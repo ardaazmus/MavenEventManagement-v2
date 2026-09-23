@@ -150,7 +150,7 @@ export async function POST() {
     const catStudent = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Öğrenci", code: "STU", basePrice: 1500, requiresApproval: true, capacity: 200, paymentInstruction: "Öğrenci belgesi onayı sonrası ödeme bağlantısı e-posta ile gönderilir", order: 1 } });
     const catSpeaker = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Davetli Konuşmacı", code: "SPK", basePrice: 0, order: 2 } });
     const catExhibitor = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Fuarcı Personeli", code: "EXH", basePrice: 0, order: 3 } });
-    const catVip = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "VIP", code: "VIP", basePrice: 0, order: 4 } });
+    const catVip = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "VIP", code: "VIP", basePrice: 0, capacity: 1, order: 4 } });
     const catPress = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Basın", code: "PRS", basePrice: 0, order: 5 } });
     const catAccomp = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Refakatçi", code: "ACC", basePrice: 2000, paymentInstruction: "Refakatçi kayıtları ana katılımcı siparişine eklenir", order: 6 } });
 
@@ -222,6 +222,30 @@ export async function POST() {
       }
       participationMap.set(name, { participationId: participation.id, registrationId: registration.id, editionId: edition1.id });
       regNo++;
+    }
+
+    // ── Bekleme listesi (VIP kategorisi 1 kontenjan — dolu; REG'te sıra bekleyenler) ──
+    const waitlistSeed: [string, typeof catVip, number, string | null][] = [
+      ["Hande", catVip, 10, "VIP kotası için beklemede — sponsor ile görüştü"],
+      ["Murat", catVip, 20, null],
+      ["Barış", catVip, 30, null],
+      ["Ünsal", catRegular, 40, "Erken kayıt dönemi kaçırdı"],
+      ["Can", catRegular, 50, null],
+    ];
+    for (const [name, cat, prio, note] of waitlistSeed) {
+      const person = P[name];
+      const participation = await db.eventParticipation.upsert({
+        where: { editionId_personId: { editionId: edition1.id, personId: person.id } },
+        create: { editionId: edition1.id, personId: person.id, source: "ADMIN_ENTRY", attendance: "NOT_ARRIVED" },
+        update: {},
+      });
+      await db.waitlistEntry.create({
+        data: {
+          editionId: edition1.id, personId: person.id, participationId: participation.id,
+          categoryId: cat.id, priority: prio, notes: note,
+          createdAt: D(-8 + Math.floor(prio / 10), 10, 0),
+        },
+      });
     }
 
     // ── Sponsorluk (§13-15) ──
@@ -825,6 +849,7 @@ async function wipe() {
     db.expense,
     db.invitation, db.scanEvent, db.credential, db.badgeInstance, db.badgeProfile,
     db.certificateIssue, db.certificateDefinition, db.floorPlanObject, db.boothAllocation, db.boothUnit,
+    db.waitlistEntry,
     db.deliverable, db.sponsorAgreement, db.sponsorPackage, db.sponsorTierDefinition,
     db.entitlementClaim, db.entitlement, db.refund, db.payment, db.orderLine, db.order, db.catalogItem,
     db.occupancySlot, db.roommateRequest, db.reservation, db.inventoryNight, db.roomBlock, db.roomType, db.hotelProperty,

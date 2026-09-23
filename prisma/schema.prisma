@@ -115,6 +115,7 @@ model Person {
   scanEvents       ScanEvent[]
   taskAssignments  Task[]
   delegationLeaders Delegation[]         @relation("DelegationLeader")
+  waitlistEntries  WaitlistEntry[]
 
   @@index([email])
   @@index([lastName])
@@ -192,6 +193,7 @@ model EventEdition {
   delegations      Delegation[]
   expenses         Expense[]
   formSubmissions  FormSubmission[]
+  waitlistEntries  WaitlistEntry[]
 
   @@index([status])
   @@index([startDate])
@@ -255,6 +257,7 @@ model EventParticipation {
   delegationMembers DelegationMember[]
   companions     Companion[]
   orderLines     OrderLine[]
+  waitlistEntries WaitlistEntry[]
 
   @@unique([editionId, personId])
   @@index([attendance])
@@ -298,6 +301,7 @@ model Registration {
   entitlementClaims EntitlementClaim[]
   orderLines   OrderLine[]
   formSubmissions FormSubmission[]
+  waitlistConversions WaitlistEntry[] @relation("WaitlistConversion")
 
   @@index([editionId])
   @@index([status])
@@ -318,8 +322,36 @@ model RegistrationCategory {
 
   edition       EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
   registrations Registration[]
+  waitlistEntries WaitlistEntry[]
 
   @@index([editionId])
+}
+
+// ─── Bekleme Listesi (kategori bazlı otomatik teklif motoru) ────────────────
+model WaitlistEntry {
+  id              String    @id @default(cuid())
+  editionId       String
+  categoryId      String?   // null → genel bekleme (manuel teklif)
+  personId        String
+  participationId String?
+  priority        Int       @default(100) // küçük sayı önce teklif alır
+  status          String    @default("WAITING") // WAITING|OFFERED|CONVERTED|DECLINED|EXPIRED|CANCELLED
+  offeredAt       DateTime?
+  offerExpiresAt  DateTime? // teklif 48 saat geçerli (§12 kayıt politikası)
+  respondedAt     DateTime?
+  convertedRegistrationId String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  edition       EventEdition          @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  person        Person                @relation(fields: [personId], references: [id], onDelete: Cascade)
+  participation EventParticipation?   @relation(fields: [participationId], references: [id], onDelete: SetNull)
+  category      RegistrationCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  convertedRegistration Registration? @relation("WaitlistConversion", fields: [convertedRegistrationId], references: [id], onDelete: SetNull)
+
+  @@index([editionId, status])
+  @@index([categoryId, status])
 }
 
 model EventRoleAssignment {

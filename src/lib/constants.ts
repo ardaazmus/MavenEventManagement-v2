@@ -12,6 +12,18 @@ export const REGISTRATION_STATUS = {
   CANCELLED: "İptal",
 } as const;
 
+// Bekleme listesi (kategori bazlı otomatik teklif motoru)
+export const WAITLIST_STATUS = {
+  WAITING: "Bekliyor",
+  OFFERED: "Teklif verildi",
+  CONVERTED: "Kayda dönüştü",
+  DECLINED: "Teklifi reddetti",
+  EXPIRED: "Süresi doldu",
+  CANCELLED: "Çıkarıldı",
+} as const;
+
+export const WAITLIST_OFFER_HOURS = 48;
+
 export const PAYMENT_STATUS = {
   NOT_REQUIRED: "Gerekmez",
   PENDING: "Bekliyor",
@@ -287,6 +299,7 @@ export const REG_SOURCES: Record<string, string> = {
   API: "API",
   ONSITE_WALK_IN: "Sahada Kayıt",
   GROUP_REGISTRATION: "Grup Kaydı",
+  WAITLIST_PROMOTION: "Bekleme Listesi",
 };
 
 export const FUNDING_SOURCES: Record<string, string> = {
@@ -446,6 +459,11 @@ export const STATUS_TONE: Record<string, string> = {
   PLANNED: "bg-sky-50 text-sky-700 border-sky-200",
   PENDING_RECEIPT: "bg-amber-50 text-amber-700 border-amber-200",
   REIMBURSED: "bg-purple-50 text-purple-700 border-purple-200",
+  // bekleme listesi
+  WAITING: "bg-amber-50 text-amber-700 border-amber-200",
+  OFFERED: "bg-sky-50 text-sky-700 border-sky-200",
+  CONVERTED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  DECLINED: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
 // Yetenek kapağında modül ekranları: capability -> modül id (§3 menü ilkesi)

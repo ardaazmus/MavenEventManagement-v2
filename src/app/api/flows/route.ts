@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ActivityType } from "@/lib/api/activity";
+import { autoOfferForCategory } from "@/lib/api/waitlist-engine";
 
 type FlowBody = Record<string, unknown> & { action?: string };
 
@@ -57,7 +58,12 @@ export async function POST(req: NextRequest) {
         }
         await db.badgeInstance.updateMany({ where: { participationId: reg.participationId, status: { in: ["READY", "ISSUED", "PRINTED"] } }, data: { status: "VOID", voidReason: `Kayıt iptali: ${reason ?? ""}` } });
         await db.activityLog.create({ data: { type: ActivityType.REGISTRATION_CANCELLED, editionId: reg.editionId, message: `Kayıt iptal edildi: ${reg.participation.person.firstName} ${reg.participation.person.lastName} — rozet ve haklar etkilenir`, entityType: "Registration", entityId: reg.id, actorName: "Yönetici" } });
-        return NextResponse.json(reg);
+        // koltuk boşaldı → bekleme listesindeki sıradakine otomatik teklif (§12)
+        const chainedOffers = reg.categoryId ? await autoOfferForCategory(reg.editionId, reg.categoryId) : [];
+        if (chainedOffers.length > 0) {
+          await db.activityLog.create({ data: { type: ActivityType.REGISTRATION_SAVED, editionId: reg.editionId, message: `İptal sonrası koltuk için bekleme listesinden ${chainedOffers.length} teklif gönderildi: ${chainedOffers.map((o) => o.personName).join(", ")}`, actorName: "Bekleme Motoru" } });
+        }
+        return NextResponse.json({ ...JSON.parse(JSON.stringify(reg)), waitlistOffered: chainedOffers });
       }
 
       // ── Sponsor misafiri ekle (09-C: Person→Participation→Registration→Claim) ──

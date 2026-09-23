@@ -29,6 +29,17 @@ interface AccountingData {
   ledger: { id: string; kind: "INCOME" | "EXPENSE" | "RECEIVABLE"; date: string; description: string; ref: string | null; method: string; status: string; amount: number; currency: string }[];
 }
 
+// Mutabakat raporu (§7) — kapanış öncesi finansal denetim
+interface ReconciliationData {
+  generatedAt: string;
+  orders: { total: number; paid: number; open: number; partiallyPaid: number; cancelled: number; mismatches: { orderNo: string; payer: string; issue: string; expected: number; actual: number; delta: number }[] };
+  unverifiedPayments: { id: string; orderNo: string; payer: string; amount: number; currency: string; source: string; paidAt: string | null; reason: string | null }[];
+  expenseAudit: { awaitingReceipt: { count: number; amount: number }; awaitingOld: { count: number; amount: number }; approvedUnpaid: { count: number; amount: number }; reimbursable: { count: number; amount: number } };
+  aging: { buckets: { label: string; count: number; amount: number }[]; totalReceivable: number; openOrders: number };
+  period: { month: string; income: number; expense: number; net: number }[];
+  readiness: { ok: boolean; blockers: string[]; warnings: string[] };
+}
+
 interface ExpenseRow {
   id: string; code: string; category: string; title: string; description?: string | null;
   amount: number; currency: string; vendor?: string | null; incurredAt: string; spentBy?: string | null;
@@ -103,6 +114,23 @@ const nextExpenseCode = (existing: ExpenseRow[]): string => {
   return code;
 };
 
+// ay etiketi: "2026-09" → "Eyl 2026"
+const monthLabel = (m: string): string => {
+  const d = new Date(`${m}-01`);
+  return Number.isNaN(d.getTime()) ? m : d.toLocaleDateString("tr-TR", { month: "short", year: "numeric" });
+};
+
+// mutabakat temiz durum bloğu — yeşil EmptyState
+function ReconCleanState({ title, desc }: { title: string; desc: string }) {
+  return (
+    <div className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-emerald-200 bg-emerald-50/40 p-6 text-center">
+      <Icons.CheckCircle2 className="size-8 text-emerald-500/70" />
+      <p className="text-sm font-medium">{title}</p>
+      <p className="max-w-sm text-xs text-muted-foreground">{desc}</p>
+    </div>
+  );
+}
+
 // kırılım barları için ortak satır
 function BreakdownBar({ text, count, total, max, barClass }: { text: string; count: number; total: number; max: number; barClass: string }) {
   return (
@@ -149,6 +177,12 @@ export function AccountingView() {
     [currentEditionId, refreshKey]
   );
 
+  // mutabakat raporu — kapanış öncesi denetim (ayrı istek, aynı yenileme döngüsü)
+  const { data: recon, error: reconError, reload: reloadRecon, loading: loadingRecon } = useApi<ReconciliationData | null>(() => {
+    if (!currentEditionId) return Promise.resolve(null);
+    return apiGet<ReconciliationData>("/api/reconciliation?editionId=" + currentEditionId);
+  }, [currentEditionId, refreshKey]);
+
   const sum = acc?.summary;
   const net = sum?.net ?? 0;
   const NetIcon = net >= 0 ? Icons.TrendingUp : Icons.TrendingDown;
@@ -186,6 +220,13 @@ export function AccountingView() {
   const dailyIncomeTotal = daily.reduce((a, d) => a + d.income, 0);
   const dailyExpenseTotal = daily.reduce((a, d) => a + d.expense, 0);
   const CHART_H = 112;
+
+  // mutabakat: dönem özeti türevleri
+  const reconPeriod = recon?.period ?? [];
+  const periodIncome = reconPeriod.reduce((a, p) => a + p.income, 0);
+  const periodExpense = reconPeriod.reduce((a, p) => a + p.expense, 0);
+  const periodNet = periodIncome - periodExpense;
+  const periodMaxNet = Math.max(1, ...reconPeriod.map((p) => Math.abs(p.net)));
 
   const refreshAll = () => { reload(); reloadExpenses(); bump(); };
 
@@ -297,10 +338,12 @@ export function AccountingView() {
       </div>
 
       <Tabs defaultValue="defter" className="gap-4">
-        <TabsList>
+        {/* 4. sekmeyle birlikte mobilde taşma — form-center ile aynı konvansiyon (h-auto flex-wrap) */}
+        <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="defter"><Icons.BookOpen className="size-4" /> Genel Defter</TabsTrigger>
           <TabsTrigger value="expenses"><Icons.ReceiptText className="size-4" /> Gider Kalemleri</TabsTrigger>
           <TabsTrigger value="breakdown"><Icons.ChartBar className="size-4" /> Kırılım &amp; Analiz</TabsTrigger>
+          <TabsTrigger value="recon"><Icons.FileCheck className="size-4" /> Mutabakat</TabsTrigger>
         </TabsList>
 
         {/* ── TAB: Genel Defter ── */}
@@ -545,6 +588,220 @@ export function AccountingView() {
                 </p>
               </SectionCard>
             </>
+          )}
+        </TabsContent>
+
+        {/* ── TAB: Mutabakat ── */}
+        <TabsContent value="recon" className="space-y-4">
+          {loadingRecon && !recon ? <Loading rows={6} /> : reconError ? <ErrorState message={reconError} onRetry={reloadRecon} /> : recon ? (
+            <>
+              {/* Kapanış Hazırlığı — engelleyici (kırmızı) vs uyarı (amber) ayrımı */}
+              <SectionCard
+                title="Kapanış Hazırlığı"
+                desc="mutabakat öncesi engelleyici ve uyarı denetimi (§7)"
+                action={
+                  <div className="flex items-center gap-2">
+                    <span className="hidden text-xs text-muted-foreground md:inline">Oluşturuldu: {fmtDateTime(recon.generatedAt)}</span>
+                    <Button size="sm" variant="outline" onClick={reloadRecon} disabled={loadingRecon}>
+                      <Icons.RefreshCw className={`size-3.5 ${loadingRecon ? "animate-spin" : ""}`} /> Yenile
+                    </Button>
+                  </div>
+                }
+              >
+                <div className={`rounded-lg border p-4 ${recon.readiness.ok ? "border-emerald-200 bg-emerald-50/60" : "border-rose-200 bg-rose-50/60"}`}>
+                  <div className="flex items-center gap-2">
+                    {recon.readiness.ok
+                      ? <Icons.CheckCircle2 className="size-5 shrink-0 text-emerald-600" />
+                      : <Icons.AlertTriangle className="size-5 shrink-0 text-rose-600" />}
+                    <p className={`text-sm font-semibold ${recon.readiness.ok ? "text-emerald-700" : "text-rose-700"}`}>
+                      {recon.readiness.ok ? "Mutabakata hazır — engelleyici bulunamadı" : "Kapanış engellendi — önce engelleyicileri çözün"}
+                    </p>
+                  </div>
+                  {recon.readiness.blockers.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Engelleyici ({recon.readiness.blockers.length})</p>
+                      <ul className="mt-1 space-y-1">
+                        {recon.readiness.blockers.map((b) => (
+                          <li key={b} className="flex items-start gap-1.5 text-xs text-rose-700">
+                            <Icons.OctagonAlert className="mt-0.5 size-3.5 shrink-0" /> {b}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {recon.readiness.warnings.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Uyarı ({recon.readiness.warnings.length})</p>
+                      <ul className="mt-1 space-y-1">
+                        {recon.readiness.warnings.map((w) => (
+                          <li key={w} className="flex items-start gap-1.5 text-xs text-amber-700">
+                            <Icons.TriangleAlert className="mt-0.5 size-3.5 shrink-0" /> {w}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </SectionCard>
+
+              {/* Sipariş özeti — mini durum çipleri */}
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card px-4 py-3 shadow-sm">
+                <span className="mr-1 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <Icons.ShoppingCart className="size-3.5" /> Sipariş Özeti
+                </span>
+                <Chip tone="neutral">Toplam · {recon.orders.total}</Chip>
+                <Chip tone="emerald">Ödendi · {recon.orders.paid}</Chip>
+                <Chip tone="amber">Açık · {recon.orders.open}</Chip>
+                <Chip tone="amber">Kısmi · {recon.orders.partiallyPaid}</Chip>
+                <Chip tone="rose">İptal · {recon.orders.cancelled}</Chip>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                {/* Sipariş Tutarsızlıkları */}
+                <SectionCard title="Sipariş Tutarsızlıkları" desc="sipariş tutarı, kalem toplamı ve durum-tahsilat tutarlılık denetimi">
+                  {recon.orders.mismatches.length === 0 ? (
+                    <ReconCleanState title="Tutarsızlık yok" desc="Tüm siparişler tutarlı — tutar, kalem ve tahsilat denetimi temiz." />
+                  ) : (
+                    <div className="maven-scroll max-h-96 space-y-3 overflow-y-auto pr-1">
+                      {recon.orders.mismatches.map((m, i) => (
+                        <div key={`${m.orderNo}-${i}`} className="rounded-xl border border-rose-200 bg-rose-50/40 p-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs font-bold">{m.orderNo}</span>
+                            <span className="min-w-0 truncate text-xs text-muted-foreground">{m.payer}</span>
+                            <Badge variant="outline" className="ml-auto shrink-0 border-rose-200 bg-rose-50 font-semibold text-rose-700">
+                              Fark: {m.delta > 0 ? "+" : ""}{fmtMoney(m.delta)}
+                            </Badge>
+                          </div>
+                          <p className="mt-1.5 text-sm font-medium">{m.issue}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Beklenen: <span className="font-semibold text-foreground">{fmtMoney(m.expected)}</span>
+                            {" ≠ "}Gerçekleşen: <span className="font-semibold text-foreground">{fmtMoney(m.actual)}</span>
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SectionCard>
+
+                {/* Doğrulanmamış Tahsilatlar (§38) */}
+                <SectionCard title="Doğrulanmamış Tahsilatlar (§38)" desc="referans veya manuel teyit bilgisi eksik tahsilatlar">
+                  {recon.unverifiedPayments.length === 0 ? (
+                    <ReconCleanState title="Tümü doğrulanmış" desc="Tahsilatların referans ve teyit bilgileri eksiksiz." />
+                  ) : (
+                    <div className="maven-scroll max-h-96 space-y-3 overflow-y-auto pr-1">
+                      {recon.unverifiedPayments.map((p) => (
+                        <div key={p.id} className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs font-bold">{p.orderNo}</span>
+                            <span className="min-w-0 truncate text-xs text-muted-foreground">{p.payer}</span>
+                            <span className="ml-auto text-sm font-bold tabular-nums">{fmtMoney(p.amount, p.currency)}</span>
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            <span className="inline-flex items-center gap-1"><Icons.Wallet className="size-3.5" /> {label(PAYMENT_METHODS, p.source)}</span>
+                            <span className="inline-flex items-center gap-1"><Icons.CalendarDays className="size-3.5" /> {fmtDateTime(p.paidAt)}</span>
+                          </div>
+                          {p.reason && (
+                            <p className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
+                              <Icons.TriangleAlert className="size-3" /> {p.reason}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SectionCard>
+              </div>
+
+              {/* Gider Denetimi — 4 denetim kartı */}
+              <SectionCard title="Gider Denetimi" desc="fiş, onay ve personel ödemesi bekleyen gider kalemleri">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <KpiCard label="Fiş Bekleyen" value={recon.expenseAudit.awaitingReceipt.count} sub={fmtMoney(recon.expenseAudit.awaitingReceipt.amount)} tone="amber" icon={<Icons.ReceiptText className="size-4" />} />
+                  <KpiCard
+                    label="7+ Gün Bekleyen Fiş"
+                    value={recon.expenseAudit.awaitingOld.count}
+                    sub={fmtMoney(recon.expenseAudit.awaitingOld.amount)}
+                    tone={recon.expenseAudit.awaitingOld.count > 0 ? "amber" : "neutral"}
+                    icon={<Icons.Clock4 className="size-4" />}
+                  />
+                  <KpiCard label="Onaylı — Ödenmemiş" value={recon.expenseAudit.approvedUnpaid.count} sub={fmtMoney(recon.expenseAudit.approvedUnpaid.amount)} tone="violet" icon={<Icons.CircleDollarSign className="size-4" />} />
+                  <KpiCard label="Personeline Ödenecek" value={recon.expenseAudit.reimbursable.count} sub={fmtMoney(recon.expenseAudit.reimbursable.amount)} tone="teal" icon={<Icons.HandCoins className="size-4" />} />
+                </div>
+              </SectionCard>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                {/* Açık Alacak Yaşlandırması */}
+                <SectionCard title="Açık Alacak Yaşlandırması" desc={`${recon.aging.openOrders} açık siparişin vade yaşına göre dağılımı`}>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {recon.aging.buckets.map((b, i) => {
+                      const warn = i === 2 && b.amount > 0;
+                      return (
+                        <div key={b.label} className={`rounded-xl border p-4 ${warn ? "border-rose-300 bg-rose-50/60" : "border-border bg-muted/30"}`}>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className={`text-xs font-medium ${warn ? "text-rose-700" : "text-muted-foreground"}`}>{b.label}</span>
+                            {warn && <Icons.TriangleAlert className="size-3.5 shrink-0 text-rose-500" />}
+                          </div>
+                          <p className={`mt-1 text-xl font-semibold tracking-tight tabular-nums ${warn ? "text-rose-700" : ""}`}>{fmtMoney(b.amount)}</p>
+                          <p className="text-xs text-muted-foreground">{b.count} sipariş</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <Separator className="my-3" />
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span className="text-muted-foreground">Toplam açık alacak</span>
+                    <span className="font-bold tabular-nums">{fmtMoney(recon.aging.totalReceivable)}</span>
+                  </div>
+                </SectionCard>
+
+                {/* Son 6 Ay Dönem Özeti */}
+                <SectionCard title="Son 6 Ay Dönem Özeti" desc="aylık tahsilat, gerçekleşen gider ve net akış">
+                  {reconPeriod.length === 0 ? (
+                    <EmptyState title="Dönem verisi yok" desc="Tahsilat ve gider kaydedildikçe aylık özet oluşur." />
+                  ) : (
+                    <div className="maven-scroll max-h-96 overflow-y-auto rounded-lg border">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
+                          <tr>
+                            <th className="px-3 py-2 font-medium">Ay</th>
+                            <th className="px-3 py-2 text-right font-medium">Gelir</th>
+                            <th className="px-3 py-2 text-right font-medium">Gider</th>
+                            <th className="px-3 py-2 text-right font-medium">Net</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reconPeriod.map((p) => (
+                            <tr key={p.month} className="border-t transition hover:bg-muted/40">
+                              <td className="whitespace-nowrap px-3 py-2 font-medium">{monthLabel(p.month)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-emerald-600">{fmtMoney(p.income)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-rose-600">{fmtMoney(p.expense)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right">
+                                <span className={`inline-flex items-center justify-end gap-1.5 font-semibold tabular-nums ${p.net >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                                  <span
+                                    className={`hidden h-1 rounded-full sm:inline-block ${p.net >= 0 ? "bg-emerald-400" : "bg-rose-400"}`}
+                                    style={{ width: `${Math.max(2, Math.round((Math.abs(p.net) / periodMaxNet) * 56))}px` }}
+                                  />
+                                  {p.net >= 0 ? "+" : ""}{fmtMoney(p.net)}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t bg-muted/50">
+                            <td className="px-3 py-2 font-semibold">Toplam</td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">{fmtMoney(periodIncome)}</td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">{fmtMoney(periodExpense)}</td>
+                            <td className={`whitespace-nowrap px-3 py-2 text-right font-bold tabular-nums ${periodNet >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{fmtMoney(periodNet)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </SectionCard>
+              </div>
+            </>
+          ) : (
+            <EmptyState title="Mutabakat verisi yok" desc="Bir edisyon seçildiğinde mutabakat raporu otomatik oluşturulur." />
           )}
         </TabsContent>
       </Tabs>

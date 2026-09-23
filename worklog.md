@@ -173,3 +173,121 @@ Unresolved / sonraki adımlar:
 - Mobil uygulamaya gerçek QA/quiz motoru bağlanacaksa QA_QUIZ için doğru cevap işaretleme (scoring) modeli eklenebilir
 - FILE alan türü UI'da bilinçli kapalı (gerçek dosya yükleme servisi gerekir)
 - Sponsor/katılımcı dış portalları ayrı faz
+
+---
+Task ID: R-prep
+Agent: Z.ai Code (ana ajan)
+Task: Cron inceleme turu R — QA değerlendirmesi + yeni özellik API'leri (mutabakat + rozet baskı)
+
+Work Log:
+- QA değerlendirmesi (agent-browser): 0 page error, 0 console error; Dashboard/Form Merkezi/Muhasebe/Kayıt/Ödeme/Sahada sweep temiz; tüm API'ler 200 (/api/accounting 400 = editionId param beklentisi, normal). Proje STABİL → hata düzeltme yerine yeni özellik turu.
+- Yeni API: `GET /api/reconciliation?editionId=` — mutabakat raporu: sipariş tutarlılığı (tutar≠kalem, PAID≠tahsilat, OPEN+tahsilat tespiti), doğrulanmamış tahsilatlar (referans/teyit eksik §38), gider denetimi (fiş bekleyen/7+ gün eski, onaylı-ödenmemiş, reimburse), açık alacak yaşlandırması (0-30/31-60/60+), son 6 ay dönem özeti, kapanış hazırlığı (blockers/warnings). Test: 8 sipariş, 0 tutarsızlık, 2 doğrulanmamış tahsilat, hazırlık=False ✓
+- Yeni API: `GET/POST /api/badges/print-queue` — baskı kuyruğu (READY/PRINTED/ISSUED... + profil + kişi + kategori + roller), POST {ids, action: PRINT|ISSUE|REPRINT} durum makinesi kontrollü (READY→PRINTED, PRINTED→ISSUED, basılı→REPRINTED) + aktivite günlüğü. Test: PRINT 1 rozet READY 3→2 ✓, seed sıfırlandı
+
+Stage Summary:
+- İki API test edildi ve çalışıyor; sıradaki: R-a (accounting.tsx Mutabakat sekmesi) + R-b (badge-queue.tsx Rozet Baskı modülü) paralel, sonra stil cilası (bits.tsx) ve final doğrulama
+
+---
+## UI AGENT SÖZLEŞMESİ R (R-a / R-b)
+
+Ortak kurallar: önceki "UI AGENT SÖZLEŞMESİ" bölümündeki TÜM konvansiyonlar geçerli (use client, göreli yol, ../bits, useToast, reload()+bump(), Türkçe, emoji yok, max-h-96 maven-scroll, responsive, strict TS).
+
+R-a ek sözleşme — Mutabakat API:
+- `apiGet("/api/reconciliation?editionId=" + currentEditionId)` → {
+    generatedAt,
+    orders: { total, paid, open, partiallyPaid, cancelled, mismatches: [{ orderNo, payer, issue, expected, actual, delta }] },
+    unverifiedPayments: [{ id, orderNo, payer, amount, currency, source, paidAt, reason }],
+    expenseAudit: { awaitingReceipt: {count,amount}, awaitingOld: {count,amount}, approvedUnpaid: {count,amount}, reimbursable: {count,amount} },
+    aging: { buckets: [{label,count,amount}], totalReceivable, openOrders },
+    period: [{ month: "YYYY-MM", income, expense, net }],
+    readiness: { ok, blockers: string[], warnings: string[] }
+  }
+
+R-b ek sözleşme — Baskı Kuyruğu API:
+- `apiGet("/api/badges/print-queue?editionId=" + currentEditionId)` → {
+    queue: [{ id, badgeNo, status, issuedAt, printedAt, profile: {name,color,accessAreas}|null, person: {fullName, company, title}, category, roles: string[], registrationStatus }],
+    stats: { ready, printed, issued, reprinted, notEligible, void, total },
+    byProfile: [{ name, count }]
+  }
+- Aksiyon: `apiSend("/api/badges/print-queue", "POST", { ids: string[], action: "PRINT"|"ISSUE"|"REPRINT" })` → { ok, succeeded, failed, results: [{id, ok, message?}] }
+- BADGE_STATUS + STATUS_TONE (constants.ts) rozet durumları için; modül id "badges" (constants MODULES'ta ben ekledim), capability "BADGING" → Sahada ile aynı yetenek
+
+---
+Task ID: R-b
+Agent: full-stack-developer
+Task: Rozet Baskı Merkezi view (badge-queue.tsx)
+
+Work Log:
+- YENİ dosya `/home/z/my-project/src/components/maven/views/badge-queue.tsx` oluşturuldu (377 satır, named export `BadgeQueueView`); SADECE bu dosya yazıldı — page.tsx / constants.ts / bits.tsx / API route'larına dokunulmadı, test kodu yok, modül kaydı ana ajana bırakıldı.
+- UI AGENT SÖZLEŞMESİ R'ye birebir: "use client" + TR yorum, apiGet/apiSend göreli yol, useApp (currentEditionId/bump/refreshKey), ../bits parçaları (PageHeader/KpiCard/Chip/SectionCard/StatusBadge/EmptyState/ErrorState/Loading/useApi), constants (BADGE_STATUS, EVENT_ROLES, label, fmtDate), shadcn (Button/Input/Checkbox/Select/Dialog), useToast, `import * as Icons`, strict TS (any yok).
+- useApi deseni sözleşmedeki gibi: `if (!currentEditionId) return Promise.resolve(null); return apiGet<BadgeQueueData>("/api/badges/print-queue?editionId=" + currentEditionId)` deps [currentEditionId, refreshKey].
+- PageHeader: "Rozet Baskı" + §40 desc; children Chip teal "N seçili" (satır tıklamasıyla canlı güncellenir).
+- KPI sırası grid sm:2 xl:5: Baskıya Hazır (teal/Printer), Basıldı (emerald/Stamp), Verildi (emerald/CheckCircle2), Yeniden Basılan (amber/RefreshCcw), Uygun Değil (neutral/Ban); altında "Toplam N rozet kuyrukta" not satırı.
+- Profil kırılımı barı: byProfile → Chip dizisi "Delegate × 13" biçiminde; her chip'e kuyruktan eşlenen profil rengiyle inline-style renk noktası (renk adı→hex objesi: teal/amber/violet/rose/sky/neutral, fallback #a3a3a3 — dinamik Tailwind sınıfı derlenmediği için inline style, talimattaki gibi).
+- Seçim + toplu aksiyon çubuğu (sticky değil): "Tümünü Seç (kuyruk)" (yalnız filtrelenmiş görünür satırlara union uygular, title ile belirtildi) / "Seçimi Temizle" / "{görünen}/{toplam} rozet görünüyor" sayacı; üç toplu buton Baskıya Gönder (PRINT, primary), Teslim Et (ISSUE, emerald outline), Yeniden Bas (REPRINT, amber outline) — durum kapısı YOK (sunucu kontrol ediyor); seçim boşsa istek atmak yerine "Rozet seçilmedi" toast'ı.
+- runAction(action, ids) tek/çoklu ortak: bulkBusy (PRINT|ISSUE|REPRINT) + rowBusyId ayrı busy state'leri, tüm butonlar çakışmayı önlemek için anyBusy'de disabled, aktifte Loader2 spin; sonuç toast'ı: başlık "{succeeded} rozet basıldı/teslim edildi/yeniden basıldı", başarısız varsa description "{failed} atlandı (durumu uygun değil / basılı durumda değil / basılı rozet değil)", succeeded=0 ise destructive; sonra setSelected(empty) + reload() + bump().
+- Kuyruk tablosu (SectionCard, max-h-96 overflow-y-auto maven-scroll, sticky thead): Checkbox (hücre stopPropagation), Rozet No (mono, son 6 karakter # ile; tıklanınca önizleme), Kişi (fullName bold + company·title muted truncate), Profil (renk noktası inline style + Chip), Kategori (lg'de), Roller (EVENT_ROLES label Chip, max 2 + "+N", md'de), Durum (StatusBadge BADGE_STATUS + STATUS_TONE), Baskı/Veriş (Basım/Veriş iki satır fmtDate, sm'de), İşlem (göz ikonu önizleme + READY→"Baskıya Al", PRINTED/REPRINTED→"Teslim Et", aksi "—"); satır tıklaması seçimi toggle eder, seçili satır bg-teal-50/60.
+- Filtreler istemci tarafı: durum Select (Tümü + BADGE_STATUS'ın 6 durumu), arama Input (fullName + badgeNo + profil adı, toLocaleLowerCase("tr-TR") contains); "Tümünü Seç" yalnız görünene uygulanır; boş görünüm için iki farklı EmptyState (kuyruk boş / filtre boş).
+- Baskı Önizleme dialogu: rozet no'ya veya satır sonu göz ikonuna tıklayınca; 320px kart mock — üstte profil rengi şerit (inline style), ortada fullName büyük + company·title, altta #badgeNo mono + profil adı + "Erişim alanları: ..." muted; not "Bu kart baskı şablonunu temsil eder — gerçek kesiim BadgeProfile ayarlarından gelir"; Kapat butonu; DialogDescription a11y için mevcut.
+- Edisyon değişiminde seçim + önizleme useEffect ile sıfırlanır (stale id ile başka edisyonun rozetine aksiyon gitmesin); seçim aksiyon anında kuyrukla kesişimle doğrulanır (selectedInQueue).
+- Doğrulama: `bun run lint` → 0 error 0 warning (exit 0); `bunx tsc --noEmit` → badge-queue.tsx'te 0 hata (proje genelindeki önceden varolan hatalar başka dosyalarda: examples/, skills/, api/seed, onsite.tsx, scientific.tsx — bu ajanın kapsamı dışı). View page.tsx'e bağlı olmadığından agent-browser E2E yapılamadı (görevde belirtildiği gibi dosya derlemesi doğrulandı).
+
+Stage Summary:
+- Rozet Baskı Merkezi UI TAM: baskı kuyruğu tablosu (seçimli), toplu PRINT/ISSUE/REPRINT akışı (sunucu durum makinesine güvenen her-zaman-aktif butonlar + succeeded/failed toast raporu), profil kırılımı, durum/arama filtreleri ve BadgeProfile tabanlı baskı önizleme mock'u — API sözleşmesi (/api/badges/print-queue GET/POST) hiç değiştirilmeden tamamlandı.
+- Bilinen sınırlar: modül henüz page.tsx'te render edilmiyor (ana ajan bağlayacak); preview kartındaki accessAreas Prisma'da String? olduğundan düz metin olarak gösterilir (dizi gelirse join ile güvenli); "Uygun Değil/Geçersiz/Verildi" rozetlerine tabloda satır aksiyonu yok (durum makinesi gereği "—").
+- Kalan: ana ajan module kaydı ("badges" id) + render + E2E turu.
+
+---
+Task ID: R-a
+Agent: full-stack-developer
+Task: Muhasebe'ye Mutabakat sekmesi
+
+Work Log:
+- Sadece `src/components/maven/views/accounting.tsx` değiştirildi (682 → 938 satır, +258 satır; named export `AccountingView` korundu). page.tsx / constants.ts / bits.tsx / API route'lara dokunulmadı, test kodu yazılmadı.
+- `ReconciliationData` interface'i eklendi (R-a sözleşmesiyle birebir: orders+mismatches, unverifiedPayments, expenseAudit, aging, period, readiness); ayrı `useApi` çağrısı `apiGet("/api/reconciliation?editionId=" + currentEditionId)` — mevcut accounting çağrısıyla AYNI deps `[currentEditionId, refreshKey]`, aynı null-guard deseni; mevcut accounting veri çağrısı hiç değiştirilmedi.
+- TAB 4 "Mutabakat" (Icons.FileCheck): Kapanış Hazırlığı kartı — ok=true → yeşil border/bg + CheckCircle2 + "Mutabakata hazır — engelleyici bulunamadı"; ok=false → kırmızı + AlertTriangle + "Kapanış engellendi…"; blockers kırmızı maddeler (OctagonAlert, "ENGELLEYICI (n)" başlığı) + warnings amber maddeler (TriangleAlert, "UYARI (n)" başlığı) ayrımı; header action'da "Oluşturuldu: fmtDateTime(generatedAt)" muted metni + Yenile butonu (loadingRecon'da disabled + ikon spin).
+- Sipariş Özeti satırı: 5 mini Chip (Toplam/Ödendi/Açık/Kısmi/İptal — nötr/emerald/amber/amber/rose tonları), ShoppingCart ikonlu etiketle tek kart satırı.
+- lg:grid-cols-2 grid: Sol "Sipariş Tutarsızlıkları" — boşsa yeşil ReconCleanState ("Tutarsızlık yok — tüm siparişler tutarlı", dosya içi yeşil EmptyState bileşeni: emerald dashed border + CheckCircle2); varsa satır: orderNo mono bold + payer + issue + "Beklenen ≠ Gerçekleşen" fmtMoney + kırmızı işaretli "Fark:" delta Badge. Sağ "Doğrulanmamış Tahsilatlar (§38)" — boşsa yeşil "Tümü doğrulanmış"; varsa satır: orderNo + payer + tutar (kendi para birimi) + kaynak (PAYMENT_METHODS label) + fmtDateTime(paidAt) + amber reason pill.
+- "Gider Denetimi": 4 KpiCard (Fiş Bekleyen amber / 7+ Gün Bekleyen Fiş — 0 üstünde amber değilse nötr / Onaylı — Ödenmemiş violet / Personeline Ödenecek teal), alt notlarda tutar fmtMoney.
+- "Açık Alacak Yaşlandırması": 3 sütun yaş kovası kartı (label + count sipariş + fmtMoney amount); 60+ gün tutarı > 0 → rose vurgu + uyarı ikonu; Separator altında bold "Toplam açık alacak" satırı.
+- "Son 6 Ay Dönem Özeti": kompakt tablo (sticky başlıklı, max-h-96 maven-scroll) — Ay "2026-09" → monthLabel("Eyl 2026", tr-TR), Gelir yeşil / Gider kırmızı / Net işaretli + pozitif yeşil negatif kırmızı + normalize mini bar; tfoot'ta Toplam satırı (Gelir/Gider/Net toplamları, period türevleri render'da hesaplanır).
+- Mobil: 4. sekmeyle TabsList 390px'i aşınca form-center'daki mevcut konvansiyon uygulandı (`TabsList className="h-auto flex-wrap"` — tek satırlık stil eklemesi, sekme yapısı/konvansiyonları korundu); 390px'te yatay taşma 0.
+- `bun run lint`: 0 hata / 0 uyarı (exit 0). `tsc --noEmit` accounting.tsx'te 0 hata (proje genelindeki diğer dosyalardaki mevcut TS hataları bu görevle ilgisiz).
+- Doğrulama (agent-browser, No-Dig Turkey 2026 edisyonu): 4 sekme render ✓; Mutabakat sekmesi gerçek veriyle: readiness=False → kırmızı kart "Kapanış engellendi…" + ENGELLEYICI(1) "2 tahsilat referans/teyit bilgisi eksik (§38)" + UYARI(1) "3 onaylı gider henüz ödenmedi" ✓; Sipariş Özeti 7/3/1/3/0 ✓; Tutarsızlık yok yeşil blok ✓; 2 doğrulanmamış tahsilat (ORD-2026-0005 Onur Erdem ₺6.000 Sahada POS 21 Eyl, ORD-2026-0006 Gizem Bulut ₺2.000 Ödeme Linki 22 Eyl, "Referans numarası eksik" pill) ✓; Gider Denetimi 2/₺9.900, 0/₺0, 3/₺19.400, 1/₺1.250 ✓; Yaşlandırma 0-30: ₺20.000/4 sipariş, toplam ₺20.000 ✓; Dönem Özeti Nis–Eyl 2026 + Eyl satırı ₺38.000/₺23.000/+₺15.000, tfoot Toplam ₺38.000/₺23.000/₺15.000 ✓; Yenile butonu çalışıyor ✓; diğer 3 sekme (defter/gider/kırılım) bozulmadı ✓; mobil 390×844 yatay taşma yok ✓; page errors 0, console temiz ✓; VLM görsel denetim: renk hiyerarşisi/hizalama/padding temiz ✓.
+- Not: Geliştirme sırasında sunucu bellek baskısıyla (4GB sandbox, tsc + chrome aynı anda) iki kez OOM ile düştü; ayrıntılı tsc turu sonrası dev sunucu yeniden başlatıldı ve doğrulama tamamlandı. Tablo/kart stilleri mevcut SectionCard/KpiCard/Chip/Badge/StatusBadge konvansiyonlarıyla birebir yazıldı.
+
+Stage Summary:
+- Muhasebe view 4. sekme MUTABAKAT tamamlandı: kapanış hazırlığı (engelleyici/uyarı ayrımı), sipariş özeti çipleri, sipariş tutarsızlıkları, doğrulanmamış tahsilatlar (§38), gider denetimi (4 KPI), açık alacak yaşlandırması ve son 6 ay dönem özeti — /api/reconciliation sözleşmesiyle birebir, tek dosya değişikliği (+258 satır), lint temiz, gerçek veriyle E2E doğrulandı (readiness=False senaryosu dahil).
+- Sıradaki: R-b (badge-queue.tsx Rozet Baskı modülü) paralel ajanı + ana ajan stil cilası ve final doğrulama.
+
+---
+Task ID: R-final
+Agent: Z.ai Code (ana ajan)
+Task: R turu finali — modül bağlama, stil cilası, uçtan uca doğrulama
+
+Work Log:
+- Rozet Baskı modülü bağlandı: MODULES'a `{ id: "badges", label: "Rozet Baskı", icon: "Printer", capability: "BADGING", group: "edition" }` (Sahada'dan sonra) + page.tsx'e BadgeQueueView mount
+- bits.tsx stil cilası (18 modülü birden etkiler):
+  - KpiCard: tıklanabilir kartlarda hover'da yukarı kalkma (translate-y), üst kenarda primary vurgu çizgisi (scale-x animasyonu), ikon hover büyütme, focus-visible ring (erişilebilirlik), active state
+  - SectionCard: overflow-hidden (köşe taşması yok), başlık şeridi bg-muted/30, hover shadow
+  - StatusBadge: iç parlaklık (inset highlight) ile daha oturmuş rozet görünümü
+  - EmptyState: ikon artık yuvarlak muted kapsayıcıda, bg-muted/20 zemin
+  - PageHeader: başlık yanında teal gradyan vurgu çubuğu (marka tutarlılığı)
+  - Tailwind uyumluluk düzeltmeleri: hover:shadow-sm/60 → hover:shadow, ring-current/15 kaldırıldı
+- agent-browser E2E (tümü GEÇTİ):
+  1. Menüde "Rozet Baskı" görünüyor; KPI'lar No-Dig 2026'da 3 READY/18 PRINTED/24 toplam ✓ (edisyon localStorage'ı seed sonrası eski id — TechDays'e düştü, edisyon seçiciyle No-Dig'e geçildi; bootstrap fallback davranışı not edildi)
+  2. Durum filtresi (Hazır) ✓, arama alanı ✓
+  3. Baskı Önizleme dialogu: Ahmet Yılmaz — ABC Pharma · Ar-Ge Müdürü — Speaker — erişim alanları ✓ (Escape ile kapanıyor)
+  4. Tümünü Seç + toplu PRINT → POST 200, READY 3→0 ✓
+  5. Muhasebe → Mutabakat sekmesi: Kapanış Hazırlığı kırmızı kart (engelleyici: 2 tahsilat referans eksik §38; UYARI 1), "Tutarsızlık yok", yaşlandırma 0-30 gün, Son 6 Ay Dönem Özeti ✓
+  6. Mobil 390×844 render ✓, page errors 0 ✓
+- `bun run lint`: 0 hata / 0 uyarı (bits.tsx cilası dahil tüm proje)
+
+Stage Summary:
+- Bu tur eklendi: Mutabakat raporu (API + Muhasebe 4. sekme: tutarsızlık/§38/gider denetimi/yaşlandırma/6 ay/kapanış hazırlığı) + Rozet Baskı Merkezi (API + yeni modül: kuyruk, toplu PRINT/ISSUE/REPRINT durum makinesi, önizleme, filtre/arama) + global stil cilası
+- Proje: 63 model, 18 modüllü SPA, 2 yeni API (reconciliation, badges/print-queue), lint temiz
+
+Unresolved / sonraki adımlar:
+- Edisyon localStorage'ı: seed sonrası eski id geçersiz olunca editions[0]'a düşüyor (TechDays) — bootstrap'ta "kayıtlı id yoksa en güncel PUBLISHED edisyonu seç" iyileştirmesi yapılabilir
+- Kalan adaylar: kişi birleştirme UI'ı (API hazır), Floor Studio sync endpoint'leri, bekleme listesi otomatik teklif, CME kredi defteri, sponsor/katılımcı portalları
+- Bellek notu: 4GB sandbox'ta tsc + chrome + next dev aynı anda OOM verebiliyor — agent'lar tsc'yi dosya bazlı filtreyle kullanmalı

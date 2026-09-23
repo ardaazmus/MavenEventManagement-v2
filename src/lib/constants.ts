@@ -336,6 +336,7 @@ export const MODULES = [
   { id: "finance", label: "Ödeme & Ek Hizmet", icon: "CreditCard", capability: "REGISTRATION", group: "edition" },
   { id: "communications", label: "İletişim", icon: "Megaphone", capability: "COMMUNICATIONS", group: "edition" },
   { id: "onsite", label: "Sahada", icon: "ScanLine", capability: "BADGING", group: "edition" },
+  { id: "badges", label: "Rozet Baskı", icon: "Printer", capability: "BADGING", group: "edition" },
   { id: "certificates", label: "Belgeler", icon: "Award", capability: "CERTIFICATES", group: "edition" },
   { id: "operations", label: "Operasyon", icon: "ListChecks", capability: null, group: "workspace" },
   { id: "settings", label: "Ayarlar", icon: "Settings", capability: null, group: "workspace" },

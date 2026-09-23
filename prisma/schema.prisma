@@ -1,6 +1,9 @@
-// Maven Event Management — Ortak Organizasyonel Mimari
-// Bu şema, docs/Maven_Event_Management_Ortak_Organizasyonel_Mimari.md §3 ile birebir eşleşir.
-// SQLite kısıtı: enum yerine String + src/lib/constants.ts sabitleri.
+// ============================================================================
+// MAVEN EVENT MANAGEMENT — ORTAK ORGANİZASYONEL MİMARİ
+// Master Domain Graph (§58) + 02 Organizasyonel Bilgi Modeli birebir uygulama
+// Temel ilke (§2): Person ≠ Participation ≠ Registration ≠ Role ≠ Payment
+// SQLite kısıtı: enum yerine String + src/lib/constants.ts sabitleri
+// ============================================================================
 
 generator client {
   provider = "prisma-client-js"
@@ -11,393 +14,1125 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── 1. ORGANİZASYON ────────────────────────────────────────
+// ─── FAZ 1: FOUNDATION — Tenant, IAM, Organization, Person, Audit ──────────
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  plan      String   @default("PRO") // FREE | PRO | ENTERPRISE
+  status    String   @default("ACTIVE")
+  country   String?
+  timezone  String   @default("Europe/Istanbul")
+  createdAt DateTime @default(now())
+
+  users          User[]
+  organizations  Organization[]
+  people         Person[]
+  series         EventSeries[]
+  editions       EventEdition[]
+  activityLogs   ActivityLog[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String
+  email     String
+  name      String
+  role      String   @default("ORG_ADMIN") // §48: ORG_OWNER|ORG_ADMIN|EVENT_MANAGER|FINANCE_MANAGER|REGISTRATION_MANAGER|SPONSORSHIP_MANAGER|SCIENTIFIC_MANAGER|PROGRAM_MANAGER|ONSITE_MANAGER
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
 
 model Organization {
-  id          String     @id @default(cuid())
-  name        String
-  slug        String     @unique
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  code      String?
+  type      String?  // COMPANY|ASSOCIATION|UNIVERSITY|AGENCY|PUBLIC_AUTHORITY|VENUE|HOTEL|MEDIA (sponsor TÜRÜ DEĞİL — §4)
+  website   String?
+  country   String?
+  city      String?
+  taxNo     String?
+  logoUrl   String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant          Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts        OrganizationContact[]
+  eventAssignments EventOrganizationAssignment[]
+  sponsorAgreements SponsorAgreement[]
+  boothAllocations BoothAllocation[]
+  entitlements    Entitlement[]
+  orders          Order[]
+  invitations     Invitation[]
+  delegationBilling Delegation[]
+}
+
+model OrganizationContact {
+  id             String  @id @default(cuid())
+  organizationId String
+  personId       String?
+  name           String
+  title          String?
+  email          String?
+  phone          String?
+  isPrimary      Boolean @default(false)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  person       Person?      @relation(fields: [personId], references: [id], onDelete: SetNull)
+}
+
+model Person {
+  id          String   @id @default(cuid())
+  tenantId    String
+  firstName   String
+  lastName    String
+  email       String?  // güçlü eşleştirme işareti, kesin kimlik değil (Kimlik kuralı 1)
+  phone       String?
+  title       String?
+  company     String?  // kalıcı profil; etkinlik anı görünümü snapshot'ta
+  country     String?
+  city        String?
+  bio         String?
+  photoUrl    String?
+  linkedin    String?
+  status      String   @default("ACTIVE") // ACTIVE|PASSIVE|MERGED
+  mergedIntoId String? // kişi tekilleştirme: önerili + onaylı birleştirme
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant           Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  participations   EventParticipation[]
+  submissions      Submission[]           @relation("Submitter")
+  authorships      Authorship[]
+  reviewAssignments ReviewAssignment[]
+  programAssignments ProgramAssignment[]
+  contacts         OrganizationContact[]
+  scanEvents       ScanEvent[]
+  taskAssignments  Task[]
+  delegationLeaders Delegation[]         @relation("DelegationLeader")
+
+  @@index([email])
+  @@index([lastName])
+}
+
+// ─── FAZ 2: EVENT CORE — Series, Edition, Capabilities, Org Assignment ─────
+
+model EventSeries {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String   // örn. "No-Dig Turkey"
+  slug        String   @unique
   description String?
-  mission     String?
+  template    String?  // SCIENTIFIC_CONGRESS|TRADE_FAIR|CORPORATE|CUSTOM
   logoUrl     String?
-  foundedYear Int?
-  contactEmail String?
-  contactPhone String?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-
-  events   Event[]
-  venues   Venue[]
-  speakers Speaker[]
-}
-
-model Department {
-  id          String      @id @default(cuid())
-  name        String
-  code        String      @unique
-  description String?
-  color       String?     // UI vurgu rengi
-  parentId    String?     // self-relation: hiyerarşik birim ağacı
-  managerId   String?     // Birim yöneticisi
-  position    Int         @default(0)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  parent      Department?  @relation("DeptTree", fields: [parentId], references: [id], onDelete: SetNull)
-  children    Department[] @relation("DeptTree")
-  manager     Member?      @relation("DeptManager", fields: [managerId], references: [id], onDelete: SetNull)
-  members     Member[]     @relation("DeptMembers")
-
-  @@index([parentId])
-}
-
-model Role {
-  id          String   @id @default(cuid())
-  name        String
-  code        String   @unique
-  level       Int      @default(5) // 1=Yönetici … 5=Gönüllü
-  description String?
-  color       String?
   createdAt   DateTime @default(now())
 
-  members Member[]
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  editions EventEdition[]
 }
 
-model Member {
-  id           String       @id @default(cuid())
-  firstName    String
-  lastName     String
-  email        String       @unique
-  phone        String?
-  avatarUrl    String?
-  studentNo    String?
-  bio          String?
-  departmentId String?
-  roleId       String?
-  status       String       @default("ACTIVE") // ACTIVE | PASSIVE | ALUMNI
-  joinDate     DateTime?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-
-  department   Department?  @relation("DeptMembers", fields: [departmentId], references: [id], onDelete: SetNull)
-  role         Role?        @relation(fields: [roleId], references: [id], onDelete: SetNull)
-  managedDepts Department[] @relation("DeptManager")
-  teamMembers  TeamMember[]
-  ledTeams     Team[]       @relation("TeamLeader")
-  tasks        Task[]       @relation("TaskAssignee")
-  createdTasks Task[]       @relation("TaskCreator")
-  coordinatedEvents Event[] @relation("EventCoordinator")
-  announcements Announcement[]
-}
-
-// ─── 2. EKİPLER ─────────────────────────────────────────────
-
-model Team {
-  id          String   @id @default(cuid())
+model EventEdition {
+  id          String    @id @default(cuid())
+  tenantId    String
+  seriesId    String?   // null → bağımsız tek seferlik etkinlik
   name        String
+  slug        String    @unique
+  editionLabel String?  // örn. "2026"
+  status      String    @default("PLANNING") // §7 yaşam döngüsü: OPPORTUNITY|BID|AWARDED|PLANNING|CONFIGURATION|SALES|REGISTRATION|LOGISTICS|PRE_EVENT|ONSITE|POST_EVENT|RECONCILIATION|ARCHIVED
+  isPublished Boolean   @default(false)
+  template    String?   // başlangıç yetenek seti önerisi
+  startDate   DateTime?
+  endDate     DateTime?
+  timezone    String    @default("Europe/Istanbul")
+  venueName   String?
+  city        String?
+  country     String?
+  format      String    @default("IN_PERSON") // IN_PERSON|VIRTUAL|HYBRID
   description String?
-  type        String   @default("EVENT") // STANDING | EVENT
-  eventId     String?  // null → daimi ekip
-  leaderId    String?
-  color       String?
-  createdAt   DateTime @default(now())
+  coverColor  String?   // UI vurgu rengi
+  languages   String?   // "tr,en"
+  isFeatured  Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  event   Event?       @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  leader  Member?      @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: SetNull)
-  members TeamMember[]
-  tasks   Task[]
+  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  series EventSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
 
-  @@index([eventId])
-}
-
-model TeamMember {
-  id         String   @id @default(cuid())
-  teamId     String
-  memberId   String
-  roleInTeam String   @default("MEMBER") // LEADER | COORDINATOR | MEMBER
-  joinedAt   DateTime @default(now())
-
-  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
-
-  @@unique([teamId, memberId])
-}
-
-// ─── 3. ETKİNLİK ────────────────────────────────────────────
-
-model Event {
-  id                  String    @id @default(cuid())
-  name                String
-  slug                String    @unique
-  description         String?
-  type                String    @default("MEETUP") // §3.1 EventType
-  status              String    @default("DRAFT")  // DRAFT→PLANNING→PUBLISHED→ONGOING→COMPLETED | CANCELLED
-  startDate           DateTime
-  endDate             DateTime
-  registrationDeadline DateTime?
-  venueId             String?
-  coordinatorId       String?
-  organizationId      String?
-  capacity            Int       @default(100)
-  plannedBudget       Float     @default(0)
-  coverColor          String?   // UI kapak rengi
-  tags                String?   // virgülle ayrılmış
-  isFeatured          Boolean   @default(false)
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-
-  venue        Venue?      @relation(fields: [venueId], references: [id], onDelete: SetNull)
-  coordinator  Member?     @relation("EventCoordinator", fields: [coordinatorId], references: [id], onDelete: SetNull)
-  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  teams        Team[]
-  tasks        Task[]
-  budgetItems  BudgetItem[]
-  expenses     Expense[]
-  sponsors     Sponsor[]
-  sessions     Session[]
-  ticketTypes  TicketType[]
-  attendees    Attendee[]
-  announcements Announcement[]
-  feedbacks    Feedback[]
+  capabilities     EventCapability[]
+  orgAssignments   EventOrganizationAssignment[]
+  participations   EventParticipation[]
+  categories       RegistrationCategory[]
+  registrations    Registration[]
+  invitations      Invitation[]
+  forms            FormDefinition[]
+  catalogItems     CatalogItem[]
+  orders           Order[]
+  entitlements     Entitlement[]
+  sponsorTiers     SponsorTierDefinition[]
+  sponsorPackages  SponsorPackage[]
+  sponsorAgreements SponsorAgreement[]
+  hotels           HotelProperty[]
+  reservations     Reservation[]
+  scientificSetup  ScientificSetup?
+  tracks           Track[]
+  submissions      Submission[]
+  rooms            ProgramRoom[]
+  sessions         ProgramSession[]
+  badgeProfiles    BadgeProfile[]
+  certificateDefs  CertificateDefinition[]
+  boothUnits       BoothUnit[]
+  campaigns        Campaign[]
+  tasks            Task[]
+  activityLogs     ActivityLog[]
+  delegations      Delegation[]
 
   @@index([status])
   @@index([startDate])
 }
 
-model Venue {
-  id          String   @id @default(cuid())
-  name        String
-  address     String?
-  city        String?
-  district    String?
-  capacity    Int      @default(0)
-  contactName String?
-  contactPhone String?
-  hourlyRate  Float?
-  notes       String?
-  createdAt   DateTime @default(now())
+model EventCapability {
+  id        String  @id @default(cuid())
+  editionId String
+  key       String  // §6: REGISTRATION|SCIENTIFIC|PROGRAM|SPONSORSHIP|EXHIBITION|FLOOR_PLAN|ACCOMMODATION|TRAVEL|BADGING|ACCESS_CONTROL|CERTIFICATES|CME_CREDITS|TOURS|SOCIAL_EVENTS|OPERATIONS|COMMUNICATIONS|FLOOR_STUDIO
+  enabled   Boolean @default(false)
+  isRequired Boolean @default(false)
+  setupNote String? // modül kartı notu (hazır/yapılacak/dikkat)
 
-  events Event[]
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
 
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  @@unique([editionId, key])
 }
 
-// ─── 4. GÖREVLER ────────────────────────────────────────────
+model EventOrganizationAssignment {
+  id             String    @id @default(cuid())
+  editionId      String
+  organizationId String
+  role           String    // §4: HOST|EVENT_OWNER|CLIENT|PCO|CO_ORGANIZER|SCIENTIFIC_OWNER|PUBLIC_AUTHORITY|SUPPORTER|SPONSOR|EXHIBITOR|VENUE|HOTEL|SUPPLIER|MEDIA_PARTNER|ACADEMIC_PARTNER|ASSOCIATION|WORKSHOP_SPONSOR
+  validFrom      DateTime?
+  validTo        DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
 
-model Task {
-  id          String    @id @default(cuid())
-  title       String
-  description String?
-  eventId     String
-  teamId      String?
-  assigneeId  String?
-  createdById String?
-  status      String    @default("BACKLOG") // BACKLOG|TODO|IN_PROGRESS|REVIEW|DONE|BLOCKED
-  priority    String    @default("MEDIUM")  // LOW|MEDIUM|HIGH|URGENT
-  dueDate     DateTime?
-  completedAt DateTime?
-  position    Int       @default(0)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  edition      EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  event      Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  team       Team?               @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  assignee   Member?             @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  creator    Member?             @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  checklist  TaskChecklistItem[]
+  @@index([editionId])
+}
 
-  @@index([eventId])
+// ─── FAZ 3: PARTICIPATION — Sistemin Kalbi (§9) ────────────────────────────
+
+model EventParticipation {
+  id        String   @id @default(cuid())
+  editionId String
+  personId  String
+  source    String   @default("ADMIN_ENTRY") // §12: PUBLIC_FORM|INVITATION|SPONSOR_PORTAL|EXHIBITOR_PORTAL|SCIENTIFIC_PORTAL|ADMIN_ENTRY|IMPORT|API|ONSITE_WALK_IN|GROUP_REGISTRATION
+  attendance String  @default("NOT_ARRIVED") // §10: NOT_ARRIVED|CHECKED_IN|CHECKED_OUT|NO_SHOW
+  notes     String?
+  createdAt DateTime @default(now())
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  person  Person       @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  snapshots      EventProfileSnapshot[]
+  registrations  Registration[]
+  roleAssignments EventRoleAssignment[]
+  entitlementClaims EntitlementClaim[]
+  programAssignments ProgramAssignment[]
+  formAnswers    FormAnswer[]
+  reservations   Reservation[]         @relation("PrimaryGuest")
+  occupancySlots OccupancySlot[]
+  badgeInstances BadgeInstance[]
+  credentials    Credential[]
+  scanEvents     ScanEvent[]
+  certIssues     CertificateIssue[]
+  delegationMembers DelegationMember[]
+  companions     Companion[]
+  orderLines     OrderLine[]
+
+  @@unique([editionId, personId])
+  @@index([attendance])
+}
+
+model EventProfileSnapshot {
+  id              String  @id @default(cuid())
+  participationId String
+  badgeName       String  // rozette yazacak isim — geçmiş geriye dönük değişmez (Kimlik kuralı 3)
+  company         String? // etkinlik anındaki kurum
+  title           String?
+  country         String?
+  specialNote     String?
+  version         Int     @default(1)
+  approved        Boolean @default(true)
+  createdAt       DateTime @default(now())
+
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+}
+
+model Registration {
+  id             String    @id @default(cuid())
+  editionId      String
+  participationId String
+  categoryId     String?
+  confirmationNo String    @unique @default(cuid())
+  source         String    @default("ADMIN_ENTRY")  // §12 Registration Source
+  fundingSource  String    @default("SELF_PAID")    // §12 Funding Source: SELF_PAID|ORGANIZATION_PAID|SPONSOR_ENTITLEMENT|HOST_COMPLIMENTARY|SPEAKER_ENTITLEMENT|STAFF|SCHOLARSHIP|GRANT|PROMO
+  status         String    @default("DRAFT")        // §10: DRAFT|SUBMITTED|PENDING_APPROVAL|CONFIRMED|REJECTED|CANCELLED
+  submittedAt    DateTime?
+  decidedAt      DateTime?
+  decidedBy      String?
+  cancelReason   String?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  edition      EventEdition         @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  participation EventParticipation  @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  category     RegistrationCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  entitlementClaims EntitlementClaim[]
+  orderLines   OrderLine[]
+
+  @@index([editionId])
   @@index([status])
 }
 
-model TaskChecklistItem {
-  id       String  @id @default(cuid())
-  taskId   String
-  title    String
-  isDone   Boolean @default(false)
-  position Int     @default(0)
-
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-
-  @@index([taskId])
-}
-
-// ─── 5. FİNANS ──────────────────────────────────────────────
-
-model BudgetItem {
-  id            String  @id @default(cuid())
-  eventId       String
-  category      String  // §3.1 BudgetCategory
-  description   String?
-  plannedAmount Float   @default(0)
-  actualAmount  Float   @default(0)
-
-  event    Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  expenses Expense[]
-
-  @@index([eventId])
-}
-
-model Expense {
-  id           String   @id @default(cuid())
-  budgetItemId String?
-  eventId      String
-  title        String
-  amount       Float    @default(0)
-  date         DateTime @default(now())
-  status       String   @default("PENDING") // PENDING|APPROVED|REJECTED|PAID
-  receiptNo    String?
-  paidBy       String?
-  note         String?
-  createdAt    DateTime @default(now())
-
-  budgetItem BudgetItem? @relation(fields: [budgetItemId], references: [id], onDelete: SetNull)
-  event      Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
-
-  @@index([eventId])
-}
-
-// ─── 6. SPONSOR & AJANDA ────────────────────────────────────
-
-model Sponsor {
+model RegistrationCategory {
   id               String  @id @default(cuid())
-  eventId          String
-  name             String
-  tier             String  @default("BRONZE") // PLATINUM|GOLD|SILVER|BRONZE|MEDIA|PARTNER
-  status           String  @default("PROSPECT") // PROSPECT|CONTACTED|NEGOTIATION|CONFIRMED|DECLINED
-  contactName      String?
-  contactEmail     String?
-  contactPhone     String?
-  logoUrl          String?
-  website          String?
-  sponsorshipAmount Float  @default(0)
-  notes            String?
-  createdAt        DateTime @default(now())
+  editionId        String
+  name             String  // Regular|Student|Member|Invited Speaker|Sponsor Guest|Press|VIP|Staff|Accompanying Person...
+  code             String
+  basePrice        Float   @default(0)
+  currency         String  @default("TRY")
+  requiresApproval Boolean @default(false)
+  capacity         Int?    // null = sınırsız
+  paymentInstruction String? // ücretli kategori için yayın engelleyici (05)
+  isActive         Boolean @default(true)
+  order            Int     @default(0)
 
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  edition       EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  registrations Registration[]
 
-  @@index([eventId])
+  @@index([editionId])
 }
 
-model Speaker {
-  id        String   @id @default(cuid())
+model EventRoleAssignment {
+  id              String  @id @default(cuid())
+  participationId String
+  role            String  // §11: ATTENDEE|AUTHOR|REVIEWER|SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST|COMMITTEE_MEMBER|VIP|PRESS|STAFF|EXHIBITOR_STAFF
+  status          String  @default("ACTIVE") // INVITED|ACCEPTED|ACTIVE|CANCELLED
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+
+  @@index([participationId])
+}
+
+// ─── LCV (Davet / RSVP) ─────────────────────────────────────────────────────
+
+model Invitation {
+  id             String    @id @default(cuid())
+  editionId      String
+  organizationId String?   // davet kaynağı kurum olabilir
+  personId       String?
+  email          String
+  fullName       String
+  suggestedCategoryId String?
+  channel        String    @default("EMAIL") // EMAIL|SMS|PHONE|MANUAL
+  status         String    @default("INVITED") // §10 LCV: INVITED|DELIVERED|RESPONSE_PENDING|COMING|NOT_COMING|NO_RESPONSE
+  sentAt         DateTime?
+  respondedAt    DateTime?
+  convertedRegistrationId String?
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  edition      EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([editionId])
+  @@index([status])
+}
+
+// ─── FORM ENGINE (§44) ──────────────────────────────────────────────────────
+
+model FormDefinition {
+  id        String  @id @default(cuid())
+  editionId String
   name      String
-  title     String?
-  company   String?
-  bio       String?
-  photoUrl  String?
-  email     String?
-  linkedin  String?
-  twitter   String?
-  organizationId String?
+  audience  String  @default("PARTICIPANT") // PARTICIPANT|ORDER_BUYER|ORGANIZATION|SESSION|ACCESSIBILITY|ACCOMMODATION
+  status    String  @default("DRAFT") // DRAFT|PUBLISHED
+  version   Int     @default(1)
   createdAt DateTime @default(now())
 
-  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  sessions     Session[]
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  fields  FormField[]
+  answers FormAnswer[]
 }
 
-model Session {
+model FormField {
+  id              String  @id @default(cuid())
+  formId          String
+  label           String
+  helpText        String?
+  type            String  @default("TEXT") // TEXT|LONGTEXT|NUMBER|DATE|SINGLE_CHOICE|MULTI_CHOICE|CHECKBOX|FILE|COUNTRY|PHONE
+  options         String? // satır bazlı seçenekler
+  required        String  @default("OPTIONAL") // ALWAYS|CONDITIONAL|OPTIONAL (§05)
+  conditionField  String? // koşullu gösterim
+  conditionValue  String?
+  sensitivity     String  @default("STANDARD") // STANDARD|OPERATIONAL_SENSITIVE|TEAM_ONLY (§05 gizlilik)
+  order           Int     @default(0)
+
+  form    FormDefinition @relation(fields: [formId], references: [id], onDelete: Cascade)
+  answers FormAnswer[]
+}
+
+model FormAnswer {
+  id        String   @id @default(cuid())
+  formId    String
+  fieldId   String
+  participationId String?
+  answer    String?
+  answeredAt DateTime @default(now())
+
+  form          FormDefinition      @relation(fields: [formId], references: [id], onDelete: Cascade)
+  field         FormField           @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+}
+
+// ─── FAZ 4: CATALOG / PRICING ───────────────────────────────────────────────
+
+model CatalogItem {
+  id          String  @id @default(cuid())
+  editionId   String
+  category    String  @default("TICKET") // TICKET|ADDON|SERVICE|TOUR|GALA|TRANSFER
+  name        String
+  description String?
+  price       Float   @default(0)
+  currency    String  @default("TRY")
+  quantity    Int?    // null = sınırsız
+  availableFor String @default("ALL") // ALL|SPONSOR|SPEAKER|VIP|STAFF
+  isActive    Boolean @default(true)
+
+  edition    EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  orderLines OrderLine[]
+}
+
+// ─── FAZ 5: ENTITLEMENT ENGINE (§15-17) — Platformun temel motoru ──────────
+
+model Entitlement {
+  id                 String    @id @default(cuid())
+  editionId          String
+  ownerOrganizationId String?  // ABC Pharma örneği
+  ownerPersonId      String?   // konuşmacı hakkı
+  source             String    @default("SPONSOR_PACKAGE") // SPONSOR_PACKAGE|SPEAKER|COMMITTEE|VIP|STAFF|PACKAGE|PROMO
+  type               String    @default("COMPLIMENTARY_REGISTRATION") // COMPLIMENTARY_REGISTRATION|BOOTH|GALA_TICKET|BADGE|LOUNGE_ACCESS|DISCOUNT|SESSION_ACCESS|HOTEL|CUSTOM
+  label              String    // "Gold Sponsor Ücretsiz Katılım Hakkı" (§45 custom ama kontrollü)
+  quantityGranted    Int       @default(0)
+  quantityConsumed   Int       @default(0)
+  quantityReserved   Int       @default(0) // ayrılmış — davette ayır, onayda kullan
+  restrictions       String?
+  validFrom          DateTime?
+  validUntil         DateTime?
+
+  edition          EventEdition      @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  ownerOrganization Organization?     @relation(fields: [ownerOrganizationId], references: [id], onDelete: Cascade)
+  claims           EntitlementClaim[]
+
+  @@index([editionId])
+}
+
+model EntitlementClaim {
+  id            String    @id @default(cuid())
+  entitlementId String
+  participationId String?
+  registrationId String?
+  guestName     String?
+  status        String    @default("RESERVED") // RESERVED|CONSUMED|RELEASED|EXPIRED (§09-C: davette ayır, onayda kullan)
+  reservedAt    DateTime  @default(now())
+  consumedAt    DateTime?
+  releasedAt    DateTime?
+  notes         String?
+
+  entitlement   Entitlement          @relation(fields: [entitlementId], references: [id], onDelete: Cascade)
+  participation EventParticipation?  @relation(fields: [participationId], references: [id], onDelete: SetNull)
+  registration  Registration?        @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+}
+
+// ─── FAZ 6: FINANCE (§36-39) — Order ≠ Payment ≠ Refund ────────────────────
+
+model Order {
+  id            String   @id @default(cuid())
+  editionId     String
+  orderNo       String   @unique @default(cuid())
+  buyerOrganizationId String? // kurumsal alıcı
+  buyerPersonId String?
+  payerName     String?  // siparişi ödeyen ≠ satırların katılımcıları (Kimlik kuralı 4)
+  currency      String   @default("TRY")
+  totalAmount   Float    @default(0)
+  status        String   @default("OPEN") // OPEN|PARTIALLY_PAID|PAID|CANCELLED
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  edition          EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  buyerOrganization Organization? @relation(fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
+  lines            OrderLine[]
+  payments         Payment[]
+  refunds          Refund[]
+
+  @@index([editionId])
+}
+
+model OrderLine {
+  id           String  @id @default(cuid())
+  orderId      String
+  participationId String? // satır kime ait
+  registrationId  String?
+  catalogItemId   String?
+  description  String
+  quantity     Int     @default(1)
+  unitPrice    Float   @default(0)
+  total        Float   @default(0)
+
+  order        Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
+  registration Registration?        @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+  catalogItem  CatalogItem?         @relation(fields: [catalogItemId], references: [id], onDelete: SetNull)
+}
+
+model Payment {
+  id         String    @id @default(cuid())
+  orderId    String
+  amount     Float
+  currency   String    @default("TRY")
+  source     String    @default("ONLINE_CARD") // §37: ONLINE_CARD|BANK_TRANSFER|POS|CASH|PAYMENT_LINK|MANUAL_EXTERNAL
+  status     String    @default("PENDING") // PENDING|SUCCEEDED|FAILED
+  reference  String?
+  enteredBy  String?   // manuel teyit (§38): entered_by + reason zorunlu
+  reason     String?
+  approvedBy String?   // eşiği aşan manuel tahsilat ikinci onay
+  paidAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+model Refund {
+  id        String    @id @default(cuid())
+  orderId   String
+  paymentId String?
+  amount    Float
+  reason    String?
+  status    String    @default("REQUESTED") // REQUESTED|APPROVED|REJECTED|PROCESSED
+  requestedBy String?
+  processedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+// ─── FAZ 7: SPONSORSHIP (§13-14, §49-51) — Tier hard-code YOK ──────────────
+
+model SponsorTierDefinition {
+  id           String  @id @default(cuid())
+  editionId    String
+  name         String  // her etkinlikte özelleştirilebilir: Gold|Naming|Lunch Sponsor...
+  displayOrder Int     @default(0)
+  capacity     Int?    // maksimum sponsor sayısı
+  price        Float   @default(0)
+  currency     String  @default("TRY")
+  brandingRules String?
+
+  edition   EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  packages  SponsorPackage[]
+  agreements SponsorAgreement[]
+}
+
+model SponsorPackage {
+  id          String  @id @default(cuid())
+  editionId   String
+  tierId      String?
+  name        String  // "Gold Sponsorship 2027"
+  price       Float   @default(0)
+  currency    String  @default("TRY")
+  description String?
+  rightsSpec  String? // paket hak özeti: "20x Ücretsiz Kayıt, 1x 12m² Stant..."
+
+  edition   EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  tier      SponsorTierDefinition? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  agreements SponsorAgreement[]
+}
+
+model SponsorAgreement {
+  id            String    @id @default(cuid())
+  editionId     String
+  organizationId String
+  packageId     String?
+  tierId        String?
+  amount        Float     @default(0)
+  currency      String    @default("TRY")
+  status        String    @default("PROSPECT") // PROSPECT|NEGOTIATION|CONTRACTED|ACTIVE|COMPLETED|CANCELLED
+  signedAt      DateTime?
+  notes         String?
+  createdAt     DateTime  @default(now())
+
+  edition      EventEdition          @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  package      SponsorPackage?       @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  tier         SponsorTierDefinition? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  deliverables Deliverable[]
+  boothAllocations BoothAllocation[]
+
+  @@index([editionId])
+  @@index([status])
+}
+
+model Deliverable {
+  id            String    @id @default(cuid())
+  agreementId   String
+  name          String    // Logo|Contract|Banner|Guest List|Stand Design...
+  type          String    @default("LOGO")
+  status        String    @default("NOT_STARTED") // §51: NOT_STARTED|WAITING_SPONSOR|SUBMITTED|UNDER_REVIEW|APPROVED|REJECTED|COMPLETED
+  dueDate       DateTime?
+  responsible   String?
+  notes         String?
+
+  agreement SponsorAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+
+  @@index([agreementId])
+}
+
+// ─── FAZ 11: ACCOMMODATION (§31-35) — Gecelik stok ─────────────────────────
+
+model HotelProperty {
   id          String   @id @default(cuid())
-  eventId     String
+  editionId   String
+  name        String
+  city        String?
+  district    String?
+  address     String?
+  contactName String?
+  contactPhone String?
+  notes       String?
+
+  edition     EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  roomTypes   RoomType[]
+  blocks      RoomBlock[]
+
+  @@index([editionId])
+}
+
+model RoomType {
+  id            String  @id @default(cuid())
+  hotelId       String
+  name          String  // Single|Double|Suite
+  capacity      Int     @default(2)
+  pricePerNight Float   @default(0)
+  currency      String  @default("TRY")
+
+  hotel        HotelProperty  @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  blocks       RoomBlock[]
+  reservations Reservation[]
+}
+
+model RoomBlock {
+  id                  String    @id @default(cuid())
+  hotelId             String
+  roomTypeId          String
+  name                String    // "Maven Ana Blok"
+  releaseDate         DateTime? // rezervasyon son günü
+  cancellationPolicy  String?
+  payerPolicy         String?   // SELF|ORGANIZATION|SPONSOR|ORGANIZER
+
+  hotel          HotelProperty   @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  roomType       RoomType        @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  inventoryNights InventoryNight[]
+  reservations   Reservation[]
+
+  @@index([hotelId])
+}
+
+model InventoryNight {
+  id            String   @id @default(cuid())
+  blockId       String
+  date          DateTime
+  totalRooms    Int      @default(0)
+  reservedRooms Int      @default(0)
+
+  block RoomBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+
+  @@unique([blockId, date])
+}
+
+model Reservation {
+  id             String    @id @default(cuid())
+  editionId      String
+  blockId        String?
+  roomTypeId     String?
+  primaryGuestParticipationId String?
+  guestName      String
+  checkIn        DateTime
+  checkOut       DateTime
+  payerType      String    @default("SELF") // §35: SELF|ORGANIZATION|SPONSOR|ORGANIZER|SPEAKER_HOSPITALITY
+  payerName      String?
+  status         String    @default("REQUESTED") // §10 Konaklama: NOT_REQUESTED|REQUESTED|WAITLIST|RESERVED|CONFIRMED|CHECKED_IN|CHECKED_OUT|CANCELLED
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  edition      EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  block        RoomBlock?       @relation(fields: [blockId], references: [id], onDelete: SetNull)
+  roomType     RoomType?        @relation(fields: [roomTypeId], references: [id], onDelete: SetNull)
+  primaryGuest EventParticipation? @relation("PrimaryGuest", fields: [primaryGuestParticipationId], references: [id], onDelete: SetNull)
+  occupancySlots OccupancySlot[]
+
+  @@index([editionId])
+}
+
+model OccupancySlot {
+  id             String  @id @default(cuid())
+  reservationId  String
+  participationId String?
+  guestName      String?
+  position       Int     @default(1)
+
+  reservation   Reservation         @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
+}
+
+model RoommateRequest {
+  id        String  @id @default(cuid())
+  requesterParticipationId String
+  targetParticipationId    String?
+  targetName String
+  status    String  @default("PENDING") // PENDING|ACCEPTED|DECLINED|EXPIRED
+  createdAt DateTime @default(now())
+}
+
+// ─── FAZ 9: SCIENTIFIC (§24-28, §30) ───────────────────────────────────────
+
+model ScientificSetup {
+  id             String   @id @default(cuid())
+  editionId      String   @unique
+  callTitle      String?
+  callDescription String?
+  reviewMode     String   @default("SINGLE_BLIND") // OPEN|SINGLE_BLIND|DOUBLE_BLIND
+  submissionDeadline DateTime?
+  reviewDeadline DateTime?
+  wordLimit      Int?
+  isVisible      Boolean  @default(false)
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+}
+
+model Track {
+  id          String  @id @default(cuid())
+  editionId   String
+  name        String
+  description String?
+
+  edition     EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+  sessions    ProgramSession[]
+}
+
+model Submission {
+  id             String    @id @default(cuid())
+  editionId      String
+  trackId        String?
+  submitterId    String?
+  code           String    @unique @default(cuid())
+  title          String
+  abstract       String?
+  type           String    @default("ORAL") // ORAL|POSTER|E_POSTER|PANEL|WORKSHOP
+  keywords       String?
+  presentingAuthorName String?
+  status         String    @default("DRAFT") // §10 Bildiri: DRAFT|SUBMITTED|UNDER_REVIEW|REVISION_REQUIRED|ACCEPTED|REJECTED|WITHDRAWN|WAITLIST
+  fileUrl        String?
+  posterNo       String?
+  fileStatus     String?   // SunumKontrol: MISSING|FORMAT_ISSUE|AV_PENDING|APPROVED
+  submittedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  edition   EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  track     Track?       @relation(fields: [trackId], references: [id], onDelete: SetNull)
+  submitter Person?      @relation("Submitter", fields: [submitterId], references: [id], onDelete: SetNull)
+  authorships Authorship[]
+  reviewAssignments ReviewAssignment[]
+  decisions Decision[]
+  sessions  ProgramSession[]
+
+  @@index([editionId])
+  @@index([status])
+}
+
+model Authorship {
+  id               String  @id @default(cuid())
+  submissionId     String
+  personId         String? // harici ortak yazar hesapsız olabilir (§25)
+  name             String
+  organizationName String?
+  position         Int     @default(0)
+  isPresenting     Boolean @default(false)
+  isCorresponding  Boolean @default(false)
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  person     Person?    @relation(fields: [personId], references: [id], onDelete: SetNull)
+
+  @@index([submissionId])
+}
+
+model ReviewAssignment {
+  id            String    @id @default(cuid())
+  submissionId  String
+  reviewerId    String?
+  status        String    @default("INVITED") // §26: INVITED|ACCEPTED|DECLINED|CONFLICT|ASSIGNED|IN_PROGRESS|COMPLETED|OVERDUE
+  dueDate       DateTime?
+  invitedAt     DateTime  @default(now())
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  reviewer   Person?    @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviews    Review[]
+
+  @@index([submissionId])
+}
+
+model Review {
+  id            String   @id @default(cuid())
+  assignmentId  String
+  score         Float?
+  recommendation String? // ACCEPT_ORAL|ACCEPT_POSTER|REJECT|REVISION
+  comment       String?
+  submittedAt   DateTime @default(now())
+
+  assignment ReviewAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+}
+
+model Decision {
+  id           String   @id @default(cuid())
+  submissionId String
+  decision     String   // §27 canonical: ACCEPT_ORAL|ACCEPT_POSTER|ACCEPT_E_POSTER|ACCEPT_PANEL|REVISION_REQUIRED|WAITLIST|REJECT|WITHDRAWN
+  rationale    String?
+  decidedBy    String?
+  version      Int      @default(1)
+  decidedAt    DateTime @default(now())
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+}
+
+// ─── FAZ 10: PROGRAM (§28-29) — Bilimsel karar ≠ Program slotu ─────────────
+
+model ProgramRoom {
+  id        String  @id @default(cuid())
+  editionId String
+  name      String
+  capacity  Int     @default(100)
+  floor     String?
+
+  edition  EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  sessions ProgramSession[]
+}
+
+model ProgramSession {
+  id          String   @id @default(cuid())
+  editionId   String
+  roomId      String?
+  trackId     String?
+  submissionId String? // kaynak bildiri — kabul otomatik slot oluşturmaz (Kimlik kuralı 6)
   title       String
   description String?
-  type        String   @default("TALK") // KEYNOTE|TALK|PANEL|WORKSHOP|BREAK|NETWORKING
-  speakerId   String?
+  type        String   @default("TALK") // KEYNOTE|TALK|PANEL|WORKSHOP|BREAK|NETWORKING|POSTER_SESSION
   startTime   DateTime
   endTime     DateTime
-  room        String?
   capacity    Int?
-  position    Int      @default(0)
-  createdAt   DateTime @default(now())
+  accessRule  String?  // OPEN|REGISTRATION_REQUIRED|SCAN
+  status      String   @default("DRAFT") // §10 Program: DRAFT|ASSIGNED|APPROVED|PUBLISHED|CANCELLED
+  isVisible   Boolean  @default(false)
 
-  event   Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  speaker Speaker? @relation(fields: [speakerId], references: [id], onDelete: SetNull)
+  edition   EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  room      ProgramRoom?  @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  track     Track?        @relation(fields: [trackId], references: [id], onDelete: SetNull)
+  submission Submission?  @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  assignments ProgramAssignment[]
+  scanEvents ScanEvent[]
 
-  @@index([eventId])
+  @@index([editionId])
 }
 
-// ─── 7. KATILIM & İLETİŞİM ──────────────────────────────────
+model ProgramAssignment {
+  id              String  @id @default(cuid())
+  sessionId       String
+  participationId String?
+  personId        String?
+  role            String  @default("SPEAKER") // §29: SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST
+  status          String  @default("INVITED") // INVITED|ACCEPTED|DECLINED|CONFIRMED|CANCELLED
+  notes           String? // AV gereksinimi, honorarium...
 
-model TicketType {
-  id           String   @id @default(cuid())
-  eventId      String
-  name         String
-  description  String?
-  price        Float    @default(0)
-  quantity     Int      @default(0)
-  isActive     Boolean  @default(true)
-  saleStart    DateTime?
-  saleEnd      DateTime?
-  createdAt    DateTime @default(now())
+  session       ProgramSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  person        Person?             @relation(fields: [personId], references: [id], onDelete: SetNull)
 
-  event    Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  attendees Attendee[]
-
-  @@index([eventId])
+  @@index([sessionId])
 }
 
-model Attendee {
-  id               String   @id @default(cuid())
-  eventId          String
-  ticketTypeId     String?
-  firstName        String
-  lastName         String
-  email            String
-  phone            String?
-  company          String?
-  title            String?
-  status           String   @default("REGISTERED") // REGISTERED|CONFIRMED|CHECKED_IN|CANCELLED|NO_SHOW
-  qrCode           String   @unique @default(cuid())
-  registrationDate DateTime @default(now())
-  checkInAt        DateTime?
-  notes            String?
+// ─── FAZ 12: ONSITE — Badge, Credential, Scan (§40-42) ─────────────────────
 
-  event      Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  ticketType TicketType? @relation(fields: [ticketTypeId], references: [id], onDelete: SetNull)
+model BadgeProfile {
+  id          String  @id @default(cuid())
+  editionId   String
+  name        String  // Delegate|Speaker|Exhibitor|Sponsor|VIP|Staff|Press
+  accessAreas String? // "Main Hall, VIP Lounge, Gala"
+  color       String?
 
-  @@unique([eventId, email])
-  @@index([eventId])
+  edition    EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  badgeInstances BadgeInstance[]
 }
 
-model Announcement {
-  id         String   @id @default(cuid())
-  eventId    String?  // null → organizasyon geneli
-  title      String
-  content    String
-  priority   String   @default("NORMAL") // NORMAL|IMPORTANT|CRITICAL
-  authorId   String?
-  pinned     Boolean  @default(false)
-  publishDate DateTime @default(now())
+model BadgeInstance {
+  id              String   @id @default(cuid())
+  participationId String
+  profileId       String?
+  badgeNo         String   @unique @default(cuid())
+  status          String   @default("NOT_ELIGIBLE") // §10: NOT_ELIGIBLE|READY|ISSUED|PRINTED|REPRINTED|VOID
+  issuedAt        DateTime?
+  printedAt       DateTime?
+  voidReason      String?
 
-  event  Event?  @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  author Member? @relation(fields: [authorId], references: [id], onDelete: SetNull)
-
-  @@index([eventId])
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  profile       BadgeProfile?      @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  credentials   Credential[]
 }
+
+model Credential {
+  id              String   @id @default(cuid())
+  participationId String
+  badgeId         String?
+  code            String   @unique @default(cuid())
+  type            String   @default("QR") // QR|NFC
+  accessProfile   String?  // §41: VIP→Main Hall+Lounge; Speaker→Main Hall+Backstage...
+  validFrom       DateTime?
+  validUntil      DateTime?
+  status          String   @default("ACTIVE") // ACTIVE|SUSPENDED|REVOKED
+
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  badge         BadgeInstance?     @relation(fields: [badgeId], references: [id], onDelete: SetNull)
+  scanEvents    ScanEvent[]
+}
+
+model ScanEvent {
+  id              String   @id @default(cuid())
+  participationId String?  // walk-in ise null
+  credentialId    String?
+  personId        String?
+  sessionId       String?  // oturum girişi ayrı tarama listesine ait (§07)
+  location        String   @default("MAIN_DOOR") // MAIN_DOOR|SESSION|GALA|LOUNGE
+  doorName        String?
+  action          String   @default("ENTRY") // ENTRY|EXIT|SESSION_ENTRY|SESSION_EXIT|RESCAN|DENIED
+  result          String   @default("ALLOWED") // ALLOWED|RESCAN_WARNING|DENIED|MANUAL_EXCEPTION
+  reason          String?  // manuel istisna gerekçesi — tarama geçmişi silinmez (Kimlik kuralı 8)
+  device          String?
+  operator        String?
+  scannedAt       DateTime @default(now())
+
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  credential    Credential?         @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  session       ProgramSession?     @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  person        Person?             @relation(fields: [personId], references: [id], onDelete: SetNull)
+
+  @@index([scannedAt])
+  @@index([participationId])
+}
+
+// ─── FAZ 13: CERTIFICATES (§43) ────────────────────────────────────────────
+
+model CertificateDefinition {
+  id              String  @id @default(cuid())
+  editionId       String
+  name            String  // "Katılımcı Sertifikası", "Konuşmacı Sertifikası"
+  type            String  @default("PARTICIPANT")
+  eligibilityRule String? // "registration=CONFIRMED AND checked_in" iş tanımı
+  minimumSessions Int?    // oturum katılım eşiği
+  signerName      String?
+  isActive        Boolean @default(true)
+
+  edition EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  issues  CertificateIssue[]
+}
+
+model CertificateIssue {
+  id              String    @id @default(cuid())
+  definitionId    String
+  participationId String
+  status          String    @default("NOT_ELIGIBLE") // §10: NOT_ELIGIBLE|ELIGIBLE|GENERATED|DELIVERED|REVOKED
+  eligibilityNote String?   // katılımcı uygunluk nedenini görür (§07)
+  generatedAt     DateTime?
+  deliveredAt     DateTime?
+  revokedReason   String?
+
+  definition    CertificateDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  participation EventParticipation    @relation(fields: [participationId], references: [id], onDelete: Cascade)
+
+  @@unique([definitionId, participationId])
+}
+
+// ─── EXHIBITION (§19-23) — Ticari stant ≠ Geometri ─────────────────────────
+
+model BoothUnit {
+  id            String    @id @default(cuid())
+  editionId     String
+  code          String    // A24
+  sizeSqm       Float     @default(12)
+  type          String    @default("SHELL_SCHEME") // SHELL_SCHEME|SPACE_ONLY|CUSTOM
+  status        String    @default("AVAILABLE") // §21: AVAILABLE|HELD|OPTION|RESERVED|CONTRACTED|BLOCKED|OCCUPIED|RELEASED
+  price         Float     @default(0)
+  currency      String    @default("TRY")
+  optionExpiresAt DateTime? // ABC Ltd. OPTION expires_at örneği
+
+  edition     EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  allocation  BoothAllocation?
+  floorObject FloorPlanObject?
+
+  @@index([editionId])
+}
+
+model BoothAllocation {
+  id             String    @id @default(cuid())
+  boothUnitId    String    @unique
+  agreementId    String?   // SponsorAgreement → Booth Entitlement → Allocation → A24 (§22)
+  organizationId String?
+  status         String    @default("HELD")
+  allocatedAt    DateTime  @default(now())
+  releasedAt     DateTime?
+
+  boothUnit    BoothUnit        @relation(fields: [boothUnitId], references: [id], onDelete: Cascade)
+  agreement    SponsorAgreement? @relation(fields: [agreementId], references: [id], onDelete: SetNull)
+  organization Organization?    @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+}
+
+model FloorPlanObject {
+  id          String  @id @default(cuid())
+  boothUnitId String? @unique // Paylaşılan kimlik: booth_unit_id (§20)
+  label       String?
+  x           Float   @default(0)
+  y           Float   @default(0)
+  width       Float   @default(4)
+  height      Float   @default(3)
+  rotation    Float   @default(0)
+  layer       String  @default("BOOTH")
+
+  boothUnit BoothUnit? @relation(fields: [boothUnitId], references: [id], onDelete: Cascade)
+}
+
+// ─── COMMUNICATIONS (§06 kampanya) ─────────────────────────────────────────
+
+model Campaign {
+  id            String    @id @default(cuid())
+  editionId     String
+  name          String
+  segmentRule   String    // "kayıt onaylı ama ödeme bekliyor" gibi sabitlenmiş ölçüt
+  audienceCount Int       @default(0)
+  channel       String    @default("EMAIL")
+  status        String    @default("DRAFT") // DRAFT|TESTED|SCHEDULED|SENT|FAILED
+  isSegmentFixed Boolean  @default(true) // sabit mi gönderim anında güncel mi
+  subject       String?
+  body          String?
+  testSentTo    String?
+  scheduledAt   DateTime?
+  sentAt        DateTime?
+  sentCount     Int       @default(0)
+  deliveredCount Int      @default(0)
+  openCount     Int       @default(0)
+  clickCount    Int       @default(0)
+  failCount     Int       @default(0)
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([editionId])
+}
+
+// ─── OPERATIONS (§52) ──────────────────────────────────────────────────────
+
+model Task {
+  id          String    @id @default(cuid())
+  editionId   String?
+  title       String
+  description String?
+  module      String    @default("OPERATIONS") // REGISTRATION|SPONSORSHIP|SCIENTIFIC|PROGRAM|ACCOMMODATION|ONSITE|FINANCE|OPERATIONS|COMMUNICATIONS|CERTIFICATES
+  status      String    @default("TODO") // BACKLOG|TODO|IN_PROGRESS|REVIEW|DONE|BLOCKED
+  priority    String    @default("MEDIUM") // LOW|MEDIUM|HIGH|URGENT
+  assigneeId  String?
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  edition  EventEdition? @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  assignee Person?       @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  @@index([editionId])
+}
+
+model Delegation {
+  id            String  @id @default(cuid())
+  editionId     String
+  name          String  // sponsor grubu|şirket delegasyonu|kamu heyeti...
+  type          String  @default("COMPANY") // SPONSOR_GROUP|COMPANY|GOVERNMENT|STUDENT|VIP|TOUR
+  leaderId      String?
+  billingOrganizationId String?
+  paymentAccount String?
+  rules         String?
+
+  edition         EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  leader          Person?            @relation("DelegationLeader", fields: [leaderId], references: [id], onDelete: SetNull)
+  billingOrganization Organization?  @relation(fields: [billingOrganizationId], references: [id], onDelete: SetNull)
+  members         DelegationMember[]
+}
+
+model DelegationMember {
+  id              String  @id @default(cuid())
+  delegationId    String
+  participationId String
+  role            String  @default("MEMBER") // LEADER|MEMBER
+
+  delegation    Delegation          @relation(fields: [delegationId], references: [id], onDelete: Cascade)
+  participation EventParticipation  @relation(fields: [participationId], references: [id], onDelete: Cascade)
+
+  @@unique([delegationId, participationId])
+}
+
+model Companion {
+  id              String  @id @default(cuid())
+  participationId String
+  name            String
+  type            String  @default("ADULT") // §34: ADULT|CHILD|INFANT
+  notes           String? // hotel, breakfast, gala, tour hakları
+
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+}
+
+// ─── AUDIT / ACTIVITY LOG ──────────────────────────────────────────────────
 
 model ActivityLog {
   id         String   @id @default(cuid())
-  type       String   // EVENT_CREATED, TASK_COMPLETED, SPONSOR_ADDED …
+  tenantId   String?
+  editionId  String?
+  type       String   // REGISTRATION_CONFIRMED, PAYMENT_RECEIVED, SPONSOR_AGREEMENT_ACTIVATED, SCAN_ALLOWED...
   message    String
   entityType String?
   entityId   String?
   actorName  String?
   createdAt  DateTime @default(now())
 
+  tenant  Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  edition EventEdition? @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
   @@index([createdAt])
-}
-
-model Feedback {
-  id          String   @id @default(cuid())
-  eventId     String
-  attendeeId  String?
-  rating      Int      @default(5) // 1-5
-  category    String?  // PROGRAM, ORGANIZATION, VENUE, OTHER
-  comment     String?
-  submittedAt DateTime @default(now())
-
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
-
-  @@index([eventId])
 }

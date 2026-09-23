@@ -1,0 +1,361 @@
+// Maven Event Management — Durum eksenleri ve modül sabitleri
+// Kaynak: Ortak Organizasyonel Mimari §10 (çok eksenli durum modeli), §6 (capabilities), §53 (menü)
+
+// ─── Durum eksenleri (§10) — birbirine karıştırılmayan eksenler ────────────
+
+export const REGISTRATION_STATUS = {
+  DRAFT: "Taslak",
+  SUBMITTED: "Gönderildi",
+  PENDING_APPROVAL: "Onay bekliyor",
+  CONFIRMED: "Onaylandı",
+  REJECTED: "Reddedildi",
+  CANCELLED: "İptal",
+} as const;
+
+export const PAYMENT_STATUS = {
+  NOT_REQUIRED: "Gerekmez",
+  PENDING: "Bekliyor",
+  PARTIALLY_PAID: "Kısmi",
+  PAID: "Ödendi",
+  FAILED: "Başarısız",
+  PARTIALLY_REFUNDED: "Kısmi iade",
+  REFUNDED: "İade",
+} as const;
+
+export const ATTENDANCE_STATUS = {
+  NOT_ARRIVED: "Gelmedi",
+  CHECKED_IN: "Giriş yaptı",
+  CHECKED_OUT: "Çıkış yaptı",
+  NO_SHOW: "No-show",
+} as const;
+
+export const BADGE_STATUS = {
+  NOT_ELIGIBLE: "Uygun değil",
+  READY: "Hazır",
+  ISSUED: "Verildi",
+  PRINTED: "Basıldı",
+  REPRINTED: "Yeniden basıldı",
+  VOID: "Geçersiz",
+} as const;
+
+export const CERTIFICATE_STATUS = {
+  NOT_ELIGIBLE: "Uygun değil",
+  ELIGIBLE: "Uygun",
+  GENERATED: "Oluşturuldu",
+  DELIVERED: "Gönderildi",
+  REVOKED: "İptal",
+} as const;
+
+export const ACCOMMODATION_STATUS = {
+  NOT_REQUESTED: "Talep yok",
+  REQUESTED: "Talep",
+  WAITLIST: "Bekleme",
+  RESERVED: "Ayrıldı",
+  CONFIRMED: "Teyit",
+  CHECKED_IN: "Giriş",
+  CHECKED_OUT: "Çıkış",
+  CANCELLED: "İptal",
+} as const;
+
+export const SUBMISSION_STATUS = {
+  DRAFT: "Taslak",
+  SUBMITTED: "Gönderildi",
+  UNDER_REVIEW: "İncelemede",
+  REVISION_REQUIRED: "Revizyon",
+  ACCEPTED: "Kabul",
+  REJECTED: "Ret",
+  WITHDRAWN: "Çekildi",
+  WAITLIST: "Yedek",
+} as const;
+
+export const SESSION_STATUS = {
+  DRAFT: "Taslak",
+  ASSIGNED: "Atandı",
+  APPROVED: "Onaylandı",
+  PUBLISHED: "Yayınlandı",
+  CANCELLED: "İptal",
+} as const;
+
+export const INVITATION_STATUS = {
+  INVITED: "Davetli",
+  DELIVERED: "Teslim",
+  RESPONSE_PENDING: "Yanıt bekliyor",
+  COMING: "Gelecek",
+  NOT_COMING: "Gelmeyecek",
+  NO_RESPONSE: "Yanıt yok",
+} as const;
+
+export const DELIVERABLE_STATUS = {
+  NOT_STARTED: "Başlamadı",
+  WAITING_SPONSOR: "Sponsor bekliyor",
+  SUBMITTED: "Gönderildi",
+  UNDER_REVIEW: "İncelemede",
+  APPROVED: "Onaylandı",
+  REJECTED: "Reddedildi",
+  COMPLETED: "Tamamlandı",
+} as const;
+
+export const CLAIM_STATUS = {
+  RESERVED: "Ayrıldı",
+  CONSUMED: "Kullanıldı",
+  RELEASED: "Geri verildi",
+  EXPIRED: "Süresi doldu",
+} as const;
+
+export const ORDER_STATUS = {
+  OPEN: "Açık",
+  PARTIALLY_PAID: "Kısmi ödendi",
+  PAID: "Ödendi",
+  CANCELLED: "İptal",
+} as const;
+
+export const RESERVATION_STATUS = ACCOMMODATION_STATUS;
+export const TASK_STATUS = { BACKLOG: "Havuz", TODO: "Yapılacak", IN_PROGRESS: "Devam", REVIEW: "İnceleme", DONE: "Bitti", BLOCKED: "Engelli" } as const;
+export const TASK_PRIORITY = { LOW: "Düşük", MEDIUM: "Orta", HIGH: "Yüksek", URGENT: "Acil" } as const;
+
+// ─── Yetenekler (§6) — hard-code edilen event türü YOK ──────────────────────
+
+export const CAPABILITIES = [
+  { key: "REGISTRATION", label: "Kayıt", desc: "Kategoriler, formlar, onay akışı, katılımcı listesi" },
+  { key: "SCIENTIFIC", label: "Bilimsel", desc: "Bildiri çağrısı, hakem, karar, poster/sunum" },
+  { key: "PROGRAM", label: "Program", desc: "Oturum, salon, çakışma, kişisel program" },
+  { key: "SPONSORSHIP", label: "Sponsorluk", desc: "Paket, sözleşme, haklar, teslimler" },
+  { key: "EXHIBITION", label: "Fuar", desc: "Stand tahsisi, fuar alanı" },
+  { key: "FLOOR_PLAN", label: "Floor Studio", desc: "Mekânsal plan, stant geometrisi (ayrı uygulama)" },
+  { key: "ACCOMMODATION", label: "Konaklama", desc: "Otel, gecelik stok, rezervasyon, oda arkadaşı" },
+  { key: "TRAVEL", label: "Seyahat", desc: "Transfer, tur" },
+  { key: "BADGING", label: "Rozet", desc: "Badge profilleri, basım" },
+  { key: "ACCESS_CONTROL", label: "Erişim", desc: "Kapılar, geçiş hakları" },
+  { key: "CERTIFICATES", label: "Sertifika", desc: "Uygunluk kuralları, belge üretimi" },
+  { key: "CME_CREDITS", label: "CME Kredi", desc: "Kredi defteri" },
+  { key: "TOURS", label: "Turlar", desc: "Sosyal tur programı" },
+  { key: "SOCIAL_EVENTS", label: "Sosyal Etkinlik", desc: "Gala, kokteyl" },
+  { key: "OPERATIONS", label: "Operasyon", desc: "Görev, tedarikçi, lojistik" },
+  { key: "COMMUNICATIONS", label: "İletişim", desc: "Segment, kampanya, gönderim" },
+] as const;
+
+// ─── Şablonlar (§6) — yetenek seti önerileri ────────────────────────────────
+
+export const TEMPLATES: Record<string, string[]> = {
+  SCIENTIFIC_CONGRESS: ["REGISTRATION", "SCIENTIFIC", "PROGRAM", "SPONSORSHIP", "ACCOMMODATION", "BADGING", "ACCESS_CONTROL", "CERTIFICATES", "COMMUNICATIONS", "OPERATIONS"],
+  TRADE_FAIR: ["REGISTRATION", "PROGRAM", "SPONSORSHIP", "EXHIBITION", "FLOOR_PLAN", "BADGING", "ACCESS_CONTROL", "COMMUNICATIONS", "OPERATIONS"],
+  CORPORATE_EVENT: ["REGISTRATION", "PROGRAM", "BADGING", "ACCESS_CONTROL", "COMMUNICATIONS", "OPERATIONS"],
+  CUSTOM: [],
+};
+
+// ─── Kurum event rolleri (§4) ───────────────────────────────────────────────
+
+export const ORG_EVENT_ROLES: Record<string, string> = {
+  HOST: "Ev Sahibi",
+  EVENT_OWNER: "Etkinlik Sahibi",
+  CLIENT: "Müşteri",
+  PCO: "PCO",
+  CO_ORGANIZER: "Ortak Organizatör",
+  SCIENTIFIC_OWNER: "Bilimsel Sahip",
+  PUBLIC_AUTHORITY: "Kamu Kurumu",
+  SUPPORTER: "Destekçi",
+  SPONSOR: "Sponsor",
+  EXHIBITOR: "Fuarcı",
+  VENUE: "Mekân",
+  HOTEL: "Otel",
+  SUPPLIER: "Tedarikçi",
+  MEDIA_PARTNER: "Medya Partneri",
+  ACADEMIC_PARTNER: "Akademik Partner",
+  ASSOCIATION: "Dernek",
+  WORKSHOP_SPONSOR: "Workshop Sponsoru",
+};
+
+// ─── Kişi rolleri (§11) ─────────────────────────────────────────────────────
+
+export const EVENT_ROLES: Record<string, string> = {
+  ATTENDEE: "Katılımcı",
+  AUTHOR: "Yazar",
+  REVIEWER: "Hakem",
+  SPEAKER: "Konuşmacı",
+  MODERATOR: "Moderatör",
+  SESSION_CHAIR: "Oturum Başkanı",
+  PANELIST: "Panelist",
+  COMMITTEE_MEMBER: "Komite Üyesi",
+  VIP: "VIP",
+  PRESS: "Basın",
+  STAFF: "Görevli",
+  EXHIBITOR_STAFF: "Stand Görevlisi",
+};
+
+// ─── Kayıt kaynakları & fon kaynakları (§12) ────────────────────────────────
+
+export const REG_SOURCES: Record<string, string> = {
+  PUBLIC_FORM: "Genel Form",
+  INVITATION: "Davet",
+  SPONSOR_PORTAL: "Sponsor Portalı",
+  EXHIBITOR_PORTAL: "Fuarcı Portalı",
+  SCIENTIFIC_PORTAL: "Bilimsel Portal",
+  ADMIN_ENTRY: "Admin Girişi",
+  IMPORT: "İçe Aktarma",
+  API: "API",
+  ONSITE_WALK_IN: "Sahada Kayıt",
+  GROUP_REGISTRATION: "Grup Kaydı",
+};
+
+export const FUNDING_SOURCES: Record<string, string> = {
+  SELF_PAID: "Kendi Ödemesi",
+  ORGANIZATION_PAID: "Kurum Ödüyor",
+  SPONSOR_ENTITLEMENT: "Sponsor Hakkı",
+  HOST_COMPLIMENTARY: "Ev Sahibi Daveti",
+  SPEAKER_ENTITLEMENT: "Konuşmacı Hakkı",
+  STAFF: "Görevli",
+  SCHOLARSHIP: "Burs",
+  GRANT: "Hibe",
+  PROMO: "Promosyon",
+};
+
+// ─── Edisyon yaşam döngüsü (§7) ─────────────────────────────────────────────
+
+export const EDITION_STATUS: Record<string, string> = {
+  OPPORTUNITY: "Fırsat",
+  BID: "Teklif",
+  AWARDED: "Kazanıldı",
+  PLANNING: "Planlama",
+  CONFIGURATION: "Kurulum",
+  SALES: "Satış",
+  REGISTRATION: "Kayıt",
+  LOGISTICS: "Lojistik",
+  PRE_EVENT: "Etkinlik Öncesi",
+  ONSITE: "Canlı",
+  POST_EVENT: "Etkinlik Sonrası",
+  RECONCILIATION: "Mutabakat",
+  ARCHIVED: "Arşiv",
+};
+
+// ─── Modül menüsü (§53) — capability kapalıysa menü görünmez ───────────────
+
+export const MODULES = [
+  { id: "dashboard", label: "Genel Bakış", icon: "LayoutDashboard", capability: null, group: "workspace" },
+  { id: "editions", label: "Etkinlikler", icon: "CalendarRange", capability: null, group: "workspace" },
+  { id: "people", label: "Kişiler", icon: "Users", capability: null, group: "people" },
+  { id: "organizations", label: "Kurumlar", icon: "Building2", capability: null, group: "people" },
+  { id: "registrations", label: "Kayıt & Katılımcılar", icon: "ClipboardList", capability: "REGISTRATION", group: "edition" },
+  { id: "scientific", label: "Bilimsel", icon: "GraduationCap", capability: "SCIENTIFIC", group: "edition" },
+  { id: "program", label: "Program", icon: "Clock", capability: "PROGRAM", group: "edition" },
+  { id: "sponsorship", label: "Sponsor & Fuar", icon: "Handshake", capability: "SPONSORSHIP", group: "edition" },
+  { id: "accommodation", label: "Konaklama", icon: "BedDouble", capability: "ACCOMMODATION", group: "edition" },
+  { id: "finance", label: "Ödeme & Ek Hizmet", icon: "CreditCard", capability: "REGISTRATION", group: "edition" },
+  { id: "communications", label: "İletişim", icon: "Megaphone", capability: "COMMUNICATIONS", group: "edition" },
+  { id: "onsite", label: "Sahada", icon: "ScanLine", capability: "BADGING", group: "edition" },
+  { id: "certificates", label: "Belgeler", icon: "Award", capability: "CERTIFICATES", group: "edition" },
+  { id: "operations", label: "Operasyon", icon: "ListChecks", capability: null, group: "workspace" },
+  { id: "settings", label: "Ayarlar", icon: "Settings", capability: null, group: "workspace" },
+] as const;
+
+// ─── Yardımcılar ────────────────────────────────────────────────────────────
+
+export function label(map: Record<string, string>, key?: string | null): string {
+  if (!key) return "—";
+  return map[key] ?? key;
+}
+
+export function fmtMoney(v: number | null | undefined, currency = "TRY"): string {
+  const n = v ?? 0;
+  return new Intl.NumberFormat("tr-TR", { style: "currency", currency, maximumFractionDigits: 0 }).format(n);
+}
+
+export function fmtDate(d?: string | Date | null, withTime = false): string {
+  if (!d) return "—";
+  const date = typeof d === "string" ? new Date(d) : d;
+  return date.toLocaleDateString("tr-TR", withTime
+    ? { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }
+    : { day: "2-digit", month: "short", year: "numeric" });
+}
+
+export function fmtDateTime(d?: string | Date | null): string {
+  return fmtDate(d, true);
+}
+
+// Durum rozet renk sınıfları (renk dışı durum işareti de var: metin + ikon)
+export const STATUS_TONE: Record<string, string> = {
+  // kayıt
+  DRAFT: "bg-neutral-100 text-neutral-700 border-neutral-200",
+  SUBMITTED: "bg-amber-50 text-amber-700 border-amber-200",
+  PENDING_APPROVAL: "bg-amber-50 text-amber-700 border-amber-200",
+  CONFIRMED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  REJECTED: "bg-rose-50 text-rose-700 border-rose-200",
+  CANCELLED: "bg-rose-50 text-rose-700 border-rose-200",
+  // ödeme
+  NOT_REQUIRED: "bg-sky-50 text-sky-700 border-sky-200",
+  PENDING: "bg-amber-50 text-amber-700 border-amber-200",
+  PARTIALLY_PAID: "bg-amber-50 text-amber-700 border-amber-200",
+  PAID: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  FAILED: "bg-rose-50 text-rose-700 border-rose-200",
+  REFUNDED: "bg-purple-50 text-purple-700 border-purple-200",
+  PARTIALLY_REFUNDED: "bg-purple-50 text-purple-700 border-purple-200",
+  // katılım
+  NOT_ARRIVED: "bg-neutral-100 text-neutral-700 border-neutral-200",
+  CHECKED_IN: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  CHECKED_OUT: "bg-neutral-100 text-neutral-700 border-neutral-200",
+  NO_SHOW: "bg-rose-50 text-rose-700 border-rose-200",
+  // bildiri
+  UNDER_REVIEW: "bg-sky-50 text-sky-700 border-sky-200",
+  ACCEPTED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  WITHDRAWN: "bg-neutral-100 text-neutral-500 border-neutral-200",
+  WAITLIST: "bg-amber-50 text-amber-700 border-amber-200",
+  REVISION_REQUIRED: "bg-amber-50 text-amber-700 border-amber-200",
+  // program
+  ASSIGNED: "bg-sky-50 text-sky-700 border-sky-200",
+  APPROVED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  PUBLISHED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  // hak
+  RESERVED: "bg-amber-50 text-amber-700 border-amber-200",
+  CONSUMED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  RELEASED: "bg-neutral-100 text-neutral-700 border-neutral-200",
+  EXPIRED: "bg-rose-50 text-rose-700 border-rose-200",
+  // genel
+  ACTIVE: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  INACTIVE: "bg-neutral-100 text-neutral-700 border-neutral-200",
+  SUCCEEDED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  PROCESSED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  REQUESTED: "bg-amber-50 text-amber-700 border-amber-200",
+  APPROVED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  REJECTED: "bg-rose-50 text-rose-700 border-rose-200",
+  SENT: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  SCHEDULED: "bg-sky-50 text-sky-700 border-sky-200",
+  COMING: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  NOT_COMING: "bg-rose-50 text-rose-700 border-rose-200",
+  DELIVERED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  NO_RESPONSE: "bg-neutral-100 text-neutral-600 border-neutral-200",
+  COMPLETED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  CONTRACTED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  NEGOTIATION: "bg-amber-50 text-amber-700 border-amber-200",
+  PROSPECT: "bg-neutral-100 text-neutral-700 border-neutral-200",
+  AVAILABLE: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  OPTION: "bg-amber-50 text-amber-700 border-amber-200",
+  OCCUPIED: "bg-purple-50 text-purple-700 border-purple-200",
+  READY: "bg-sky-50 text-sky-700 border-sky-200",
+  ISSUED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  PRINTED: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  REPRINTED: "bg-amber-50 text-amber-700 border-amber-200",
+  VOID: "bg-rose-50 text-rose-700 border-rose-200",
+  ELIGIBLE: "bg-sky-50 text-sky-700 border-sky-200",
+  GENERATED: "bg-sky-50 text-sky-700 border-sky-200",
+  REVOKED: "bg-rose-50 text-rose-700 border-rose-200",
+  // görev
+  BACKLOG: "bg-neutral-100 text-neutral-700 border-neutral-200",
+  TODO: "bg-sky-50 text-sky-700 border-sky-200",
+  IN_PROGRESS: "bg-amber-50 text-amber-700 border-amber-200",
+  REVIEW: "bg-purple-50 text-purple-700 border-purple-200",
+  DONE: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  BLOCKED: "bg-rose-50 text-rose-700 border-rose-200",
+};
+
+// Yetenek kapağında modül ekranları: capability -> modül id (§3 menü ilkesi)
+export const CAPABILITY_MODULE: Record<string, string> = {
+  REGISTRATION: "registrations",
+  SCIENTIFIC: "scientific",
+  PROGRAM: "program",
+  SPONSORSHIP: "sponsorship",
+  EXHIBITION: "sponsorship",
+  ACCOMMODATION: "accommodation",
+  COMMUNICATIONS: "communications",
+  BADGING: "onsite",
+  ACCESS_CONTROL: "onsite",
+  CERTIFICATES: "certificates",
+};

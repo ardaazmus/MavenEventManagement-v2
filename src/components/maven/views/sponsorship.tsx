@@ -4,13 +4,14 @@ import { useState } from "react";
 import { listEntity, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip } from "../bits";
-import { DELIVERABLE_STATUS, fmtDate, fmtMoney, CLAIM_STATUS } from "@/lib/constants";
+import { DELIVERABLE_STATUS, fmtDate, fmtMoney, CLAIM_STATUS, APPROVAL_STATUS, label } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,7 @@ interface Agreement {
 }
 interface Entitlement {
   id: string; label: string; type: string; source: string; quantityGranted: number; quantityConsumed: number; quantityReserved: number; restrictions?: string | null;
+  approvalStatus?: string; approvedBy?: string | null; approvedAt?: string | null;
   ownerOrganization?: { id: string; name: string } | null;
   claims: { id: string; guestName?: string | null; status: string; notes?: string | null }[];
 }
@@ -45,6 +47,13 @@ const BOOTH_TONE: Record<string, string> = {
   RELEASED: "border-neutral-200 bg-neutral-50 text-neutral-500",
 };
 
+// hak onay akışı — APPROVED teal, PROPOSED amber, REJECTED rose (renk dili)
+const APPROVAL_TONE: Record<string, "teal" | "amber" | "rose"> = { APPROVED: "teal", PROPOSED: "amber", REJECTED: "rose" };
+const ENT_TYPES: Record<string, string> = {
+  COMPLIMENTARY_REGISTRATION: "Ücretsiz Kayıt", BOOTH: "Stant", GALA_TICKET: "Gala Davetiyesi", BADGE: "Rozet",
+  LOUNGE_ACCESS: "Lounge Erişimi", DISCOUNT: "İndirim", SESSION_ACCESS: "Oturum Erişimi", HOTEL: "Konaklama", CUSTOM: "Özel",
+};
+
 export function SponsorshipView() {
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
@@ -52,9 +61,14 @@ export function SponsorshipView() {
   const [guest, setGuest] = useState({ firstName: "", lastName: "", email: "", company: "" });
   const [busy, setBusy] = useState(false);
   const [allocTarget, setAllocTarget] = useState<BoothUnit | null>(null);
+  // — onay akışı durumu —
+  const [pendingOnly, setPendingOnly] = useState(false);
+  const [busyApprovalId, setBusyApprovalId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState({ label: "", type: "COMPLIMENTARY_REGISTRATION", orgId: "__none__", quantityGranted: 1, restrictions: "", approvalStatus: "APPROVED" });
 
   const { data: agreements, error, reload, loading } = useApi<Agreement[]>(() => listEntity<Agreement>("sponsor-agreements", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
-  const { data: entitlements } = useApi<Entitlement[]>(() => listEntity<Entitlement>("entitlements", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+  const { data: entitlements, reload: reloadEnts } = useApi<Entitlement[]>(() => listEntity<Entitlement>("entitlements", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
   const { data: booths } = useApi<BoothUnit[]>(() => listEntity<BoothUnit>("booth-units", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
 
   const addGuest = async () => {
@@ -90,32 +104,122 @@ export function SponsorshipView() {
     }
   };
 
+  // — hak onay akışı: PROPOSED → APPROVED / REJECTED (Komite imzasıyla) —
+  const setApproval = async (ent: Entitlement, status: "APPROVED" | "REJECTED") => {
+    setBusyApprovalId(ent.id);
+    try {
+      await apiSend(`/api/entitlements/${ent.id}`, "PUT", {
+        approvalStatus: status,
+        approvedBy: "Komite",
+        approvedAt: new Date().toISOString(),
+      });
+      toast({
+        title: status === "APPROVED" ? "Hak onaylandı" : "Hak reddedildi",
+        description: `${ent.label} — "Komite" imzasıyla kaydedildi.`,
+      });
+      reloadEnts(); bump();
+    } catch (e) {
+      toast({ title: "Onay işlemi başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally {
+      setBusyApprovalId(null);
+    }
+  };
+
+  // — yeni hak havuzu (öneri olarak da eklenebilir) —
+  const createEntitlement = async () => {
+    if (!createForm.label.trim() || !currentEditionId) return;
+    setBusy(true);
+    try {
+      await apiSend("/api/entitlements", "POST", {
+        editionId: currentEditionId,
+        label: createForm.label.trim(),
+        type: createForm.type,
+        source: "SPONSOR_PACKAGE",
+        ownerOrganizationId: createForm.orgId === "__none__" ? null : createForm.orgId,
+        quantityGranted: Math.max(0, Math.round(Number(createForm.quantityGranted) || 0)),
+        restrictions: createForm.restrictions.trim() || null,
+        approvalStatus: createForm.approvalStatus,
+      });
+      toast({
+        title: createForm.approvalStatus === "PROPOSED" ? "Hak önerisi kaydedildi" : "Hak havuzu eklendi",
+        description: createForm.approvalStatus === "PROPOSED"
+          ? `${createForm.label.trim()} — onay bekleyen haklar listesinde görünecek.`
+          : `${createForm.label.trim()} — doğrudan onaylı olarak tanındı.`,
+      });
+      setCreateOpen(false);
+      reloadEnts(); bump();
+    } catch (e) {
+      toast({ title: "Hak havuzu eklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (loading && !agreements) return <Loading rows={5} />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
 
-  const sponsorEnts = (entitlements ?? []).filter((e) => e.ownerOrganization);
+  const pendingCount = (entitlements ?? []).filter((e) => e.approvalStatus === "PROPOSED").length;
+  const sponsorEnts = (entitlements ?? []).filter((e) => e.ownerOrganization && (!pendingOnly || e.approvalStatus === "PROPOSED"));
+  const orgOptions = Array.from(new Map((agreements ?? []).map((a) => [a.organization.id, a.organization])).values());
 
   return (
     <div className="space-y-5">
       <PageHeader title="Sponsor & Fuar" desc="Tier hard-code değildir — her etkinlik kendi tier'ını tanımlar; hak tüketimi finansal işlem değildir" />
 
       {/* Hak havuzları */}
-      <SectionCard title="Entitlement Havuzları" desc="Hak kaynağı → sahip → tanınan → ayrılmış → kullanılan → kalan (§15)">
+      <SectionCard
+        title="Entitlement Havuzları"
+        desc="Hak kaynağı → sahip → tanınan → ayrılmış → kullanılan → kalan (§15)"
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPendingOnly((v) => !v)}
+              aria-pressed={pendingOnly}
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors",
+                pendingOnly ? "border-amber-300 bg-amber-100 text-amber-900" : "bg-card text-muted-foreground hover:bg-muted",
+              )}
+            >
+              <Icons.Hourglass className={cn("size-3.5", pendingCount > 0 && "text-amber-500")} />
+              Onay bekleyen haklar
+              <span className={cn("rounded-full px-1.5 text-[10px] tabular-nums", pendingCount > 0 ? "bg-amber-500/15 text-amber-800" : "bg-muted text-muted-foreground")}>{pendingCount}</span>
+            </button>
+            <Button size="sm" variant="outline" onClick={() => { setCreateForm({ label: "", type: "COMPLIMENTARY_REGISTRATION", orgId: "__none__", quantityGranted: 1, restrictions: "", approvalStatus: "APPROVED" }); setCreateOpen(true); }}>
+              <Icons.Plus className="size-3.5" /> Hak Havuzu Ekle
+            </Button>
+          </div>
+        }
+      >
         {sponsorEnts.length === 0 ? (
-          <EmptyState title="Hak havuzu yok" desc="Sponsor sözleşmesiyle hak tanımlayın." />
+          <EmptyState
+            title={pendingOnly ? "Onay bekleyen hak yok" : "Hak havuzu yok"}
+            desc={pendingOnly ? "Tüm haklar karara bağlanmış — filtreyi kapatın." : "Sponsor sözleşmesiyle hak tanımlayın veya öneri olarak ekleyin."}
+          />
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
             {sponsorEnts.map((ent) => {
               const remaining = Math.max(0, ent.quantityGranted - ent.quantityConsumed - ent.quantityReserved);
               const pct = ent.quantityGranted ? Math.round((ent.quantityConsumed / ent.quantityGranted) * 100) : 0;
+              const isProposed = ent.approvalStatus === "PROPOSED";
               return (
-                <div key={ent.id} className="rounded-xl border p-4">
+                <div key={ent.id} className={cn("animate-in rounded-xl border p-4 transition-all duration-200 hover:shadow-md fade-in slide-in-from-bottom-1 fill-mode-backwards", isProposed && "border-amber-200 bg-amber-50/30")}>
                   <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold">{ent.label}</p>
-                      <p className="text-xs text-muted-foreground">{ent.ownerOrganization?.name} · {ent.type}</p>
+                    <div className="min-w-0">
+                      <p className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
+                        <span className="truncate">{ent.label}</span>
+                        <Chip tone={APPROVAL_TONE[ent.approvalStatus ?? "APPROVED"] ?? "neutral"}>
+                          {ent.approvalStatus === "PROPOSED" && <Icons.Hourglass className="mr-0.5 inline size-3" />}
+                          {label(APPROVAL_STATUS, ent.approvalStatus) ?? "Onaylı"}
+                        </Chip>
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {ent.ownerOrganization?.name} · {ENT_TYPES[ent.type] ?? ent.type}
+                        {ent.approvalStatus === "APPROVED" && ent.approvedBy && <span> · onay: {ent.approvedBy}{ent.approvedAt ? ` · ${fmtDate(ent.approvedAt)}` : ""}</span>}
+                        {ent.approvalStatus === "REJECTED" && <span className="text-rose-600"> · komite kararıyla reddedildi</span>}
+                      </p>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => setGuestTarget(ent)} disabled={remaining <= 0}>
+                    <Button size="sm" variant="outline" onClick={() => setGuestTarget(ent)} disabled={remaining <= 0 || isProposed} title={isProposed ? "Önce komite onayı gerekir" : undefined}>
                       <Icons.UserPlus className="size-3.5" /> Misafir Ekle
                     </Button>
                   </div>
@@ -128,6 +232,19 @@ export function SponsorshipView() {
                   </div>
                   <Progress value={pct} className="mt-3 h-2" />
                   <p className="mt-1 text-[11px] text-muted-foreground">%{pct} tüketildi · {ent.restrictions ?? "kısıt yok"}</p>
+                  {isProposed && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-amber-200/60 pt-2.5">
+                      <span className="text-[11px] text-muted-foreground">Komite kararı bekleniyor — onaysız haktan misafir ayrılamaz.</span>
+                      <div className="ml-auto flex gap-1.5">
+                        <Button size="sm" className="h-7 bg-teal-600 text-[11px] text-white hover:bg-teal-700" onClick={() => setApproval(ent, "APPROVED")} disabled={busyApprovalId === ent.id}>
+                          {busyApprovalId === ent.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Check className="size-3" />} Onayla
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-7 border-rose-200 text-[11px] text-rose-700 hover:bg-rose-50" onClick={() => setApproval(ent, "REJECTED")} disabled={busyApprovalId === ent.id}>
+                          <Icons.X className="size-3" /> Reddet
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   <details className="mt-2">
                     <summary className="cursor-pointer text-xs font-medium text-primary/80">Claim dökümü ({ent.claims.length})</summary>
                     <div className="mt-1.5 max-h-36 space-y-1 overflow-y-auto maven-scroll pr-1">
@@ -256,6 +373,70 @@ export function SponsorshipView() {
             <Button onClick={allocateBooth} disabled={busy || !["AVAILABLE", "HELD", "OPTION", "RELEASED"].includes(allocTarget?.status ?? "")}>
               {busy ? "Tahsis ediliyor…" : "Tahsis Et"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Hak havuzu ekleme diyaloğu — doğrudan onaylı veya öneri olarak */}
+      <Dialog open={createOpen} onOpenChange={(o) => !o && setCreateOpen(false)}>
+        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Hak Havuzu Ekle</DialogTitle>
+            <DialogDescription>
+              Sponsor paketinden doğan hak ya da komiteye taşınacak öneri olarak kaydedin.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="ent-label">Hak etiketi</Label>
+              <Input id="ent-label" value={createForm.label} onChange={(e) => setCreateForm({ ...createForm, label: e.target.value })} placeholder="örn. VIP Lounge Kahve Servisi (sponsor ayrıcalığı)" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Hak tipi</Label>
+              <Select value={createForm.type} onValueChange={(v) => setCreateForm({ ...createForm, type: v })}>
+                <SelectTrigger aria-label="Hak tipi"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(ENT_TYPES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Sahip kurum</Label>
+              <Select value={createForm.orgId} onValueChange={(v) => setCreateForm({ ...createForm, orgId: v })}>
+                <SelectTrigger aria-label="Sahip kurum"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Kurumsuz (genel havuz)</SelectItem>
+                  {orgOptions.map((o) => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ent-qty">Tanınan adet</Label>
+              <Input id="ent-qty" type="number" min={0} value={createForm.quantityGranted} onChange={(e) => setCreateForm({ ...createForm, quantityGranted: Number(e.target.value) })} className="tabular-nums" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ent-restrictions">Kısıt (opsiyonel)</Label>
+              <Input id="ent-restrictions" value={createForm.restrictions} onChange={(e) => setCreateForm({ ...createForm, restrictions: e.target.value })} placeholder="örn. yalnız açılış günü" />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Onay durumu</Label>
+              <Select value={createForm.approvalStatus} onValueChange={(v) => setCreateForm({ ...createForm, approvalStatus: v })}>
+                <SelectTrigger aria-label="Onay durumu"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="APPROVED">Onaylı olarak ekle (eski davranış — hemen kullanılabilir)</SelectItem>
+                  <SelectItem value="PROPOSED">Öneri olarak ekle (komite onayı bekleyecek)</SelectItem>
+                </SelectContent>
+              </Select>
+              {createForm.approvalStatus === "PROPOSED" && (
+                <p className="rounded-md border border-amber-200 bg-amber-50/60 px-2.5 py-1.5 text-[11px] text-amber-800">
+                  Öneri hakları "Onay bekleyen haklar" filtresinde belirir; komite onaylayana dek misafir ayrılamaz.
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Vazgeç</Button>
+            <Button onClick={createEntitlement} disabled={busy || !createForm.label.trim()}>{busy ? "Kaydediliyor…" : createForm.approvalStatus === "PROPOSED" ? "Öneri Olarak Ekle" : "Hak Havuzu Ekle"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

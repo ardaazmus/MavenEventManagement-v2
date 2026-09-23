@@ -897,6 +897,166 @@ export async function POST() {
     await db.delegationMember.createMany({ data: [{ delegationId: del.id, participationId: participationMap.get("Fatma")!.participationId, role: "LEADER" }, { delegationId: del.id, participationId: participationMap.get("Deniz")!.participationId }] });
     await db.companion.create({ data: { participationId: participationMap.get("Mustafa")!.participationId, name: "Elif Koç", type: "ADULT", notes: "Gala + tur hakları var" } });
 
+    // ── GENİŞLETME DALGASI: düşünce bulutu 1-9 demo verisi ──
+    // (1) Custom rol motoru + CV + QR VCard zaten kişiden üretiliyor
+    await db.customRole.createMany({
+      data: [
+        { editionId: edition1.id, key: "cme_auditor", name: "Akreditasyon Denetçisi", color: "violet", hierarchyLevel: 10, permissions: JSON.stringify(["CME_CREDITS", "CERTIFICATES"]), description: "CME kredi kayıtlarını denetler, resmî raporu imzalar" },
+        { editionId: edition1.id, key: "gala_host", name: "Gala Host", color: "amber", hierarchyLevel: 30, permissions: JSON.stringify(["SOCIAL_EVENTS", "ACCESS_CONTROL"]), description: "Gala girişi ve VIP refakat operasyonu" },
+        { editionId: edition1.id, key: "floor_ranger", name: "Fuar Sahası Görevlisi", color: "teal", hierarchyLevel: 55, permissions: JSON.stringify(["EXHIBITION", "FLOOR_PLAN"]), description: "Stand kurulum ve saha yönlendirmesi" },
+      ],
+    });
+    // CV örnekleri — konuşmacı/profil verisi zenginleştirme (elle giriş senaryosu)
+    await db.cvEntry.createMany({
+      data: [
+        { personId: P.Kerem.id, editionId: edition1.id, kind: "EXPERIENCE", title: "Kıdemli Organizasyon Direktörü", organization: "Maven Etkinlik Çözümleri", city: "İstanbul", startDate: D(-2200), isCurrent: true, order: 1 },
+        { personId: P.Kerem.id, editionId: edition1.id, kind: "EDUCATION", title: "İşletme Yüksek Lisansı (MBA)", organization: "Boğaziçi Üniversitesi", city: "İstanbul", startDate: D(-4200), endDate: D(-3300), order: 2 },
+        { personId: P.Kerem.id, editionId: edition1.id, kind: "LANGUAGE", title: "İngilizce — C2", order: 3 },
+        { personId: P.Yusuf.id, editionId: edition1.id, kind: "EXPERIENCE", title: "Saha Operasyonları Şefi", organization: "Maven Etkinlik Çözümleri", city: "İstanbul", startDate: D(-1500), isCurrent: true, order: 1 },
+        { personId: P.Yusuf.id, editionId: edition1.id, kind: "CERTIFICATION", title: "ISO 20121 Sürdürülebilir Etkinlik Yöneticisi", startDate: D(-700), order: 2 },
+        { personId: P.Kerem.id, editionId: edition1.id, kind: "AWARD", title: "Yılın Etkinlik Yöneticisi — TEBD Ödülü", startDate: D(-500), order: 0 },
+      ],
+    });
+
+    // (2) Oturum materyalleri — bildiri/sunum/video/speaker metni bağlantıları
+    await db.sessionMaterial.createMany({
+      data: [
+        { sessionId: sesKeynote.id, editionId: edition1.id, type: "SLIDES", title: "Açılış Sunumu — Kazısız Gelecek 2026", url: "https://assets.maven.demo/keynote-slides.pdf", mimeType: "application/pdf", sizeKb: 8400, status: "READY", order: 1 },
+        { sessionId: sesKeynote.id, editionId: edition1.id, type: "SPEAKER_TEXT", title: "Konuşmacı Açılış Metni", url: "https://assets.maven.demo/keynote-script.docx", mimeType: "application/msword", sizeKb: 42, status: "READY", order: 2 },
+        { sessionId: ses1.id, editionId: edition1.id, type: "FULL_PAPER", title: "TBM Kesici Kafa Aşınması — Tam Metin", url: "https://assets.maven.demo/sub100-fulltext.pdf", mimeType: "application/pdf", sizeKb: 12500, status: "READY", order: 1 },
+        { sessionId: ses1.id, editionId: edition1.id, type: "VIDEO", title: "Sunum Kaydı (7 dk)", url: "https://video.maven.demo/sub100", durationMin: 7, status: "PENDING", order: 2 },
+        { sessionId: ses2.id, editionId: edition1.id, type: "SLIDES", title: "HDD Risk Atölyesi Çalışma Kitabı", url: "https://assets.maven.demo/hdd-workshop.pdf", mimeType: "application/pdf", sizeKb: 5600, status: "READY", order: 1 },
+        { sessionId: ses2.id, editionId: edition1.id, type: "ABSTRACT", title: "Atölye Özeti", url: "https://assets.maven.demo/hdd-abstract.pdf", mimeType: "application/pdf", sizeKb: 220, status: "READY", order: 2 },
+      ],
+    });
+
+    // (3) Merkezi medya arşivi — klasör ağacı + varlıklar (etkinlik izolasyonu)
+    const mfPhotos = await db.mediaFolder.create({ data: { editionId: edition1.id, name: "Fotoğraflar", systemKey: "PHOTOS", color: "teal", description: "Etkinlik fotoğraf arşivi — gün sıralı" } });
+    const mfLogos = await db.mediaFolder.create({ data: { editionId: edition1.id, name: "Logolar", systemKey: "LOGOS", color: "amber", description: "Sponsor ve organizasyon logoları" } });
+    const mfDocs = await db.mediaFolder.create({ data: { editionId: edition1.id, name: "Belgeler", systemKey: "DOCUMENTS", color: "violet" } });
+    const mfPress = await db.mediaFolder.create({ data: { editionId: edition1.id, parentId: mfLogos.id, name: "2026 Basın Kiti", color: "amber" } });
+    await db.mediaAsset.createMany({
+      data: [
+        { editionId: edition1.id, folderId: mfLogos.id, name: "nodig-turkey-2026-logo.svg", kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 18, externalUrl: "https://assets.maven.demo/nodig2026.svg", tags: "logo,ana,2026", uploadedBy: "Elif Kaya" },
+        { editionId: edition1.id, folderId: mfPress.id, name: "basin-kiti-2026.pdf", kind: "DOCUMENT", mimeType: "application/pdf", sizeKb: 15400, externalUrl: "https://assets.maven.demo/press2026.pdf", tags: "basın,kitapçık", uploadedBy: "Elif Kaya" },
+        { editionId: edition1.id, folderId: mfPhotos.id, name: "acilis-genel-gorunum.jpg", kind: "IMAGE", mimeType: "image/jpeg", sizeKb: 6200, externalUrl: "https://assets.maven.demo/opening.jpg", tags: "açılış,ana salon", uploadedBy: "Kapı Görevlisi" },
+        { editionId: edition1.id, folderId: mfDocs.id, name: "floor-plan-v3.dwg", kind: "OTHER", mimeType: "application/dwg", sizeKb: 24800, externalUrl: "https://assets.maven.demo/floor-v3.dwg", tags: "floor studio,saha", uploadedBy: "Burak Demir", linkedType: "BOOTH" },
+        { editionId: edition1.id, folderId: null, name: "sponsor-karşılama-video.mp4", kind: "VIDEO", mimeType: "video/mp4", sizeKb: 148000, externalUrl: "https://video.maven.demo/sponsor-welcome", tags: "sponsor,hoş geldin", uploadedBy: "Selin Öztürk" },
+      ],
+    });
+
+    // (4) API Geçidi — çift yönlü entegrasyon örnekleri + log dili
+    await db.apiIntegration.createMany({
+      data: [
+        { tenantId: tenant.id, editionId: edition1.id, name: "CRM Kişi Eşitleme", direction: "OUTBOUND", kind: "REST", baseUrl: "https://crm.maven-demo.example/api/v1/participants", authType: "API_KEY", authConfig: JSON.stringify({ key: "demo-crm-***" }), status: "ACTIVE", notes: "Onaylı kayıtlar gecelik CRM'e aktarılır" },
+        { tenantId: tenant.id, name: "Iyzico Sanal POS", direction: "OUTBOUND", kind: "PAYMENT", provider: "IYZICO", baseUrl: "https://api.iyzico.example/payment/pos/auth", authType: "BASIC", authConfig: JSON.stringify({ user: "maven-api", pass: "***" }), status: "ACTIVE", notes: "Form Merkezi online ödemeleri bu kanaldan akar" },
+        { tenantId: tenant.id, editionId: edition1.id, name: "Kayıt Webhook (dış form)", direction: "INBOUND", kind: "WEBHOOK", inboundToken: "maven-hook-demo-token", status: "ACTIVE", notes: "POST /api/integrations/hook/maven-hook-demo-token — type=PARTICIPANT ile kişi+katılım upsert" },
+        { tenantId: tenant.id, editionId: edition1.id, name: "Mailjet Kampanya Kanalı", direction: "OUTBOUND", kind: "MAIL", provider: "MAILJET", authType: "API_KEY", authConfig: JSON.stringify({ key: "mj-***" }), status: "DRAFT", notes: "Toplu gönderimler spam'e düşmemesi için" },
+      ],
+    });
+    const apiIntegrationDemo = await db.apiIntegration.findFirst({ where: { name: "CRM Kişi Eşitleme" } });
+    await db.integrationLog.createMany({
+      data: [
+        { integrationId: apiIntegrationDemo!.id, editionId: edition1.id, direction: "OUTBOUND", method: "POST", endpoint: "https://crm.maven-demo.example/api/v1/participants", statusCode: 200, ok: true, durationMs: 412, summary: "200 OK — 148 kayıt eşitlendi", createdAt: D(-1) },
+        { integrationId: apiIntegrationDemo!.id, editionId: edition1.id, direction: "OUTBOUND", method: "POST", endpoint: "https://crm.maven-demo.example/api/v1/participants", statusCode: 502, ok: false, durationMs: 8000, summary: "HATA: 502 Bad Gateway — tekrar denendi", createdAt: D(-2) },
+        { editionId: edition1.id, direction: "INBOUND", method: "POST", endpoint: "/api/integrations/hook/maven-hook-demo-token", statusCode: 202, ok: true, durationMs: 84, summary: "Webhook: type=PARTICIPANT → yeni kişi + katılım", payload: '{"type":"PARTICIPANT","fullName":"Ayşe Yılmaz","email":"ayse@example.com"}', createdAt: D(-1) },
+      ],
+    });
+
+    // (5) 360 Branding — e-posta şablonları + mail sağlayıcılar + kampanya fazları
+    await db.emailTemplate.createMany({
+      data: [
+        { editionId: edition1.id, name: "Davet — Erken Kayıt", category: "INVITATION", phase: "PRE_EVENT", subject: "{{series}} {{editionLabel}} davetiniz hazır", htmlBody: "<div style=\"font-family:Arial\"><h2 style=\"color:#0f766e\">{{series}} {{editionLabel}}</h2><p>Sayın {{fullName}}, <b>{{edition}}</b> etkinliğine davetlisiniz.</p><p><a href=\"{{registerUrl}}\" style=\"background:#0f766e;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none\">Kaydınızı oluşturun</a></p><p style=\"color:#6b7280;font-size:12px\">{{venue}} · {{date}}</p></div>", usageCount: 2 },
+        { editionId: edition1.id, name: "Kayıt Onayı + Ödeme Bağlantısı", category: "CONFIRMATION", phase: "PRE_EVENT", subject: "Kayıt onayınız — {{confirmationNo}}", htmlBody: "<div style=\"font-family:Arial\"><h3>Kaydınız onaylandı 🎉</h3><p>Teyit numaranız: <b>{{confirmationNo}}</b></p><p>Kalan bakiye: <b>{{remaining}}</b> — <a href=\"{{payUrl}}\">Online ödeyin</a></p></div>", usageCount: 5 },
+        { editionId: edition1.id, name: "Etkileşimli Quiz — Etkinlik İçi", category: "QUIZ", phase: "DURING_EVENT", subject: "Soruları yanıtlayın, CME kredisi kazanın", htmlBody: "<div style=\"font-family:Arial\"><h3>Günün quiz sorusu</h3><p>{{quizQuestion}}</p><p><a href=\"{{quizUrl}}\">Quiz'i açın →</a></p></div>" },
+        { editionId: edition1.id, name: "Teşekkür + Sertifika Teslimi", category: "THANK_YOU", phase: "POST_EVENT", subject: "Teşekkürler — sertifikanız ekte", htmlBody: "<div style=\"font-family:Arial\"><h2>Teşekkür ederiz!</h2><p>Sertifikanız ekte: <b>{{certificateSerial}}</b></p><p>Gelecek edisyon için erken kayıt avantajı: {{earlyBirdUrl}}</p></div>" },
+      ],
+    });
+    await db.mailProviderConfig.createMany({
+      data: [
+        { tenantId: tenant.id, name: "Şirket SMTP (Firma Sunucu)", kind: "SMTP", host: "smtp.maven-demo.example", port: 587, username: "etkinlik@maven-demo.example", password: "***", fromEmail: "etkinlik@maven-demo.example", fromName: "Maven Etkinlik", replyTo: "destek@maven-demo.example", dailyLimit: 2000, isDefault: true, status: "ACTIVE" },
+        { tenantId: tenant.id, name: "Mailjet — Toplu Gönderim", kind: "MAILJET", fromEmail: "bulten@maven-demo.example", fromName: "Maven Bülten", dailyLimit: 12000, status: "ACTIVE" },
+      ],
+    });
+    const tplConfirm = await db.emailTemplate.findFirst({ where: { category: "CONFIRMATION" } });
+    const providerSmtp = await db.mailProviderConfig.findFirst({ where: { kind: "SMTP" } });
+    await db.campaign.updateMany({ where: { editionId: edition1.id, name: "Ödeme Hatırlatma" }, data: { phase: "PRE_EVENT", audienceMode: "SEGMENT", templateId: tplConfirm?.id ?? null, providerId: providerSmtp?.id ?? null } });
+    await db.campaign.updateMany({ where: { editionId: edition1.id, name: "Program Yayınlandı" }, data: { phase: "DURING_EVENT", audienceMode: "BOTH", customRecipients: "basin@maven-demo.example, vip@guestlist.example", providerId: (await db.mailProviderConfig.findFirst({ where: { kind: "MAILJET" } }))?.id ?? null } });
+
+    // (6) Kurum kimlik kartı + çoklu kontak + konum QR notu
+    await db.organization.update({
+      where: { id: abcPharma.id },
+      data: {
+        generalEmail: "info@abcpharma.example",
+        address: "Maslak Mah. Büyükdere Cad. No:255 Sarıyer / İstanbul",
+        description: "ABC Pharma — 1998'den beri endüstriyel çözümler; No-Dig serisinin kurumsal sponsoru.",
+        locationNote: "Fuar Alanı · Stand A24 · Maslak Grand Otel lobisi karşısı",
+      },
+    });
+    await db.organizationContact.createMany({
+      data: [
+        { organizationId: abcPharma.id, name: "Sibel Aksu", title: "Finans Müdürü", email: "finans@abcpharma.example", phone: "+90 212 555 01 90", role: "PAYMENT", department: "Finans" },
+        { organizationId: abcPharma.id, name: "Cem Tekin", title: "Teknik Operasyon", email: "teknik@abcpharma.example", role: "TECHNICAL", department: "Operasyon" },
+      ],
+    });
+
+    // (7) Sponsorluk — paket dışı custom hak + onay akışı örneği
+    await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "PROMO", type: "CUSTOM", label: "VIP Lounge Kahve Servisi (sponsor ayrıcalığı)", quantityGranted: 4, approvalStatus: "PROPOSED", restrictions: "Etkinlik komitesi onayı sonrası geçerli" } });
+
+    // (8) Konaklama — occupancy/rate/no-show örneği + aile misafiri (Person self-ref)
+    await db.reservation.update({
+      where: { id: res1.id },
+      data: { occupancyType: "DOUBLE", ratePerNight: 4200, nights: 3 },
+    });
+    const resCancel = await db.reservation.findFirst({ where: { editionId: edition1.id, status: "CANCELLED" } });
+    if (resCancel) await db.reservation.update({ where: { id: resCancel.id }, data: { noShow: true, noShowFee: 1500 } });
+    const parentMustafa = participationMap.get("Mustafa");
+    if (parentMustafa) {
+      const parent = await db.eventParticipation.findUnique({ where: { id: parentMustafa.participationId }, include: { person: true } });
+      if (parent) {
+        const child = await db.person.create({ data: { tenantId: tenant.id, firstName: "Elif", lastName: parent.person.lastName, relationType: "SPOUSE", parentPersonId: parent.personId, email: null } });
+        await db.eventParticipation.create({ data: { editionId: edition1.id, personId: child.id, source: "ADMIN_ENTRY", notes: "Refakatçi — Mustafa'ya bağlı aile misafiri" } });
+      }
+    }
+
+    // (8-bis) Yaka kartı tasarımcısı — varsayılan tasarım + profillere bağla
+    const badgeDesignMain = await db.badgeDesign.create({
+      data: {
+        editionId: edition1.id, name: "Standart Konferans — Dikey", widthMm: 105, heightMm: 148, bleedMm: 3, cornerMm: 5,
+        sideCount: 2, fontKey: "montserrat", qrSource: "CREDENTIAL", sponsorHierarchyKey: "Gold Sponsor",
+        showProgramOnBack: true, backContactInfo: "Maven Etkinlik Çözümleri\ninfo@maven.events\n+90 212 000 00 00\nmaven.events/nodig2026",
+        frontElements: JSON.stringify([
+          { type: "LOGO", x: 8, y: 6, w: 40, h: 10, fontSize: 4.5, weight: 800, color: "0f766e", align: "left" },
+          { type: "FIELD", fieldKey: "badgeName", x: 8, y: 24, w: 89, h: 12, fontSize: 7.5, weight: 800, color: "0f172a", align: "left" },
+          { type: "FIELD", fieldKey: "title", x: 8, y: 37, w: 89, h: 6, fontSize: 3.4, weight: 500, color: "475569", align: "left" },
+          { type: "FIELD", fieldKey: "company", x: 8, y: 43, w: 89, h: 6, fontSize: 3.4, weight: 700, color: "0f766e", align: "left" },
+          { type: "FIELD", fieldKey: "profileName", x: 8, y: 122, w: 40, h: 7, fontSize: 3.2, weight: 800, color: "ffffff", align: "left" },
+          { type: "FIELD", fieldKey: "accessAreas", x: 8, y: 129, w: 60, h: 5, fontSize: 2.4, weight: 500, color: "ffffff", align: "left" },
+          { type: "QR", x: 70, y: 118, w: 27, h: 27, align: "center" },
+        ]),
+        backElements: JSON.stringify([
+          { type: "TEXT", text: "PROGRAM — 1. GÜN", x: 8, y: 6, w: 80, h: 8, fontSize: 4.2, weight: 800, color: "0f766e", align: "left" },
+          { type: "PROGRAM", x: 8, y: 16, w: 89, h: 55, fontSize: 2.4, color: "1f2937", align: "left" },
+          { type: "SPONSOR_LOGO", x: 8, y: 78, w: 89, h: 18, align: "center" },
+          { type: "CONTACT", x: 8, y: 104, w: 89, h: 30, fontSize: 2.8, color: "475569", align: "left" },
+          { type: "QR", x: 70, y: 6, w: 20, h: 20 },
+        ]),
+        isDefault: true,
+      },
+    });
+    await db.badgeProfile.update({ where: { id: bpDelegate.id }, data: { designId: badgeDesignMain.id } });
+    await db.badgeProfile.update({ where: { id: bpSpeaker.id }, data: { designId: badgeDesignMain.id } });
+
+    // (9) Sertifika tasarımcısı — kişi-özel gövde şablonu + boyut
+    await db.certificateDefinition.updateMany({
+      where: { editionId: edition1.id },
+      data: {
+        widthMm: 297, heightMm: 210, bleedMm: 5, fontKey: "playfair", textColor: "1f2937",
+        bodyTemplate: "<p>Bu belge, <b>{{edition}}</b> etkinliğinde <b>{{tier}}</b> statüsüyle görev almasının onurunu taşıdığını belgelemek üzere {{date}} tarihinde düzenlenmiştir.</p><p style=\"margin-top:6mm\"><b>{{fullName}}</b><br/><span style=\"color:#6b7280\">{{title}} — {{company}}</span></p>",
+        tierNote: "Katılımcı düzeyi",
+      },
+    });
+
     // ── Aktivite günlüğü (§47 domain event örnekleri) ──
     await db.activityLog.createMany({
       data: [
@@ -941,17 +1101,18 @@ async function wipe() {
   const order = [
     db.companion, db.delegationMember, db.delegation, db.formAnswer, db.formSubmission, db.formField, db.formDefinition,
     db.expense,
-    db.invitation, db.scanEvent, db.credential, db.badgeInstance, db.badgeProfile,
+    db.invitation, db.scanEvent, db.credential, db.badgeInstance, db.badgeProfile, db.badgeDesign,
     db.certificateIssue, db.certificateDefinition, db.floorPlanObject, db.boothAllocation, db.boothUnit,
     db.waitlistEntry,
     db.deliverable, db.sponsorAgreement, db.sponsorPackage, db.sponsorTierDefinition,
     db.entitlementClaim, db.entitlement, db.refund, db.payment, db.orderLine, db.order, db.catalogItem,
     db.occupancySlot, db.roommateRequest, db.reservation, db.inventoryNight, db.roomBlock, db.roomType, db.hotelProperty,
-    db.review, db.reviewAssignment, db.decision, db.authorship, db.submission, db.track, db.scientificSetup,
+    db.review, db.reviewAssignment, db.decision, db.authorship, db.sessionMaterial, db.submission, db.track, db.scientificSetup,
     db.programAssignment, db.programSession, db.programRoom,
     db.eventRoleAssignment, db.registration, db.registrationCategory, db.eventProfileSnapshot, db.eventParticipation,
     db.eventOrganizationAssignment, db.eventCapability, db.eventEdition, db.eventSeries,
-    db.organizationContact, db.organization, db.task, db.campaign, db.activityLog, db.person, db.user, db.tenant,
+    db.organizationContact, db.organization, db.task, db.campaign, db.activityLog, db.cvEntry, db.customRole, db.person, db.user,
+    db.mediaAsset, db.mediaFolder, db.integrationLog, db.apiIntegration, db.emailTemplate, db.mailProviderConfig, db.tenant,
   ];
   for (const m of order) {
     await (m as unknown as { deleteMany: () => Promise<unknown> }).deleteMany();

@@ -267,3 +267,52 @@
   }
   .maven-no-print { display: none !important; }
 }
+
+/* ── R9-c: QR kartvizit çerçevesi + kademeli giriş + mock su damgası ─────── */
+
+/* kademeli giriş — listede animationDelay ile sıralanır */
+@keyframes maven-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.maven-stagger-item { animation: maven-fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+
+/* QR kartvizit çerçevesi — ince çift çizgi + köşe vurguları */
+.maven-qrvcard {
+  position: relative;
+  border: 1px solid oklch(0.72 0.1 187 / 0.4);
+  background: #fff;
+  padding: 6px;
+  border-radius: 10px;
+  box-shadow: 0 1px 4px oklch(0.45 0.05 190 / 0.12);
+}
+.maven-qrvcard::before,
+.maven-qrvcard::after {
+  content: "";
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  border: 2px solid oklch(0.55 0.1 187);
+  pointer-events: none;
+}
+.maven-qrvcard::before { top: -3px; left: -3px; border-right: 0; border-bottom: 0; border-top-left-radius: 10px; }
+.maven-qrvcard::after { bottom: -3px; right: -3px; border-left: 0; border-top: 0; border-bottom-right-radius: 10px; }
+
+/* rol giriş ekranı mock'u — çapraz çizgili su damgası zemini */
+.maven-mock-watermark {
+  background-image: repeating-linear-gradient(-45deg, transparent 0 16px, oklch(0.55 0.05 190 / 0.045) 16px 32px);
+}
+
+/* hiyerarşi rayı — bağlantı çizgisi dokusu */
+.maven-rail-line {
+  background: linear-gradient(to right, oklch(0.72 0.1 187 / 0.55), oklch(0.72 0.1 187 / 0.2));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maven-stagger-item { animation: none; }
+}
+
+/* R9-d: tw-animate-css giriş animasyonları — hareket azaltma tercihi güvenliği */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in { animation: none !important; transition-duration: 0.01ms !important; }
+}

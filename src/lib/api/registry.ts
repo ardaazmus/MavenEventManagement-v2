@@ -443,6 +443,72 @@ export const registry: Record<string, EntityConfig> = {
     filterFields: ["tenantId", "editionId", "type"],
     orderBy: { createdAt: "desc" },
   },
+
+  // ─── GENİŞLETME DALGASI (kullanıcı düşünce bulutu 1-9) ────────────────────
+  "organization-contacts": {
+    delegate: db.organizationContact as unknown as AnyDelegate,
+    filterFields: ["organizationId", "role"],
+    auditType: ActivityType.ORG_SAVED,
+    auditMessage: (d) => `Kurum iletişim kişisi güncellendi: ${d.name ?? ""}`,
+  },
+  "custom-roles": {
+    delegate: db.customRole as unknown as AnyDelegate,
+    filterFields: ["editionId", "isActive"],
+    orderBy: { hierarchyLevel: "asc" },
+    auditType: ActivityType.ROLE_ASSIGNED,
+    auditMessage: (d) => `Özel rol güncellendi: ${d.name ?? ""}`,
+  },
+  "cv-entries": {
+    delegate: db.cvEntry as unknown as AnyDelegate,
+    filterFields: ["personId", "editionId", "kind"],
+    orderBy: { order: "asc" },
+    auditType: ActivityType.PERSON_SAVED,
+    auditMessage: (d) => `CV kaydı güncellendi: ${d.title ?? ""}`,
+  },
+  "session-materials": {
+    delegate: db.sessionMaterial as unknown as AnyDelegate,
+    filterFields: ["sessionId", "editionId", "type", "status"],
+    orderBy: { order: "asc" },
+    auditType: ActivityType.SESSION_SAVED,
+    auditMessage: (d) => `Oturum materyali güncellendi: ${d.title ?? ""}`,
+  },
+  "media-folders": {
+    delegate: db.mediaFolder as unknown as AnyDelegate,
+    filterFields: ["editionId", "parentId"],
+    orderBy: { name: "asc" },
+  },
+  "media-assets": {
+    delegate: db.mediaAsset as unknown as AnyDelegate,
+    searchFields: ["name", "tags"],
+    filterFields: ["editionId", "folderId", "kind", "linkedType"],
+    orderBy: { createdAt: "desc" },
+  },
+  "api-integrations": {
+    delegate: db.apiIntegration as unknown as AnyDelegate,
+    searchFields: ["name", "provider"],
+    filterFields: ["tenantId", "editionId", "direction", "kind", "status"],
+    orderBy: { createdAt: "desc" },
+  },
+  "integration-logs": {
+    delegate: db.integrationLog as unknown as AnyDelegate,
+    filterFields: ["integrationId", "direction", "ok"],
+    orderBy: { createdAt: "desc" },
+  },
+  "email-templates": {
+    delegate: db.emailTemplate as unknown as AnyDelegate,
+    filterFields: ["editionId", "category", "phase", "isActive"],
+    orderBy: { createdAt: "desc" },
+  },
+  "mail-providers": {
+    delegate: db.mailProviderConfig as unknown as AnyDelegate,
+    filterFields: ["tenantId", "kind", "status"],
+    orderBy: { createdAt: "desc" },
+  },
+  "badge-designs": {
+    delegate: db.badgeDesign as unknown as AnyDelegate,
+    filterFields: ["editionId", "isActive"],
+    orderBy: { createdAt: "desc" },
+  },
 };
 
 // ─── Yardımcı: hangi alanlar güncellenebilir (id/createdAt hariç) ──────────

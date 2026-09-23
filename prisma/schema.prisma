@@ -32,6 +32,8 @@ model Tenant {
   series         EventSeries[]
   editions       EventEdition[]
   activityLogs   ActivityLog[]
+  apiIntegrations ApiIntegration[]
+  mailProviders  MailProviderConfig[]
 }
 
 model User {
@@ -61,6 +63,12 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // — Kurumsal kimlik kartı (kullanıcı isteği 5) —
+  generalEmail String? // genel e-posta (info@...)
+  address      String? // fiziksel adres
+  description  String? // genel açıklama/bilgi
+  locationNote String? // Salon/Fuar alanı/Otel konum + QR notu
+
   tenant          Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contacts        OrganizationContact[]
   eventAssignments EventOrganizationAssignment[]
@@ -81,6 +89,8 @@ model OrganizationContact {
   email          String?
   phone          String?
   isPrimary      Boolean @default(false)
+  role           String  @default("PRIMARY") // PRIMARY|AUTHORIZED|PAYMENT|TECHNICAL|PRESS|CUSTOM — rol bazlı sınırsız kontak
+  department     String?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   person       Person?      @relation(fields: [personId], references: [id], onDelete: SetNull)
@@ -102,10 +112,17 @@ model Person {
   linkedin    String?
   status      String   @default("ACTIVE") // ACTIVE|PASSIVE|MERGED
   mergedIntoId String? // kişi tekilleştirme: önerili + onaylı birleştirme
+  // — Misafir/aile hiyerarşisi (Self-Referencing Parent_ID, kullanıcı isteği 8) —
+  parentPersonId String? // bağlı olduğu ana katılımcı (aile/misafir profili)
+  relationType   String? // SELF|SPOUSE|CHILD|GUEST|ASSISTANT|OTHER
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   tenant           Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parent           Person?                @relation("PersonGuardian", fields: [parentPersonId], references: [id], onDelete: SetNull)
+  dependents       Person[]               @relation("PersonGuardian")
+  cvEntries        CvEntry[]
+  materials        SessionMaterial[]
   participations   EventParticipation[]
   submissions      Submission[]           @relation("Submitter")
   authorships      Authorship[]
@@ -194,6 +211,14 @@ model EventEdition {
   expenses         Expense[]
   formSubmissions  FormSubmission[]
   waitlistEntries  WaitlistEntry[]
+  customRoles      CustomRole[]
+  cvEntries        CvEntry[]
+  sessionMaterials SessionMaterial[]
+  mediaFolders     MediaFolder[]
+  mediaAssets      MediaAsset[]
+  apiIntegrations  ApiIntegration[]
+  emailTemplates   EmailTemplate[]
+  badgeDesigns     BadgeDesign[]
 
   @@index([status])
   @@index([startDate])
@@ -258,6 +283,7 @@ model EventParticipation {
   companions     Companion[]
   orderLines     OrderLine[]
   waitlistEntries WaitlistEntry[]
+  sessionMaterials SessionMaterial[]
 
   @@unique([editionId, personId])
   @@index([attendance])
@@ -357,12 +383,14 @@ model WaitlistEntry {
 model EventRoleAssignment {
   id              String  @id @default(cuid())
   participationId String
-  role            String  // §11: ATTENDEE|AUTHOR|REVIEWER|SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST|COMMITTEE_MEMBER|VIP|PRESS|STAFF|EXHIBITOR_STAFF
+  role            String  // §11: ATTENDEE|AUTHOR|REVIEWER|SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST|COMMITTEE_MEMBER|VIP|PRESS|STAFF|EXHIBITOR_STAFF + custom rol anahtarları
+  customRoleId    String? // özel rol tanımı (CustomRole) — hiyerarşik eşleme
   status          String  @default("ACTIVE") // INVITED|ACCEPTED|ACTIVE|CANCELLED
   notes           String?
   createdAt       DateTime @default(now())
 
   participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  customRole    CustomRole?        @relation(fields: [customRoleId], references: [id], onDelete: SetNull)
 
   @@index([participationId])
 }
@@ -421,6 +449,7 @@ model FormDefinition {
   fields  FormField[]
   answers FormAnswer[]
   submissions FormSubmission[]
+  campaignQuizzes Campaign[] // etkileşimli quiz bağlantılı kampanyalar
 }
 
 model FormField {
@@ -551,6 +580,10 @@ model Entitlement {
   quantityGranted    Int       @default(0)
   quantityConsumed   Int       @default(0)
   quantityReserved   Int       @default(0) // ayrılmış — davette ayır, onayda kullan
+  // — Hak onay akışı (kullanıcı isteği 7) —
+  approvalStatus     String    @default("APPROVED") // PROPOSED|APPROVED|REJECTED — mevcut kayıtlar onaylı doğar (evrim güvenliği)
+  approvedBy         String?
+  approvedAt         DateTime?
   restrictions       String?
   validFrom          DateTime?
   validUntil         DateTime?
@@ -799,6 +832,12 @@ model Reservation {
   payerType      String    @default("SELF") // §35: SELF|ORGANIZATION|SPONSOR|ORGANIZER|SPEAKER_HOSPITALITY
   payerName      String?
   status         String    @default("REQUESTED") // §10 Konaklama: NOT_REQUESTED|REQUESTED|WAITLIST|RESERVED|CONFIRMED|CHECKED_IN|CHECKED_OUT|CANCELLED
+  // — Konaklama operasyon detayları (kullanıcı isteği 8) —
+  occupancyType  String?   // SINGLE|DOUBLE|FAMILY_SHARED
+  ratePerNight   Float     @default(0) // hangi fiyattan
+  nights         Int       @default(0) // kaç gece
+  noShow         Boolean   @default(false) // gerçekleşmeyen konaklama — sistemden düşme
+  noShowFee      Float     @default(0)
   notes          String?
   createdAt      DateTime  @default(now())
 
@@ -980,6 +1019,7 @@ model ProgramSession {
   track     Track?        @relation(fields: [trackId], references: [id], onDelete: SetNull)
   submission Submission?  @relation(fields: [submissionId], references: [id], onDelete: SetNull)
   assignments ProgramAssignment[]
+  materials   SessionMaterial[]
   scanEvents ScanEvent[]
 
   @@index([editionId])
@@ -1009,8 +1049,10 @@ model BadgeProfile {
   name        String  // Delegate|Speaker|Exhibitor|Sponsor|VIP|Staff|Press
   accessAreas String? // "Main Hall, VIP Lounge, Gala"
   color       String?
+  designId    String? // bağlı yaka kartı tasarımı (BadgeDesign)
 
   edition    EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  design     BadgeDesign?    @relation(fields: [designId], references: [id], onDelete: SetNull)
   badgeInstances BadgeInstance[]
 }
 
@@ -1075,11 +1117,22 @@ model CertificateDefinition {
   id              String  @id @default(cuid())
   editionId       String
   name            String  // "Katılımcı Sertifikası", "Konuşmacı Sertifikası"
-  type            String  @default("PARTICIPANT")
+  type            String  @default("PARTICIPANT") // düzeye göre seçimli: PARTICIPANT|SPEAKER|COMMITTEE|SPONSOR|STAFF|CUSTOM
   eligibilityRule String? // "registration=CONFIRMED AND checked_in" iş tanımı
   minimumSessions Int?    // oturum katılım eşiği
   signerName      String?
   isActive        Boolean @default(true)
+  // — Sertifika tasarımcısı (kullanıcı isteği 9) —
+  widthMm            Float   @default(297)
+  heightMm           Float   @default(210)
+  bleedMm            Float   @default(0) // baskı payı seçimli
+  orientation        String  @default("LANDSCAPE")
+  backgroundDataUrl  String? // tasarımcıdan gelen arka plan — en arka layer
+  fontKey            String  @default("serif")
+  textColor          String  @default("1f2937")
+  bodyTemplate       String? // kişi-özel gövde metni: {{fullName}}, {{title}}, {{edition}}... yer tutucular
+  tierNote           String? // düzey/katılım notu
+  mailDeliveredCount Int     @default(0)
 
   edition EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
   issues  CertificateIssue[]
@@ -1159,6 +1212,13 @@ model Campaign {
   audienceCount Int       @default(0)
   channel       String    @default("EMAIL")
   status        String    @default("DRAFT") // DRAFT|TESTED|SCHEDULED|SENT|FAILED
+  // — 360 Branding (kullanıcı isteği 6) —
+  phase         String    @default("PRE_EVENT") // PRE_EVENT|DURING_EVENT|POST_EVENT — 3 aşamalı süreç
+  audienceMode  String    @default("SEGMENT") // SEGMENT|CUSTOM|BOTH
+  customRecipients String? // özel e-posta listesi (satır/virgül bazlı)
+  templateId    String?   // HTML mailing şablonu
+  providerId    String?   // gönderim sağlayıcısı (SMTP/Mailjet...)
+  formId        String?   // etkileşimli quiz formu
   isSegmentFixed Boolean  @default(true) // sabit mi gönderim anında güncel mi
   subject       String?
   body          String?
@@ -1172,6 +1232,9 @@ model Campaign {
   failCount     Int       @default(0)
 
   edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  template EmailTemplate?     @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  provider MailProviderConfig? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  quizForm FormDefinition?     @relation(fields: [formId], references: [id], onDelete: SetNull)
 
   @@index([editionId])
 }
@@ -1253,4 +1316,245 @@ model ActivityLog {
   edition EventEdition? @relation(fields: [editionId], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
+}
+
+// ─── GENİŞLETME DALGASI 1: Custom Rol Motoru + CV (kullanıcı isteği 1) ─────
+
+model CustomRole {
+  id             String  @id @default(cuid())
+  editionId      String
+  key            String  // sistem rol anahtarına ek özel anahtar: "gala_host", "cme_auditor"...
+  name           String  // "Gala Host", "Akreditasyon Denetçisi"
+  color          String? // rozet/kart rengi
+  hierarchyLevel Int     @default(50) // 1 en üst — hiyerarşik eşleme
+  permissions    String? // JSON dizi: CAPABILITIES anahtarları + custom izinler
+  description    String?
+  isSystem       Boolean @default(false)
+  isActive       Boolean @default(true)
+  createdAt      DateTime @default(now())
+
+  edition        EventEdition          @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  roleAssignments EventRoleAssignment[]
+
+  @@unique([editionId, key])
+}
+
+model CvEntry {
+  id          String    @id @default(cuid())
+  personId    String
+  editionId   String    // etkinlik bazlı izolasyon (tenant-like kural)
+  kind        String    @default("EXPERIENCE") // EDUCATION|EXPERIENCE|AWARD|LANGUAGE|PUBLICATION|CERTIFICATION
+  title       String
+  organization String?  // kurum/okul
+  city        String?
+  startDate   DateTime?
+  endDate     DateTime?
+  isCurrent   Boolean   @default(false)
+  description String?
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  person Person       @relation(fields: [personId], references: [id], onDelete: Cascade)
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([personId])
+}
+
+// ─── GENİŞLETME DALGASI 1: Oturum materyalleri (kullanıcı isteği 2) ────────
+
+model SessionMaterial {
+  id              String   @id @default(cuid())
+  sessionId       String
+  editionId       String
+  type            String   @default("SLIDES") // ABSTRACT|FULL_PAPER|SLIDES|VIDEO|SPEAKER_TEXT|LINK|OTHER
+  title           String
+  personId        String?  // sahibi konuşmacıysa
+  participationId String?
+  url             String?  // dış bağlantı
+  dataUrl         String?  // küçük dosyalar için base64 (≤ 400KB)
+  mimeType        String?
+  sizeKb          Int?
+  durationMin     Int?     // video için
+  status          String   @default("PENDING") // PENDING|READY|MISSING
+  notes           String?
+  order           Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  session       ProgramSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  edition       EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  person        Person?             @relation(fields: [personId], references: [id], onDelete: SetNull)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
+}
+
+// ─── GENİŞLETME DALGASI 2: Merkezi Medya Arşivi (kullanıcı isteği 3) ───────
+
+model MediaFolder {
+  id          String  @id @default(cuid())
+  editionId   String
+  parentId    String? // esnek iç içe klasörleme (self-referencing)
+  name        String
+  color       String?
+  systemKey   String? // ROOT|PHOTOS|LOGOS|DOCUMENTS|PRESENTATIONS|VIDEOS|FLOOR_STUDIO|DESIGN_ASSETS — sistem klasörü işareti
+  description String?
+  createdAt   DateTime @default(now())
+
+  edition EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  parent  MediaFolder?  @relation("FolderTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children MediaFolder[] @relation("FolderTree")
+  assets  MediaAsset[]
+
+  @@index([editionId])
+  @@index([parentId])
+}
+
+model MediaAsset {
+  id          String   @id @default(cuid())
+  editionId   String   // ETKİNLİK İZOLASYONU — her varsa kendi edisyonunda
+  folderId    String?
+  name        String
+  kind        String   @default("IMAGE") // IMAGE|VIDEO|AUDIO|DOCUMENT|SPREADSHEET|ARCHIVE|FONT|OTHER
+  mimeType    String?
+  sizeKb      Int?
+  externalUrl String?  // dış bağlantı
+  dataUrl     String?  // küçük dosyalar için base64 (≤ 400KB)
+  tags        String?  // virgülle
+  notes       String?
+  linkedType  String?  // PERSON|ORGANIZATION|SUBMISSION|SESSION|BOOTH|BADGE_DESIGN|CERTIFICATE
+  linkedId    String?
+  uploadedBy  String?
+  createdAt   DateTime @default(now())
+
+  edition EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  folder  MediaFolder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  @@index([editionId])
+  @@index([folderId])
+}
+
+// ─── GENİŞLETME DALGASI 3: API Geçidi & Entegrasyon (kullanıcı isteği 4) ───
+
+model ApiIntegration {
+  id          String   @id @default(cuid())
+  tenantId    String
+  editionId   String?  // tenant-düzeyi entegrasyonlarda null (ödeme sağlayıcısı vb.)
+  name        String
+  direction   String   @default("OUTBOUND") // OUTBOUND|INBOUND — çift yönlü akış
+  kind        String   @default("REST") // REST|WEBHOOK|PAYMENT|MAIL|SMS|CRM|TICKETING
+  provider    String?  // IYZICO|PAYTR|STRIPE|MAILJET|RESEND|SMTP|CUSTOM
+  baseUrl     String?
+  authType    String   @default("NONE") // NONE|API_KEY|BEARER|BASIC|OAUTH2|SIGNATURE
+  authConfig  String?  // JSON (UI'da maskelenir)
+  inboundToken String? @unique // INBOUND çağrı adresi: /api/integrations/hook/<token>
+  status      String   @default("DRAFT") // DRAFT|ACTIVE|PAUSED|ERROR
+  lastRunAt   DateTime?
+  lastStatus  String?  // OK|FAILED
+  successCount Int     @default(0)
+  failCount   Int      @default(0)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  edition EventEdition?    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  logs   IntegrationLog[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model IntegrationLog {
+  id            String   @id @default(cuid())
+  integrationId String?
+  editionId     String?
+  direction     String   @default("OUTBOUND") // OUTBOUND|INBOUND
+  method        String?  // GET|POST|PUT|...
+  endpoint      String?
+  statusCode    Int?
+  ok            Boolean  @default(false)
+  durationMs    Int?
+  summary       String?
+  payload       String?  // kısa özet (ilk 500 karakter)
+  createdAt     DateTime @default(now())
+
+  integration ApiIntegration? @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([integrationId])
+}
+
+// ─── GENİŞLETME DALGASI 4: 360 Branding altyapısı (kullanıcı isteği 6) ─────
+
+model EmailTemplate {
+  id        String  @id @default(cuid())
+  editionId String
+  name      String
+  category  String  @default("INFORMATION") // INVITATION|CONFIRMATION|PAYMENT_REMINDER|INFORMATION|QUIZ|THANK_YOU|CUSTOM
+  phase     String  @default("PRE_EVENT") // PRE_EVENT|DURING_EVENT|POST_EVENT
+  subject   String
+  htmlBody  String  // HTML mail alanı
+  isActive  Boolean @default(true)
+  usageCount Int    @default(0)
+  createdAt DateTime @default(now())
+
+  edition   EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@index([editionId])
+}
+
+model MailProviderConfig {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String   // "Şirket SMTP", "Mailjet Ana Hesap"
+  kind      String   @default("SMTP") // SMTP|MAILJET|SENDGRID|RESEND|POSTMARK|OTHER
+  host      String?
+  port      Int?
+  username  String?
+  password  String?  // UI'da maskelenir
+  fromEmail String
+  fromName  String?
+  replyTo   String?
+  dailyLimit Int?    // gönderim limiti
+  isDefault Boolean  @default(false)
+  status    String   @default("ACTIVE") // ACTIVE|PAUSED
+  lastTestAt DateTime?
+  lastTestStatus String?
+  createdAt DateTime @default(now())
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@index([tenantId])
+}
+
+// ─── GENİŞLETME DALGASI 5: Yaka Kartı Tasarımcısı (kullanıcı isteği 8-bis) ──
+
+model BadgeDesign {
+  id          String  @id @default(cuid())
+  editionId   String
+  name        String
+  widthMm     Float   @default(105) // CR80 dikey: 54x86; konferans: 105x148 — tamamen custom
+  heightMm    Float   @default(148)
+  bleedMm     Float   @default(3) // baskı payı ekle/çıkar
+  cornerMm    Float   @default(4)
+  sideCount   Int     @default(1) // 1|2 — tek/çift taraflı
+  fontKey     String  @default("inter") // serbest font seçimi
+  frontBackgroundDataUrl String? // tasarımcıdan yüklenen arka layer
+  backBackgroundDataUrl  String?
+  frontElements String? // JSON: [{type:TEXT|FIELD|QR|LOGO|SPONSOR_LOGO|PROGRAM|CONTACT, x,y,w,h (mm), fontSize, weight, color, align, fieldKey?, text?}]
+  backElements  String? // arka yüz: fuar/event logosu, hiyerarşik sponsor logosu, program, iletişim
+  qrSource    String  @default("CREDENTIAL") // CREDENTIAL|VCARD — QR seçimli eklenip çıkarılır
+  sponsorHierarchyKey String? // hangi sponsor seviyesi logosu arka yüzde
+  showProgramOnBack Boolean @default(false)
+  backContactInfo String?
+  isActive    Boolean @default(true)
+  isDefault   Boolean @default(false)
+  createdAt   DateTime @default(now())
+
+  edition EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  profiles BadgeProfile[]
+
+  @@index([editionId])
 }

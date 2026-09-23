@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
+import { BadgeDesigner } from "../badge-designer";
 import { Chip, EmptyState, ErrorState, KpiCard, Loading, PageHeader, SectionCard, StatusBadge, useApi } from "../bits";
 import { BADGE_STATUS, EVENT_ROLES, fmtDate, label } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
@@ -81,6 +82,7 @@ const ACTION_SKIP: Record<BadgeAction, string> = {
 export function BadgeQueueView() {
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
+  const [tab, setTab] = useState<"queue" | "designer">("queue");
 
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [search, setSearch] = useState("");
@@ -166,6 +168,27 @@ export function BadgeQueueView() {
       <PageHeader title="Rozet Baskı" desc="Baskıya hazır rozetler, toplu baskı ve teslim akışı — rozet ≠ katılım (§40): durum bağımsız yönetilir.">
         <Chip tone="teal">{selectedInQueue.length} seçili</Chip>
       </PageHeader>
+
+      {/* Sekmeler: Baskı Kuyruğu / Tasarımcı */}
+      <div className="flex rounded-lg border bg-card p-1 shadow-sm">
+        {(["queue", "designer"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition sm:flex-none sm:px-4 ${
+              tab === t ? "bg-teal-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            }`}
+          >
+            {t === "queue" ? (<><Icons.ListChecks className="size-3.5" /> Baskı Kuyruğu</>) : (<><Icons.Palette className="size-3.5" /> Tasarımcı</>)}
+          </button>
+        ))}
+      </div>
+
+      {tab === "designer" ? (
+        <BadgeDesigner />
+      ) : (
+      <>
 
       {/* 1 — KPI sırası */}
       <div className="space-y-1">
@@ -372,6 +395,9 @@ export function BadgeQueueView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      </>
+      )}
     </div>
   );
 }

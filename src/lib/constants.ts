@@ -354,6 +354,8 @@ export const MODULES = [
   { id: "badges", label: "Rozet Baskı", icon: "Printer", capability: "BADGING", group: "edition" },
   { id: "certificates", label: "Belgeler", icon: "Award", capability: "CERTIFICATES", group: "edition" },
   { id: "operations", label: "Operasyon", icon: "ListChecks", capability: null, group: "workspace" },
+  { id: "media", label: "Medya Arşivi", icon: "FolderOpen", capability: null, group: "workspace" },
+  { id: "integrations", label: "API Geçidi", icon: "PlugZap", capability: null, group: "workspace" },
   { id: "settings", label: "Ayarlar", icon: "Settings", capability: null, group: "workspace" },
 ] as const;
 
@@ -505,4 +507,142 @@ export const CAPABILITY_MODULE: Record<string, string> = {
   CERTIFICATES: "certificates",
   FLOOR_PLAN: "floors",
   EXHIBITION: "floors",
+};
+
+// ─── GENİŞLETME DALGASI etiketleri (düşünce bulutu 1-9) ────────────────────
+
+export const CAMPAIGN_PHASE = {
+  PRE_EVENT: "Organizasyon Öncesi",
+  DURING_EVENT: "Organizasyon Zamanı",
+  POST_EVENT: "Organizasyon Sonrası",
+} as const;
+
+export const APPROVAL_STATUS = {
+  PROPOSED: "Onay Bekliyor",
+  APPROVED: "Onaylı",
+  REJECTED: "Reddedildi",
+} as const;
+
+export const EMAIL_TEMPLATE_CATEGORY = {
+  INVITATION: "Davet",
+  CONFIRMATION: "Onay / Kayıt Tevdihi",
+  PAYMENT_REMINDER: "Ödeme Hatırlatma",
+  INFORMATION: "Bilgilendirme",
+  QUIZ: "Etkileşimli Quiz",
+  THANK_YOU: "Teşekkür",
+  CUSTOM: "Özel",
+} as const;
+
+export const MAIL_PROVIDER_KIND = {
+  SMTP: "SMTP (Kendi Sunucu)",
+  MAILJET: "Mailjet",
+  SENDGRID: "SendGrid",
+  RESEND: "Resend",
+  POSTMARK: "Postmark",
+  OTHER: "Diğer",
+} as const;
+
+export const MEDIA_KIND = {
+  IMAGE: "Görsel",
+  VIDEO: "Video",
+  AUDIO: "Ses",
+  DOCUMENT: "Belge",
+  SPREADSHEET: "Tablo",
+  ARCHIVE: "Arşiv",
+  FONT: "Font",
+  OTHER: "Diğer",
+} as const;
+
+export const MATERIAL_TYPE = {
+  ABSTRACT: "Bildiri Özeti",
+  FULL_PAPER: "Tam Metin Bildiri",
+  SLIDES: "Sunum Dosyası",
+  VIDEO: "Video",
+  SPEAKER_TEXT: "Konuşmacı Metni",
+  LINK: "Bağlantı",
+  OTHER: "Diğer",
+} as const;
+
+export const INTEGRATION_KIND = {
+  REST: "REST API",
+  WEBHOOK: "Webhook",
+  PAYMENT: "Ödeme",
+  MAIL: "E-Posta",
+  SMS: "SMS",
+  CRM: "CRM",
+  TICKETING: "Bilet Sistemi",
+} as const;
+
+export const INTEGRATION_DIRECTION = {
+  OUTBOUND: "Dışa Aktarım",
+  INBOUND: "İçe Veri Çekme / Webhook",
+} as const;
+
+export const INTEGRATION_STATUS = {
+  DRAFT: "Taslak",
+  ACTIVE: "Aktif",
+  PAUSED: "Duraklatıldı",
+  ERROR: "Hatalı",
+} as const;
+
+export const CONTACT_ROLE = {
+  PRIMARY: "Ana İletişim",
+  AUTHORIZED: "Yetkili Kişi",
+  PAYMENT: "Ödeme Sorumlusu",
+  TECHNICAL: "Teknik Sorumlu",
+  PRESS: "Basın",
+  CUSTOM: "Özel",
+} as const;
+
+export const RELATION_TYPE = {
+  SELF: "Kendisi",
+  SPOUSE: "Eş",
+  CHILD: "Çocuk",
+  GUEST: "Misafir",
+  ASSISTANT: "Asistan",
+  OTHER: "Diğer",
+} as const;
+
+export const CV_KIND = {
+  EDUCATION: "Eğitim",
+  EXPERIENCE: "Deneyim",
+  AWARD: "Ödül",
+  LANGUAGE: "Dil",
+  PUBLICATION: "Yayın",
+  CERTIFICATION: "Sertifika",
+} as const;
+
+export const OCCUPANCY_TYPE = {
+  SINGLE: "Single (Tek Kişi)",
+  DOUBLE: "Double (Çift)",
+  FAMILY_SHARED: "Aile / Paylaşımlı",
+} as const;
+
+// Yaka kartı alan bağlama seçenekleri — kayıt formu ve kişi verisinden (düşünce bulutu 8-bis)
+export const BADGE_FIELD_KEYS = [
+  { key: "fullName", label: "Ad Soyad" },
+  { key: "firstName", label: "Ad" },
+  { key: "lastName", label: "Soyad" },
+  { key: "badgeName", label: "Rozet Adı (Snapshot)" },
+  { key: "title", label: "Unvan" },
+  { key: "company", label: "Kurum" },
+  { key: "country", label: "Ülke" },
+  { key: "city", label: "Şehir" },
+  { key: "role", label: "Rol" },
+  { key: "profileName", label: "Rozet Profili" },
+  { key: "accessAreas", label: "Erişim Alanları" },
+  { key: "badgeNo", label: "Rozet No" },
+  { key: "confirmationNo", label: "Teyit No" },
+  { key: "categoryName", label: "Kategori" },
+  { key: "qr", label: "QR (Kimlik)" },
+] as const;
+
+// Serbest font seçimi — baskıda güvenli Google font karşılıkları
+export const BADGE_FONTS: Record<string, { label: string; css: string }> = {
+  inter: { label: "Inter (Modern)", css: "Inter, system-ui, sans-serif" },
+  playfair: { label: "Playfair Display (Klasik)", css: '"Playfair Display", Georgia, serif' },
+  montserrat: { label: "Montserrat (Geometrik)", css: '"Montserrat", Arial, sans-serif' },
+  merriweather: { label: "Merriweather (Serif)", css: '"Merriweather", Georgia, serif' },
+  sourcecode: { label: "Source Code Pro (Mono)", css: '"Source Code Pro", monospace' },
+  roboto: { label: "Roboto (Nötr)", css: 'Roboto, Arial, sans-serif' },
 };

@@ -5,10 +5,12 @@ import { useEffect, useState } from "react";
 import { listEntity, apiSend, apiGet } from "@/lib/client";
 import { useApp, hasCapability } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
-import { SUBMISSION_STATUS, SESSION_STATUS, fmtDateTime, fmtDate, EVENT_ROLES, label } from "@/lib/constants";
+import { SUBMISSION_STATUS, SESSION_STATUS, fmtDateTime, fmtDate, EVENT_ROLES, MATERIAL_TYPE, label } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,6 +34,33 @@ interface SessionRow {
   submission?: { code: string; title: string } | null;
   assignments: { id: string; role: string; status: string; person?: { firstName: string; lastName: string } | null; participation?: { person: { firstName: string; lastName: string } } | null }[];
 }
+
+// ── R9-c: içe aktarım raporu (/api/program/import sözleşmesi) ──────────────
+interface ImportMatchDetail { row: number; name?: string; email?: string; result: string; personId?: string }
+interface ImportReport {
+  ok?: boolean; kind: string; dryRun: boolean; totalRows: number;
+  sessionsCreated: number; sessionsUpdated: number; roomsCreated: number;
+  personsMatched: number; personsCreated: number; personsUnmatched: number;
+  participationsCreated: number; assignmentsCreated: number;
+  matchDetails: ImportMatchDetail[];
+  errors: { row: number; message: string }[];
+}
+
+// ── R9-c: oturum materyalleri (SessionMaterial sözleşmesi) ─────────────────
+interface MaterialRow {
+  id: string; sessionId: string; editionId: string; type: string; title: string;
+  personId?: string | null; url?: string | null; durationMin?: number | null;
+  status: string; notes?: string | null; order: number;
+  person?: { firstName: string; lastName: string } | null;
+}
+const MATERIAL_STATUS_LABEL: Record<string, string> = { PENDING: "Bekliyor", READY: "Hazır", MISSING: "Eksik" };
+// eşleşme sonucu tonu — teal: eşleşti · emerald: yeni · amber: sınama · rose: eşleşmedi
+const importTone = (r: string): "teal" | "emerald" | "amber" | "rose" | "neutral" =>
+  r.includes("ile eşleşti") ? "teal"
+  : r.includes("Yeni kişi") ? "emerald"
+  : r.includes("oluşturulacak") || r.includes("sına") ? "amber"
+  : r.includes("Eşleşmedi") || r.includes("kapalı") ? "rose"
+  : "neutral";
 
 // CME Kredi Defteri verileri (/api/cme sözleşmesi — R2-a)
 interface CmeSession {
@@ -218,6 +247,24 @@ export function ProgramView() {
   const [publishTarget, setPublishTarget] = useState<SessionRow | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // ── R9-c: içe aktarım durumu ──
+  const [importOpen, setImportOpen] = useState(false);
+  const [importKind, setImportKind] = useState<"SESSIONS" | "PARTICIPANTS">("SESSIONS");
+  const [importText, setImportText] = useState("");
+  const [createMissingPersons, setCreateMissingPersons] = useState(true);
+  const [createMissingRooms, setCreateMissingRooms] = useState(true);
+  const [dryRun, setDryRun] = useState(true);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importReport, setImportReport] = useState<ImportReport | null>(null);
+
+  // ── R9-c: materyal durumu ──
+  const [matTarget, setMatTarget] = useState<SessionRow | null>(null); // yeni ekleme hedefi
+  const [editingMat, setEditingMat] = useState<MaterialRow | null>(null);
+  const [matOpen, setMatOpen] = useState(false);
+  const [matBusy, setMatBusy] = useState(false);
+  const emptyMat = { type: "SLIDES", title: "", url: "", personId: "none", durationMin: "", status: "PENDING", notes: "" };
+  const [matForm, setMatForm] = useState(emptyMat);
+
   // CME Kredi Defteri — yalnız edisyonun CME_CREDITS yeteneği açıksa görünür
   const edition = editions.find((e) => e.id === currentEditionId);
   const cmeEnabled = hasCapability(edition, "CME_CREDITS");
@@ -229,6 +276,13 @@ export function ProgramView() {
 
   const { data: sessions, error, reload, loading } = useApi<SessionRow[]>(() => listEntity<SessionRow>("sessions", { editionId: currentEditionId ?? undefined, limit: 200 }), [currentEditionId, refreshKey]);
   const { data: rooms } = useApi<{ id: string; name: string; capacity: number }[]>(() => listEntity("rooms", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+  // ── R9-c: materyaller (edisyon geneli tek istek, oturuma göre gruplanır) + kişi seçenekleri ──
+  const { data: materials, reload: reloadMaterials } = useApi<MaterialRow[]>(() =>
+    currentEditionId ? listEntity<MaterialRow>("session-materials", { editionId: currentEditionId, limit: 300 }) : Promise.resolve([]),
+    [currentEditionId, refreshKey]);
+  const { data: importParts } = useApi<{ id: string; person: { id: string; firstName: string; lastName: string } }[]>(() =>
+    currentEditionId ? listEntity("participations", { editionId: currentEditionId, limit: 100 }) : Promise.resolve([]),
+    [currentEditionId, refreshKey]);
   const { data: cme, error: cmeError, reload: reloadCme, loading: cmeLoading } = useApi<CmeData | null>(() => {
     if (!currentEditionId || !cmeEnabled) return Promise.resolve(null);
     return apiGet<CmeData>("/api/cme?editionId=" + currentEditionId);
@@ -309,9 +363,80 @@ export function ProgramView() {
     } finally { setBusy(false); }
   };
 
+  // ── R9-c: içe aktarım — dryRun ile sına, raporu göster, onayla kaydet ──
+  const openImport = () => { setImportReport(null); setImportText(""); setImportOpen(true); };
+  const runImport = async (dry: boolean) => {
+    if (!currentEditionId || !importText.trim()) return;
+    setImportBusy(true);
+    try {
+      const res = await apiSend<ImportReport>("/api/program/import", "POST", {
+        editionId: currentEditionId, kind: importKind, csvText: importText,
+        createMissingPersons, createMissingRooms, dryRun: dry,
+      });
+      setImportReport(res);
+      if (!dry) {
+        toast({ title: "İçe aktarım kaydedildi", description: importKind === "SESSIONS" ? `${res.sessionsCreated} yeni · ${res.sessionsUpdated} güncellenen oturum` : `${res.personsMatched} eşleşen · ${res.personsCreated} yeni kişi` });
+        reload(); reloadMaterials(); bump();
+      }
+    } catch (e) {
+      toast({ title: "İçe aktarım başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setImportBusy(false); }
+  };
+
+  // ── R9-c: materyal CRUD ──
+  const openMatNew = (s: SessionRow) => { setEditingMat(null); setMatTarget(s); setMatForm(emptyMat); setMatOpen(true); };
+  const openMatEdit = (m: MaterialRow) => {
+    setEditingMat(m); setMatTarget(null);
+    setMatForm({ type: m.type, title: m.title, url: m.url ?? "", personId: m.personId ?? "none", durationMin: m.durationMin != null ? String(m.durationMin) : "", status: m.status, notes: m.notes ?? "" });
+    setMatOpen(true);
+  };
+  const saveMat = async () => {
+    if (!matForm.title.trim()) return;
+    setMatBusy(true);
+    try {
+      const payload = {
+        type: matForm.type, title: matForm.title.trim(), url: matForm.url || null,
+        personId: matForm.personId === "none" ? null : matForm.personId,
+        durationMin: matForm.type === "VIDEO" && matForm.durationMin ? Number(matForm.durationMin) : null,
+        status: matForm.status, notes: matForm.notes || null,
+      };
+      if (editingMat) await apiSend(`/api/session-materials/${editingMat.id}`, "PUT", payload);
+      else await apiSend("/api/session-materials", "POST", { sessionId: matTarget?.id, editionId: currentEditionId, ...payload });
+      toast({ title: editingMat ? "Materyal güncellendi" : "Materyal eklendi", description: matForm.title });
+      setMatOpen(false); reloadMaterials(); bump();
+    } catch (e) {
+      toast({ title: "Hata", description: e instanceof Error ? e.message : "Materyal kaydedilemedi", variant: "destructive" });
+    } finally { setMatBusy(false); }
+  };
+  const removeMat = async (m: MaterialRow) => {
+    try {
+      await apiSend(`/api/session-materials/${m.id}`, "DELETE");
+      toast({ title: "Materyal silindi", description: m.title });
+      reloadMaterials();
+    } catch (e) {
+      toast({ title: "Hata", description: e instanceof Error ? e.message : "Silinemedi", variant: "destructive" });
+    }
+  };
+
+  // oturum → materyal haritası (kart içinde alt liste için)
+  const materialsBySession = new Map<string, MaterialRow[]>();
+  for (const m of materials ?? []) {
+    const list = materialsBySession.get(m.sessionId) ?? [];
+    list.push(m);
+    materialsBySession.set(m.sessionId, list);
+  }
+  // materyal kişi seçenekleri — katılımlardan benzersiz kişiler
+  const personOptions = new Map<string, string>();
+  for (const p of importParts ?? []) {
+    if (p.person && !personOptions.has(p.person.id)) personOptions.set(p.person.id, `${p.person.firstName} ${p.person.lastName}`);
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader title="Program" desc="Salon, zaman, görevli — çakışmalı yayın engellenir; bilimsel kararı program modülü değiştirmez">
+        <Button size="sm" variant="outline" onClick={openImport} disabled={!currentEditionId} aria-label="Program veya katılımcı listesi içe aktar">
+          <Icons.FileUp className="size-4" /> İçe Aktar
+        </Button>
         <Button variant="ghost" size="sm" onClick={() => { reload(); reloadCme(); }} aria-label="Yenile"><Icons.RefreshCw className="size-4" /></Button>
       </PageHeader>
 
@@ -361,8 +486,46 @@ export function ProgramView() {
                       return <Chip key={a.id} tone={a.status === "CONFIRMED" ? "emerald" : "amber"}>{label2(EVENT_ROLES, a.role)}: {name}</Chip>;
                     })}
                   </div>
+                  {/* ── R9-c: oturum materyalleri alt listesi ── */}
+                  {(materialsBySession.get(s.id)?.length ?? 0) > 0 && (
+                    <div className="mt-3 rounded-lg border bg-muted/20 p-2.5">
+                      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                        <Icons.Paperclip className="size-3.5" aria-hidden /> Materyaller
+                        <span className="font-normal tabular-nums">({materialsBySession.get(s.id)!.length})</span>
+                      </p>
+                      <div className="space-y-1">
+                        {materialsBySession.get(s.id)!.map((m) => (
+                          <div key={m.id} className="group flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-card px-2 py-1.5 text-xs transition-colors hover:bg-teal-500/5">
+                            <Chip tone="teal">{label(MATERIAL_TYPE, m.type)}</Chip>
+                            <span className="min-w-0 flex-1 truncate font-medium">{m.title}</span>
+                            {m.type === "VIDEO" && m.durationMin != null && <span className="tabular-nums text-muted-foreground">{m.durationMin} dk</span>}
+                            {m.personId && personOptions.get(m.personId) && <span className="hidden text-muted-foreground sm:inline">{personOptions.get(m.personId)}</span>}
+                            <StatusBadge map={MATERIAL_STATUS_LABEL} value={m.status} />
+                            {m.url && (
+                              <a href={m.url} target="_blank" rel="noreferrer" className="rounded p-0.5 text-teal-600 transition hover:text-teal-800" aria-label={`${m.title} bağlantısını aç`}>
+                                <Icons.ExternalLink className="size-3.5" />
+                              </a>
+                            )}
+                            <span className="flex items-center gap-0.5 opacity-60 transition group-hover:opacity-100">
+                              <button onClick={() => openMatEdit(m)} className="rounded p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={`${m.title} materyalini düzenle`}>
+                                <Icons.Pencil className="size-3" />
+                              </button>
+                              <button onClick={() => removeMat(m)} className="rounded p-1 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600" aria-label={`${m.title} materyalini sil`}>
+                                <Icons.Trash2 className="size-3" />
+                              </button>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" variant="ghost" className="h-7" onClick={() => openMatNew(s)} aria-label={`${s.title} oturumuna materyal ekle`}>
+                      <Icons.Paperclip className="size-3.5" /> Materyal Ekle
+                    </Button>
+                  </div>
                   {s.status !== "PUBLISHED" && (
-                    <Button size="sm" variant="outline" className="mt-3" onClick={() => setPublishTarget(s)} disabled={clashes.has(s.id)}>
+                    <Button size="sm" variant="outline" className="mt-2" onClick={() => setPublishTarget(s)} disabled={clashes.has(s.id)}>
                       <Icons.Upload className="size-4" /> Yayınla
                     </Button>
                   )}
@@ -542,6 +705,230 @@ export function ProgramView() {
       {reportOpen && currentEditionId && (
         <CmeReportOverlay editionId={currentEditionId} onClose={() => setReportOpen(false)} />
       )}
+
+      {/* ── R9-c: İçe Aktar diyaloğu — CSV/TSV yapıştır, sına, kaydet ── */}
+      <Dialog open={importOpen} onOpenChange={(o) => { if (!o) { setImportOpen(false); setImportReport(null); } }}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>İçe Aktar — Oturum Programı / Katılımcı Listesi</DialogTitle>
+            <DialogDescription>Excel&apos;den kopyala-yapıştır (TSV) veya noktalı virgül ayraçlı CSV — başlıklar Türkçe veya İngilizce olabilir.</DialogDescription>
+          </DialogHeader>
+
+          <RadioGroup
+            value={importKind}
+            onValueChange={(v) => { setImportKind(v as "SESSIONS" | "PARTICIPANTS"); setImportReport(null); }}
+            className="grid gap-2 sm:grid-cols-2"
+          >
+            <Label htmlFor="imp-sessions" className={cn("flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition", importKind === "SESSIONS" ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:border-primary/40")}>
+              <RadioGroupItem value="SESSIONS" id="imp-sessions" className="mt-0.5" />
+              <span>
+                <span className="block text-sm font-semibold">Oturum Programı</span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">Oturum adı, saat, salon, konuşmacı eşleştirme — salon yoksa oluşturulur</span>
+              </span>
+            </Label>
+            <Label htmlFor="imp-parts" className={cn("flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition", importKind === "PARTICIPANTS" ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:border-primary/40")}>
+              <RadioGroupItem value="PARTICIPANTS" id="imp-parts" className="mt-0.5" />
+              <span>
+                <span className="block text-sm font-semibold">Katılımcı Listesi</span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">Ad soyad + e-posta eşleştirme — katılım ve kaynak: İçe Aktarma</span>
+              </span>
+            </Label>
+          </RadioGroup>
+
+          <div>
+            <Label>Veri (başlık + en az bir satır)</Label>
+            <Textarea
+              className="mt-1 min-h-40 font-mono text-xs"
+              rows={8}
+              value={importText}
+              onChange={(e) => { setImportText(e.target.value); setImportReport(null); }}
+              placeholder={importKind === "SESSIONS"
+                ? "Oturum Adı;Başlangıç;Bitiş;Salon;Konuşmacı;E-posta;Rol\nAçılış Konuşması;14.05.2026 09:00;14.05.2026 09:45;Ana Salon;Prof. Dr. Ayşe Yılmaz;ayse@universite.edu.tr;SPEAKER\nPanel: Şehirleşme;14.05.2026 10:00;14.05.2026 11:30;Salon B;..."
+                : "Ad Soyad;E-posta;Kurum;Unvan\nAyşe Yılmaz;ayse@ornek.com;Yılmaz A.Ş.;Direktör\nMehmet Demir;mehmet@ornek.com;Demir Ltd;Müdür"}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {importKind === "SESSIONS"
+                ? "Beklenen başlıklar: Oturum Adı | Başlangıç | Bitiş | Salon | Konuşmacı | E-posta | Rol"
+                : "Beklenen başlıklar: Ad Soyad | E-posta | Kurum | Unvan"}
+              {" "}— saat biçimi: 14.05.2026 09:00 veya ISO.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            <div className="flex items-center gap-2">
+              <Checkbox id="imp-cmp" checked={createMissingPersons} onCheckedChange={(v) => setCreateMissingPersons(v === true)} />
+              <Label htmlFor="imp-cmp" className="cursor-pointer text-sm font-normal">Eşleşmeyen için yeni kişi oluştur</Label>
+            </div>
+            {importKind === "SESSIONS" && (
+              <div className="flex items-center gap-2">
+                <Checkbox id="imp-cmr" checked={createMissingRooms} onCheckedChange={(v) => setCreateMissingRooms(v === true)} />
+                <Label htmlFor="imp-cmr" className="cursor-pointer text-sm font-normal">Eksik salonu oluştur</Label>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <Checkbox id="imp-dry" checked={dryRun} onCheckedChange={(v) => { setDryRun(v === true); setImportReport(null); }} />
+              <Label htmlFor="imp-dry" className="cursor-pointer text-sm font-normal">Önce sına — kaydetmez</Label>
+            </div>
+          </div>
+
+          {/* ── sonuç raporu ── */}
+          {importBusy && (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground"><Icons.Loader2 className="size-3.5 animate-spin" /> Satırlar işleniyor, kişiler eşleştiriliyor…</p>
+          )}
+          {importReport && !importBusy && (
+            <div className="maven-stagger-item space-y-3 rounded-xl border bg-muted/20 p-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {importKind === "SESSIONS" ? (
+                  <>
+                    <Chip tone="emerald">{importReport.sessionsCreated} oturum oluşturuldu</Chip>
+                    {importReport.sessionsUpdated > 0 && <Chip tone="teal">{importReport.sessionsUpdated} güncellendi</Chip>}
+                    {importReport.roomsCreated > 0 && <Chip tone="violet">{importReport.roomsCreated} salon oluşturuldu</Chip>}
+                    <Chip tone="teal">{importReport.personsMatched} kişi eşleşti</Chip>
+                    {importReport.personsCreated > 0 && <Chip tone="emerald">{importReport.personsCreated} yeni kişi</Chip>}
+                    {importReport.assignmentsCreated > 0 && <Chip tone="neutral">{importReport.assignmentsCreated} atama</Chip>}
+                    {importReport.personsUnmatched > 0 && <Chip tone="rose">{importReport.personsUnmatched} eşleşmeyen</Chip>}
+                  </>
+                ) : (
+                  <>
+                    <Chip tone="teal">{importReport.personsMatched} kişi eşleşti</Chip>
+                    <Chip tone="emerald">{importReport.personsCreated} yeni kişi</Chip>
+                    <Chip tone="rose">{importReport.personsUnmatched} eşleşmeyen</Chip>
+                    {importReport.participationsCreated > 0 && <Chip tone="violet">{importReport.participationsCreated} katılım oluşturuldu</Chip>}
+                  </>
+                )}
+                {importReport.dryRun && <Chip tone="amber">deneme — kaydedilmedi</Chip>}
+                <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{importReport.totalRows} satır</span>
+              </div>
+
+              {importReport.errors.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-rose-700">Hatalar</p>
+                  {importReport.errors.map((e) => (
+                    <p key={`${e.row}-${e.message}`} className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
+                      <Icons.TriangleAlert className="mt-0.5 size-3 shrink-0" aria-hidden />
+                      <span>Satır <span className="tabular-nums font-semibold">{e.row}</span> — {e.message}</span>
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {importReport.matchDetails.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-muted-foreground">Kişi eşleştirme dökümü</p>
+                  {/* mobilde kart, sm+ üstünde tablo */}
+                  <div className="maven-scroll hidden max-h-52 overflow-y-auto rounded-lg border bg-card sm:block">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-card text-left text-muted-foreground">
+                        <tr className="border-b">
+                          <th className="px-2.5 py-1.5 font-medium">Satır</th>
+                          <th className="px-2.5 py-1.5 font-medium">Ad Soyad</th>
+                          <th className="px-2.5 py-1.5 font-medium">E-posta</th>
+                          <th className="px-2.5 py-1.5 font-medium">Sonuç</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importReport.matchDetails.map((d) => (
+                          <tr key={`${d.row}-${d.name ?? d.email ?? ""}`} className="border-b last:border-0">
+                            <td className="px-2.5 py-1.5 tabular-nums text-muted-foreground">{d.row}</td>
+                            <td className="max-w-40 truncate px-2.5 py-1.5 font-medium">{d.name ?? "—"}</td>
+                            <td className="max-w-44 truncate px-2.5 py-1.5 text-muted-foreground">{d.email ?? "—"}</td>
+                            <td className="px-2.5 py-1.5"><Chip tone={importTone(d.result)}>{d.result}</Chip></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="maven-scroll max-h-52 space-y-1.5 overflow-y-auto sm:hidden">
+                    {importReport.matchDetails.map((d) => (
+                      <div key={`${d.row}-${d.name ?? d.email ?? ""}`} className="rounded-lg border bg-card p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-xs font-semibold">{d.name ?? "—"}</span>
+                          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">sr. {d.row}</span>
+                        </div>
+                        {d.email && <p className="truncate text-[10px] text-muted-foreground">{d.email}</p>}
+                        <div className="mt-1"><Chip tone={importTone(d.result)}>{d.result}</Chip></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* dryRun temizse kaydetme onayı */}
+              {importReport.dryRun && (importReport.errors ?? []).length === 0 && importReport.totalRows > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2">
+                  <p className="text-xs text-teal-800">Sınama temiz görünüyor — kaydedilmeye hazır.</p>
+                  <Button size="sm" onClick={() => void runImport(false)} disabled={importBusy}>
+                    <Icons.Check className="size-4" /> Şimdi kaydet
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setImportOpen(false); setImportReport(null); }}>Kapat</Button>
+            <Button onClick={() => void runImport(dryRun)} disabled={importBusy || !importText.trim() || !currentEditionId}>
+              {importBusy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.FileUp className="size-4" />}
+              {dryRun ? "Sına (kaydetmez)" : "İçe Aktar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── R9-c: Materyal ekle/düzenle diyaloğu ── */}
+      <Dialog open={matOpen} onOpenChange={setMatOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingMat ? "Materyali Düzenle" : "Yeni Materyal"}</DialogTitle>
+            <DialogDescription>{editingMat ? editingMat.title : matTarget?.title}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Tür</Label>
+              <Select value={matForm.type} onValueChange={(v) => setMatForm({ ...matForm, type: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(MATERIAL_TYPE).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Durum</Label>
+              <Select value={matForm.status} onValueChange={(v) => setMatForm({ ...matForm, status: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PENDING">Bekliyor</SelectItem>
+                  <SelectItem value="READY">Hazır</SelectItem>
+                  <SelectItem value="MISSING">Eksik</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="sm:col-span-2"><Label>Başlık *</Label><Input className="mt-1" value={matForm.title} onChange={(e) => setMatForm({ ...matForm, title: e.target.value })} placeholder="Örn. Açılış sunumu v2" /></div>
+            <div className="sm:col-span-2"><Label>Bağlantı (URL)</Label><Input className="mt-1" type="url" value={matForm.url} onChange={(e) => setMatForm({ ...matForm, url: e.target.value })} placeholder="https://…" /></div>
+            <div>
+              <Label>Kişisi (opsiyonel)</Label>
+              <Select value={matForm.personId} onValueChange={(v) => setMatForm({ ...matForm, personId: v })}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                <SelectContent className="maven-scroll max-h-64">
+                  <SelectItem value="none">— Sahip yok —</SelectItem>
+                  {Array.from(personOptions.entries()).map(([id, name]) => <SelectItem key={id} value={id}>{name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            {matForm.type === "VIDEO" && (
+              <div>
+                <Label>Süre (dk)</Label>
+                <Input className="mt-1 tabular-nums" type="number" min={0} max={999} value={matForm.durationMin} onChange={(e) => setMatForm({ ...matForm, durationMin: e.target.value })} placeholder="Örn. 24" />
+              </div>
+            )}
+            <div className="sm:col-span-2"><Label>Notlar</Label><Textarea className="mt-1" rows={2} value={matForm.notes} onChange={(e) => setMatForm({ ...matForm, notes: e.target.value })} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMatOpen(false)}>Vazgeç</Button>
+            <Button onClick={saveMat} disabled={matBusy || !matForm.title.trim()}>{matBusy ? "Kaydediliyor…" : "Kaydet"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -119,9 +119,9 @@ export async function POST() {
     });
 
     // ── Yetenekler (§6 şablonlar) ──
-    const caps1 = ["REGISTRATION", "SCIENTIFIC", "PROGRAM", "SPONSORSHIP", "EXHIBITION", "ACCOMMODATION", "BADGING", "ACCESS_CONTROL", "CERTIFICATES", "COMMUNICATIONS", "OPERATIONS", "CME_CREDITS"];
+    const caps1 = ["REGISTRATION", "SCIENTIFIC", "PROGRAM", "SPONSORSHIP", "EXHIBITION", "FLOOR_PLAN", "ACCOMMODATION", "BADGING", "ACCESS_CONTROL", "CERTIFICATES", "COMMUNICATIONS", "OPERATIONS", "CME_CREDITS"];
     for (const key of caps1) {
-      await db.eventCapability.create({ data: { editionId: edition1.id, key, enabled: true, setupNote: key === "CME_CREDITS" ? "uyarı: kredi kuralı tanımlı değil" : "hazır" } });
+      await db.eventCapability.create({ data: { editionId: edition1.id, key, enabled: true, setupNote: key === "CME_CREDITS" ? "uyarı: kredi kuralı tanımlı değil" : key === "FLOOR_PLAN" ? "Floor Studio uygulamasıyla ortak kimlik (§20)" : "hazır" } });
     }
     const caps2 = ["REGISTRATION", "PROGRAM", "SPONSORSHIP", "EXHIBITION", "FLOOR_PLAN", "BADGING", "ACCESS_CONTROL", "COMMUNICATIONS", "OPERATIONS"];
     for (const key of caps2) {
@@ -326,18 +326,56 @@ export async function POST() {
       ],
     });
 
-    // ── Fuar / stantlar (§19-22) ──
-    const boothRows: [string, number, string, number][] = [["A21", 12, "SHELL_SCHEME", 60000], ["A22", 12, "SHELL_SCHEME", 60000], ["A23", 12, "SHELL_SCHEME", 60000], ["A24", 12, "SHELL_SCHEME", 60000], ["A25", 12, "SHELL_SCHEME", 60000], ["B01", 24, "SPACE_ONLY", 100000], ["B02", 24, "SPACE_ONLY", 100000]];
+    // ── Fuar / stantlar (§19-22) — tam salon düzeni + Floor Studio geometrisi ──
+    const boothRows: [string, number, string, number][] = [
+      ["A21", 12, "SHELL_SCHEME", 60000], ["A22", 12, "SHELL_SCHEME", 60000], ["A23", 12, "SHELL_SCHEME", 60000],
+      ["A24", 12, "SHELL_SCHEME", 60000], ["A25", 12, "SHELL_SCHEME", 60000], ["A26", 12, "SHELL_SCHEME", 60000],
+      ["A27", 12, "SHELL_SCHEME", 60000], ["A28", 12, "SHELL_SCHEME", 60000],
+      ["B01", 24, "SPACE_ONLY", 100000], ["B02", 24, "SPACE_ONLY", 100000], ["B03", 24, "SPACE_ONLY", 100000],
+      ["B04", 24, "SPACE_ONLY", 100000], ["B05", 24, "SPACE_ONLY", 100000],
+      ["C01", 12, "SHELL_SCHEME", 55000], ["C02", 12, "SHELL_SCHEME", 55000], ["C03", 12, "SHELL_SCHEME", 55000],
+      ["C04", 12, "SHELL_SCHEME", 55000], ["C05", 12, "SHELL_SCHEME", 55000],
+    ];
     for (const [code, size, type, price] of boothRows) {
       await db.boothUnit.create({ data: { editionId: edition1.id, code, sizeSqm: size, type, price } });
     }
-    const boothA24 = await db.boothUnit.findFirst({ where: { editionId: edition1.id, code: "A24" } })!;
-    const boothB01 = await db.boothUnit.findFirst({ where: { editionId: edition1.id, code: "B01" } })!;
+    const boothByCode = async (code: string) => (await db.boothUnit.findFirst({ where: { editionId: edition1.id, code } }))!;
+    const boothA24 = await boothByCode("A24");
+    const boothB01 = await boothByCode("B01");
     await db.boothAllocation.create({ data: { boothUnitId: boothA24!.id, agreementId: agrAbc.id, organizationId: abcPharma.id, status: "CONTRACTED" } });
     await db.boothUnit.update({ where: { id: boothA24!.id }, data: { status: "CONTRACTED" } });
-    await db.floorPlanObject.create({ data: { boothUnitId: boothA24!.id, label: "ABC Pharma — A24", x: 12, y: 4, width: 4, height: 3 } });
     await db.boothAllocation.create({ data: { boothUnitId: boothB01!.id, organizationId: beta.id, status: "OPTION" } });
     await db.boothUnit.update({ where: { id: boothB01!.id }, data: { status: "OPTION", optionExpiresAt: D(4, 17) } });
+    // durum çeşitliliği (plan renk paleti için): A25 HOLD, B03 BLOCKED, C02 RELEASED
+    await db.boothUnit.update({ where: { id: (await boothByCode("A25")).id }, data: { status: "HELD" } });
+    await db.boothUnit.update({ where: { id: (await boothByCode("B03")).id }, data: { status: "BLOCKED" } });
+    await db.boothUnit.update({ where: { id: (await boothByCode("C02")).id }, data: { status: "RELEASED" } });
+
+    // ── Floor Studio geometrisi: A sırası (4×3), B sırası (6×4), C sırası (4×3) + dekor ──
+    // A24 ABC Pharma sözleşmeli — etiketi kuruluş adıyla
+    const geoRows: [string, number, number, number, number, string?][] = [
+      ["A21", 2, 4, 4, 3], ["A22", 7, 4, 4, 3], ["A23", 12, 4, 4, 3], ["A24", 17, 4, 4, 3, "ABC Pharma — A24"],
+      ["A25", 22, 4, 4, 3], ["A26", 27, 4, 4, 3], ["A27", 32, 4, 4, 3], ["A28", 37, 4, 4, 3],
+      ["B01", 2, 10, 6, 4], ["B02", 9, 10, 6, 4], ["B03", 16, 10, 6, 4], ["B04", 23, 10, 6, 4], ["B05", 30, 10, 6, 4],
+      ["C01", 2, 17, 4, 3], ["C02", 7, 17, 4, 3], ["C03", 12, 17, 4, 3], ["C04", 17, 17, 4, 3], ["C05", 22, 17, 4, 3],
+    ];
+    for (const [code, x, y, width, height, label] of geoRows) {
+      const bu = await boothByCode(code);
+      await db.floorPlanObject.create({ data: { boothUnitId: bu.id, label: label ?? code, x, y, width, height } });
+    }
+    // dekor/servis objeleri — Floor Studio sahipli (boothUnitId null)
+    await db.floorPlanObject.createMany({
+      data: [
+        { label: "ANA GİRİŞ", x: 18, y: 22.5, width: 8, height: 2 },
+        { label: "KAYIT MASASI", x: 30, y: 22.5, width: 7, height: 2 },
+        { label: "KAFE", x: 38, y: 12, width: 5, height: 5 },
+      ],
+    });
+    // B02 Beta Sound CONTRACTED örneği (tahsis + geometri etiketi)
+    const boothB02 = await boothByCode("B02");
+    await db.boothAllocation.create({ data: { boothUnitId: boothB02!.id, agreementId: agrBeta.id, organizationId: beta.id, status: "CONTRACTED" } });
+    await db.boothUnit.update({ where: { id: boothB02!.id }, data: { status: "CONTRACTED" } });
+    await db.floorPlanObject.update({ where: { boothUnitId: boothB02!.id }, data: { label: "Beta Sound — B02" } });
 
     // ── Bilimsel (§24-28) ──
     await db.scientificSetup.create({

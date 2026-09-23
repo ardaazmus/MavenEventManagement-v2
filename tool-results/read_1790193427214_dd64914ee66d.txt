@@ -1,0 +1,460 @@
+     1→     1→# Maven Event Management — Worklog
+     2→     2→
+     3→     3→---
+     4→     4→Task ID: 1
+     5→     5→Agent: Z.ai Code (ana ajan)
+     6→     6→Task: Zip içindeki mimari dokümana (Maven_Event_Management_Ortak_Organizasyonel_Mimari.md + 11 Ar-Ge dosyası) birebir uyan Event Management App'in eksiksiz geliştirilmesi.
+     7→     7→
+     8→     8→Work Log:
+     9→     9→- Upload kanalı sandbox'a dosya ulaştıramadı (3 deneme). Arka plan zip-watcher kuruldu (PID 1640, /home/z/my-project/upload/).
+    10→    10→- Kullanıcının paylaştığı Google Docs linki `export?format=txt` ile indirildi (108 KB, 5220 satır) → `docs/maven-arge/Maven_UX_ArGe_Tum_Dokumantasyon.txt`. İçinde: 00 indeks + 01-11 Ar-Ge dosyaları + 63 başlıklı kaynak "Ortak Organizasyonel Mimari" MD'nin TAMAMI.
+    11→    11→- Gerçek mimari özlendi: Person ≠ Participation ≠ Registration ≠ Role ≠ Payment; Tenant→Series→Edition; Entitlement Engine; çok eksenli durum modeli (§10); capability tabanlı modül sistemi (§6); Floor Studio ayrı uygulama, ortak kimlikler (§20, §60).
+    12→    12→- Prisma şeması Master Domain Graph (§58) ile birebir yeniden yazıldı: **61 model**. `bunx prisma db push` ✓
+    13→    13→- `src/lib/constants.ts`: tüm durum eksenleri (REGISTRATION_STATUS, PAYMENT_STATUS, ATTENDANCE_STATUS, BADGE, CERTIFICATE, ACCOMMODATION, SUBMISSION, SESSION, INVITATION, DELIVERABLE, CLAIM, ORDER) + TR etiketler + STATUS_TONE renkleri + CAPABILITIES (§6) + TEMPLATES + ORG_EVENT_ROLES (§4) + EVENT_ROLES (§11) + REG_SOURCES/FUNDING_SOURCES (§12) + EDITION_STATUS (§7) + MODULES (§53 menü).
+    14→    14→- API katmanı: `src/lib/api/registry.ts` (61 entity için generic CRUD sözleşmesi: include/search/filter/orderBy/audit) + `src/app/api/[entity]/route.ts` + `[id]/route.ts` (Next 16: await params) + özel rotalar:
+    15→    15→  - `/api/bootstrap` — SPA ilk yükleme (tenant, edisyonlar, sayaçlar, aktivite)
+    16→    16→  - `/api/dashboard` — 08 dosyasındaki KPI sözleşmeleri: portföy + edisyon görünümü, 35 KPI, hazırlık denetimi (engelleyici/uyarı, 8/8), kayıt eğrisi, kaynak dağılımı
+    17→    17→  - `/api/scan` — onsite tarama motoru: ilk geçerli giriş → CHECKED_IN; tekrar tarama → RESCAN_WARNING (sarı); engelli → DENIED; manuel istisna forceReason ile; oturum girişi ayrı liste
+    18→    18→  - `/api/flows` — domain aksiyonları: registration.decide/cancel (claim CONSUMED/RELEASED + badge READY/VOID), sponsor.guest (Person→Participation→Registration→Claim RESERVED zinciri), finance.manualPayment (§38: reason zorunlu, 50k+ ikinci onay), finance.refund, booth.allocate, reservation.confirm (her gece stok kontrolü — bir gece eksikse engel), certificate.generate (uygunluk kuralı), edition.publish (denetim engelleyicileri), person.merge (önerili+onaylı), invitation.respond, capability.toggle
+    19→    19→  - `/api/seed` — 61 modeli dolduran zengin demo: canlı edisyon No-Dig Turkey 2026 (ONSITE), TechDays 2027 (PLANNING), 24 kişi, 8 kurum, 25 kayıt (tüm durum eksenleri), Gold Sponsor 20/14/2/4 hak dökümü (09-C senaryosu), 14 bildiri + hakem/karar, 7 oturum, otel + gecelik stok + 5 rezervasyon + oda arkadaşı, 6 sipariş/ödeme/iade, 12 LCV, rozet/credential/30 tarama, sertifika kuralları, 4 kampanya, 10 görev.
+    20→    20→- UI (SPA `/`): koyu teal sidebar + bağlam şeridi (Tenant > Seri > Edisyon, tarih/yer/saat dilimi) + sabit footer (mt-auto). 15 modül:
+    21→    21→  - Dashboard (portföy + edisyon: 8 KPI + hazırlık 8/8 + finans/sponsor/bilimsel/program kartları + eğri + donut)
+    22→    22→  - Etkinlikler (3 adımlı kurulum sihirbazı + şablon yetenek önerisi)
+    23→    23→  - Kişiler + **Person 360** çekmecesi (§54: kimlik, edisyona göre kayıt/ödeme/rol/rozet/tarama/sertifika, bilimsel)
+    24→    24→  - Kurumlar + **Kurum 360** (§55: roller, hak dökümü, stand, finans, teslimler)
+    25→    25→  - Kayıt & Katılımcılar (kategori doluluk kartları, durum filtresi, onay/ret/iptal + etki önizlemesi, LCV sekmesi)
+    26→    26→  - Bilimsel (bildiri detay: yazarlar, hakem atamaları, sürümlü kararlar; komite karar dialogu)
+    27→    27→  - Program (gün filtresi, salon çakışma tespiti, yayın engeli, görevliler)
+    28→    28→  - Sponsor & Fuar (Entitlement havuzları 4'lü döküm + claim listesi + misafir ekleme + teslim takvimi + ticari stand planı, Floor Studio ayrımı notu)
+    29→    29→  - Konaklama (gecelik stok ızgarası renk kodlu, release uyarısı, teyit akışı)
+    30→    30→  - Ödeme & Ek Hizmet (6 finans KPI, sipariş detay: kalemler→katılımcı, ödeme zaman çizelgesi, açık bakiye, manuel tahsilat dialogu)
+    31→    31→  - İletişim, Sahada (kapı seçimi + tarama masası + sonuç kartı yeşil/sarı/kırmızı + canlı akış + manuel istisna), Belgeler (4'lü sayaç + üretim), Operasyon (6 kolon kanban + hızlı durum), Ayarlar (capability switch'leri + kurum atamaları)
+    32→    32→- Doğrulama (agent-browser, uçtan uca): dashboard render ✓, edisyon değişimi ✓, sponsor misafir ekleme (ayrılmış 2→3, kalan 4→3) ✓, QR tarama yeşil ✓, tekrar tarama sarı ✓ (location MAIN_DOOR düzeltmesi), kayıt onaylama (claim CONSUMED + rozet READY) ✓, rezervasyon teyidi (2 oda-gece tüketildi) ✓, Person 360 ✓ (apiGet import + response wrap düzeltmeleri), yetenek kilidi ekranı ✓, Operasyon kanban ✓, Konaklama stok ızgarası ✓, campaigns orderBy düzeltmesi (createdAt yok → name) ✓.
+    33→    33→- ESLint: 0 error (useApi async IIFE düzenlemesi, eksik importlar: label/apiGet/useState/Select).
+    34→    34→
+    35→    35→Stage Summary:
+    36→    36→- **61 modellik Prisma şeması kaynak mimarinin Master Domain Graph'ı ile birebir uyumlu**; organizasyon yapısı (Tenant→Series→Edition→Participation) ve iş kayıtları (Registration/Order/Payment/Entitlement/Submission/…) dokümanla 1:1.
+    37→    37→- 15 modüllü SPA + generic REST API + 6 özel iş rotası + gerçekçi demo verisi.
+    38→    38→- Anti-patternlere uyuldu (§57): tek status yok (çok eksenli), sponsor tier hard-code değil, complimentary ≠ PAID, bilimsel karar ≠ program slotu, stant ticari tahsis ≠ geometri.
+    39→    39→- Bilinen ufak esneklikler: registration confirmationNo akışta cuid (okunaklı format sadece seed'de); Floor Studio geometri yalnız FloorPlanObject ile temsili.
+    40→    40→- Zip hala upload edilmedi; zip gelirse `upload/maven_docs` watcher çıkaracak — mimari farkları hizalanmalı.
+    41→    41→
+    42→    42→Unresolved / sonraki adımlar:
+    43→    43→- Katılımcı/sponsor/davetli PORTALLARI (dış kullanıcı akışları) ayrı faz.
+    44→    44→- Form tasarımcısı (sürükle-bırak soru editörü) ve koşullu soru istatistikleri.
+    45→    45→- Floor Studio bağlantı sözleşmesi (shared ID sync endpoint'leri).
+    46→    46→- Person merge UI'ı (API hazır).
+    47→    47→
+    48→    48→---
+    49→    49→Task ID: F-prep (F1-F5)
+    50→    50→Agent: Z.ai Code (ana ajan)
+    51→    51→Task: Kullanıcının yeni isteği — Geniş kapsamlı Form Yönetimi & Tasarım Merkezi (kayıt formu, katılımcı formu, anketler, mobil interaktif QA öğeleri, spam koruması, kayıt muhasebesi, online ödeme, saha giderleri entegrasyonu)
+    52→    52→
+    53→    53→Work Log:
+    54→    54→- Prisma şeması genişletildi: `FormSubmission` (spam puanı/gerekçeleri, honeypot, elapsed, IP, kaynak), `Expense` (kategori/saha harcaması, fiş, onay, ödeme yöntemi) modelleri; `FormDefinition`'a type (REGISTRATION|SURVEY|FEEDBACK|QA_MOBILE|CUSTOM), isPublic, spam ayarları (honeypotEnabled, minSubmitSeconds, maxPerEmailPerDay, blockedDomains, autoApprove), enableOnlinePayment, defaultCategoryId, successMessage; `FormField`'a placeholder + mobileInteractive. `bunx prisma db push --force-reset` ✓ (seed yeniden doldurulacak)
+    55→    55→- `src/lib/spam-guard.ts`: 7 katmanlı spam motoru (honeypot +100, engelli domain +100, zaman tuzağı +60, geçersiz e-posta +50, IP hız limiti +40, e-posta günlük limit +80, mükerrer onaylı +30; eşik 50 → SPAM). Bellek içi günlük sayaçlar.
+    56→    56→- `src/lib/api/registration-chain.ts`: FormSubmission → Person → Participation → Registration → Order/Line/Payment zinciri (idempotent; §2 prensibi: her adım bağımsız kayıt). cancelRegistrationOfSubmission ile spam/ret durumunda bağlı kayıt iptali.
+    57→    57→- API rotaları:
+    58→    58→  - `POST /api/public-register` — spam korumalı herkese açık kayıt: {formId, respondentName, respondentEmail, phone, organization, answers{fieldId:değer}, honeypotValue, elapsedSeconds, paymentMethod} → SPAM ise bile submission kaydedilir (gerekçeleriyle), temizse kayıt zinciri + PENDING ödeme oluşur. Yanıt: {submissionId, status, spamScore, spamReasons, registration, order, payment}
+    59→    59→  - `GET/PATCH/DELETE /api/form-submissions/[id]` — PATCH action: approve (kayıt zinciri kurar/iptal edileni geri açar) | reject | spam | pending
+    60→    60→  - `GET /api/form-stats?formId=` — gönderi özeti + alan bazlı dağılım (SINGLE/MULTI/CHECKBOX/QA_QUIZ), NUMBER/RATING ort-min-max, NPS skoru (promoter-passive-detractor), son 14 gün günlük akış, spam oranı
+    61→    61→  - `GET /api/accounting?editionId=` — entegre defter: gelir (SUCCEEDED payments), bekleyen tahsilat, gider (APPROVED/PAID/REIMBURSED) + planlanan, net/marj, açık alacak (order bakiyesi), kaynak/kategori kırılımı, 30 günlük seri, son 60 birleşik hareket
+    62→    62→  - `POST /api/payments/[id]/process` — sanal POS simülasyonu: kart doğrulama, **0000 ile biten kart → FAILED; aksi SUCCEEDED + order bakiyesi yeniden hesap (OPEN/PARTIALLY_PAID/PAID)
+    63→    63→- Registry: `form-submissions` ve `expenses` varlıkları eklendi (generic CRUD + audit); `forms` entry'sine _count.submissions + orderBy + audit eklendi
+    64→    64→- constants.ts: FORM_TYPES, FORM_TYPE_HINTS, FORM_FIELD_TYPES (15 tür; RATING/NPS/QA_QUIZ mobil interaktif), CHOICE_FIELD_TYPES, FORM_SUBMISSION_STATUS, SUBMISSION_SOURCES, EXPENSE_STATUS/CATEGORY/PAYMENT_METHOD, PAYMENT_METHODS; MODULES'a `forms` (Form Merkezi, capability=null) ve `accounting` (Muhasebe, capability=REGISTRATION) eklendi; STATUS_TONE'a SPAM/PLANNED/PENDING_RECEIPT/REIMBURSED/CLOSED
+    65→    65→- Seed: Online Kayıt Formu (REGISTRATION, spam ayarlı, engelli domainler: spam.xyz/tempmail.xyz/guvensizmail.com, ödeme yöntemi alanı), Kongre Memnuniyet Anketi (8 yanıt, NPS/RATING/Quiz mobil interaktif), kapalı geri bildirim + taslak özel form; gönderiler: 3 SPAM (honeypot/engelli domain/zaman tuzağı gerekçeli), 2 PENDING, 1 APPROVED + kayıt zinciri + tahsil edilmiş ödeme, 1 ADMIN kayıtlı; 8 gider (saha harcamaları dahil, 4 farklı durum)
+    66→    66→- page.tsx: `forms` ve `accounting` modülleri render'a bağlandı; stub view'lar yazıldı
+    67→    67→
+    68→    68→Stage Summary:
+    69→    69→- Form Merkezi backend'i TAM: form CRUD (registry), spam korumalı public kayıt, gönderi inceleme, istatistik, sanal POS, entegre muhasebe
+    70→    70→- Sıradaki: F-a (form-center.tsx UI) + F-b (accounting.tsx UI) paralel agent görevleri, sonra E2E doğrulama
+    71→    71→
+    72→    72→---
+    73→    73→## UI AGENT SÖZLEŞMESİ (F-a / F-b ajanları için ortak kurallar)
+    74→    74→
+    75→    75→Konvansiyonlar (mevcut view'lardan birebir):
+    76→    76→- Dosya başı: `"use client";` + kısa TR yorum
+    77→    77→- `import { listEntity, apiSend } from "@/lib/client";` — TÜM istekler göreli yol (ZORUNLU)
+    78→    78→- `import { useApp } from "@/lib/store";` — `const { currentEditionId, bump, refreshKey } = useApp();`
+    79→    79→- `import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";`
+    80→    80→- Sabitler: `@/lib/constants` (label, fmtMoney, fmtDate, fmtDateTime, STATUS_TONE, FORM_TYPES, FORM_FIELD_TYPES, FORM_SUBMISSION_STATUS, SUBMISSION_SOURCES, EXPENSE_STATUS, EXPENSE_CATEGORY, EXPENSE_PAYMENT_METHOD, PAYMENT_METHODS, ORDER_STATUS, PAYMENT_STATUS)
+    81→    81→- shadcn: Button, Input, Label, Textarea, Select, Dialog*, Tabs, Badge, Switch, Checkbox, Separator, Card (src/components/ui/*)
+    82→    82→- Toast: `import { useToast } from "@/hooks/use-toast";`
+    83→    83→- İkonlar: `import * as Icons from "lucide-react";`
+    84→    84→- Named export: `export function FormCenterView()` / `export function AccountingView()`
+    85→    85→- useApi deseni: `const { data, error, reload, loading } = useApi<T>(() => listEntity<T>("entity", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);`
+    86→    86→- Toast sonrası `reload(); bump();`
+    87→    87→- Kart dolgusu p-4/p-6, listelerde max-h-96 overflow-y-auto + `maven-scroll` sınıfı, mobil uyumlu (grid sm:/md:/lg:)
+    88→    88→- Türkçe etiketler, emoji yok, küçük/orta boyutlu tipografi
+    89→    89→
+    90→    90→API SÖZLEŞMESİ (değiştirme — ana ajan yazdı, çalışıyor):
+    91→    91→- Form listesi: `listEntity("forms", { editionId })` → FormDefinition[] (fields + _count.submissions dahil)
+    92→    92→- Form kaydet: `apiSend("/api/forms", "POST", {...})` / `apiSend("/api/forms/<id>", "PUT", {...})` / DELETE
+    93→    93→- Alan CRUD: `/api/form-fields` (POST {formId, label, type, ...}) / `/api/form-fields/<id>` PUT-DELETE
+    94→    94→- PUBLIC kayıt: `apiSend("/api/public-register", "POST", { formId, respondentName, respondentEmail, phone, organization, answers: {fieldId: value}, honeypotValue, elapsedSeconds, paymentMethod, source: "WEB_PUBLIC" })` → { submissionId, status: "APPROVED"|"PENDING"|"SPAM", spamScore, spamReasons[], registration, order, payment }
+    95→    95→- Gönderi listesi: `listEntity("form-submissions", { formId | editionId | status | source })` → form{id,name,type} + registration{category} dahil
+    96→    96→- Gönderi aksiyon: `apiSend("/api/form-submissions/<id>", "PATCH", { action: "approve"|"reject"|"spam"|"pending", notes? })`
+    97→    97→- Gönderi detay: `apiGet("/api/form-submissions/<id>")` → form.fields + answers + registration
+    98→    98→- İstatistik: `apiGet("/api/form-stats?formId=<id>")` → { form, totals{submissions,valid,spam,spamRate,approved,pending,rejected,avgElapsedSeconds}, daily[{date,count}], fields[{fieldId,label,type,mobileInteractive,responseCount,responseRate,distribution[{value,count}],numeric,nps,samples}] }
+    99→    99→- Muhasebe: `apiGet("/api/accounting?editionId=<id>")` → { summary{incomeTotal,pendingIncome,pendingCount,expenseTotal,plannedExpense,net,margin,paymentCount,expenseCount}, receivable{amount,openOrders}, incomeBySource[], expenseByCategory[], expenseByStatus[], daily[{date,income,expense}], ledger[{id,kind:"INCOME"|"EXPENSE"|"RECEIVABLE",date,description,ref,method,status,amount,currency}] }
+   100→   100→- Gider CRUD: `listEntity("expenses", { editionId, status?, category? })`, POST/PUT `/api/expenses[...]` (code UI'da üretilir: `GSN-YYYY-XXX`)
+   101→   101→- Ödeme simülasyonu: `apiSend("/api/payments/<id>/process", "POST", { cardHolder, cardNumber, expiry: "AA/YY", cvc })` → { outcome: "SUCCEEDED"|"FAILED", message, payment, order }. KART TESTLERİ: başarılı için "4242 4242 4242 4242", reddi için sonu "0000" (örn. "5555 5555 5555 0000")
+   102→   102→- Bekleyen ödeme bulma: `listEntity("payments", { status: "PENDING" })` → order dahil; order.editionId == currentEditionId filtresi UI'da
+   103→   103→
+   104→   104→---
+   105→   105→Task ID: F-b
+   106→   106→Agent: full-stack-developer
+   107→   107→Task: Muhasebe view (accounting.tsx)
+   108→   108→
+   109→   109→Work Log:
+   110→   110→- Stub `/home/z/my-project/src/components/maven/views/accounting.tsx` üzerine yazıldı (681 satır, named export `AccountingView`); yalnızca bu dosya değiştirildi — page.tsx / constants.ts / registry.ts / API route'lara dokunulmadı, test kodu yazılmadı.
+   111→   111→- Sözleşmeye birebir uydı: "use client" + TR yorum, `listEntity/apiSend/apiGet` (göreli yol), `useApp` (currentEditionId/bump/refreshKey), `../bits` bileşenleri, constants importları (EXPENSE_STATUS, EXPENSE_CATEGORY, EXPENSE_PAYMENT_METHOD, PAYMENT_METHODS, STATUS_TONE, label, fmtDate, fmtDateTime, fmtMoney), shadcn (Button/Input/Label/Textarea/Select/Dialog/Tabs/Badge/Separator), useToast, `import * as Icons`, useApi deseni `apiGet("/api/accounting?editionId=")` + `listEntity("expenses", { editionId })`.
+   112→   112→- PageHeader: "Muhasebe" + §36 açıklaması; children: "Hızlı Saha Harcaması" (amber outline varyant) + "Yeni Gider".
+   113→   113→- 6 KPI (grid sm:2 / md:3 / xl:6): Tahsil Edilen (paymentCount tahsilat), Bekleyen Tahsilat (pendingCount ödeme + openOrders açık sipariş, Hourglass/amber), Gerçekleşen Gider (expenseCount kalem, ReceiptText), Planlanan Gider (onay/fiş bekleyen), Net Bakiye (net≥0 yeşil / <0 kırmızı, TrendingUp/Down, "%47 marj" alt notu — margin null ise "gelir − gerçekleşen gider"), Açık Alacak (openOrders sipariş bakiyesi).
+   114→   114→- TAB defter: kind Select filtresi (Tümü/INCOME/EXPENSE/RECEIVABLE, istemci tarafı), sticky başlıklı tablo (max-h-96 maven-scroll): fmtDateTime tarih, mono referans, yöntem (INCOME/RECEIVABLE → PAYMENT_METHODS, EXPENSE → EXPENSE_PAYMENT_METHOD), StatusBadge (ödemeler için SUCCEEDED/PENDING/FAILED + EXPENSE_STATUS birleşik harita; ton STATUS_TONE'dan), tutar renk kodlu (+yeşil / −kırmızımsı / "(bekliyor)" amber, satır para birimiyle); altında görünür filtrede gelir/gider alt toplam satırı; boşsa EmptyState.
+   115→   115→- TAB expenses: durum + kategori Select ve başlık/vendor/kod arama (üçü de istemci tarafı — kod üretimi tam listeden yapılır); gider kartları: mono kod, StatusBadge, kategori Chip (FIELD_EXPENSE amber, TECH teal — Chip'te sky tonu yok, CATERING violet, diğer neutral), tutar bold sağda, fmtDate tarih, "Sahada: {spentBy}", ödeme yöntemi, fiş no mono Badge; aksiyonlar: PLANNED/PENDING_RECEIPT → Onayla (PUT APPROVED + approvedBy:"Muhasebe") + Ödendi İşaretle (PUT PAID), APPROVED → Ödendi, PAID + PERSONAL_REIMBURSE → Personeline Ödendi (PUT REIMBURSED); REJECTED'a buton yok; satır bazlı busyId + disabled.
+   116→   116→- "Yeni Gider" dialogu: 12 alanlı tam form (başlık*, kategori*, tutar*, para birimi TRY/USD/EUR default TRY, ödeme yöntemi, tedarikçi, harcayan, harcama tarihi default bugün — TZ güvenli todayStr, durum default PENDING_RECEIPT, açıklama, fiş no, not); POST /api/expenses; code `GSN-YYYY-XXX` sayaç+1, Set ile çakışma denetimi (+1 döngü).
+   117→   117→- "Hızlı Saha Harcaması" dialogu: başlık/tutar/harcayan/ödeme yöntemi (CASH/COMPANY_CARD/PERSONAL_REIMBURSE); sabit category FIELD_EXPENSE, status APPROVED, approvedBy "Saha Onayı", açıklama "Sahada anlık harcama — fiş sonradan eklenebilir."; toast "Saha harcaması kaydedildi — deftere işlendi".
+   118→   118→- TAB breakdown: lg:2 sütun — Sol: Gelir Kaynakları barları (teal, PAYMENT_METHODS etiketi), Gider Kategorileri barları (FIELD_EXPENSE amber, diğer rose-400); Sağ: Gider Durumları Chip dizisi (ton STATUS_TONE'dan türetilen toneFromStatus ile), 30 Günlük Akış sütun grafiği (gün başına iki ince div: teal gelir / rose-500 gider, max'a normalize min 2px, zero barlar opak, hover title "GG.AA — gelir/gider", altta renkli kare legend + 30 gün toplamları); altta "Mutabakat Notu" SectionCard (net = gelir − gerçekleşen gider; planlanan gider onay/ödeme sonrası net'e etki eder; RECEIVABLE tahsil olunca INCOME'a döner) + Separator.
+   119→   119→- Doğrulama (agent-browser, No-Dig Turkey 2026 edisyonu): KPI'lar gerçek veriyle (₺43.000 tahsil / ₺23.000 gider / ₺20.000 net / %47 marj / ₺20.000 alacak) ✓; defter tablosu +/− tutarlar, yöntem etiketleri, durum rozetleri ✓; Hızlı Saha Harcaması POST uçtan uca (GSN-2026-009, 450 TRY, CASH, APPROVED/Saha Onayı) ✓; Onayla PUT uçtan uca (GSN-2026-006 → APPROVED, approvedBy "Muhasebe") ✓; Yeni Gider dialogu tüm alanlar + defaultlar ✓; 3 sekme + kırılım barları/chip/grafik ✓; page errors: 0.
+   120→   120→- `bun run lint`: 0 error 0 warning (temiz, exit 0).
+   121→   121→
+   122→   122→Stage Summary:
+   123→   123→- Muhasebe view TAM: entegre defter (gelir ≠ gider ≠ alacak), 6 KPI, gider CRUD akışı (tam form + hızlı saha harcaması + onay/ödeme/reimburse zinciri), kaynak/kategori/durum kırılımı ve 30 günlük akış grafiği — API sözleşmesi hiç değiştirilmeden UI katmanı tamamlandı.
+   124→   124→- Kod üretimi tam gider listesinden yapıldığı için status/category filtreleri istemci tarafında (liste küçük, anlık filtre; listEntity'nin status/category parametreleri kullanılmadı — davranış farkı yok).
+   125→   125→- Bilinen ufak esneklikler: TECH kategorisi Chip'te sky tonu olmadığından teal; "Ödendi İşaretle" basit PUT {status:"PAID"} (spec'e uygun — fiş no dialogu isteğe bağlı bırakıldı); RECEIVABLE defter satırları yalnız PENDING ödeme varken görünür (mevcut seed'de pendingIncome=0, kod hazır).
+   126→   126→- Kalan: F-a (form-center.tsx) paralel ajanı + ana ajan E2E turu.
+   127→   127→
+   128→   128→---
+   129→   129→Task ID: F-a
+   130→   130→Agent: full-stack-developer
+   131→   131→Task: Form Merkezi view (form-center.tsx)
+   132→   132→
+   133→   133→Work Log:
+   134→   134→- Stub üzerine 1.872 satırlık tam FormCenterView yazıldı (sadece bu dosya değiştirildi; page.tsx/constants/registry/API rotalarına dokunulmadı). Konvansiyonlar UI AGENT SÖZLEŞMESİ'nden birebir: "use client" + TR yorum, listEntity/apiSend/apiGet göreli yol, useApp (currentEditionId/bump/refreshKey), ../bits parçaları, shadcn bileşenleri, useToast, Icons namespace, useApi deseni, toast sonrası reload()+bump().
+   135→   135→- TAB 1 Formlar: kart grid (md:2/xl:3), tür rozeti (REGISTRATION=teal, SURVEY=violet, FEEDBACK=emerald, QA_MOBILE=amber, CUSTOM=neutral), StatusBadge (Taslak/Yayında/Kapalı), açıklama truncate, mini metrikler (_count.submissions, fields.length), spam koruması / online ödeme / herkese açık rozetleri. Aksiyonlar: Stüdyoda Düzenle (tab+seçim), Yayınla/Kapat (PUT status), Herkese Açık Switch (PUT isPublic). Yeni Form dialogu: ad/tür(+FORM_TYPE_HINTS)/açıklama + spam bölümü (honeypot default açık, zaman tuzağı 4sn, günlük limit 5, engelli domainler) + REGISTRATION ekstraları (enableOnlinePayment, defaultCategoryId "Kategori otomatik" sentinel=AUTO, autoApprove).
+   136→   136→- TAB 2 Tasarım Stüdyosu: form seçici; lg:grid-cols-5 (sol 3 alan listesi, sağ 2 ayar panelleri). Alan satırları: sıra no, etiket, tür, Zorunlu(amber)/Koşullu(sky) rozetleri, Mobil Chip, gizlilik Chip, SECTION sol vurgulu farklı görünüm, ok butonlarıyla order swap (iki alanın çift PUT'u) ve sil (DELETE + toast). Alan Ekle dialogu: 15 tür, placeholder/helpText, options textarea (SINGLE/MULTI/QA_QUIZ/COUNTRY), required (OPTIONAL/ALWAYS/CONDITIONAL + koşul alan/değer girişleri), gizlilik 3 seçenek, mobileInteractive (RATING/NPS/QA_QUIZ'de otomatik açık), order=fields.length+1. Sağ panel: Form Ayarları + Spam Koruması (ShieldCheck) + Ödeme (CreditCard, yalnız REGISTRATION) — hepsi PUT /api/forms/<id>, boş string→null.
+   137→   137→- TAB 3 Yanıtlar & İstatistik: form + durum + kaynak filtreleri; masaüstü tablo (sticky başlıklı, max-h-96 maven-scroll) + mobil kartlar; spam puanı pill (STATUS_TONE.SPAM doğrudan kullanım), süre "38 sn", kaynak/tarih; aksiyonlar Onayla/Ret/Spam, SPAM'da İncelemeye Al (apiPatch yardımcı — client.ts PATCH içermediği için dosya içinde fetch tabanlı PATCH eklendi, göreli yol). Detay dialogu apiGet: gönderen bilgileri + IP + spam gerekçeleri (kırmızı liste) + form.fields sırasıyla yanıtlar (CHECKBOX→Evet/Hayır, çoklu JSON→virgül) + bağlı kayıt (no, durum, kategori, kişi). İstatistik: 4 KpiCard (Toplam/Onaylı/Spam Oranı/Ort. Doldurma), 14 günlük mini sütun grafiği (normalize yükseklik), NPS büyük skor kartı (promoter yeşil/pasif amber/detractor kırmızı), alan kartları lg:grid-cols-3 (yanıt oranı, teal dağılım barları max'a normalize, Ort (min–max), son 5 örnek italik, Mobil Öge Badge).
+   138→   138→- TAB 4 Canlı Kayıt Masası: yalnız PUBLISHED && isPublic formlar; max-w-2xl ziyaretçi görünümü; 15 alan türü render (yatak/textarea/select/checkbox listesi/tek checkbox/yıldız 1-5 fill/NPS 0-10 grid-cols-11 teal/quiz=select/dosya disabled/tarih/sayı); koşullu alanlar conditionField etiketi eşleşmesiyle gizle/göster (conditionValue "true" özel durumu); honeypot görünmez name="website" alan (-left-[9999px], aria-hidden, tabIndex -1); Date.now tabanlı elapsedSeconds; REGISTRATION'da 4 bilgi alanı + ödeme yöntemi Select (ONLINE_CARD/BANK_TRANSFER/PAYMENT_LINK); POST /api/public-register → sonuç kartı (SPAM kırmızı skor+gerekçe, PENDING amber + successMessage + kayıt no/durum, APPROVED yeşil); PENDING ödemede sanal POS kart formu → /api/payments/<id>/process (SUCCEEDED yeşil referans / FAILED kırmızı tekrar dene) + test ipucu Chip'leri (4242→Başarılı, **0000→Red); Yeni Gönderim sıfırlama; submit sonrası bump().
+   139→   139→- Doğrulama: bun run lint 0 sorun; tsc --noEmit form-center.tsx temiz (listEntity generic tip düzeltmesi: T=eleman tipi). agent-browser E2E: 4 sekme render ✓, edisyon değişiminde eski form seçiminin otomatik temizlenmesi düzeltildi ✓, stüdyoda 7 alanlı kayıt formu + sıra değişimi (ileri/geri) ✓, Yanıtlar tablosu + spam pill + koşullu aksiyonlar + detay dialogu (bağlı kayıt NF-No + kategori) ✓, istatistik KPI + NPS + dağılım barları ✓, Canlı Masada UI üzerinden gerçek gönderim → PENDING + kayıt zinciri + sanal POS 4242 ile SUCCEEDED (TR referansı) + Yeni Gönderim sıfırlaması ✓, Yeni Form dialogu ✓. Test sırasında oluşan gönderiler (Canlı Test Kullanıcı, Bot Botson) demo verisi olarak bırakıldı.
+   140→   140→
+   141→   141→Stage Summary:
+   142→   142→- Form Merkezi UI tamamlandı: 4 sekme (liste/tasarım stüdyosu/yanıt incelemesi+istatistik/canlı kayıt masası) backend sözleşmesiyle birebir entegre; spam koruması, koşullu alanlar, mobil interaktif öğeler ve online ödeme akışı uçtan uca çalışıyor.
+   143→   143→- ESLint 0 hata, TypeScript strict temiz; tek dosya değişikliği (form-center.tsx, 1.872 satır).
+   144→   144→- Bilinen esneklikler: file alanı önizlemede kapalı (spec gereği), koşullu gösterim conditionField'i etiket eşleşmesiyle bulur (aynı etiketten iki soru varsa ilki), İncelemeye Al/PATCH için client.ts'e dokunulmadan dosya içi apiPatch kullanıldı, submission detayında notes alanı henüz UI'da düzenlenmiyor.
+   145→   145→
+   146→   146→---
+   147→   147→Task ID: F8
+   148→   148→Agent: Z.ai Code (ana ajan)
+   149→   149→Task: Final doğrulama — lint, temiz seed, agent-browser uçtan uca E2E testleri
+   150→   150→
+   151→   151→Work Log:
+   152→   152→- `bun run lint` → 0 hata / 0 uyarı (tüm proje)
+   153→   153→- Seed yeniden çalıştırıldı (agent E2E test artıklarını temizler): 4 form, 15 gönderi, 8 gider, 26 kayıt
+   154→   154→- agent-browser E2E (tümü GEÇTİ):
+   155→   155→  1. Menüde "Form Merkezi" ve "Muhasebe" modülleri görünüyor ✓
+   156→   156→  2. Canlı Kayıt Masası → ziyaretçi görünümü: 15 alan türü render, honeypot gizli alan, zaman tuzağı sayacı ✓
+   157→   157→  3. SPAM TESTİ: engelli domain e-posta (bot@tempmail.xyz) → gönderildi ama "Spam şüphesi — incelemeye alındı", Skor 100, gerekçe: "E-posta alan adı engelli listede: tempmail.xyz" ✓ (kayıt zinciri KURULMADI)
+   158→   158→  4. TEMİZ KAYIT: Ayla Deneme → "Başvurunuz alındı — incelemede" + Kayıt No NF-MUECUBH7406 + ₺5.000 sipariş + PENDING ödeme ✓
+   159→   159→  5. SANAL POS: 4242 4242 4242 4242 kart → "Ödeme başarılı — Referans TR-MUECUTD0, 5000 TRY tahsil edildi" ✓ (önceki curl testinde **0000 kartı → FAILED doğrulanmıştı)
+   160→   160→  6. Yanıtlar sekmesi: Ayla (İnceleniyor) + Bot Deneme (Spam, Skor 100) tabloda; "Onayla" aksiyonu → "Onaylandı" ✓
+   161→   161→  7. Form istatistikleri: yanıt oranları, dağılım barları ✓
+   162→   162→  8. Muhasebe: Tahsil ₺43.000 (7), Bekleyen ₺2.000, Gider ₺23.000, Net ₺20.000 (%47 marj), Açık Alacak ₺20.000; defterde Ayla +₺5.000 INCOME satırı ✓ (seed 38.000 + Ayla 5.000 = tutarlı)
+   163→   163→  9. Mobil viewport (390×844) render + sticky footer (contentinfo) ✓, sayfa hataları 0 ✓
+   164→   164→- dev.log temiz: 0 runtime error
+   165→   165→
+   166→   166→Stage Summary:
+   167→   167→- Kullanıcının yeni isteği TAMAMLANDI: geniş kapsamlı Form Yönetimi & Tasarım Merkezi (kayıt/katılımcı/anket/mobil QA/özel formlar), 7 katmanlı spam koruması, form özelliklerine göre kayıt girişi, kayıt muhasebesi (kişi bazlı ödeme durumu), online ödeme seçenekleri + sanal POS API'si, ek/saha harcamalarının muhasebeye entegrasyonu
+   168→   168→- API yolları: /api/public-register, /api/form-submissions/[id], /api/form-stats, /api/accounting, /api/payments/[id]/process, /api/forms, /api/form-fields, /api/form-submissions, /api/expenses (generic CRUD)
+   169→   169→- Proje durumu: 61+2 model, 17 modüllü SPA, lint temiz, E2E doğrulanmış
+   170→   170→
+   171→   171→Unresolved / sonraki adımlar:
+   172→   172→- Hız limitleri bellek içi (tek instance) — yatay ölçek için Redis'e taşınmalı
+   173→   173→- Mobil uygulamaya gerçek QA/quiz motoru bağlanacaksa QA_QUIZ için doğru cevap işaretleme (scoring) modeli eklenebilir
+   174→   174→- FILE alan türü UI'da bilinçli kapalı (gerçek dosya yükleme servisi gerekir)
+   175→   175→- Sponsor/katılımcı dış portalları ayrı faz
+   176→   176→
+   177→   177→---
+   178→   178→Task ID: R-prep
+   179→   179→Agent: Z.ai Code (ana ajan)
+   180→   180→Task: Cron inceleme turu R — QA değerlendirmesi + yeni özellik API'leri (mutabakat + rozet baskı)
+   181→   181→
+   182→   182→Work Log:
+   183→   183→- QA değerlendirmesi (agent-browser): 0 page error, 0 console error; Dashboard/Form Merkezi/Muhasebe/Kayıt/Ödeme/Sahada sweep temiz; tüm API'ler 200 (/api/accounting 400 = editionId param beklentisi, normal). Proje STABİL → hata düzeltme yerine yeni özellik turu.
+   184→   184→- Yeni API: `GET /api/reconciliation?editionId=` — mutabakat raporu: sipariş tutarlılığı (tutar≠kalem, PAID≠tahsilat, OPEN+tahsilat tespiti), doğrulanmamış tahsilatlar (referans/teyit eksik §38), gider denetimi (fiş bekleyen/7+ gün eski, onaylı-ödenmemiş, reimburse), açık alacak yaşlandırması (0-30/31-60/60+), son 6 ay dönem özeti, kapanış hazırlığı (blockers/warnings). Test: 8 sipariş, 0 tutarsızlık, 2 doğrulanmamış tahsilat, hazırlık=False ✓
+   185→   185→- Yeni API: `GET/POST /api/badges/print-queue` — baskı kuyruğu (READY/PRINTED/ISSUED... + profil + kişi + kategori + roller), POST {ids, action: PRINT|ISSUE|REPRINT} durum makinesi kontrollü (READY→PRINTED, PRINTED→ISSUED, basılı→REPRINTED) + aktivite günlüğü. Test: PRINT 1 rozet READY 3→2 ✓, seed sıfırlandı
+   186→   186→
+   187→   187→Stage Summary:
+   188→   188→- İki API test edildi ve çalışıyor; sıradaki: R-a (accounting.tsx Mutabakat sekmesi) + R-b (badge-queue.tsx Rozet Baskı modülü) paralel, sonra stil cilası (bits.tsx) ve final doğrulama
+   189→   189→
+   190→   190→---
+   191→   191→## UI AGENT SÖZLEŞMESİ R (R-a / R-b)
+   192→   192→
+   193→   193→Ortak kurallar: önceki "UI AGENT SÖZLEŞMESİ" bölümündeki TÜM konvansiyonlar geçerli (use client, göreli yol, ../bits, useToast, reload()+bump(), Türkçe, emoji yok, max-h-96 maven-scroll, responsive, strict TS).
+   194→   194→
+   195→   195→R-a ek sözleşme — Mutabakat API:
+   196→   196→- `apiGet("/api/reconciliation?editionId=" + currentEditionId)` → {
+   197→   197→    generatedAt,
+   198→   198→    orders: { total, paid, open, partiallyPaid, cancelled, mismatches: [{ orderNo, payer, issue, expected, actual, delta }] },
+   199→   199→    unverifiedPayments: [{ id, orderNo, payer, amount, currency, source, paidAt, reason }],
+   200→   200→    expenseAudit: { awaitingReceipt: {count,amount}, awaitingOld: {count,amount}, approvedUnpaid: {count,amount}, reimbursable: {count,amount} },
+   201→   201→    aging: { buckets: [{label,count,amount}], totalReceivable, openOrders },
+   202→   202→    period: [{ month: "YYYY-MM", income, expense, net }],
+   203→   203→    readiness: { ok, blockers: string[], warnings: string[] }
+   204→   204→  }
+   205→   205→
+   206→   206→R-b ek sözleşme — Baskı Kuyruğu API:
+   207→   207→- `apiGet("/api/badges/print-queue?editionId=" + currentEditionId)` → {
+   208→   208→    queue: [{ id, badgeNo, status, issuedAt, printedAt, profile: {name,color,accessAreas}|null, person: {fullName, company, title}, category, roles: string[], registrationStatus }],
+   209→   209→    stats: { ready, printed, issued, reprinted, notEligible, void, total },
+   210→   210→    byProfile: [{ name, count }]
+   211→   211→  }
+   212→   212→- Aksiyon: `apiSend("/api/badges/print-queue", "POST", { ids: string[], action: "PRINT"|"ISSUE"|"REPRINT" })` → { ok, succeeded, failed, results: [{id, ok, message?}] }
+   213→   213→- BADGE_STATUS + STATUS_TONE (constants.ts) rozet durumları için; modül id "badges" (constants MODULES'ta ben ekledim), capability "BADGING" → Sahada ile aynı yetenek
+   214→   214→
+   215→   215→---
+   216→   216→Task ID: R-b
+   217→   217→Agent: full-stack-developer
+   218→   218→Task: Rozet Baskı Merkezi view (badge-queue.tsx)
+   219→   219→
+   220→   220→Work Log:
+   221→   221→- YENİ dosya `/home/z/my-project/src/components/maven/views/badge-queue.tsx` oluşturuldu (377 satır, named export `BadgeQueueView`); SADECE bu dosya yazıldı — page.tsx / constants.ts / bits.tsx / API route'larına dokunulmadı, test kodu yok, modül kaydı ana ajana bırakıldı.
+   222→   222→- UI AGENT SÖZLEŞMESİ R'ye birebir: "use client" + TR yorum, apiGet/apiSend göreli yol, useApp (currentEditionId/bump/refreshKey), ../bits parçaları (PageHeader/KpiCard/Chip/SectionCard/StatusBadge/EmptyState/ErrorState/Loading/useApi), constants (BADGE_STATUS, EVENT_ROLES, label, fmtDate), shadcn (Button/Input/Checkbox/Select/Dialog), useToast, `import * as Icons`, strict TS (any yok).
+   223→   223→- useApi deseni sözleşmedeki gibi: `if (!currentEditionId) return Promise.resolve(null); return apiGet<BadgeQueueData>("/api/badges/print-queue?editionId=" + currentEditionId)` deps [currentEditionId, refreshKey].
+   224→   224→- PageHeader: "Rozet Baskı" + §40 desc; children Chip teal "N seçili" (satır tıklamasıyla canlı güncellenir).
+   225→   225→- KPI sırası grid sm:2 xl:5: Baskıya Hazır (teal/Printer), Basıldı (emerald/Stamp), Verildi (emerald/CheckCircle2), Yeniden Basılan (amber/RefreshCcw), Uygun Değil (neutral/Ban); altında "Toplam N rozet kuyrukta" not satırı.
+   226→   226→- Profil kırılımı barı: byProfile → Chip dizisi "Delegate × 13" biçiminde; her chip'e kuyruktan eşlenen profil rengiyle inline-style renk noktası (renk adı→hex objesi: teal/amber/violet/rose/sky/neutral, fallback #a3a3a3 — dinamik Tailwind sınıfı derlenmediği için inline style, talimattaki gibi).
+   227→   227→- Seçim + toplu aksiyon çubuğu (sticky değil): "Tümünü Seç (kuyruk)" (yalnız filtrelenmiş görünür satırlara union uygular, title ile belirtildi) / "Seçimi Temizle" / "{görünen}/{toplam} rozet görünüyor" sayacı; üç toplu buton Baskıya Gönder (PRINT, primary), Teslim Et (ISSUE, emerald outline), Yeniden Bas (REPRINT, amber outline) — durum kapısı YOK (sunucu kontrol ediyor); seçim boşsa istek atmak yerine "Rozet seçilmedi" toast'ı.
+   228→   228→- runAction(action, ids) tek/çoklu ortak: bulkBusy (PRINT|ISSUE|REPRINT) + rowBusyId ayrı busy state'leri, tüm butonlar çakışmayı önlemek için anyBusy'de disabled, aktifte Loader2 spin; sonuç toast'ı: başlık "{succeeded} rozet basıldı/teslim edildi/yeniden basıldı", başarısız varsa description "{failed} atlandı (durumu uygun değil / basılı durumda değil / basılı rozet değil)", succeeded=0 ise destructive; sonra setSelected(empty) + reload() + bump().
+   229→   229→- Kuyruk tablosu (SectionCard, max-h-96 overflow-y-auto maven-scroll, sticky thead): Checkbox (hücre stopPropagation), Rozet No (mono, son 6 karakter # ile; tıklanınca önizleme), Kişi (fullName bold + company·title muted truncate), Profil (renk noktası inline style + Chip), Kategori (lg'de), Roller (EVENT_ROLES label Chip, max 2 + "+N", md'de), Durum (StatusBadge BADGE_STATUS + STATUS_TONE), Baskı/Veriş (Basım/Veriş iki satır fmtDate, sm'de), İşlem (göz ikonu önizleme + READY→"Baskıya Al", PRINTED/REPRINTED→"Teslim Et", aksi "—"); satır tıklaması seçimi toggle eder, seçili satır bg-teal-50/60.
+   230→   230→- Filtreler istemci tarafı: durum Select (Tümü + BADGE_STATUS'ın 6 durumu), arama Input (fullName + badgeNo + profil adı, toLocaleLowerCase("tr-TR") contains); "Tümünü Seç" yalnız görünene uygulanır; boş görünüm için iki farklı EmptyState (kuyruk boş / filtre boş).
+   231→   231→- Baskı Önizleme dialogu: rozet no'ya veya satır sonu göz ikonuna tıklayınca; 320px kart mock — üstte profil rengi şerit (inline style), ortada fullName büyük + company·title, altta #badgeNo mono + profil adı + "Erişim alanları: ..." muted; not "Bu kart baskı şablonunu temsil eder — gerçek kesiim BadgeProfile ayarlarından gelir"; Kapat butonu; DialogDescription a11y için mevcut.
+   232→   232→- Edisyon değişiminde seçim + önizleme useEffect ile sıfırlanır (stale id ile başka edisyonun rozetine aksiyon gitmesin); seçim aksiyon anında kuyrukla kesişimle doğrulanır (selectedInQueue).
+   233→   233→- Doğrulama: `bun run lint` → 0 error 0 warning (exit 0); `bunx tsc --noEmit` → badge-queue.tsx'te 0 hata (proje genelindeki önceden varolan hatalar başka dosyalarda: examples/, skills/, api/seed, onsite.tsx, scientific.tsx — bu ajanın kapsamı dışı). View page.tsx'e bağlı olmadığından agent-browser E2E yapılamadı (görevde belirtildiği gibi dosya derlemesi doğrulandı).
+   234→   234→
+   235→   235→Stage Summary:
+   236→   236→- Rozet Baskı Merkezi UI TAM: baskı kuyruğu tablosu (seçimli), toplu PRINT/ISSUE/REPRINT akışı (sunucu durum makinesine güvenen her-zaman-aktif butonlar + succeeded/failed toast raporu), profil kırılımı, durum/arama filtreleri ve BadgeProfile tabanlı baskı önizleme mock'u — API sözleşmesi (/api/badges/print-queue GET/POST) hiç değiştirilmeden tamamlandı.
+   237→   237→- Bilinen sınırlar: modül henüz page.tsx'te render edilmiyor (ana ajan bağlayacak); preview kartındaki accessAreas Prisma'da String? olduğundan düz metin olarak gösterilir (dizi gelirse join ile güvenli); "Uygun Değil/Geçersiz/Verildi" rozetlerine tabloda satır aksiyonu yok (durum makinesi gereği "—").
+   238→   238→- Kalan: ana ajan module kaydı ("badges" id) + render + E2E turu.
+   239→   239→
+   240→   240→---
+   241→   241→Task ID: R-a
+   242→   242→Agent: full-stack-developer
+   243→   243→Task: Muhasebe'ye Mutabakat sekmesi
+   244→   244→
+   245→   245→Work Log:
+   246→   246→- Sadece `src/components/maven/views/accounting.tsx` değiştirildi (682 → 938 satır, +258 satır; named export `AccountingView` korundu). page.tsx / constants.ts / bits.tsx / API route'lara dokunulmadı, test kodu yazılmadı.
+   247→   247→- `ReconciliationData` interface'i eklendi (R-a sözleşmesiyle birebir: orders+mismatches, unverifiedPayments, expenseAudit, aging, period, readiness); ayrı `useApi` çağrısı `apiGet("/api/reconciliation?editionId=" + currentEditionId)` — mevcut accounting çağrısıyla AYNI deps `[currentEditionId, refreshKey]`, aynı null-guard deseni; mevcut accounting veri çağrısı hiç değiştirilmedi.
+   248→   248→- TAB 4 "Mutabakat" (Icons.FileCheck): Kapanış Hazırlığı kartı — ok=true → yeşil border/bg + CheckCircle2 + "Mutabakata hazır — engelleyici bulunamadı"; ok=false → kırmızı + AlertTriangle + "Kapanış engellendi…"; blockers kırmızı maddeler (OctagonAlert, "ENGELLEYICI (n)" başlığı) + warnings amber maddeler (TriangleAlert, "UYARI (n)" başlığı) ayrımı; header action'da "Oluşturuldu: fmtDateTime(generatedAt)" muted metni + Yenile butonu (loadingRecon'da disabled + ikon spin).
+   249→   249→- Sipariş Özeti satırı: 5 mini Chip (Toplam/Ödendi/Açık/Kısmi/İptal — nötr/emerald/amber/amber/rose tonları), ShoppingCart ikonlu etiketle tek kart satırı.
+   250→   250→- lg:grid-cols-2 grid: Sol "Sipariş Tutarsızlıkları" — boşsa yeşil ReconCleanState ("Tutarsızlık yok — tüm siparişler tutarlı", dosya içi yeşil EmptyState bileşeni: emerald dashed border + CheckCircle2); varsa satır: orderNo mono bold + payer + issue + "Beklenen ≠ Gerçekleşen" fmtMoney + kırmızı işaretli "Fark:" delta Badge. Sağ "Doğrulanmamış Tahsilatlar (§38)" — boşsa yeşil "Tümü doğrulanmış"; varsa satır: orderNo + payer + tutar (kendi para birimi) + kaynak (PAYMENT_METHODS label) + fmtDateTime(paidAt) + amber reason pill.
+   251→   251→- "Gider Denetimi": 4 KpiCard (Fiş Bekleyen amber / 7+ Gün Bekleyen Fiş — 0 üstünde amber değilse nötr / Onaylı — Ödenmemiş violet / Personeline Ödenecek teal), alt notlarda tutar fmtMoney.
+   252→   252→- "Açık Alacak Yaşlandırması": 3 sütun yaş kovası kartı (label + count sipariş + fmtMoney amount); 60+ gün tutarı > 0 → rose vurgu + uyarı ikonu; Separator altında bold "Toplam açık alacak" satırı.
+   253→   253→- "Son 6 Ay Dönem Özeti": kompakt tablo (sticky başlıklı, max-h-96 maven-scroll) — Ay "2026-09" → monthLabel("Eyl 2026", tr-TR), Gelir yeşil / Gider kırmızı / Net işaretli + pozitif yeşil negatif kırmızı + normalize mini bar; tfoot'ta Toplam satırı (Gelir/Gider/Net toplamları, period türevleri render'da hesaplanır).
+   254→   254→- Mobil: 4. sekmeyle TabsList 390px'i aşınca form-center'daki mevcut konvansiyon uygulandı (`TabsList className="h-auto flex-wrap"` — tek satırlık stil eklemesi, sekme yapısı/konvansiyonları korundu); 390px'te yatay taşma 0.
+   255→   255→- `bun run lint`: 0 hata / 0 uyarı (exit 0). `tsc --noEmit` accounting.tsx'te 0 hata (proje genelindeki diğer dosyalardaki mevcut TS hataları bu görevle ilgisiz).
+   256→   256→- Doğrulama (agent-browser, No-Dig Turkey 2026 edisyonu): 4 sekme render ✓; Mutabakat sekmesi gerçek veriyle: readiness=False → kırmızı kart "Kapanış engellendi…" + ENGELLEYICI(1) "2 tahsilat referans/teyit bilgisi eksik (§38)" + UYARI(1) "3 onaylı gider henüz ödenmedi" ✓; Sipariş Özeti 7/3/1/3/0 ✓; Tutarsızlık yok yeşil blok ✓; 2 doğrulanmamış tahsilat (ORD-2026-0005 Onur Erdem ₺6.000 Sahada POS 21 Eyl, ORD-2026-0006 Gizem Bulut ₺2.000 Ödeme Linki 22 Eyl, "Referans numarası eksik" pill) ✓; Gider Denetimi 2/₺9.900, 0/₺0, 3/₺19.400, 1/₺1.250 ✓; Yaşlandırma 0-30: ₺20.000/4 sipariş, toplam ₺20.000 ✓; Dönem Özeti Nis–Eyl 2026 + Eyl satırı ₺38.000/₺23.000/+₺15.000, tfoot Toplam ₺38.000/₺23.000/₺15.000 ✓; Yenile butonu çalışıyor ✓; diğer 3 sekme (defter/gider/kırılım) bozulmadı ✓; mobil 390×844 yatay taşma yok ✓; page errors 0, console temiz ✓; VLM görsel denetim: renk hiyerarşisi/hizalama/padding temiz ✓.
+   257→   257→- Not: Geliştirme sırasında sunucu bellek baskısıyla (4GB sandbox, tsc + chrome aynı anda) iki kez OOM ile düştü; ayrıntılı tsc turu sonrası dev sunucu yeniden başlatıldı ve doğrulama tamamlandı. Tablo/kart stilleri mevcut SectionCard/KpiCard/Chip/Badge/StatusBadge konvansiyonlarıyla birebir yazıldı.
+   258→   258→
+   259→   259→Stage Summary:
+   260→   260→- Muhasebe view 4. sekme MUTABAKAT tamamlandı: kapanış hazırlığı (engelleyici/uyarı ayrımı), sipariş özeti çipleri, sipariş tutarsızlıkları, doğrulanmamış tahsilatlar (§38), gider denetimi (4 KPI), açık alacak yaşlandırması ve son 6 ay dönem özeti — /api/reconciliation sözleşmesiyle birebir, tek dosya değişikliği (+258 satır), lint temiz, gerçek veriyle E2E doğrulandı (readiness=False senaryosu dahil).
+   261→   261→- Sıradaki: R-b (badge-queue.tsx Rozet Baskı modülü) paralel ajanı + ana ajan stil cilası ve final doğrulama.
+   262→   262→
+   263→   263→---
+   264→   264→Task ID: R-final
+   265→   265→Agent: Z.ai Code (ana ajan)
+   266→   266→Task: R turu finali — modül bağlama, stil cilası, uçtan uca doğrulama
+   267→   267→
+   268→   268→Work Log:
+   269→   269→- Rozet Baskı modülü bağlandı: MODULES'a `{ id: "badges", label: "Rozet Baskı", icon: "Printer", capability: "BADGING", group: "edition" }` (Sahada'dan sonra) + page.tsx'e BadgeQueueView mount
+   270→   270→- bits.tsx stil cilası (18 modülü birden etkiler):
+   271→   271→  - KpiCard: tıklanabilir kartlarda hover'da yukarı kalkma (translate-y), üst kenarda primary vurgu çizgisi (scale-x animasyonu), ikon hover büyütme, focus-visible ring (erişilebilirlik), active state
+   272→   272→  - SectionCard: overflow-hidden (köşe taşması yok), başlık şeridi bg-muted/30, hover shadow
+   273→   273→  - StatusBadge: iç parlaklık (inset highlight) ile daha oturmuş rozet görünümü
+   274→   274→  - EmptyState: ikon artık yuvarlak muted kapsayıcıda, bg-muted/20 zemin
+   275→   275→  - PageHeader: başlık yanında teal gradyan vurgu çubuğu (marka tutarlılığı)
+   276→   276→  - Tailwind uyumluluk düzeltmeleri: hover:shadow-sm/60 → hover:shadow, ring-current/15 kaldırıldı
+   277→   277→- agent-browser E2E (tümü GEÇTİ):
+   278→   278→  1. Menüde "Rozet Baskı" görünüyor; KPI'lar No-Dig 2026'da 3 READY/18 PRINTED/24 toplam ✓ (edisyon localStorage'ı seed sonrası eski id — TechDays'e düştü, edisyon seçiciyle No-Dig'e geçildi; bootstrap fallback davranışı not edildi)
+   279→   279→  2. Durum filtresi (Hazır) ✓, arama alanı ✓
+   280→   280→  3. Baskı Önizleme dialogu: Ahmet Yılmaz — ABC Pharma · Ar-Ge Müdürü — Speaker — erişim alanları ✓ (Escape ile kapanıyor)
+   281→   281→  4. Tümünü Seç + toplu PRINT → POST 200, READY 3→0 ✓
+   282→   282→  5. Muhasebe → Mutabakat sekmesi: Kapanış Hazırlığı kırmızı kart (engelleyici: 2 tahsilat referans eksik §38; UYARI 1), "Tutarsızlık yok", yaşlandırma 0-30 gün, Son 6 Ay Dönem Özeti ✓
+   283→   283→  6. Mobil 390×844 render ✓, page errors 0 ✓
+   284→   284→- `bun run lint`: 0 hata / 0 uyarı (bits.tsx cilası dahil tüm proje)
+   285→   285→
+   286→   286→Stage Summary:
+   287→   287→- Bu tur eklendi: Mutabakat raporu (API + Muhasebe 4. sekme: tutarsızlık/§38/gider denetimi/yaşlandırma/6 ay/kapanış hazırlığı) + Rozet Baskı Merkezi (API + yeni modül: kuyruk, toplu PRINT/ISSUE/REPRINT durum makinesi, önizleme, filtre/arama) + global stil cilası
+   288→   288→- Proje: 63 model, 18 modüllü SPA, 2 yeni API (reconciliation, badges/print-queue), lint temiz
+   289→   289→
+   290→   290→Unresolved / sonraki adımlar:
+   291→   291→- Edisyon localStorage'ı: seed sonrası eski id geçersiz olunca editions[0]'a düşüyor (TechDays) — bootstrap'ta "kayıtlı id yoksa en güncel PUBLISHED edisyonu seç" iyileştirmesi yapılabilir
+   292→   292→- Kalan adaylar: kişi birleştirme UI'ı (API hazır), Floor Studio sync endpoint'leri, bekleme listesi otomatik teklif, CME kredi defteri, sponsor/katılımcı portalları
+   293→   293→- Bellek notu: 4GB sandbox'ta tsc + chrome + next dev aynı anda OOM verebiliyor — agent'lar tsc'yi dosya bazlı filtreyle kullanmalı
+   294→   294→
+   295→   295→---
+   296→   296→## UI AGENT SÖZLEŞMESİ R2 (R2-a / R2-b)
+   297→   297→
+   298→   298→Ortak kurallar: önceki "UI AGENT SÖZLEŞMESİ" bölümlerindeki TÜM konvansiyonlar geçerli ("use client", göreli yol, ../bits parçaları, useToast, Türkçe, emoji yok, max-h-96 maven-scroll, responsive, strict TS, any yok). EK KURAL: **tsc --noEmit ÇALIŞTIRMA** (4GB sandbox OOM riski) — yalnız `bun run lint` ile doğrula. Dev sunucusuna DOKUNMA, seed ÇALIŞTIRMA.
+   299→   299→
+   300→   300→R2-a ek sözleşme — CME Kredi API (HAZIR, değiştirme):
+   301→   301→- `apiGet("/api/cme?editionId=" + currentEditionId)` → {
+   302→   302→    editionId,
+   303→   303→    sessions: [{ id, title, type, startTime, cmeCredits: number|null, status, attendanceCount }],
+   304→   304→    ledger: [{ participationId, person: { fullName, company, title }, roles: string[], registrationStatus, attendedCount, eligibleCount, credits, maxPossible, percent, lastActivity }],
+   305→   305→    summary: { sessionsTotal, sessionsWithCredits, creditsPotential, attendees, creditsIssued, avgCredits, maxEarned, coveragePercent },
+   306→   306→    byType: [{ type, sessions, withCredits, creditsSum, attendance }]
+   307→   307→  }
+   308→   308→- POST `apiSend("/api/cme", "POST", { action: "set-credits", sessionId, credits: number })` → ProgramSession | { error } (0–99 arası; hata 400)
+   309→   309→- POST `apiSend("/api/cme", "POST", { action: "bulk-apply", editionId, defaults: Record<string, number> })` → { ok, updated, applied: string[] } — yalnız cmeCredits null olanlara uygular
+   310→   310→
+   311→   311→R2-b ek sözleşme — Mükerrer Kişi API (HAZIR, değiştirme):
+   312→   312→- `apiGet("/api/people/duplicates")` → {
+   313→   313→    totalPersons,
+   314→   314→    suggestions: [{ key, reason: "EMAIL"|"NAME_PHONE"|"NAME_ORG", persons: [{ id, fullName, email, phone, title, company, city, status, createdAt }], olderId, note }],
+   315→   315→    reasonLabels: { EMAIL, NAME_PHONE, NAME_ORG }
+   316→   316→  }
+   317→   317→- Birleştirme: `apiSend("/api/flows", "POST", { action: "person.merge", sourceId, targetId })` → { ok: true } — kaynak MERGED olur, geçmiş (katılım/bildiri/yazarlık/hakemlik/tarama) hedefe taşınır. Kaynak ≠ hedef kontrolü sunucuda.
+   318→   318→
+   319→   319→Entegrasyon notları:
+   320→   320→- R2-a: scientific.tsx içindeki ProgramView'a Tabs eklenecek (mevcut oturum listesi "Oturumlar" sekmesine taşınır; yeni sekme "CME Kredi" — yalnız hasCapability(edition, "CME_CREDITS") true ise görünür; edition = editions.find(e => e.id === currentEditionId))
+   321→   321→- R2-b: people.tsx içindeki PeopleView'a "Olası Mükerrerler" bölümü eklenecek (Kişiler listesinin üstünde/altında SectionCard)
+   322→   322→
+   323→   323→---
+   324→   324→Task ID: R2-a
+   325→   325→Agent: Z.ai Code
+   326→   326→Task: Program modülüne CME Kredi Defteri sekmesi (scientific.tsx — yalnız ProgramView)
+   327→   327→
+   328→   328→Work Log:
+   329→   329→- Yalnız `/home/z/my-project/src/components/maven/views/scientific.tsx` değiştirildi (289 → 539 satır, +250 satır); ScientificView'a hiç dokunulmadı, yeni dosya açılmadı, test kodu yazılmadı. page.tsx / constants.ts / bits.tsx / API rotaları değişmedi, seed çalıştırılmadı, dev sunucusuna dokunulmadı.
+   330→   330→- ProgramView içeriği Tabs'e taşındı: "Oturumlar" sekmesi (gün filtresi Select + çakışma uyarısı + oturum kartları + yayınla dialogu birebir korundu), yeni "CME Kredi" sekmesi (GraduationCap ikonu). Sekme yalnız `hasCapability(editions.find(e => e.id === currentEditionId), "CME_CREDITS")` true ise render edilir (store'dan editions + hasCapability import edildi).
+   331→   331→- CME verisi ayrı useApi ile: `apiGet("/api/cme?editionId=" + currentEditionId)`, deps `[currentEditionId, refreshKey]`, null-guard `if (!currentEditionId || !cmeEnabled) return Promise.resolve(null)`. Sekme içi yükleme Loading(rows=5), hata ErrorState(onRetry: reloadCme).
+   332→   332→- KPI satırı (grid gap-3 sm:grid-cols-2 xl:grid-cols-4): Kredili Oturum (sessionsWithCredits, sub "N oturum", GraduationCap), Kredi Potansiyeli (creditsPotential, Sigma, violet), Kredi Kazanan (attendees, sub "katılımcı", UserCheck, emerald), Dağıtılan Kredi (creditsIssued, sub "ort. X kredi/kişi", Award, amber).
+   333→   333→- Kapsam satırı: h-1.5 rounded bg-muted içinde teal div (width %) + "Kapsam" etiketi + "Oturumların %X'i kredili" muted metni.
+   334→   334→- SectionCard "Oturum Kredileri": kredi editörü tablosu (maven-scroll max-h-96 overflow-auto, min-w-[560px], sticky thead bg-card) — sütunlar Oturum (title bold + tür Chip, KEYNOTE=violet/BREAK=neutral/diğer=teal), Saat (tr-TR saat:dk), Katılım ("N kişi"), Kredi (Input type=number w-20 h-8, value=cmeCredits ?? "", placeholder "—", min 0 max 99 step 0.5) + Kaydet butonu (Loader2 spin, savingId'de disabled, boş girişte disabled). Kaydet: apiSend("/api/cme","POST",{action:"set-credits", sessionId, credits:Number(input)}) → toast "X kredi atandı: {title}" → reloadCme() + bump(); hata toast destructive; 0–99 aralık dışı istemci tarafı engel + uyarı.
+   335→   335→- Input senkronizasyonu: satır bazlı `Record<string,string>` state + useEffect([cme]) ile dış veri reload'unda sunucu değerine senkronize (cmeCredits null → "").
+   336→   336→- SectionCard "Tür Bazlı Toplu Ata": CME_SESSION_TYPES sabiti (constants.ts'te SESSION_TYPES yoktu → yerel sabit dizi KEYNOTE/TALK/PANEL/WORKSHOP/POSTER_SESSION) için 5 küçük number input (placeholder "0") + sağda "Boş Kredilere Uygula" butonu (tüm inputlar boş veya bulkBusy iken disabled) + muted ipucu "Yalnız kredisiz oturumlara uygulanır". Gönderilen defaults yalnız dolu inputlar; yanıt updated>0 → toast "{updated} oturuma kredi atandı", updated=0 → bilgi toast "Atanacak kredisiz oturum yok".
+   337→   337→- SectionCard "Kredi Defteri": kişi bazlı tablo (maven-scroll max-h-96, min-w-[640px], sticky thead) — Kişi (fullName bold + company·title muted truncate), Roller (EVENT_ROLES label Chip teal, max 2 + "+N" neutral, boşsa "—"), Katılım ("attendedCount/eligibleCount oturum" tabular-nums), Kredi (bold tabular-nums), İlerleme (w-16 h-1.5 teal bar + %X muted), Son Etkinlik (fmtDateTime, yoksa "—"). API sırası korundu (krediye göre sıralı), attendedCount=0 satırlar opacity-60. Boşsa EmptyState "Defter boş — oturum taraması ve kredi bekleniyor".
+   338→   338→- PageHeader Yenile butonu artık her iki veriyi yeniler (reload + reloadCme); `label` ve `fmtDateTime` constants'tan eklendi, dosya başı yorumuna CME notu eklendi. Renk ailesi teal/emerald/amber/rose/violet/neutral, emoji yok, tüm metinler Türkçe.
+   339→   339→- Doğrulama: `bun run lint` → 0 hata / 0 uyarı (tsc çalıştırılmadı — R2 sözleşmesi). agent-browser E2E (No-Dig Turkey 2026): Program → 2 sekme render ✓; CME Kredi sekmesi görünür (yetenek açık) ✓; KPI gerçek veriyle 3/7 oturum, potansiyel 6.5, 5 kazanan, 7.5 dağıtılan (ort. 1.5) ✓; Kapsam %43 ✓; editör tablosunda 7 oturum, mevcut krediler inputlara yüklü, boş girişlerde Kaydet disabled ✓; PANEL oturumuna 1 kredi girip Kaydet → toast "1 kredi atandı: Büyük Projelerde Paydaş Paneli" + Kredili 4, Potansiyel 7.5, Kapsam %57, defter "1/4 oturum" ✓; Tür Bazlı Ata POSTER_SESSION=2 → "Boş Kredilere Uygula" aktifleşti, POST 200, Kredili 5 / Kapsam %71 / Poster input 2 ✓; aynı şablon tekrar uygulandığında updated=0 → bilgi toast "Atanacak kredisiz oturum yok" (DOM eval ile doğrulandı) ✓; Kredi Defteri 25 satır (5 aktif + 20 soluk opacity-60), roller Chip, ilerleme barları ✓; Oturumlar sekmesi değişmedi ✓; mobil 390×844 yatay taşma 0 ✓; `agent-browser errors` → 0 page error ✓.
+   340→   340→
+   341→   341→Stage Summary:
+   342→   342→- Program modülü 2 sekmeli oldu: mevcut oturum yönetimi korunarak CME Kredi Defteri (§08) tam UI kazandı — kredi atama editörü, tür bazlı toplu şablon, kişi bazlı birikim defteri; /api/cme GET/POST sözleşmesi hiç değiştirilmeden tüketildi (tek dosya +250 satır).
+   343→   343→- Test sırasında atanan gerçek krediler (PANEL=1, POSTER_SESSION=2) demo verisi olarak bırakıldı (seed çalıştırma yasağı gereği geri alınıp bozulmadı; akreditasyon senaryosuna uygun).
+   344→   344→- Bilinen sınırlar: oturum kredisini sıfırlama/silme yok (API credits=null kabul etmiyor, 400); BREAK türü şablonda yok (toplu atama yalnız 5 sabit tür) ama editörde listelenir; "+N" rol chip'i için demo veride 3+ rollü kişi yok (kod yolu hazır); SESSION_TYPES sabiti constants.ts'e eklenmedi (dokunma yasağı) — yerel sabit kullanıldı.
+   345→   345→- R2-b (people.tsx Mükerrer Kişi) paralel ajanın görevi; bu ajan yalnız scientific.tsx'e dokundu.
+   346→   346→
+   347→   347→---
+   348→   348→Task ID: R2
+   349→   349→Agent: Z.ai Code (ana ajan) + full-stack-developer ×2 (R2-a ✓, R2-b △ tamamlandı ve ana ajan tarafından doğrulandı)
+   350→   350→Task: Cron inceleme turu R2 — QA değerlendirmesi, edisyon fallback hatası düzeltmesi, CME Kredi Defteri + Kişi Birleştirme özellikleri, stil cilası
+   351→   351→
+   352→   352→Work Log:
+   353→   353→- QA DEĞERLENDİRMESİ: worklog + dev.log inceledi; agent-browser ile 18 modülün tamamı tarandı → 0 page error, 0 console error, tüm API'ler 200. Proje STABİL → hata düzeltme + yeni özellik turu kararına varıldı.
+   354→   354→- HATA DÜZELTMESİ (worklog'da bilinen sorun): store.ts bootstrap — persisted edition id geçersizse (seed sonrası) editions[0]'a (boş TechDays taslağı) düşüyordu. Yeni mantık: persisted geçersiz → isPublished/REGISTRATION/ONSITE edisyonları startDate'e göre sırala, en güncel aktif edisyonu seç. E2E doğrulandı: reseed + stale localStorage → No-Dig Turkey 2026 açılıyor ✓
+   355→   355→- ŞEMA: ProgramSession.cmeCredits Float? eklendi (CME_CREDITS yeteneği için), db push ✓ — model sayısı 63 (footer metni de 63'e güncellendi).
+   356→   356→- YENİ API `/api/cme` (GET+POST): oturum kredi editörü verisi, SESSION_ENTRY/RESCAN+ALLOWED/RESCAN_WARNING taramalarından kişi×oturum tekil katılım, kişi bazlı defter (kredi, yüzde bar, son etkinlik), özet (sessionsWithCredits/creditsPotential/attendees/creditsIssued/avg/coveragePercent), tür kırılımı. POST: set-credits (0–99 doğrulamalı) + bulk-apply (tür bazlı, yalnız kredisiz oturumlara). Düzeltmeler: ScanEvent'te editionId yok → session relasyon filtresi; katılım haritası personId anahtarlı (participationId değil). Seed'e KEYNOTE=2/TALK=1.5/WORKSHOP=3 kredileri eklendi.
+   357→   357→- YENİ API `/api/people/duplicates`: EMAIL / NAME_PHONE / NAME_ORG kurallarıyla mükerrer önerisi (tr-TR normalize, MERGED hariç, olderId hedef önerisi). Test: iki kural da gerçek veriyle doğrulandı.
+   358→   358→- registry.ts: EntityConfig.defaultWhere desteği + people'a { status ≠ MERGED, mergedIntoId: null } — birleştirilen kişiler artık tüm listelerde gizlenir (sözleşme gereği).
+   359→   359→- R2-a (subagent, scientific.tsx +250 satır): ProgramView Tabs'a taşındı; "CME Kredi" sekmesi (yalnız CME_CREDITS yeteneği açıkken): 4 KPI + kapsam barı + oturum kredi editörü (inline input+kaydet) + tür bazlı toplu atama + kredi defteri (kişi, rol chip'leri, ilerleme barı, soluk satırlar). Subagent E2E: kredi atama 1.5→toast, toplu atama, updated=0 bilgi toast'ı, mobil 390px ✓
+   360→   360→- R2-b (subagent, people.tsx +148 satır): "Olası Mükerrerler" bölümü (öneri 0 ise gizli, "Mükerrer yok" chip'i), kişi kartları + sebep chip'i (EMAIL emerald/NAME_PHONE amber/NAME_ORG violet), birleştirme diyaloğu (A/B radio kartlar, olderId varsayılan, geri alınamaz uyarısı). Subagent deadline aşımı → ana ajan dosyayı devraldı: tek bozukluk 3 useState bildirimiydi ([m karakterleri eksik — dosya zaten ajanın son yazımında düzgün geldi), lint 0 hata ile doğrulandı. Ana ajan E2E: test Ahmet Yılmaz çifti UI'dan birleştirildi → toast + bölüm kapandı + MERGED listeden düştü ✓
+   361→   361→- STİL CILASI (shell.tsx, 18 modülü etkiler): sidebar aktif öğesinde sol teal vurgu çubuğu (scale animasyonlu), hover'da ikon büyüme + pl geçişi, focus-visible ring; ONSITE edisyon için "Canlı" rozetinde ve edisyon seçicide ping animasyonlu nokta; Yenile butonu loading'de spin + disabled; modül geçişlerinde fade/slide animasyonu (key={module}); sidebar alt kartına gradyan + Shapes ikonu; footer "61 model" → "63 model" düzeltmesi.
+   362→   362→
+   363→   363→Stage Summary:
+   364→   364→- Bu tur eklendi: CME Kredi Defteri (§08 — şema+API+UI, akreditasyon iş akışı: kredi ata → tarama işler → kişi bazlı defter) + Mükerrer Kişi Tespiti & Onaylı Birleştirme (Kimlik kuralı 1 UI'ı) + edisyon fallback düzeltmesi + MERGED gizleme + kapsamlı stil cilası
+   365→   365→- Proje: 63 model, 18 modüllü SPA, 2 yeni API (cme, people/duplicates), lint 0 hata, reseed sonrası tam E2E sweep temiz
+   366→   366→- Doğrulanmış akışlar: bootstrap fallback, CME kredi atama (tek+toplu), mükerrer tespit (2 kural), onaylı birleştirme (UI+API), MERGED gizlenme, mobil render
+   367→   367→
+   368→   368→Unresolved / sonraki adımlar:
+   369→   369→- CME: kredi sıfırlama (credits:null) API'de kapalı — akreditasyonda gerekirse açılabilir; BREAK/NETWORKING türlerine şablon atanmıyor (bilinçli)
+   370→   370→- person.merge activity log'u id son 6 haneyle yazıyor — insan okunur isim için flows'ta include ile zenginleştirilebilir
+   371→   371→- Kalan adaylar (öncelik sırasıyla): bekleme listesi otomatik teklif (registration.cancel → WAITLIST'e teklif), Floor Studio sync endpoint'leri, sponsor/katılımcı dış portalları, kişi birleştirmede çakışma çözümü (aynı edisyonda iki katılım)
+   372→   372→- Bellek: dev sunucusu tur içinde 2 kez OOM düştü (subagent chrome+tsc paralelliği) — tur sonunda setsid ile yeniden başlatıldı, temiz. Subagent'lara tsc yasağı işe yarıyor; chrome işlemleri bitince kapatılmalı (agent-browser close)
+   373→   373→
+   374→   374→---
+   375→   375→Task ID: R3
+   376→   376→Agent: Z.ai Code (ana ajan)
+   377→   377→Task: Cron inceleme turu R3 — QA değerlendirmesi (agent-browser), Bekleme Listesi & Otomatik Teklif motoru (§12), stil cilası
+   378→   378→
+   379→   379→Work Log:
+   380→   380→- QA DEĞERLENDİRMESİ: worklog + dev.log incelendi; agent-browser ile modül sweep (Dashboard, Kayıt, Form Merkezi, Muhasebe, Ödeme, Sahada, Rozet, Bilimsel + mobil 390×844) → 0 page error, 0 console error, lint 0 hata. Proje STABİL → yeni özellik turu kararı: worklog'daki 1 numaralı aday "bekleme listesi otomatik teklif" uygulandı.
+   381→   381→- ŞEMA: WaitlistEntry modeli (64. model) — editionId, categoryId?, personId, participationId?, priority (küçük önce), status (WAITING|OFFERED|CONVERTED|DECLINED|EXPIRED|CANCELLED), offeredAt/offerExpiresAt (48s), respondedAt, convertedRegistrationId (Registration'a "WaitlistConversion"关系), notes. EventEdition/Person/EventParticipation/RegistrationCategory'a waitlistEntries ters relasyonu; Registration'a waitlistConversions. İki kez db push (ilk push'ta convertedRegistration include'u eksikti → PrismaClientValidationError; relasyon eklenip düzeltildi). Footer "63 model" → "64 model".
+   382→   382→- SABİTLER: WAITLIST_STATUS (TR etiketler), WAITLIST_OFFER_HOURS=48, REG_SOURCES'a WAITLIST_PROMOTION ("Bekleme Listesi"), STATUS_TONE'a WAITING/OFFERED/CONVERTED/DECLINED.
+   383→   383→- MOTOR `src/lib/api/waitlist-engine.ts` (paylaşımlı): SEAT_HOLDING_STATUSES (SUBMITTED/PENDING_APPROVAL/CONFIRMED koltuk tutar), expireStaleOffers (süresi geçen OFFERED→EXPIRED + aktivite), seatStatsForCategory (capacity/taken/seatsLeft), autoOfferForCategory (boş koltuk başına TEK teklif kuralı: seatsLeft − açık teklif sayısı ≤ 0 → dur; öncelik+createdAt sırası; 48 saatlik offerExpiresAt; aktivite günlüğü), convertOfferToRegistration (son kapasite kontrolü + participation upsert + okunaklı REG-YYYY-#### teyit no üretimi (çakışma döngüsüyle) + CONFIRMED kayıt + rozet NOT_ELIGIBLE→READY + CONVERTED).
+   384→   384→- YENİ API `/api/waitlist` (GET+POST): GET → summary (waiting/offered/converted/declinedExpired/fullCategories/categoriesWithQueue) + kategori doluluk anlık görüntüsü (taken/seatsLeft/waitingCount/offeredCount/fillPercent) + girişler (person/category/convertedRegistration dahil); GET her çağrıda önce expireStaleOffers. POST aksiyonları: add (kişi+kategori+öncelik; aktif kayıt/mükerrer bekleme engelli; öncelik boşsa sıra sonu), offer (manuel tek teklif — koltuk başına tek teklif kuralı 409), auto-offer (kategori veya tüm kontenjanlı kategoriler), respond (ACCEPT→CONVERTED+zincir yok çünkü koltuk doldu; DECLINE→sıradakine zincirleme auto-offer), cancel (WAITING/OFFERED→CANCELLED; OFFERED ise koltuk serbest→zincir).
+   385→   385→- flows ENTEGRASYONU: registration.cancel sonrası kategori bazlı autoOfferForCategory çağrılır; yanıt body'sine waitlistOffered eklenir ve iptal toast'ı "Koltuk boşaldı — bekleme listesinden teklif gönderildi: {isimler}" gösterir. Kayıt iptal dialogu etki önizlemesine bekleme maddesi eklendi.
+   386→   386→- SEED: catVip'e capacity:1 (dolu VIP senaryosu — Seda VIP CONFIRMED); 5 bekleme girişi: VIP Hande#10 (notlu)/Murat#20/Barış#30, REG Ünsal#40/Can#50; wipe sırasına waitlistEntry eklendi.
+   387→   387→- UI (registrations.tsx, 250 → ~680 satır): 3. sekme "Bekleme" (Kayıtlar | Bekleme | LCV) → WaitlistTab: 5 KPI (Bekleyen/Teklif Aşamasında/Kayda Dönüşen/Ret-Süre Aşımı/Tam Dolu Kategori), "Kategori Doluluğu & Otomatik Teklif" kartı (kategoribazı doluluk barı — dolu kırmızı/%80+ amber/normal teal, bekleyen/teklifte/Dolu Chip'leri, kategoribazı + global "Tümünü Tara" Otomatik Teklif butonu), Bekleme Sırası tablosu (kategori içi pozisyon rozeti, kişi+kurum, öncelik mono #N, StatusBadge, teklif hücresinde geri sayım "47 sa 59 dk kaldı"/"Süresi doldu", eylemler), kapasite duyarlı butonlar: dolu kategoride WAITING → kilitli "Koltuk Bekleniyor" (tooltip), boşta → "Teklif Gönder"; OFFERED → Kabul (emerald)/Ret (rose); geçmiş bölümü (CONVERTED kayıt no, DECLINED/EXPIRED/CANCELLED + yanıt tarihi); "Listeye Ekle" dialogu (kişi select 300 kişi, kategori+Genel, öncelik otomatik sıra sonu, not). Kategori filtresi (Tümü/Genel/kategoriler). HMR ile canlı kural güncellemesi doğrulandı.
+   388→   388→- BULUNAN VE DÜZELTİLEN 2 TASARIM HATASI (E2E sırasında): (1) autoOfferForCategory tek boş koltuk için 3 teklif gönderiyordu (OFFERED koltuk tutmuyordu) → açık teklif sayısı koltuktan düşüldü, artık boş koltuk başına tek teklif; (2) manuel "Teklif Gönder" dolu kategoride 409 veriyordu ama buton açıktı → sunucu kuralı seatsLeft−openOffers'a genişletildi + UI kilitli buton durumuna geçti (HMR ile canlı doğrulandı).
+   389→   389→- E2E (agent-browser, tam zincir): Kayıtlar sekmesinden REG kaydı iptal → toast "teklif gönderildi: Ünsal Kağan, Can Arslan" (787 boş koltuk → sıradaki 2'sine teklif, doğru) ✓; Seda VIP iptal → "teklif gönderildi: Hande Soyer" (tek koltuk → tek teklif) ✓; Bekleme sekmesinde Hande OFFERED + geri sayım ✓; Kabul → "Teklif kabul edildi — kayıt açıldı" + Hande geçmişte CONVERTED + VIP 1/1 yeniden dolu ✓; Ret → "Teklif reddedildi: Ünsal" + geçmişte DECLINED ✓; Listeye Ekle → Serpil genel sıraya #100 WAITING ✓; manuel teklif → OFFERED + geri sayım ✓; Listeden çıkar → CANCELLED + geçmiş ✓; Okunaklı teyit no düzeltmesi sonrası lint 0 ✓; mobil 390px'te kategori kartları ve KPI'lar düzgün, "Listeye Ekle" satır taşması flex-wrap ile giderildi ✓; page errors 0 ✓; reseed ile temiz demo durumu (5 WAITING, VIP dolu) bırakıldı; browser kapatıldı.
+   390→   390→- OPERASYON NOTU: Tur başında Prisma client yenilenince dev sunucusu eski client'la seed'de patladı (deleteMany undefined) — sunucu yeniden başlatıldı; ayrıca 4GB sandbox'ta chrome+dev aynı anda OOM (dmesg: next-server killed) → agent-browser close ile bellek serbest bırakıldı, seed sonrası sunucu stabilize.
+   391→   391→
+   392→   392→Stage Summary:
+   393→   393→- Bekleme Listesi & Otomatik Teklif motoru TAM: kategori kontenjanı dolan kişiler sıraya alınır; koltuk her boşaldığında (iptal/reddet/çıkarma/süre aşımı) en yüksek öncelikli bekleyene 48 saatlik teklif otomatik gider; kabul → WAITLIST_PROMOTION kaynaklı onaylı kayıt + rozet READY; ret/süre aşımı → zincirleme sıradaki teklife geçiş; "boş koltuk başına tek teklif" kuralı sunucu + UI'da tutarlı zorlanıyor.
+   394→   394→- Proje: 64 model, 18 modüllü SPA, yeni API /api/waitlist + flows registration.cancel zinciri, lint 0 hata, reseed sonrası temiz demo verisi, E2E uçtan uca doğrulanmış.
+   395→   395→- Yapılan düzeltmeler: teklif/koltuk tutarlılığı (2 hata), okunaklı teyit numarası (REG-YYYY-####), mobil satır taşması, 64 model footer.
+   396→   396→
+   397→   397→Unresolved / sonraki adımlar:
+   398→   398→- Teklif e-postası/bildirimi gerçek gönderim yok (simülasyon; portallar fazında entegre edilir)
+   399→   399→- Kategorisiz (Genel) bekleyenler otomatik dağıtıma girmez — bilinçli: hangi kategoriye yerleşeceği belirsiz; manuel teklif gerekir
+   400→   400→- expireStaleOffers yalnız GET/akış çağrılarında çalışır — cron/scheduled job yok (tek instance bellek içi yeterli)
+   401→   401→- Kalan adaylar (öncelik sırasıyla): Floor Studio sync endpoint'leri, sponsor/katılımcı dış portalları, kişi birleştirmede çakışma çözümü (aynı edisyonda iki katılım), QA_QUIZ doğru cevap scoring modeli
+   402→   402→- Bellek: chrome + dev aynı anda çalışınca 4GB sınırı daralıyor — agent turu sonunda agent-browser close alışkanlığı sürdürülmeli
+   403→   403→
+   404→   404→---
+   405→   405→Task ID: R4
+   406→   406→Agent: Z.ai Code (ana ajan)
+   407→   407→Task: Cron inceleme turu R4 — QA değerlendirmesi, Bildirim Merkezi (zil) + QA_QUIZ puanlama motoru (mobil QA tamamı), stil cilası
+   408→   408→
+   409→   409→Work Log:
+   410→   410→- QA DEĞERLENDİRMESİ: worklog + dev.log + lint inceledi (0 hata); agent-browser sweep (Dashboard/Kayıt/Form/Muhasebe/Program/Ödeme + mobil) → 0 page error. Proje STABİL → özellik turu: kalan adaylardan "QA_QUIZ doğru cevap scoring modeli" + yeni Bildirim Merkezi uygulandı (R3'te açılan bekleme teklifi bildirimi simülasyonuydu; zil ile gerçek zamanlı olay akışı kazanıldı).
+   411→   411→- ŞEMA: FormField.correctAnswer String? (QA_QUIZ doğru cevabı) + FormSubmission.quizScore Float? / quizCorrect Int? / quizTotal Int? → db push ✓ (model sayısı 64; yeni model yok, alan genişletmesi).
+   412→   412→- YENİ API `/api/notifications` (GET): ActivityLog → bildirim eşlemesi; önem seviyesi tip bazlı (rose: iptal/tarama reddi/iade, emerald: onay/tahsilat/yayın/giriş, amber: claim/ödeme kaydı/yetenek, teal: varsayılan); hedef modül eşlemesi İKİ KATMANLI: entityType → modül + entityType boş olan seed/akış kayıtları için ActivityType → modül yedek haritası (moduleFor) — 0 "modülsüz" kayıt doğrulandı. limit parametresi (1-100, default 25).
+   413→   413→- Shell: NotificationBell bileşeni (notification-bell.tsx, Yenile ile avatar arasına); Popover panel — başlık + "{n} yeni" rozeti + "Tümünü gör" + max-h-96 liste; madde: önem ikonu (ShieldAlert/CircleAlert/CheckCircle2/Activity), mesaj, göreli zaman ("şimdi/3 dk önce/2 sa önce/dün"), aktör, "modüle git" ipucu; okunmamış takibi localStorage "maven.notif.seen" zaman damgası; rozet 9+ sınırı + ping animasyonu + zil sallanma animasyonu (swing keyframe); 60 sn hafif yoklama + edisyon değişiminde yenileme + açılışta tazeleme; maddeye tıklayınca setModule ile ilgili ekrana navigasyon + görüldü işaretleme; mobilde edisyon seçici w-[150px] sm:w-[220px] küçültülerek zile yer açıldı.
+   414→   414→- QUIZ MOTORU: public-register — QA_QUIZ + correctAnswer'lı alanlar otomatik puanlanır (String eşleşme, trim'li; quizScore=round(correct/total*100)) ve yanıt gövdesine quizScore/quizCorrect/quizTotal eklendi; SPAM gönderiler de puanlanır (inceleme değer kaybı yok). form-stats — quiz bölümü: questionCount, scoredCount, avgScore, passRate(50+), 4 kova dağılım (0-24/25-49/50-74/75-100), soru bazlı correctCount/wrongCount/correctRate.
+   415→   415→- FORM MERKEZİ UI (form-center.tsx): (1) Stüdyo — QA_QUIZ alan satırında satır içi "Doğru cevap:" Select (KeyRound ikonu, seçeneklerden, PUT /api/form-fields/<id>, toast + reload; boş seçim puanlamayı kapatır); Alan Ekle dialogunda QA_QUIZ için "Doğru Cevap (QA motoru puanlaması)" seçenek kartı (emerald). (2) Yanıtlar — tabloya "Quiz" sütunu + mobil kartlara quiz pill: "Quiz %100 · 1/1" bant renkli (≥75 emerald/≥50 amber/<50 rose, Sigma ikonu). (3) Detay dialogu — quiz skoru bandı + QA_QUIZ yanıt satırları ✓/✗ renkli ("yanlış — doğrusu: X" gösterimi). (4) İstatistik — "QA Quiz Sonuçları" kartı (lg:col-span-3): Ortalama Skor (renk eşikli), Geçme Oranı, Skor Dağılımı mini barları, soru bazlı doğru/yanlış split bar + "6✓ 3✗" sayacı. (5) Canlı masa — gönderim sonucu kartına anında "Quiz sonucu: %100 — 1/1 doğru" bandı.
+   416→   416→- SEED: Anket quiz alanına correctAnswer "Kazısız altyapı" + 8 anket gönderisine quizScore (6 doğru %100 / 2 yanlış %0) — istatistik kartı gerçek dağılım gösterir.
+   417→   417→- E2E (agent-browser): zil "9+" rozetli ✓; popover 12 okunmamış madde ✓; "Tarama reddedildi" maddesine tıkla → Sahada modülüne navigasyon + rozet sıfır ✓; Yanıtlar tablosunda quiz pill'ler (Quiz %0 · 0/1 kırmızı, Quiz %100 · 1/1 yeşil) ✓; QA Quiz Sonuçları kartı gerçek veriyle %66.7 ort / %67 geçme / 3-0-0-6 kova / 6✓ 3✗ split bar ✓; Stüdyoda doğru cevap değiştirme (Kazısız→Ziraat→geri) PUT + toast + reload ✓; Canlı masada doğru cevapla gönderim → "Kaydınız onaylandı" + "Quiz sonucu: %100 — 1/1 doğru" ✓; yanlış e-postayla gönderim spam skor 50 + quizScore 100 (bağımsız puanlama) ✓; Detay dialogunda quiz bandı + "doğru" satır işareti ✓; mobil 390px zil + küçük edisyon seçici düzenli, sekme sarmalama doğru ✓; page errors 0 ✓.
+   418→   418→- Test sırasında oluşan gönderiler reseed ile temizlendi; temiz demo durumu bırakıldı; browser kapatıldı; lint 0 hata; dev.log 5xx yok.
+   419→   419→
+   420→   420→Stage Summary:
+   421→   421→- Bu tur eklendi: Bildirim Merkezi (zil — aktivite akışından türetilen önem seviyeli bildirimler, modüle giden tıklanabilir maddeler, okunmamış takibi, 60 sn yoklama) + QA_QUIZ puanlama motoru (doğru cevap işaretleme → otomatik quiz skoru → yanıt pill'leri → detay ✓/✗ → istatistik kartı → canlı masa anında sonuç) — kullanıcının "mobil uygulamaya anket QA soruları gibi interaktif öğeler tasarlanabilmeli" isteğinin puanlama ayağı tamamlandı.
+   422→   422→- Proje: 64 model (alan genişletmesi), 18 modüllü SPA + bildirim zili, 1 yeni API (notifications), lint 0 hata, E2E doğrulanmış, reseed ile temiz demo.
+   423→   423→- Yapılan düzeltmeler: notifications modül eşlemesinde entityType NULL fallback (tip bazlı harita), mobil edisyon seçici genişliği.
+   424→   424→
+   425→   425→Unresolved / sonraki adımlar:
+   426→   426→- Quiz doğru cevabı değişince ESKİ gönderilerin skorları yeniden hesaplanmaz (gönderi anındaki cevapla puanlanır — tasarım kararı; gerekirse backfill endpoint'i eklenebilir)
+   427→   427→- Bildirim yoklaması 60 sn setInterval — WebSocket taşıma olası (mini-service fazında)
+   428→   428→- Quiz: birden fazla soruda ağırlık/kısmi puan yok (her soru 1 puan); QA_QUIZ çoklu doğru cevap desteklenmez
+   429→   429→- Kalan adaylar (öncelik sırasıyla): Floor Studio sync endpoint'leri, sponsor/katılımcı dış portalları (teklif e-postası burada gerçek gönderime döner), kişi birleştirmede çakışma çözümü
+   430→   430→- Bellek alışkanlığı: agent turu sonunda agent-browser close sürdürülmeli (4GB sandbox)
+   431→   431→
+   432→   432→---
+   433→   433→Task ID: R5
+   434→   434→Agent: Z.ai Code (ana ajan)
+   435→   435→Task: Cron inceleme turu R5 — QA taraması, Floor Studio modülü (plan + senkron uçları), stil cilası
+   436→   436→
+   437→   437→Work Log:
+   438→   438→- QA DEĞERLENDİRMESİ: worklog + dev.log (0×5xx) + lint (0 hata) inceledi; agent-browser sweep — 16 modül tek tek gezildi, 0 page error; mobil 390px yatay taşma 0. Proje STABİL → özellik turu: worklog'daki birinci öncelik adayı "Floor Studio sync endpoint'leri" uygulandı.
+   439→   439→- YENİ MODÜL Floor Studio (18. modül + zil = 19 nav girişi; MODULES'e "floors" eklendi, capability FLOOR_PLAN, grup edition, icon Map):
+   440→   440→  - API `/api/floor-studio/plan` (GET): edisyon plan anlık görünümü — booth'lar (allocation→organization, floorObject), Floor Studio sahipli dekor objeleri (boothUnitId null), summary (toplam/yerleşik/byStatus/m²/contracted+potential gelir). Ortak fonksiyon `src/lib/api/floor.ts` buildPlanSnapshot.
+   441→   441→  - API `/api/floor-studio/sync`: GET = Floor Studio uygulamasının PULL ucu (aynı snapshot + direction), POST = PUSH ucu — changes[] (geometri upsert, boothUnitId unique) + statusChanges[] (BoothUnit.status, allowlist'li); ORTAK KİMLİK bütünlüğü: yabancı boothUnitId → 409; BOOTHS_SAVED ActivityLog (entityType FloorPlanObject) → zile düşer, modül eşlemesi "floors".
+   442→   442→  - View `views/floors.tsx` (~430 satır): 5 KPI (Toplam/Planda Yerleşik/Müsait/Sözleşmeli Gelir/Potansiyel Gelir); milimetrik kağıt zeminli Salon Planı (46×26 m sahne, .maven-plan-grid CSS, kademeli giriş animasyonu .maven-plan-block, prefers-reduced-motion duyarlı); stant blokları durum renkli (BOOTH_PLAN_TONE — teal CONTRACTED, amber OPTION/HELD, gri BLOCKED/RELEASED, emerald AVAILABLE), köşe ölçek ibresi; dekor objeleri kesikli (Floor Studio sahipli — Maven yalnız görüntüler); durum filtre çipleri (sayaçlı) + arama (eşleşmeyenler %25 opasite); yerleşim bekleyen şeridi (kesikli amber kart, chip listesi); Stant Detayı paneli (kuruluş, tip, fiyat, opsiyon bitişi, StatusBadge, durum hız eylemleri Müsait/Hold/Bloke/Serbest — PUT /api/booth-units/[id], konum editörü X/Y/En/Boy sayısal + 0.5 m ok takımı + Konumu Kaydet (tek parça push) + Geometriyi Kaldır); Senkron kartı (yerleşim ilerlemesi %, son gönderim/çekme localStorage, uç dokümantasyonu, tüm planı senkronize et); Otomatik Yerleşim (yerleşmemişleri mevcut planın altına satır satır dizip toplu push).
+   443→   443→  - SEED: salon düzeni 7 → 18 stant (A21-A28 4×3, B01-B05 6×4, C01-C05 4×3, koordinatlı geometri hepsinde), 3 dekor objesi (ANA GİRİŞ, KAYIT MASASI, KAFE), durum çeşitliliği (A25 HELD, B03 BLOCKED, C02 RELEASED), B02 → Beta Sound CONTRACTED; caps1'e FLOOR_PLAN eklendi (No-Dig ana demo edisyonunda modül artık görünür, setupNote'lu).
+   444→   444→- STİL CILASI (zorunlu): globals.css — ::selection teal, .maven-plan-grid milimetrik kağıt (iki katmanlı grid), .maven-plan-block kademeli fade+scale giriş animasyonu (reduced-motion ile kapatılır); plan içi hover/scale/ring geçişleri, etiket truncation, mobil 390px'te KPI 2 kolon + buton sarmalama doğrulandı.
+   445→   445→- DÜZELTİLEN HATALAR: (1) buildPlanSnapshot `venue` diye yanlış alan → schema `venueName` (500 → 200); (2) apiSend GET desteklemediği için plan/pull apiGet'e taşındı; (3) yerleşmemiş stantların planda üst üste binmesi → plandan çıkarılıp "yerleşim bekleyen" şeridine alındı; (4) constants CAPABILITY_MODULE'de EXHIBITION çift anahtarı (sponsorship + floors) → sponsorship tarafı kaldırıldı; (5) kullanılmayan eslint-disable direktifi.
+   446→   446→- E2E (agent-browser): Floor Studio nav girişi göründü ✓; 18 blok + 3 dekor + 5 KPI doğru ✓; A24 detayı (ABC Pharma, ₺60.000, Sözleşmeli) ✓; C05 durum değişimi AVAILABLE→HELD (toast + amber ton) ✓; nudge ↑↑ + Konumu Kaydet (y 17→16) ✓; Plana Gönder "18 geometri" push ✓; Floor Studio'dan Çek ✓; arama "ABC" → 17 blok soluk, yalnız A24 net ✓; Geometri Kaldır → şeritte C05 + "Otomatik Yerleşim (1)" → yerleşim geri, 18 blok ✓; yabancı boothUnitId push → 409 ortak kimlik ihlali ✓; zil akışında "Floor Studio senkronizasyonu" kayıtları severity teal + module floors ✓; mobil 390px düzenli, yatay taşma 0 ✓; page errors 0 ✓.
+   447→   447→- TEST SONRASI: reseed ile temiz demo (18 stant hepsi yerleşik, C05 müsait) bırakıldı; browser kapatıldı; lint 0 hata; dev.log'ta yeni 5xx yok (test sırasındaki 1×500 düzeltildi).
+   448→   448→
+   449→   449→Stage Summary:
+   450→   450→- Bu tur eklendi: Floor Studio modülü — mimarinin "ayrı uygulama, ortak kimlik" ilkesine (§20, §60) birebir: Maven ticari tahsisi + kontratı tutar, geometri PULL/PUSH uçlarıyla paylaşılır, dekor Floor Studio sahipli. Salon planı görselleştirme, otomatik yerleşim, konum/durum düzenleme ve senkron durumu tek ekranda.
+   451→   451→- Proje: 64 model, 19 nav girişli SPA (18 modül + zil), 2 yeni API dosyası (plan/sync) + paylaşımlı floor.ts, lint 0 hata, E2E doğrulandı, reseed ile temiz demo.
+   452→   452→- Yapılan düzeltmeler: venueName alan adı, apiGet/apiSend ayrımı, yerleşmemiş stant render kuralı, CAPABILITY_MODULE çift anahtar, dekor etiket eşiği.
+   453→   453→
+   454→   454→Unresolved / sonraki adımlar:
+   455→   455→- Plan editörü fare sürükleme desteklemez (bilinçli: seç + ok/ sayısal adım; sürükleme istenirse pointer event + çakışma denetimi eklenebilir)
+   456→   456→- Otomatik yerleşim mevcut bloklarla çakışma denetimi yapmaz (yalnızca alt boşluğa dizer — çakışma görsel olarak fark edilir, senkron engellemez)
+   457→   457→- Floor Studio "gerçek dış uygulamadan" push senaryosu yalnız curl/browser ile simüle edildi; gerçek Floor Studio istemcisi ayrı proje
+   458→   458→- Kalan adaylar (öncelik sırasıyla): sponsor/katılımcı dış portalları (teklif e-postası gerçek gönderim), kişi birleştirmede çakışma çözümü, bildirim WebSocket taşıma (mini-service)
+   459→   459→- Bellek alışkanlığı: agent turu sonunda agent-browser close sürdürülmeli (4GB sandbox)
+   460→   460→

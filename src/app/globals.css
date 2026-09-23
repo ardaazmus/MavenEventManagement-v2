@@ -126,3 +126,26 @@
 .maven-scroll::-webkit-scrollbar-track { background: transparent; }
 .maven-scroll::-webkit-scrollbar-thumb { background: oklch(0.78 0.03 190 / 0.6); border-radius: 8px; }
 .maven-scroll::-webkit-scrollbar-thumb:hover { background: oklch(0.62 0.08 190 / 0.8); }
+
+/* Maven seçim rengi */
+::selection { background: oklch(0.6 0.11 187 / 0.22); }
+
+/* Floor Studio — milimetrik kağıt plan zemini */
+.maven-plan-grid {
+  background-image:
+    linear-gradient(to right, oklch(0.55 0.06 190 / 0.16) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(0.55 0.06 190 / 0.16) 1px, transparent 1px),
+    linear-gradient(to right, oklch(0.55 0.06 190 / 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(0.55 0.06 190 / 0.06) 1px, transparent 1px);
+  background-size: 10% 10%, 10% 10%, 2% 2%, 2% 2%;
+}
+
+/* plan bloklarının kademeli giriş animasyonu */
+@keyframes maven-plan-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+.maven-plan-block { animation: maven-plan-in 0.35s ease-out backwards; }
+@media (prefers-reduced-motion: reduce) {
+  .maven-plan-block { animation: none; }
+}

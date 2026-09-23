@@ -428,3 +428,32 @@ Unresolved / sonraki adımlar:
 - Quiz: birden fazla soruda ağırlık/kısmi puan yok (her soru 1 puan); QA_QUIZ çoklu doğru cevap desteklenmez
 - Kalan adaylar (öncelik sırasıyla): Floor Studio sync endpoint'leri, sponsor/katılımcı dış portalları (teklif e-postası burada gerçek gönderime döner), kişi birleştirmede çakışma çözümü
 - Bellek alışkanlığı: agent turu sonunda agent-browser close sürdürülmeli (4GB sandbox)
+
+---
+Task ID: R5
+Agent: Z.ai Code (ana ajan)
+Task: Cron inceleme turu R5 — QA taraması, Floor Studio modülü (plan + senkron uçları), stil cilası
+
+Work Log:
+- QA DEĞERLENDİRMESİ: worklog + dev.log (0×5xx) + lint (0 hata) inceledi; agent-browser sweep — 16 modül tek tek gezildi, 0 page error; mobil 390px yatay taşma 0. Proje STABİL → özellik turu: worklog'daki birinci öncelik adayı "Floor Studio sync endpoint'leri" uygulandı.
+- YENİ MODÜL Floor Studio (18. modül + zil = 19 nav girişi; MODULES'e "floors" eklendi, capability FLOOR_PLAN, grup edition, icon Map):
+  - API `/api/floor-studio/plan` (GET): edisyon plan anlık görünümü — booth'lar (allocation→organization, floorObject), Floor Studio sahipli dekor objeleri (boothUnitId null), summary (toplam/yerleşik/byStatus/m²/contracted+potential gelir). Ortak fonksiyon `src/lib/api/floor.ts` buildPlanSnapshot.
+  - API `/api/floor-studio/sync`: GET = Floor Studio uygulamasının PULL ucu (aynı snapshot + direction), POST = PUSH ucu — changes[] (geometri upsert, boothUnitId unique) + statusChanges[] (BoothUnit.status, allowlist'li); ORTAK KİMLİK bütünlüğü: yabancı boothUnitId → 409; BOOTHS_SAVED ActivityLog (entityType FloorPlanObject) → zile düşer, modül eşlemesi "floors".
+  - View `views/floors.tsx` (~430 satır): 5 KPI (Toplam/Planda Yerleşik/Müsait/Sözleşmeli Gelir/Potansiyel Gelir); milimetrik kağıt zeminli Salon Planı (46×26 m sahne, .maven-plan-grid CSS, kademeli giriş animasyonu .maven-plan-block, prefers-reduced-motion duyarlı); stant blokları durum renkli (BOOTH_PLAN_TONE — teal CONTRACTED, amber OPTION/HELD, gri BLOCKED/RELEASED, emerald AVAILABLE), köşe ölçek ibresi; dekor objeleri kesikli (Floor Studio sahipli — Maven yalnız görüntüler); durum filtre çipleri (sayaçlı) + arama (eşleşmeyenler %25 opasite); yerleşim bekleyen şeridi (kesikli amber kart, chip listesi); Stant Detayı paneli (kuruluş, tip, fiyat, opsiyon bitişi, StatusBadge, durum hız eylemleri Müsait/Hold/Bloke/Serbest — PUT /api/booth-units/[id], konum editörü X/Y/En/Boy sayısal + 0.5 m ok takımı + Konumu Kaydet (tek parça push) + Geometriyi Kaldır); Senkron kartı (yerleşim ilerlemesi %, son gönderim/çekme localStorage, uç dokümantasyonu, tüm planı senkronize et); Otomatik Yerleşim (yerleşmemişleri mevcut planın altına satır satır dizip toplu push).
+  - SEED: salon düzeni 7 → 18 stant (A21-A28 4×3, B01-B05 6×4, C01-C05 4×3, koordinatlı geometri hepsinde), 3 dekor objesi (ANA GİRİŞ, KAYIT MASASI, KAFE), durum çeşitliliği (A25 HELD, B03 BLOCKED, C02 RELEASED), B02 → Beta Sound CONTRACTED; caps1'e FLOOR_PLAN eklendi (No-Dig ana demo edisyonunda modül artık görünür, setupNote'lu).
+- STİL CILASI (zorunlu): globals.css — ::selection teal, .maven-plan-grid milimetrik kağıt (iki katmanlı grid), .maven-plan-block kademeli fade+scale giriş animasyonu (reduced-motion ile kapatılır); plan içi hover/scale/ring geçişleri, etiket truncation, mobil 390px'te KPI 2 kolon + buton sarmalama doğrulandı.
+- DÜZELTİLEN HATALAR: (1) buildPlanSnapshot `venue` diye yanlış alan → schema `venueName` (500 → 200); (2) apiSend GET desteklemediği için plan/pull apiGet'e taşındı; (3) yerleşmemiş stantların planda üst üste binmesi → plandan çıkarılıp "yerleşim bekleyen" şeridine alındı; (4) constants CAPABILITY_MODULE'de EXHIBITION çift anahtarı (sponsorship + floors) → sponsorship tarafı kaldırıldı; (5) kullanılmayan eslint-disable direktifi.
+- E2E (agent-browser): Floor Studio nav girişi göründü ✓; 18 blok + 3 dekor + 5 KPI doğru ✓; A24 detayı (ABC Pharma, ₺60.000, Sözleşmeli) ✓; C05 durum değişimi AVAILABLE→HELD (toast + amber ton) ✓; nudge ↑↑ + Konumu Kaydet (y 17→16) ✓; Plana Gönder "18 geometri" push ✓; Floor Studio'dan Çek ✓; arama "ABC" → 17 blok soluk, yalnız A24 net ✓; Geometri Kaldır → şeritte C05 + "Otomatik Yerleşim (1)" → yerleşim geri, 18 blok ✓; yabancı boothUnitId push → 409 ortak kimlik ihlali ✓; zil akışında "Floor Studio senkronizasyonu" kayıtları severity teal + module floors ✓; mobil 390px düzenli, yatay taşma 0 ✓; page errors 0 ✓.
+- TEST SONRASI: reseed ile temiz demo (18 stant hepsi yerleşik, C05 müsait) bırakıldı; browser kapatıldı; lint 0 hata; dev.log'ta yeni 5xx yok (test sırasındaki 1×500 düzeltildi).
+
+Stage Summary:
+- Bu tur eklendi: Floor Studio modülü — mimarinin "ayrı uygulama, ortak kimlik" ilkesine (§20, §60) birebir: Maven ticari tahsisi + kontratı tutar, geometri PULL/PUSH uçlarıyla paylaşılır, dekor Floor Studio sahipli. Salon planı görselleştirme, otomatik yerleşim, konum/durum düzenleme ve senkron durumu tek ekranda.
+- Proje: 64 model, 19 nav girişli SPA (18 modül + zil), 2 yeni API dosyası (plan/sync) + paylaşımlı floor.ts, lint 0 hata, E2E doğrulandı, reseed ile temiz demo.
+- Yapılan düzeltmeler: venueName alan adı, apiGet/apiSend ayrımı, yerleşmemiş stant render kuralı, CAPABILITY_MODULE çift anahtar, dekor etiket eşiği.
+
+Unresolved / sonraki adımlar:
+- Plan editörü fare sürükleme desteklemez (bilinçli: seç + ok/ sayısal adım; sürükleme istenirse pointer event + çakışma denetimi eklenebilir)
+- Otomatik yerleşim mevcut bloklarla çakışma denetimi yapmaz (yalnızca alt boşluğa dizer — çakışma görsel olarak fark edilir, senkron engellemez)
+- Floor Studio "gerçek dış uygulamadan" push senaryosu yalnız curl/browser ile simüle edildi; gerçek Floor Studio istemcisi ayrı proje
+- Kalan adaylar (öncelik sırasıyla): sponsor/katılımcı dış portalları (teklif e-postası gerçek gönderim), kişi birleştirmede çakışma çözümü, bildirim WebSocket taşıma (mini-service)
+- Bellek alışkanlığı: agent turu sonunda agent-browser close sürdürülmeli (4GB sandbox)

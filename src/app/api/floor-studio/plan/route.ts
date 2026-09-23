@@ -1,0 +1,20 @@
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { buildPlanSnapshot } from "@/lib/api/floor";
+
+export const dynamic = "force-dynamic";
+
+// GET /api/floor-studio/plan?editionId=...
+// Maven → Floor Studio plan anlık görünümü (§20: ortak kimlik boothUnitId).
+// Dış Floor Studio uygulaması bu endpoint ile salon planını çeker.
+export async function GET(req: NextRequest) {
+  const editionId = req.nextUrl.searchParams.get("editionId");
+  if (!editionId) {
+    return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+  }
+  const snapshot = await buildPlanSnapshot(editionId);
+  if (!snapshot.edition) {
+    return NextResponse.json({ error: "Edisyon bulunamadı" }, { status: 404 });
+  }
+  return NextResponse.json(snapshot);
+}

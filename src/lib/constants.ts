@@ -337,6 +337,7 @@ export const EDITION_STATUS: Record<string, string> = {
 export const MODULES = [
   { id: "dashboard", label: "Genel Bakış", icon: "LayoutDashboard", capability: null, group: "workspace" },
   { id: "editions", label: "Etkinlikler", icon: "CalendarRange", capability: null, group: "workspace" },
+  { id: "portals", label: "Dış Portal", icon: "Globe", capability: null, group: "workspace" },
   { id: "people", label: "Kişiler", icon: "Users", capability: null, group: "people" },
   { id: "organizations", label: "Kurumlar", icon: "Building2", capability: null, group: "people" },
   { id: "registrations", label: "Kayıt & Katılımcılar", icon: "ClipboardList", capability: "REGISTRATION", group: "edition" },
@@ -345,6 +346,7 @@ export const MODULES = [
   { id: "scientific", label: "Bilimsel", icon: "GraduationCap", capability: "SCIENTIFIC", group: "edition" },
   { id: "program", label: "Program", icon: "Clock", capability: "PROGRAM", group: "edition" },
   { id: "sponsorship", label: "Sponsor & Fuar", icon: "Handshake", capability: "SPONSORSHIP", group: "edition" },
+  { id: "floors", label: "Floor Studio", icon: "Map", capability: "FLOOR_PLAN", group: "edition" },
   { id: "accommodation", label: "Konaklama", icon: "BedDouble", capability: "ACCOMMODATION", group: "edition" },
   { id: "finance", label: "Ödeme & Ek Hizmet", icon: "CreditCard", capability: "REGISTRATION", group: "edition" },
   { id: "communications", label: "İletişim", icon: "Megaphone", capability: "COMMUNICATIONS", group: "edition" },
@@ -466,16 +468,41 @@ export const STATUS_TONE: Record<string, string> = {
   DECLINED: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
+// Stant durum etiketleri (§21) + Floor Studio plan renkleri
+export const BOOTH_STATUS: Record<string, string> = {
+  AVAILABLE: "Müsait",
+  HELD: "Geçici Hold",
+  OPTION: "Opsiyon",
+  RESERVED: "Rezerve",
+  CONTRACTED: "Sözleşmeli",
+  BLOCKED: "Bloke",
+  OCCUPIED: "İşgal",
+  RELEASED: "Serbest Bırakıldı",
+};
+
+// Floor Studio planda durum → dolgu/kenar sınıfı (m² orantılı blok üzerine)
+export const BOOTH_PLAN_TONE: Record<string, string> = {
+  AVAILABLE: "border-emerald-400/70 bg-emerald-100/70 text-emerald-900 hover:bg-emerald-200/70",
+  HELD: "border-amber-400/70 bg-amber-100/70 text-amber-900 hover:bg-amber-200/70",
+  OPTION: "border-amber-500/80 bg-amber-200/80 text-amber-950 hover:bg-amber-300/80",
+  RESERVED: "border-violet-400/70 bg-violet-100/70 text-violet-900 hover:bg-violet-200/70",
+  CONTRACTED: "border-teal-600/80 bg-teal-500/25 text-teal-950 hover:bg-teal-500/40",
+  BLOCKED: "border-neutral-400/60 bg-neutral-200/70 text-neutral-600 hover:bg-neutral-300/70",
+  OCCUPIED: "border-violet-600/80 bg-violet-300/80 text-violet-950 hover:bg-violet-400/80",
+  RELEASED: "border-neutral-300/60 bg-neutral-100/60 text-neutral-500 hover:bg-neutral-200/60",
+};
+
 // Yetenek kapağında modül ekranları: capability -> modül id (§3 menü ilkesi)
 export const CAPABILITY_MODULE: Record<string, string> = {
   REGISTRATION: "registrations",
   SCIENTIFIC: "scientific",
   PROGRAM: "program",
   SPONSORSHIP: "sponsorship",
-  EXHIBITION: "sponsorship",
   ACCOMMODATION: "accommodation",
   COMMUNICATIONS: "communications",
   BADGING: "onsite",
   ACCESS_CONTROL: "onsite",
   CERTIFICATES: "certificates",
+  FLOOR_PLAN: "floors",
+  EXHIBITION: "floors",
 };

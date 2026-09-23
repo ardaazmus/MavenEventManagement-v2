@@ -19,6 +19,7 @@ export interface EntityConfig {
   include?: Record<string, unknown>;
   searchFields?: string[];          // serbest metin arama alanları (contains)
   filterFields?: string[];          // ?field=value eşitlik filtreleri
+  defaultWhere?: Record<string, unknown>; // tüm listeye uygulanan taban filtre (ör. MERGED kişileri gizle)
   orderBy?: Record<string, "asc" | "desc">;
   auditType?: string;               // aktivite günlüğü tipi
   auditMessage?: (data: Record<string, unknown>, action: "create" | "update" | "delete") => string;
@@ -37,6 +38,7 @@ export const registry: Record<string, EntityConfig> = {
     delegate: db.person as unknown as AnyDelegate,
     searchFields: ["firstName", "lastName", "email", "company"],
     filterFields: ["tenantId", "status", "country"],
+    defaultWhere: { status: { not: "MERGED" }, mergedIntoId: null }, // birleştirilenler listelerde gizlenir (Kimlik kuralı)
     orderBy: { lastName: "asc" },
     auditType: ActivityType.PERSON_SAVED,
     auditMessage: (d) => `Kişi güncellendi: ${d.firstName ?? ""} ${d.lastName ?? ""}`,

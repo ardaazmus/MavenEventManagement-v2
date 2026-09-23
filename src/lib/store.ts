@@ -71,7 +71,16 @@ export const useApp = create<AppState>((set, get) => ({
       }
       const editions: EditionLite[] = data.editions ?? [];
       const persisted = typeof window !== "undefined" ? window.localStorage.getItem("maven.edition") : null;
-      const current = editions.find((e) => e.id === persisted)?.id ?? editions[0]?.id ?? null;
+      // kayıtlı id geçersizse (seed sonrası vb.) drafts[0]'a değil en güncel aktif edisyona düş:
+      // aktif = yayında veya kayıt/saha evresinde; tarihe göre en yakını (§07: canlı etkinlik öne çıkar)
+      const activeSorted = editions
+        .filter((e) => e.isPublished || ["REGISTRATION", "ONSITE"].includes(e.status))
+        .sort((a, b) => (b.startDate ?? "").localeCompare(a.startDate ?? ""));
+      const current =
+        editions.find((e) => e.id === persisted)?.id ??
+        activeSorted[0]?.id ??
+        editions[0]?.id ??
+        null;
       const persistedModule = typeof window !== "undefined" ? window.localStorage.getItem("maven.module") : null;
       set({ tenant: data.tenant, editions, currentEditionId: current, module: persistedModule ?? "dashboard", loading: false });
     } catch (e) {

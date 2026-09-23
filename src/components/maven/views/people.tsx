@@ -9,7 +9,7 @@ import { fmtDate, fmtDateTime, fmtMoney, EVENT_ROLES, REG_SOURCES, FUNDING_SOURC
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
@@ -35,6 +35,11 @@ interface Person360 {
   submissions: { id: string; code: string; title: string; status: string }[];
   reviewAssignments: { id: string; status: string; submission: { code: string; title: string } }[];
 }
+// Mükerrer kişi önerileri (R2-b) — /api/people/duplicates sözleşmesi (tenant geneli, edisyon-bağımsız)
+interface DuplicatePerson { id: string; fullName: string; email?: string | null; phone?: string | null; title?: string | null; company?: string | null; city?: string | null; status: string; createdAt: string; }
+interface DuplicateSuggestion { key: string; reason: string; persons: DuplicatePerson[]; olderId?: string | null; note?: string | null; }
+interface DuplicatesData { totalPersons: number; suggestions: DuplicateSuggestion[]; reasonLabels: Record<string, string>; }
+const REASON_TONE: Record<string, "emerald" | "amber" | "violet"> = { EMAIL: "emerald", NAME_PHONE: "amber", NAME_ORG: "violet" };
 interface OrgRow { id: string; name: string; type?: string | null; city?: string | null; country?: string | null; website?: string | null; _count?: { eventAssignments?: number; sponsorAgreements?: number } }
 interface Org360 {
   organization: OrgRow;
@@ -55,8 +60,20 @@ function Row360Line({ label, children }: { label: string; children: React.ReactN
   );
 }
 
+// Mükerrer öneri satırındaki tek kişi kartı (kimlik özeti + kayıt tarihi)
+function DupPersonCard({ p }: { p: DuplicatePerson }) {
+  return (
+    <div className="min-w-0 rounded-lg border bg-card p-3">
+      <p className="truncate text-sm font-semibold">{p.fullName}</p>
+      {p.email && <p className="truncate text-xs text-muted-foreground">{p.email}</p>}
+      {(p.company || p.title) && <p className="truncate text-xs text-muted-foreground">{[p.company, p.title].filter(Boolean).join(" · ")}</p>}
+      <p className="mt-1 text-[11px] text-muted-foreground">kayıt: {fmtDate(p.createdAt)}</p>
+    </div>
+  );
+}
+
 export function PeopleView() {
-  const { tenant, bump } = useApp();
+  const { tenant, bump, currentEditionId, refreshKey } = useApp();
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<PersonRow | null>(null);
@@ -64,8 +81,14 @@ export function PeopleView() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ firstName: "", lastName: "", email: "", company: "", title: "" });
+  const [mergeSug, setMergeSug] = useState<DuplicateSuggestion | null>(null);
+  const [mergeTarget, setMergeTarget] = useState<string | null>(null); // korunacak (hedef) kişi id
+  const [mergeBusy, setMergeBusy] = useState(false);
 
   const { data, error, reload, loading } = useApi<PersonRow[]>(() => listEntity<PersonRow>("people", { q, limit: 300 }), [q]);
+
+  // Olası mükerrerler — tenant geneli (edisyon-bağımsız, null-guard gerekmez); edisyon değişince tazelensin
+  const { data: dupData, error: dupError, reload: dupReload } = useApi<DuplicatesData>(() => apiGet<DuplicatesData>("/api/people/duplicates"), [currentEditionId, refreshKey]);
 
   const open360 = async (p: PersonRow) => {
     setSelected(p);
@@ -94,9 +117,45 @@ export function PeopleView() {
     }
   };
 
+  // Birleştirme diyaloğunu aç — varsayılan hedef: daha eski kayıt (API'nin olderId önerisi)
+  const openMerge = (s: DuplicateSuggestion) => {
+    const def = s.olderId && s.persons.some((p) => p.id === s.olderId) ? s.olderId : s.persons[0]?.id ?? null;
+    setMergeSug(s);
+    setMergeTarget(def);
+  };
+
+  // Onaylı birleştirme — kaynak ≠ hedef savunmacı kontrolü ile (sunucuda da denetlenir)
+  const confirmMerge = async () => {
+    const sug = mergeSug;
+    if (!sug || !mergeTarget) return;
+    const target = sug.persons.find((p) => p.id === mergeTarget) ?? null;
+    const source = sug.persons.find((p) => p.id !== mergeTarget) ?? null;
+    if (!target || !source) {
+      toast({ title: "Hata", description: "Kaynak ve hedef aynı olamaz.", variant: "destructive" });
+      return;
+    }
+    setMergeBusy(true);
+    try {
+      await apiSend("/api/flows", "POST", { action: "person.merge", sourceId: source.id, targetId: target.id });
+      toast({ title: "Kişiler birleştirildi — geçmiş korundu", description: `${source.fullName} kaydı ${target.fullName} içine taşındı.` });
+      setMergeSug(null);
+      setMergeTarget(null);
+      reload(); dupReload(); bump(); // kişi listesi + mükerrer listesi + global sayaçlar
+    } catch (e) {
+      toast({ title: "Birleştirme başarısız", description: e instanceof Error ? e.message : "Kişiler birleştirilemedi", variant: "destructive" });
+    } finally {
+      setMergeBusy(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader title="Kişiler" desc="Tenant içinde tekil kimlik — e-posta güçlü işaret, kesin kimlik değil (birleştirme onaylı yapılır)">
+        {dupData && dupData.suggestions.length === 0 && (
+          <Chip tone="emerald">
+            <span className="inline-flex items-center gap-1"><Icons.CheckCircle2 className="size-3" aria-hidden />Mükerrer yok</span>
+          </Chip>
+        )}
         <Input placeholder="Ad, e-posta, kurum ara…" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild><Button size="sm"><Icons.UserPlus className="size-4" /> Kişi Ekle</Button></DialogTrigger>
@@ -114,12 +173,49 @@ export function PeopleView() {
         </Dialog>
       </PageHeader>
 
+      {/* ── Olası Mükerrerler (R2-b) — öneri bağlamaz, birleştirme onaylı yapılır ── */}
+      {dupError && !dupData && (
+        <p className="mb-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Icons.TriangleAlert className="size-3.5 shrink-0 text-amber-500" aria-hidden />
+          Mükerrer taraması yüklenemedi — kişi listesi etkilenmedi.
+        </p>
+      )}
+      {dupData && dupData.suggestions.length > 0 && (
+        <SectionCard
+          title="Olası Mükerrerler"
+          desc="Tenant genelinde kimlik eşleşmesi — öneriler bağlamadan incelenmelidir"
+          action={<Chip tone="amber">{dupData.suggestions.length} öneri</Chip>}
+          className="mb-4"
+        >
+          <div className="maven-scroll max-h-96 space-y-3 overflow-y-auto">
+            {dupData.suggestions.map((s) => {
+              const [a, b] = s.persons;
+              return (
+                <div key={s.key} className="rounded-lg border bg-muted/20 p-3">
+                  <div className="grid grid-cols-1 items-stretch gap-2 md:grid-cols-[1fr_auto_1fr] md:gap-3">
+                    <DupPersonCard p={a} />
+                    <div className="flex items-center justify-center gap-2 md:w-40 md:flex-col">
+                      <Icons.ArrowLeftRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                      <Chip tone={REASON_TONE[s.reason] ?? "neutral"}>{dupData.reasonLabels[s.reason] ?? s.reason}</Chip>
+                      <Button size="sm" variant="outline" onClick={() => openMerge(s)}>
+                        <Icons.Merge className="size-4" /> Birleştir
+                      </Button>
+                    </div>
+                    <DupPersonCard p={b} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </SectionCard>
+      )}
+
       {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (data ?? []).length === 0 ? (
         <EmptyState title="Kişi bulunamadı" desc="Filtre sonucu yok — aramayı temizleyin veya yeni kişi ekleyin." />
       ) : (
         <div className="grid gap-2">
           {(data ?? []).map((p) => (
-            <button key={p.id} onClick={() => open360(p)} className="flex items-center gap-3 rounded-xl border bg-card p-3 text-left transition hover:border-primary/40 hover:shadow-sm">
+            <button key={p.id} onClick={() => open360(p)} className="flex min-w-0 items-center gap-3 rounded-xl border bg-card p-3 text-left transition hover:border-primary/40 hover:shadow-sm">
               <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
                 {p.firstName[0]}{p.lastName[0]}
               </span>
@@ -135,6 +231,55 @@ export function PeopleView() {
           ))}
         </div>
       )}
+
+      {/* ── Birleştirme onay diyaloğu (R2-b) — kaynak hedefe taşınır, geri alınamaz ── */}
+      <Dialog open={Boolean(mergeSug)} onOpenChange={(o) => { if (!o) setMergeSug(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Kişileri Birleştir</DialogTitle>
+            <DialogDescription>{mergeSug?.note ?? "Kaynak kişi hedefe taşınır; hedef kayıt korunur."}</DialogDescription>
+          </DialogHeader>
+          <div role="radiogroup" aria-label="Korunacak kişi" className="grid gap-2 sm:grid-cols-2">
+            {mergeSug?.persons.map((p, i) => {
+              const checked = mergeTarget === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  onClick={() => setMergeTarget(p.id)}
+                  className={cn(
+                    "flex items-start gap-2.5 rounded-lg border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                    checked ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:border-primary/40"
+                  )}
+                >
+                  <span aria-hidden className={cn("mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border", checked ? "border-primary" : "border-muted-foreground/40")}>
+                    {checked && <span className="size-2 rounded-full bg-primary" />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">
+                      {i === 0 ? "A'yı koru" : "B'yi koru"} <span className="font-normal text-muted-foreground">({i === 0 ? "B" : "A"} birleşir)</span>
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">{p.fullName} · {p.email ?? "e-posta yok"} · {p.company ?? "—"}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
+            <Icons.TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+            <span>Birleştirme geri alınamaz. Kaynak kişinin katılımları, bildirileri, yazarlıkları, hakemlikleri ve saha taramaları hedefe taşınır; kaynak kişi MERGED durumuna geçer ve kişiler listesinde gizlenir.</span>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMergeSug(null)} disabled={mergeBusy}>İptal</Button>
+            <Button onClick={confirmMerge} disabled={mergeBusy || !mergeTarget}>
+              {mergeBusy ? <Icons.Loader2 className="size-4 animate-spin" aria-hidden /> : <Icons.Merge className="size-4" aria-hidden />}
+              Birleştir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Person 360 çekmecesi (§54) ── */}
       <Sheet open={Boolean(selected)} onOpenChange={(o) => !o && setSelected(null)}>

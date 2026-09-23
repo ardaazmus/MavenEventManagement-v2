@@ -937,6 +937,7 @@ model ProgramSession {
   accessRule  String?  // OPEN|REGISTRATION_REQUIRED|SCAN
   status      String   @default("DRAFT") // §10 Program: DRAFT|ASSIGNED|APPROVED|PUBLISHED|CANCELLED
   isVisible   Boolean  @default(false)
+  cmeCredits  Float?   // CME kredi değeri — CME_CREDITS yeteneği açıkken akreditasyon sorumlusu girer (§08)
 
   edition   EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
   room      ProgramRoom?  @relation(fields: [roomId], references: [id], onDelete: SetNull)

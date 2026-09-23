@@ -50,21 +50,35 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
                 onClick={() => { setModule(m.id); onNavigate?.(); }}
                 aria-current={module === m.id ? "page" : undefined}
                 className={cn(
-                  "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition",
+                  "group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-primary/40",
                   module === m.id
                     ? "bg-sidebar-primary/15 font-medium text-sidebar-primary"
-                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:pl-3"
                 )}
               >
-                <ModuleIcon name={m.icon} className="size-4 shrink-0" />
+                {/* aktif modül göstergesi — sol kenarda teal vurgu çubuğu */}
+                <span
+                  aria-hidden
+                  className={cn(
+                    "absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200",
+                    module === m.id ? "scale-y-100 opacity-100" : "scale-y-0 opacity-0"
+                  )}
+                />
+                <ModuleIcon
+                  name={m.icon}
+                  className={cn(
+                    "size-4 shrink-0 transition-transform duration-150",
+                    module === m.id ? "text-sidebar-primary" : "group-hover:scale-110"
+                  )}
+                />
                 <span className="truncate">{m.label}</span>
               </button>
             ))}
           </div>
         );
       })}
-      <div className="mt-auto rounded-lg border border-sidebar-border/60 bg-sidebar-accent/40 p-3 text-[11px] leading-relaxed text-sidebar-foreground/70">
-        <p className="font-semibold text-sidebar-foreground/90">Ortak Organizasyonel Mimari</p>
+      <div className="mt-auto rounded-lg border border-sidebar-border/60 bg-gradient-to-br from-sidebar-accent/60 to-sidebar-accent/20 p-3 text-[11px] leading-relaxed text-sidebar-foreground/70">
+        <p className="flex items-center gap-1.5 font-semibold text-sidebar-foreground/90"><Icons.Shapes className="size-3.5 text-primary" /> Ortak Organizasyonel Mimari</p>
         <p className="mt-1">Kişi ≠ Katılım ≠ Kayıt ≠ Rol ≠ Ödeme — her eksen bağımsız yönetilir.</p>
       </div>
     </nav>
@@ -135,7 +149,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   {editions.map((e) => (
                     <SelectItem key={e.id} value={e.id}>
                       <span className="flex items-center gap-2">
-                        <span className={cn("size-2 rounded-full", e.isPublished ? "bg-emerald-500" : "bg-amber-500")} />
+                        <span className="relative flex size-2">
+                          {e.status === "ONSITE" && (
+                            <span aria-hidden className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                          )}
+                          <span className={cn("relative inline-flex size-2 rounded-full", e.isPublished ? "bg-emerald-500" : "bg-amber-500")} />
+                        </span>
                         {e.name}
                       </span>
                     </SelectItem>
@@ -144,12 +163,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
               </Select>
               {edition && (
                 <Badge variant="outline" className="hidden gap-1.5 sm:flex">
-                  <span className={cn("size-1.5 rounded-full", edition.isPublished ? "bg-emerald-500" : "bg-amber-500")} />
+                  <span className="relative flex size-1.5">
+                    {edition.status === "ONSITE" && (
+                      <span aria-hidden className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                    )}
+                    <span className={cn("relative inline-flex size-1.5 rounded-full", edition.isPublished ? "bg-emerald-500" : "bg-amber-500")} />
+                  </span>
                   {label(EDITION_STATUS, edition.status)}
                 </Badge>
               )}
-              <Button variant="ghost" size="icon" aria-label="Yenile" onClick={() => bootstrap()}>
-                <Icons.RefreshCw className="size-4" />
+              <Button variant="ghost" size="icon" aria-label="Yenile" onClick={() => bootstrap()} disabled={loading}>
+                <Icons.RefreshCw className={cn("size-4", loading && "animate-spin text-primary")} />
               </Button>
               <Avatar className="size-8">
                 <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">EK</AvatarFallback>
@@ -172,6 +196,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </aside>
 
           <main className="min-w-0 flex-1 p-4 md:p-6" aria-label={activeModule?.label}>
+            {/* modül geçişinde yumuşak fade/slide — key sayesinde her geçişte tetiklenir */}
+            <div key={module} className="animate-in fade-in slide-in-from-bottom-2 duration-300">
             {loading ? (
               <div className="grid min-h-[60vh] place-items-center">
                 <div className="flex flex-col items-center gap-3 text-muted-foreground">
@@ -200,6 +226,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             ) : (
               children
             )}
+            </div>
           </main>
         </div>
 
@@ -209,7 +236,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <p>© 2026 Maven Event Management — Ortak Organizasyonel Mimari v1.0 · Tenant: {tenant?.name ?? "—"}</p>
             <p className="flex items-center gap-3">
               <span className="inline-flex items-center gap-1"><Icons.Layers className="size-3.5" /> {editions.length} edisyon</span>
-              <span className="inline-flex items-center gap-1"><Icons.Users className="size-3.5" /> 61 model</span>
+              <span className="inline-flex items-center gap-1"><Icons.Users className="size-3.5" /> 63 model</span>
             </p>
           </div>
         </footer>

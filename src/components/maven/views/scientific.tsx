@@ -1,12 +1,14 @@
 "use client";
 // Bilimsel — çağrı, bildiri, hakem, karar (kabul ≠ otomatik program slotu, Kimlik kuralı 6)
-// Program — oturum, salon, görevler, yayın durumu
-import { useState } from "react";
-import { listEntity, apiSend } from "@/lib/client";
-import { useApp } from "@/lib/store";
+// Program — oturum, salon, görevler, yayın durumu + CME kredi defteri (§08, CME_CREDITS yeteneği)
+import { useEffect, useState } from "react";
+import { listEntity, apiSend, apiGet } from "@/lib/client";
+import { useApp, hasCapability } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
-import { SUBMISSION_STATUS, SESSION_STATUS, fmtDateTime, fmtDate, EVENT_ROLES } from "@/lib/constants";
+import { SUBMISSION_STATUS, SESSION_STATUS, fmtDateTime, fmtDate, EVENT_ROLES, label } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,6 +31,33 @@ interface SessionRow {
   submission?: { code: string; title: string } | null;
   assignments: { id: string; role: string; status: string; person?: { firstName: string; lastName: string } | null; participation?: { person: { firstName: string; lastName: string } } | null }[];
 }
+
+// CME Kredi Defteri verileri (/api/cme sözleşmesi — R2-a)
+interface CmeSession {
+  id: string; title: string; type: string; startTime: string; cmeCredits: number | null; status: string; attendanceCount: number;
+}
+interface CmeLedgerRow {
+  participationId: string;
+  person: { fullName: string; company: string | null; title: string | null };
+  roles: string[];
+  registrationStatus: string | null;
+  attendedCount: number; eligibleCount: number;
+  credits: number; maxPossible: number; percent: number;
+  lastActivity: string | null;
+}
+interface CmeData {
+  editionId: string;
+  sessions: CmeSession[];
+  ledger: CmeLedgerRow[];
+  summary: { sessionsTotal: number; sessionsWithCredits: number; creditsPotential: number; attendees: number; creditsIssued: number; avgCredits: number; maxEarned: number; coveragePercent: number };
+  byType: { type: string; sessions: number; withCredits: number; creditsSum: number; attendance: number }[];
+}
+
+// SESSION_TYPES sabiti constants.ts'te tanımlı değil — CME tür şablonu için yerel sabit dizi
+const CME_SESSION_TYPES = ["KEYNOTE", "TALK", "PANEL", "WORKSHOP", "POSTER_SESSION"] as const;
+
+const cmeTime = (iso: string) => new Date(iso).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+const cmeTypeTone = (t: string): "violet" | "neutral" | "teal" => (t === "KEYNOTE" ? "violet" : t === "BREAK" ? "neutral" : "teal");
 
 export function ScientificView() {
   const { currentEditionId, bump, refreshKey } = useApp();
@@ -182,14 +211,34 @@ export function ScientificView() {
 }
 
 export function ProgramView() {
-  const { currentEditionId, bump, refreshKey } = useApp();
+  const { currentEditionId, bump, refreshKey, editions } = useApp();
   const { toast } = useToast();
   const [dayFilter, setDayFilter] = useState("ALL");
   const [publishTarget, setPublishTarget] = useState<SessionRow | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // CME Kredi Defteri — yalnız edisyonun CME_CREDITS yeteneği açıksa görünür
+  const edition = editions.find((e) => e.id === currentEditionId);
+  const cmeEnabled = hasCapability(edition, "CME_CREDITS");
+  const [creditInputs, setCreditInputs] = useState<Record<string, string>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [bulkDefaults, setBulkDefaults] = useState<Record<string, string>>({});
+  const [bulkBusy, setBulkBusy] = useState(false);
+
   const { data: sessions, error, reload, loading } = useApi<SessionRow[]>(() => listEntity<SessionRow>("sessions", { editionId: currentEditionId ?? undefined, limit: 200 }), [currentEditionId, refreshKey]);
   const { data: rooms } = useApi<{ id: string; name: string; capacity: number }[]>(() => listEntity("rooms", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+  const { data: cme, error: cmeError, reload: reloadCme, loading: cmeLoading } = useApi<CmeData | null>(() => {
+    if (!currentEditionId || !cmeEnabled) return Promise.resolve(null);
+    return apiGet<CmeData>("/api/cme?editionId=" + currentEditionId);
+  }, [currentEditionId, refreshKey]);
+
+  // dış veri reload'unda satır kredi girişlerini sunucu değeriyle senkronize et
+  useEffect(() => {
+    if (!cme) return;
+    const next: Record<string, string> = {};
+    for (const s of cme.sessions) next[s.id] = s.cmeCredits != null ? String(s.cmeCredits) : "";
+    setCreditInputs(next);
+  }, [cme]);
 
   const days = Array.from(new Set((sessions ?? []).map((s) => s.startTime.slice(0, 10)))).sort();
   const filtered = (sessions ?? []).filter((s) => dayFilter === "ALL" || s.startTime.slice(0, 10) === dayFilter);
@@ -203,6 +252,48 @@ export function ProgramView() {
       }
     }
   }
+
+  // toplu atama butonu: en az bir tür girişi doluysa aktif
+  const bulkFilled = CME_SESSION_TYPES.some((t) => (bulkDefaults[t] ?? "").trim() !== "");
+
+  const saveCredits = async (s: CmeSession) => {
+    const raw = (creditInputs[s.id] ?? "").trim();
+    if (raw === "") return;
+    const credits = Number(raw);
+    if (Number.isNaN(credits) || credits < 0 || credits > 99) {
+      toast({ title: "Geçersiz kredi", description: "Kredi 0–99 arasında olmalı.", variant: "destructive" });
+      return;
+    }
+    setSavingId(s.id);
+    try {
+      await apiSend("/api/cme", "POST", { action: "set-credits", sessionId: s.id, credits });
+      toast({ title: `${credits} kredi atandı: ${s.title}` });
+      reloadCme(); bump();
+    } catch (e) {
+      toast({ title: "Kredi atanamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setSavingId(null); }
+  };
+
+  const applyBulk = async () => {
+    if (!currentEditionId) return;
+    const defaults: Record<string, number> = {};
+    for (const t of CME_SESSION_TYPES) {
+      const raw = (bulkDefaults[t] ?? "").trim();
+      if (raw === "") continue;
+      const n = Number(raw);
+      if (!Number.isNaN(n) && n >= 0 && n <= 99) defaults[t] = n;
+    }
+    if (Object.keys(defaults).length === 0) return;
+    setBulkBusy(true);
+    try {
+      const res = await apiSend<{ ok: boolean; updated: number }>("/api/cme", "POST", { action: "bulk-apply", editionId: currentEditionId, defaults });
+      if (res.updated > 0) toast({ title: `${res.updated} oturuma kredi atandı`, description: "Yalnız kredisi olmayan oturumlar güncellendi." });
+      else toast({ title: "Atanacak kredisiz oturum yok", description: "Seçilen türlere ait tüm oturumlar zaten kredili." });
+      reloadCme(); bump();
+    } catch (e) {
+      toast({ title: "Toplu atama başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setBulkBusy(false); }
+  };
 
   const publish = async () => {
     if (!publishTarget) return;
@@ -219,56 +310,215 @@ export function ProgramView() {
   return (
     <div className="space-y-5">
       <PageHeader title="Program" desc="Salon, zaman, görevli — çakışmalı yayın engellenir; bilimsel kararı program modülü değiştirmez">
-        <Select value={dayFilter} onValueChange={setDayFilter}>
-          <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">Tüm günler</SelectItem>
-            {days.map((d) => <SelectItem key={d} value={d}>{fmtDate(d)}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Button variant="ghost" size="sm" onClick={reload}><Icons.RefreshCw className="size-4" /></Button>
+        <Button variant="ghost" size="sm" onClick={() => { reload(); reloadCme(); }} aria-label="Yenile"><Icons.RefreshCw className="size-4" /></Button>
       </PageHeader>
 
-      {clashes.size > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50/60 p-3 text-sm text-rose-800">
-          <Icons.OctagonAlert className="mt-0.5 size-4 shrink-0" />
-          Aynı salonda çakışan oturumlar var ({clashes.size}) — çakışmalı yayın engellenir veya yetkili gerekçeyle işaretler.
-        </div>
-      )}
+      <Tabs defaultValue="sessions">
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="sessions">Oturumlar</TabsTrigger>
+          {cmeEnabled && <TabsTrigger value="cme"><Icons.GraduationCap className="size-4" /> CME Kredi</TabsTrigger>}
+        </TabsList>
 
-      {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : filtered.length === 0 ? (
-        <EmptyState title="Bu gün için oturum yok" desc="Oturum oluşturun veya başka gün seçin." />
-      ) : (
-        <div className="space-y-2.5">
-          {filtered.map((s) => (
-            <div key={s.id} className={cn("rounded-xl border bg-card p-4", clashes.has(s.id) && "border-rose-300")}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold tabular-nums text-primary">
-                  {new Date(s.startTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}–{new Date(s.endTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
-                </span>
-                <p className="min-w-0 flex-1 truncate font-semibold">{s.title}</p>
-                <Chip tone={s.type === "KEYNOTE" ? "violet" : s.type === "BREAK" ? "neutral" : "teal"}>{s.type}</Chip>
-                {s.room && <Chip>{s.room.name}</Chip>}
-                <StatusBadge map={SESSION_STATUS} value={s.status} />
-                {clashes.has(s.id) && <Chip tone="rose">çakışma</Chip>}
-                {!s.isVisible && s.status === "PUBLISHED" && <Chip tone="amber">gizli</Chip>}
-              </div>
-              {s.submission && <p className="mt-1 text-xs text-muted-foreground">kaynak bildiri: {s.submission.code} — {s.submission.title}</p>}
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {s.assignments.map((a) => {
-                  const name = a.person ? `${a.person.firstName} ${a.person.lastName}` : a.participation ? `${a.participation.person.firstName} ${a.participation.person.lastName}` : "—";
-                  return <Chip key={a.id} tone={a.status === "CONFIRMED" ? "emerald" : "amber"}>{label2(EVENT_ROLES, a.role)}: {name}</Chip>;
-                })}
-              </div>
-              {s.status !== "PUBLISHED" && (
-                <Button size="sm" variant="outline" className="mt-3" onClick={() => setPublishTarget(s)} disabled={clashes.has(s.id)}>
-                  <Icons.Upload className="size-4" /> Yayınla
-                </Button>
-              )}
+        <TabsContent value="sessions" className="mt-4 space-y-4">
+          <Select value={dayFilter} onValueChange={setDayFilter}>
+            <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">Tüm günler</SelectItem>
+              {days.map((d) => <SelectItem key={d} value={d}>{fmtDate(d)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          {clashes.size > 0 && (
+            <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50/60 p-3 text-sm text-rose-800">
+              <Icons.OctagonAlert className="mt-0.5 size-4 shrink-0" />
+              Aynı salonda çakışan oturumlar var ({clashes.size}) — çakışmalı yayın engellenir veya yetkili gerekçeyle işaretler.
             </div>
-          ))}
-        </div>
-      )}
+          )}
+
+          {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : filtered.length === 0 ? (
+            <EmptyState title="Bu gün için oturum yok" desc="Oturum oluşturun veya başka gün seçin." />
+          ) : (
+            <div className="space-y-2.5">
+              {filtered.map((s) => (
+                <div key={s.id} className={cn("rounded-xl border bg-card p-4", clashes.has(s.id) && "border-rose-300")}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold tabular-nums text-primary">
+                      {new Date(s.startTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}–{new Date(s.endTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                    <p className="min-w-0 flex-1 truncate font-semibold">{s.title}</p>
+                    <Chip tone={s.type === "KEYNOTE" ? "violet" : s.type === "BREAK" ? "neutral" : "teal"}>{s.type}</Chip>
+                    {s.room && <Chip>{s.room.name}</Chip>}
+                    <StatusBadge map={SESSION_STATUS} value={s.status} />
+                    {clashes.has(s.id) && <Chip tone="rose">çakışma</Chip>}
+                    {!s.isVisible && s.status === "PUBLISHED" && <Chip tone="amber">gizli</Chip>}
+                  </div>
+                  {s.submission && <p className="mt-1 text-xs text-muted-foreground">kaynak bildiri: {s.submission.code} — {s.submission.title}</p>}
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {s.assignments.map((a) => {
+                      const name = a.person ? `${a.person.firstName} ${a.person.lastName}` : a.participation ? `${a.participation.person.firstName} ${a.participation.person.lastName}` : "—";
+                      return <Chip key={a.id} tone={a.status === "CONFIRMED" ? "emerald" : "amber"}>{label2(EVENT_ROLES, a.role)}: {name}</Chip>;
+                    })}
+                  </div>
+                  {s.status !== "PUBLISHED" && (
+                    <Button size="sm" variant="outline" className="mt-3" onClick={() => setPublishTarget(s)} disabled={clashes.has(s.id)}>
+                      <Icons.Upload className="size-4" /> Yayınla
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        {cmeEnabled && (
+          <TabsContent value="cme" className="mt-4 space-y-4">
+            {cmeLoading ? <Loading rows={5} /> : cmeError ? <ErrorState message={cmeError} onRetry={reloadCme} /> : !cme ? (
+              <EmptyState title="CME verisi yok" desc="Veri yüklenemedi — yenile düğmesiyle tekrar deneyin." />
+            ) : (
+              <>
+                {/* Üst KPI satırı */}
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <KpiCard label="Kredili Oturum" value={cme.summary.sessionsWithCredits} sub={`${cme.summary.sessionsTotal} oturum`} icon={<Icons.GraduationCap className="size-4" />} />
+                  <KpiCard label="Kredi Potansiyeli" value={cme.summary.creditsPotential} sub="kredili oturumların toplamı" tone="violet" icon={<Icons.Sigma className="size-4" />} />
+                  <KpiCard label="Kredi Kazanan" value={cme.summary.attendees} sub="katılımcı" tone="emerald" icon={<Icons.UserCheck className="size-4" />} />
+                  <KpiCard label="Dağıtılan Kredi" value={cme.summary.creditsIssued} sub={`ort. ${cme.summary.avgCredits} kredi/kişi`} tone="amber" icon={<Icons.Award className="size-4" />} />
+                </div>
+
+                {/* Kapsam satırı */}
+                <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 shadow-sm">
+                  <span className="text-xs font-medium text-muted-foreground">Kapsam</span>
+                  <div className="h-1.5 flex-1 overflow-hidden rounded bg-muted">
+                    <div className="h-full rounded bg-teal-500 transition-all duration-300" style={{ width: `${cme.summary.coveragePercent}%` }} />
+                  </div>
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">{`Oturumların %${cme.summary.coveragePercent}'i kredili`}</span>
+                </div>
+
+                {/* Oturum kredi editörü */}
+                <SectionCard title="Oturum Kredileri" desc="Oturuma atanacak CME kredisini girin — oturum taraması gerçekleştiğinde kişiye işlenir">
+                  <div className="maven-scroll max-h-96 overflow-auto">
+                    <table className="w-full min-w-[560px] text-sm">
+                      <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
+                        <tr className="border-b">
+                          <th className="px-3 py-2 text-xs font-medium">Oturum</th>
+                          <th className="px-3 py-2 text-xs font-medium">Saat</th>
+                          <th className="px-3 py-2 text-xs font-medium">Katılım</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium">Kredi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cme.sessions.map((s) => (
+                          <tr key={s.id} className="border-b last:border-0 hover:bg-muted/30">
+                            <td className="px-3 py-2.5">
+                              <p className="max-w-64 truncate font-semibold">{s.title}</p>
+                              <div className="mt-1"><Chip tone={cmeTypeTone(s.type)}>{s.type}</Chip></div>
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-muted-foreground">{cmeTime(s.startTime)}</td>
+                            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{s.attendanceCount} kişi</td>
+                            <td className="px-3 py-2.5">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Input
+                                  type="number" inputMode="decimal" min={0} max={99} step={0.5}
+                                  value={creditInputs[s.id] ?? ""} placeholder="—"
+                                  onChange={(e) => setCreditInputs((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                                  className="h-8 w-20" aria-label={`${s.title} — CME kredisi`}
+                                />
+                                <Button
+                                  size="sm" variant="outline" className="h-8"
+                                  disabled={savingId !== null || (creditInputs[s.id] ?? "").trim() === ""}
+                                  onClick={() => saveCredits(s)}
+                                >
+                                  {savingId === s.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Check className="size-3.5" />}
+                                  Kaydet
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </SectionCard>
+
+                {/* Tür bazlı toplu atama */}
+                <SectionCard title="Tür Bazlı Toplu Ata" desc="Tür şablonunu oturumlara uygula">
+                  <div className="flex flex-wrap items-end gap-3">
+                    {CME_SESSION_TYPES.map((t) => (
+                      <div key={t} className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">{t}</Label>
+                        <Input
+                          type="number" min={0} max={99} step={0.5} placeholder="0"
+                          value={bulkDefaults[t] ?? ""}
+                          onChange={(e) => setBulkDefaults((prev) => ({ ...prev, [t]: e.target.value }))}
+                          className="h-8 w-20" aria-label={`${t} oturumları için varsayılan kredi`}
+                        />
+                      </div>
+                    ))}
+                    <div className="ml-auto flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Yalnız kredisiz oturumlara uygulanır</span>
+                      <Button size="sm" onClick={applyBulk} disabled={bulkBusy || !bulkFilled}>
+                        {bulkBusy && <Icons.Loader2 className="size-4 animate-spin" />}
+                        Boş Kredilere Uygula
+                      </Button>
+                    </div>
+                  </div>
+                </SectionCard>
+
+                {/* Kişi bazlı kredi defteri */}
+                <SectionCard title="Kredi Defteri" desc="Kişi bazlı CME birikimi — krediye göre sıralı">
+                  {cme.ledger.length === 0 ? (
+                    <EmptyState title="Defter boş" desc="Oturum taraması ve kredi bekleniyor" />
+                  ) : (
+                    <div className="maven-scroll max-h-96 overflow-auto">
+                      <table className="w-full min-w-[640px] text-sm">
+                        <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
+                          <tr className="border-b">
+                            <th className="px-3 py-2 text-xs font-medium">Kişi</th>
+                            <th className="px-3 py-2 text-xs font-medium">Roller</th>
+                            <th className="px-3 py-2 text-xs font-medium">Katılım</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium">Kredi</th>
+                            <th className="px-3 py-2 text-xs font-medium">İlerleme</th>
+                            <th className="px-3 py-2 text-xs font-medium">Son Etkinlik</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {cme.ledger.map((l) => (
+                            <tr key={l.participationId} className={cn("border-b last:border-0", l.attendedCount === 0 && "opacity-60")}>
+                              <td className="px-3 py-2.5">
+                                <p className="font-semibold">{l.person.fullName}</p>
+                                {(l.person.company || l.person.title) && (
+                                  <p className="max-w-48 truncate text-xs text-muted-foreground">{[l.person.company, l.person.title].filter(Boolean).join(" · ")}</p>
+                                )}
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <div className="flex flex-wrap gap-1">
+                                  {l.roles.slice(0, 2).map((r) => <Chip key={r} tone="teal">{label(EVENT_ROLES, r)}</Chip>)}
+                                  {l.roles.length > 2 && <Chip tone="neutral">+{l.roles.length - 2}</Chip>}
+                                  {l.roles.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
+                                </div>
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{l.attendedCount}/{l.eligibleCount} oturum</td>
+                              <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{l.credits}</td>
+                              <td className="px-3 py-2.5">
+                                <div className="flex items-center gap-2">
+                                  <div className="h-1.5 w-16 overflow-hidden rounded bg-muted">
+                                    <div className="h-full rounded bg-teal-500" style={{ width: `${l.percent}%` }} />
+                                  </div>
+                                  <span className="text-xs tabular-nums text-muted-foreground">%{l.percent}</span>
+                                </div>
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">{l.lastActivity ? fmtDateTime(l.lastActivity) : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </SectionCard>
+              </>
+            )}
+          </TabsContent>
+        )}
+      </Tabs>
 
       <Dialog open={Boolean(publishTarget)} onOpenChange={(o) => !o && setPublishTarget(null)}>
         <DialogContent className="sm:max-w-sm">

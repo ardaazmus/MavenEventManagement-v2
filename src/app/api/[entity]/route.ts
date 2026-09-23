@@ -15,7 +15,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   if (!config) return notFound();
 
   const sp = req.nextUrl.searchParams;
-  const where: Record<string, unknown> = {};
+  const where: Record<string, unknown> = { ...(config.defaultWhere ?? {}) };
 
   for (const f of config.filterFields ?? []) {
     const v = sp.get(f);

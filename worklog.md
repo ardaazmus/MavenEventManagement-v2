@@ -291,3 +291,82 @@ Unresolved / sonraki adımlar:
 - Edisyon localStorage'ı: seed sonrası eski id geçersiz olunca editions[0]'a düşüyor (TechDays) — bootstrap'ta "kayıtlı id yoksa en güncel PUBLISHED edisyonu seç" iyileştirmesi yapılabilir
 - Kalan adaylar: kişi birleştirme UI'ı (API hazır), Floor Studio sync endpoint'leri, bekleme listesi otomatik teklif, CME kredi defteri, sponsor/katılımcı portalları
 - Bellek notu: 4GB sandbox'ta tsc + chrome + next dev aynı anda OOM verebiliyor — agent'lar tsc'yi dosya bazlı filtreyle kullanmalı
+
+---
+## UI AGENT SÖZLEŞMESİ R2 (R2-a / R2-b)
+
+Ortak kurallar: önceki "UI AGENT SÖZLEŞMESİ" bölümlerindeki TÜM konvansiyonlar geçerli ("use client", göreli yol, ../bits parçaları, useToast, Türkçe, emoji yok, max-h-96 maven-scroll, responsive, strict TS, any yok). EK KURAL: **tsc --noEmit ÇALIŞTIRMA** (4GB sandbox OOM riski) — yalnız `bun run lint` ile doğrula. Dev sunucusuna DOKUNMA, seed ÇALIŞTIRMA.
+
+R2-a ek sözleşme — CME Kredi API (HAZIR, değiştirme):
+- `apiGet("/api/cme?editionId=" + currentEditionId)` → {
+    editionId,
+    sessions: [{ id, title, type, startTime, cmeCredits: number|null, status, attendanceCount }],
+    ledger: [{ participationId, person: { fullName, company, title }, roles: string[], registrationStatus, attendedCount, eligibleCount, credits, maxPossible, percent, lastActivity }],
+    summary: { sessionsTotal, sessionsWithCredits, creditsPotential, attendees, creditsIssued, avgCredits, maxEarned, coveragePercent },
+    byType: [{ type, sessions, withCredits, creditsSum, attendance }]
+  }
+- POST `apiSend("/api/cme", "POST", { action: "set-credits", sessionId, credits: number })` → ProgramSession | { error } (0–99 arası; hata 400)
+- POST `apiSend("/api/cme", "POST", { action: "bulk-apply", editionId, defaults: Record<string, number> })` → { ok, updated, applied: string[] } — yalnız cmeCredits null olanlara uygular
+
+R2-b ek sözleşme — Mükerrer Kişi API (HAZIR, değiştirme):
+- `apiGet("/api/people/duplicates")` → {
+    totalPersons,
+    suggestions: [{ key, reason: "EMAIL"|"NAME_PHONE"|"NAME_ORG", persons: [{ id, fullName, email, phone, title, company, city, status, createdAt }], olderId, note }],
+    reasonLabels: { EMAIL, NAME_PHONE, NAME_ORG }
+  }
+- Birleştirme: `apiSend("/api/flows", "POST", { action: "person.merge", sourceId, targetId })` → { ok: true } — kaynak MERGED olur, geçmiş (katılım/bildiri/yazarlık/hakemlik/tarama) hedefe taşınır. Kaynak ≠ hedef kontrolü sunucuda.
+
+Entegrasyon notları:
+- R2-a: scientific.tsx içindeki ProgramView'a Tabs eklenecek (mevcut oturum listesi "Oturumlar" sekmesine taşınır; yeni sekme "CME Kredi" — yalnız hasCapability(edition, "CME_CREDITS") true ise görünür; edition = editions.find(e => e.id === currentEditionId))
+- R2-b: people.tsx içindeki PeopleView'a "Olası Mükerrerler" bölümü eklenecek (Kişiler listesinin üstünde/altında SectionCard)
+
+---
+Task ID: R2-a
+Agent: Z.ai Code
+Task: Program modülüne CME Kredi Defteri sekmesi (scientific.tsx — yalnız ProgramView)
+
+Work Log:
+- Yalnız `/home/z/my-project/src/components/maven/views/scientific.tsx` değiştirildi (289 → 539 satır, +250 satır); ScientificView'a hiç dokunulmadı, yeni dosya açılmadı, test kodu yazılmadı. page.tsx / constants.ts / bits.tsx / API rotaları değişmedi, seed çalıştırılmadı, dev sunucusuna dokunulmadı.
+- ProgramView içeriği Tabs'e taşındı: "Oturumlar" sekmesi (gün filtresi Select + çakışma uyarısı + oturum kartları + yayınla dialogu birebir korundu), yeni "CME Kredi" sekmesi (GraduationCap ikonu). Sekme yalnız `hasCapability(editions.find(e => e.id === currentEditionId), "CME_CREDITS")` true ise render edilir (store'dan editions + hasCapability import edildi).
+- CME verisi ayrı useApi ile: `apiGet("/api/cme?editionId=" + currentEditionId)`, deps `[currentEditionId, refreshKey]`, null-guard `if (!currentEditionId || !cmeEnabled) return Promise.resolve(null)`. Sekme içi yükleme Loading(rows=5), hata ErrorState(onRetry: reloadCme).
+- KPI satırı (grid gap-3 sm:grid-cols-2 xl:grid-cols-4): Kredili Oturum (sessionsWithCredits, sub "N oturum", GraduationCap), Kredi Potansiyeli (creditsPotential, Sigma, violet), Kredi Kazanan (attendees, sub "katılımcı", UserCheck, emerald), Dağıtılan Kredi (creditsIssued, sub "ort. X kredi/kişi", Award, amber).
+- Kapsam satırı: h-1.5 rounded bg-muted içinde teal div (width %) + "Kapsam" etiketi + "Oturumların %X'i kredili" muted metni.
+- SectionCard "Oturum Kredileri": kredi editörü tablosu (maven-scroll max-h-96 overflow-auto, min-w-[560px], sticky thead bg-card) — sütunlar Oturum (title bold + tür Chip, KEYNOTE=violet/BREAK=neutral/diğer=teal), Saat (tr-TR saat:dk), Katılım ("N kişi"), Kredi (Input type=number w-20 h-8, value=cmeCredits ?? "", placeholder "—", min 0 max 99 step 0.5) + Kaydet butonu (Loader2 spin, savingId'de disabled, boş girişte disabled). Kaydet: apiSend("/api/cme","POST",{action:"set-credits", sessionId, credits:Number(input)}) → toast "X kredi atandı: {title}" → reloadCme() + bump(); hata toast destructive; 0–99 aralık dışı istemci tarafı engel + uyarı.
+- Input senkronizasyonu: satır bazlı `Record<string,string>` state + useEffect([cme]) ile dış veri reload'unda sunucu değerine senkronize (cmeCredits null → "").
+- SectionCard "Tür Bazlı Toplu Ata": CME_SESSION_TYPES sabiti (constants.ts'te SESSION_TYPES yoktu → yerel sabit dizi KEYNOTE/TALK/PANEL/WORKSHOP/POSTER_SESSION) için 5 küçük number input (placeholder "0") + sağda "Boş Kredilere Uygula" butonu (tüm inputlar boş veya bulkBusy iken disabled) + muted ipucu "Yalnız kredisiz oturumlara uygulanır". Gönderilen defaults yalnız dolu inputlar; yanıt updated>0 → toast "{updated} oturuma kredi atandı", updated=0 → bilgi toast "Atanacak kredisiz oturum yok".
+- SectionCard "Kredi Defteri": kişi bazlı tablo (maven-scroll max-h-96, min-w-[640px], sticky thead) — Kişi (fullName bold + company·title muted truncate), Roller (EVENT_ROLES label Chip teal, max 2 + "+N" neutral, boşsa "—"), Katılım ("attendedCount/eligibleCount oturum" tabular-nums), Kredi (bold tabular-nums), İlerleme (w-16 h-1.5 teal bar + %X muted), Son Etkinlik (fmtDateTime, yoksa "—"). API sırası korundu (krediye göre sıralı), attendedCount=0 satırlar opacity-60. Boşsa EmptyState "Defter boş — oturum taraması ve kredi bekleniyor".
+- PageHeader Yenile butonu artık her iki veriyi yeniler (reload + reloadCme); `label` ve `fmtDateTime` constants'tan eklendi, dosya başı yorumuna CME notu eklendi. Renk ailesi teal/emerald/amber/rose/violet/neutral, emoji yok, tüm metinler Türkçe.
+- Doğrulama: `bun run lint` → 0 hata / 0 uyarı (tsc çalıştırılmadı — R2 sözleşmesi). agent-browser E2E (No-Dig Turkey 2026): Program → 2 sekme render ✓; CME Kredi sekmesi görünür (yetenek açık) ✓; KPI gerçek veriyle 3/7 oturum, potansiyel 6.5, 5 kazanan, 7.5 dağıtılan (ort. 1.5) ✓; Kapsam %43 ✓; editör tablosunda 7 oturum, mevcut krediler inputlara yüklü, boş girişlerde Kaydet disabled ✓; PANEL oturumuna 1 kredi girip Kaydet → toast "1 kredi atandı: Büyük Projelerde Paydaş Paneli" + Kredili 4, Potansiyel 7.5, Kapsam %57, defter "1/4 oturum" ✓; Tür Bazlı Ata POSTER_SESSION=2 → "Boş Kredilere Uygula" aktifleşti, POST 200, Kredili 5 / Kapsam %71 / Poster input 2 ✓; aynı şablon tekrar uygulandığında updated=0 → bilgi toast "Atanacak kredisiz oturum yok" (DOM eval ile doğrulandı) ✓; Kredi Defteri 25 satır (5 aktif + 20 soluk opacity-60), roller Chip, ilerleme barları ✓; Oturumlar sekmesi değişmedi ✓; mobil 390×844 yatay taşma 0 ✓; `agent-browser errors` → 0 page error ✓.
+
+Stage Summary:
+- Program modülü 2 sekmeli oldu: mevcut oturum yönetimi korunarak CME Kredi Defteri (§08) tam UI kazandı — kredi atama editörü, tür bazlı toplu şablon, kişi bazlı birikim defteri; /api/cme GET/POST sözleşmesi hiç değiştirilmeden tüketildi (tek dosya +250 satır).
+- Test sırasında atanan gerçek krediler (PANEL=1, POSTER_SESSION=2) demo verisi olarak bırakıldı (seed çalıştırma yasağı gereği geri alınıp bozulmadı; akreditasyon senaryosuna uygun).
+- Bilinen sınırlar: oturum kredisini sıfırlama/silme yok (API credits=null kabul etmiyor, 400); BREAK türü şablonda yok (toplu atama yalnız 5 sabit tür) ama editörde listelenir; "+N" rol chip'i için demo veride 3+ rollü kişi yok (kod yolu hazır); SESSION_TYPES sabiti constants.ts'e eklenmedi (dokunma yasağı) — yerel sabit kullanıldı.
+- R2-b (people.tsx Mükerrer Kişi) paralel ajanın görevi; bu ajan yalnız scientific.tsx'e dokundu.
+
+---
+Task ID: R2
+Agent: Z.ai Code (ana ajan) + full-stack-developer ×2 (R2-a ✓, R2-b △ tamamlandı ve ana ajan tarafından doğrulandı)
+Task: Cron inceleme turu R2 — QA değerlendirmesi, edisyon fallback hatası düzeltmesi, CME Kredi Defteri + Kişi Birleştirme özellikleri, stil cilası
+
+Work Log:
+- QA DEĞERLENDİRMESİ: worklog + dev.log inceledi; agent-browser ile 18 modülün tamamı tarandı → 0 page error, 0 console error, tüm API'ler 200. Proje STABİL → hata düzeltme + yeni özellik turu kararına varıldı.
+- HATA DÜZELTMESİ (worklog'da bilinen sorun): store.ts bootstrap — persisted edition id geçersizse (seed sonrası) editions[0]'a (boş TechDays taslağı) düşüyordu. Yeni mantık: persisted geçersiz → isPublished/REGISTRATION/ONSITE edisyonları startDate'e göre sırala, en güncel aktif edisyonu seç. E2E doğrulandı: reseed + stale localStorage → No-Dig Turkey 2026 açılıyor ✓
+- ŞEMA: ProgramSession.cmeCredits Float? eklendi (CME_CREDITS yeteneği için), db push ✓ — model sayısı 63 (footer metni de 63'e güncellendi).
+- YENİ API `/api/cme` (GET+POST): oturum kredi editörü verisi, SESSION_ENTRY/RESCAN+ALLOWED/RESCAN_WARNING taramalarından kişi×oturum tekil katılım, kişi bazlı defter (kredi, yüzde bar, son etkinlik), özet (sessionsWithCredits/creditsPotential/attendees/creditsIssued/avg/coveragePercent), tür kırılımı. POST: set-credits (0–99 doğrulamalı) + bulk-apply (tür bazlı, yalnız kredisiz oturumlara). Düzeltmeler: ScanEvent'te editionId yok → session relasyon filtresi; katılım haritası personId anahtarlı (participationId değil). Seed'e KEYNOTE=2/TALK=1.5/WORKSHOP=3 kredileri eklendi.
+- YENİ API `/api/people/duplicates`: EMAIL / NAME_PHONE / NAME_ORG kurallarıyla mükerrer önerisi (tr-TR normalize, MERGED hariç, olderId hedef önerisi). Test: iki kural da gerçek veriyle doğrulandı.
+- registry.ts: EntityConfig.defaultWhere desteği + people'a { status ≠ MERGED, mergedIntoId: null } — birleştirilen kişiler artık tüm listelerde gizlenir (sözleşme gereği).
+- R2-a (subagent, scientific.tsx +250 satır): ProgramView Tabs'a taşındı; "CME Kredi" sekmesi (yalnız CME_CREDITS yeteneği açıkken): 4 KPI + kapsam barı + oturum kredi editörü (inline input+kaydet) + tür bazlı toplu atama + kredi defteri (kişi, rol chip'leri, ilerleme barı, soluk satırlar). Subagent E2E: kredi atama 1.5→toast, toplu atama, updated=0 bilgi toast'ı, mobil 390px ✓
+- R2-b (subagent, people.tsx +148 satır): "Olası Mükerrerler" bölümü (öneri 0 ise gizli, "Mükerrer yok" chip'i), kişi kartları + sebep chip'i (EMAIL emerald/NAME_PHONE amber/NAME_ORG violet), birleştirme diyaloğu (A/B radio kartlar, olderId varsayılan, geri alınamaz uyarısı). Subagent deadline aşımı → ana ajan dosyayı devraldı: tek bozukluk 3 useState bildirimiydi ([m karakterleri eksik — dosya zaten ajanın son yazımında düzgün geldi), lint 0 hata ile doğrulandı. Ana ajan E2E: test Ahmet Yılmaz çifti UI'dan birleştirildi → toast + bölüm kapandı + MERGED listeden düştü ✓
+- STİL CILASI (shell.tsx, 18 modülü etkiler): sidebar aktif öğesinde sol teal vurgu çubuğu (scale animasyonlu), hover'da ikon büyüme + pl geçişi, focus-visible ring; ONSITE edisyon için "Canlı" rozetinde ve edisyon seçicide ping animasyonlu nokta; Yenile butonu loading'de spin + disabled; modül geçişlerinde fade/slide animasyonu (key={module}); sidebar alt kartına gradyan + Shapes ikonu; footer "61 model" → "63 model" düzeltmesi.
+
+Stage Summary:
+- Bu tur eklendi: CME Kredi Defteri (§08 — şema+API+UI, akreditasyon iş akışı: kredi ata → tarama işler → kişi bazlı defter) + Mükerrer Kişi Tespiti & Onaylı Birleştirme (Kimlik kuralı 1 UI'ı) + edisyon fallback düzeltmesi + MERGED gizleme + kapsamlı stil cilası
+- Proje: 63 model, 18 modüllü SPA, 2 yeni API (cme, people/duplicates), lint 0 hata, reseed sonrası tam E2E sweep temiz
+- Doğrulanmış akışlar: bootstrap fallback, CME kredi atama (tek+toplu), mükerrer tespit (2 kural), onaylı birleştirme (UI+API), MERGED gizlenme, mobil render
+
+Unresolved / sonraki adımlar:
+- CME: kredi sıfırlama (credits:null) API'de kapalı — akreditasyonda gerekirse açılabilir; BREAK/NETWORKING türlerine şablon atanmıyor (bilinçli)
+- person.merge activity log'u id son 6 haneyle yazıyor — insan okunur isim için flows'ta include ile zenginleştirilebilir
+- Kalan adaylar (öncelik sırasıyla): bekleme listesi otomatik teklif (registration.cancel → WAITLIST'e teklif), Floor Studio sync endpoint'leri, sponsor/katılımcı dış portalları, kişi birleştirmede çakışma çözümü (aynı edisyonda iki katılım)
+- Bellek: dev sunucusu tur içinde 2 kez OOM düştü (subagent chrome+tsc paralelliği) — tur sonunda setsid ile yeniden başlatıldı, temiz. Subagent'lara tsc yasağı işe yarıyor; chrome işlemleri bitince kapatılmalı (agent-browser close)

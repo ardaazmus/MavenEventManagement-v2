@@ -400,3 +400,31 @@ Unresolved / sonraki adımlar:
 - expireStaleOffers yalnız GET/akış çağrılarında çalışır — cron/scheduled job yok (tek instance bellek içi yeterli)
 - Kalan adaylar (öncelik sırasıyla): Floor Studio sync endpoint'leri, sponsor/katılımcı dış portalları, kişi birleştirmede çakışma çözümü (aynı edisyonda iki katılım), QA_QUIZ doğru cevap scoring modeli
 - Bellek: chrome + dev aynı anda çalışınca 4GB sınırı daralıyor — agent turu sonunda agent-browser close alışkanlığı sürdürülmeli
+
+---
+Task ID: R4
+Agent: Z.ai Code (ana ajan)
+Task: Cron inceleme turu R4 — QA değerlendirmesi, Bildirim Merkezi (zil) + QA_QUIZ puanlama motoru (mobil QA tamamı), stil cilası
+
+Work Log:
+- QA DEĞERLENDİRMESİ: worklog + dev.log + lint inceledi (0 hata); agent-browser sweep (Dashboard/Kayıt/Form/Muhasebe/Program/Ödeme + mobil) → 0 page error. Proje STABİL → özellik turu: kalan adaylardan "QA_QUIZ doğru cevap scoring modeli" + yeni Bildirim Merkezi uygulandı (R3'te açılan bekleme teklifi bildirimi simülasyonuydu; zil ile gerçek zamanlı olay akışı kazanıldı).
+- ŞEMA: FormField.correctAnswer String? (QA_QUIZ doğru cevabı) + FormSubmission.quizScore Float? / quizCorrect Int? / quizTotal Int? → db push ✓ (model sayısı 64; yeni model yok, alan genişletmesi).
+- YENİ API `/api/notifications` (GET): ActivityLog → bildirim eşlemesi; önem seviyesi tip bazlı (rose: iptal/tarama reddi/iade, emerald: onay/tahsilat/yayın/giriş, amber: claim/ödeme kaydı/yetenek, teal: varsayılan); hedef modül eşlemesi İKİ KATMANLI: entityType → modül + entityType boş olan seed/akış kayıtları için ActivityType → modül yedek haritası (moduleFor) — 0 "modülsüz" kayıt doğrulandı. limit parametresi (1-100, default 25).
+- Shell: NotificationBell bileşeni (notification-bell.tsx, Yenile ile avatar arasına); Popover panel — başlık + "{n} yeni" rozeti + "Tümünü gör" + max-h-96 liste; madde: önem ikonu (ShieldAlert/CircleAlert/CheckCircle2/Activity), mesaj, göreli zaman ("şimdi/3 dk önce/2 sa önce/dün"), aktör, "modüle git" ipucu; okunmamış takibi localStorage "maven.notif.seen" zaman damgası; rozet 9+ sınırı + ping animasyonu + zil sallanma animasyonu (swing keyframe); 60 sn hafif yoklama + edisyon değişiminde yenileme + açılışta tazeleme; maddeye tıklayınca setModule ile ilgili ekrana navigasyon + görüldü işaretleme; mobilde edisyon seçici w-[150px] sm:w-[220px] küçültülerek zile yer açıldı.
+- QUIZ MOTORU: public-register — QA_QUIZ + correctAnswer'lı alanlar otomatik puanlanır (String eşleşme, trim'li; quizScore=round(correct/total*100)) ve yanıt gövdesine quizScore/quizCorrect/quizTotal eklendi; SPAM gönderiler de puanlanır (inceleme değer kaybı yok). form-stats — quiz bölümü: questionCount, scoredCount, avgScore, passRate(50+), 4 kova dağılım (0-24/25-49/50-74/75-100), soru bazlı correctCount/wrongCount/correctRate.
+- FORM MERKEZİ UI (form-center.tsx): (1) Stüdyo — QA_QUIZ alan satırında satır içi "Doğru cevap:" Select (KeyRound ikonu, seçeneklerden, PUT /api/form-fields/<id>, toast + reload; boş seçim puanlamayı kapatır); Alan Ekle dialogunda QA_QUIZ için "Doğru Cevap (QA motoru puanlaması)" seçenek kartı (emerald). (2) Yanıtlar — tabloya "Quiz" sütunu + mobil kartlara quiz pill: "Quiz %100 · 1/1" bant renkli (≥75 emerald/≥50 amber/<50 rose, Sigma ikonu). (3) Detay dialogu — quiz skoru bandı + QA_QUIZ yanıt satırları ✓/✗ renkli ("yanlış — doğrusu: X" gösterimi). (4) İstatistik — "QA Quiz Sonuçları" kartı (lg:col-span-3): Ortalama Skor (renk eşikli), Geçme Oranı, Skor Dağılımı mini barları, soru bazlı doğru/yanlış split bar + "6✓ 3✗" sayacı. (5) Canlı masa — gönderim sonucu kartına anında "Quiz sonucu: %100 — 1/1 doğru" bandı.
+- SEED: Anket quiz alanına correctAnswer "Kazısız altyapı" + 8 anket gönderisine quizScore (6 doğru %100 / 2 yanlış %0) — istatistik kartı gerçek dağılım gösterir.
+- E2E (agent-browser): zil "9+" rozetli ✓; popover 12 okunmamış madde ✓; "Tarama reddedildi" maddesine tıkla → Sahada modülüne navigasyon + rozet sıfır ✓; Yanıtlar tablosunda quiz pill'ler (Quiz %0 · 0/1 kırmızı, Quiz %100 · 1/1 yeşil) ✓; QA Quiz Sonuçları kartı gerçek veriyle %66.7 ort / %67 geçme / 3-0-0-6 kova / 6✓ 3✗ split bar ✓; Stüdyoda doğru cevap değiştirme (Kazısız→Ziraat→geri) PUT + toast + reload ✓; Canlı masada doğru cevapla gönderim → "Kaydınız onaylandı" + "Quiz sonucu: %100 — 1/1 doğru" ✓; yanlış e-postayla gönderim spam skor 50 + quizScore 100 (bağımsız puanlama) ✓; Detay dialogunda quiz bandı + "doğru" satır işareti ✓; mobil 390px zil + küçük edisyon seçici düzenli, sekme sarmalama doğru ✓; page errors 0 ✓.
+- Test sırasında oluşan gönderiler reseed ile temizlendi; temiz demo durumu bırakıldı; browser kapatıldı; lint 0 hata; dev.log 5xx yok.
+
+Stage Summary:
+- Bu tur eklendi: Bildirim Merkezi (zil — aktivite akışından türetilen önem seviyeli bildirimler, modüle giden tıklanabilir maddeler, okunmamış takibi, 60 sn yoklama) + QA_QUIZ puanlama motoru (doğru cevap işaretleme → otomatik quiz skoru → yanıt pill'leri → detay ✓/✗ → istatistik kartı → canlı masa anında sonuç) — kullanıcının "mobil uygulamaya anket QA soruları gibi interaktif öğeler tasarlanabilmeli" isteğinin puanlama ayağı tamamlandı.
+- Proje: 64 model (alan genişletmesi), 18 modüllü SPA + bildirim zili, 1 yeni API (notifications), lint 0 hata, E2E doğrulanmış, reseed ile temiz demo.
+- Yapılan düzeltmeler: notifications modül eşlemesinde entityType NULL fallback (tip bazlı harita), mobil edisyon seçici genişliği.
+
+Unresolved / sonraki adımlar:
+- Quiz doğru cevabı değişince ESKİ gönderilerin skorları yeniden hesaplanmaz (gönderi anındaki cevapla puanlanır — tasarım kararı; gerekirse backfill endpoint'i eklenebilir)
+- Bildirim yoklaması 60 sn setInterval — WebSocket taşıma olası (mini-service fazında)
+- Quiz: birden fazla soruda ağırlık/kısmi puan yok (her soru 1 puan); QA_QUIZ çoklu doğru cevap desteklenmez
+- Kalan adaylar (öncelik sırasıyla): Floor Studio sync endpoint'leri, sponsor/katılımcı dış portalları (teklif e-postası burada gerçek gönderime döner), kişi birleştirmede çakışma çözümü
+- Bellek alışkanlığı: agent turu sonunda agent-browser close sürdürülmeli (4GB sandbox)

@@ -436,6 +436,7 @@ model FormField {
   conditionValue  String?
   sensitivity     String  @default("STANDARD") // STANDARD|OPERATIONAL_SENSITIVE|TEAM_ONLY (§05 gizlilik)
   mobileInteractive Boolean @default(false) // mobil uygulamada interaktif öge (anket QA, NPS, rating)
+  correctAnswer   String? // QA_QUIZ: seçeneklerden doğru cevap (mobil QA scoring)
   order           Int     @default(0)
 
   form    FormDefinition @relation(fields: [formId], references: [id], onDelete: Cascade)
@@ -475,6 +476,9 @@ model FormSubmission {
   elapsedSeconds  Float?   // form açılma→gönderim süresi (zaman tuzağı)
   submitIp        String?
   source          String   @default("WEB_PUBLIC") // WEB_PUBLIC|KIOSK|MOBILE|ADMIN
+  quizScore       Float?   // QA_QUIZ başarı yüzdesi 0-100
+  quizCorrect     Int?     // doğru sayısı
+  quizTotal       Int?     // quiz sorusu sayısı
   notes           String?
   createdAt       DateTime @default(now())
 

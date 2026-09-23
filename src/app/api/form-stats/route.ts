@@ -126,6 +126,39 @@ export async function GET(req: NextRequest) {
   const elapsed = valid.map((s) => s.elapsedSeconds).filter((v): v is number => v != null);
   const spamCount = byStatus["SPAM"] ?? 0;
 
+  // QA_QUIZ scoring özeti — mobil QA motoru sonuçları
+  const quizFields = form.fields.filter((f) => f.type === "QA_QUIZ");
+  const scored = valid.filter((s) => s.quizTotal != null && s.quizTotal > 0 && s.quizScore != null);
+  const bucketsDef = [
+    { label: "0-24", min: 0, max: 24 },
+    { label: "25-49", min: 25, max: 49 },
+    { label: "50-74", min: 50, max: 74 },
+    { label: "75-100", min: 75, max: 100 },
+  ];
+  const quiz = quizFields.length === 0 ? null : {
+    questionCount: quizFields.length,
+    scoredCount: scored.length,
+    avgScore: scored.length ? Math.round((scored.reduce((a, s) => a + (s.quizScore ?? 0), 0) / scored.length) * 10) / 10 : null,
+    passRate: scored.length ? Math.round((scored.filter((s) => (s.quizScore ?? 0) >= 50).length / scored.length) * 100) : 0,
+    buckets: bucketsDef.map((b) => ({
+      label: b.label,
+      count: scored.filter((s) => (s.quizScore ?? 0) >= b.min && (s.quizScore ?? 0) <= b.max).length,
+    })),
+    fields: quizFields.map((f) => {
+      const answers = valid.map((s) => s.answers.find((a) => a.fieldId === f.id)?.answer ?? null).filter((a): a is string => a != null && a !== "");
+      const correctCount = answers.filter((a) => f.correctAnswer && a.trim() === f.correctAnswer).length;
+      return {
+        fieldId: f.id,
+        label: f.label,
+        correctAnswer: f.correctAnswer,
+        answered: answers.length,
+        correctCount,
+        wrongCount: answers.length - correctCount,
+        correctRate: answers.length ? Math.round((correctCount / answers.length) * 100) : 0,
+      };
+    }),
+  };
+
   return NextResponse.json({
     form: { id: form.id, name: form.name, type: form.type, status: form.status },
     totals: {
@@ -140,6 +173,7 @@ export async function GET(req: NextRequest) {
     },
     daily: days,
     fields: fieldStats,
+    quiz,
   });
 }
 

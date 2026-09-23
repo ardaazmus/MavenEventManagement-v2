@@ -490,7 +490,7 @@ export async function POST() {
     const sv1 = await db.formField.create({ data: { formId: survey.id, label: "Kongreyi nereden duydunuz?", type: "SINGLE_CHOICE", options: "E-posta\nSosyal Medya\nArkadaş Önerisi\nDernek Duyurusu", order: 1 } });
     const sv2 = await db.formField.create({ data: { formId: survey.id, label: "Oturum kalitesi (1-5)", type: "RATING", mobileInteractive: true, order: 2 } });
     const sv3 = await db.formField.create({ data: { formId: survey.id, label: "Bizi bir meslektaşınıza önerme olasılığınız (0-10)", type: "NPS", mobileInteractive: true, order: 3 } });
-    const sv4 = await db.formField.create({ data: { formId: survey.id, label: "No-Dig teknolojisi hangi alanda kullanılır?", type: "QA_QUIZ", options: "Kazısız altyapı\nAçık ocak madenciliği\nZiraat", mobileInteractive: true, order: 4 } });
+    const sv4 = await db.formField.create({ data: { formId: survey.id, label: "No-Dig teknolojisi hangi alanda kullanılır?", type: "QA_QUIZ", options: "Kazısız altyapı\nAçık ocak madenciliği\nZiraat", correctAnswer: "Kazısız altyapı", mobileInteractive: true, order: 4 } });
     const sv5 = await db.formField.create({ data: { formId: survey.id, label: "Önerileriniz", type: "LONGTEXT", order: 5 } });
     const surveyRespondents = [
       ["İlkay Tan", "ilkay.tan@example.com", "E-posta", 4, 9, "Kazısız altyapı", "Program çok akıcıydı."],
@@ -503,12 +503,15 @@ export async function POST() {
       ["Cem Doğrusöz", "cem.dogrusoz@example.com", "Arkadaş Önerisi", 5, 10, "Kazısız altyapı", "Mükemmel organizasyon."],
     ] as const;
     for (const [i, s] of surveyRespondents.entries()) {
+      // QA_QUIZ scoring — doğru cevap: Kazısız altyapı (mobil QA motoru)
+      const quizCorrect = s[5] === "Kazısız altyapı" ? 1 : 0;
       const sub = await db.formSubmission.create({
         data: {
           formId: survey.id, editionId: edition1.id,
           respondentName: s[0], respondentEmail: s[1],
           status: "APPROVED", spamScore: 0, elapsedSeconds: 25 + i * 7,
           source: i % 4 === 0 ? "MOBILE" : "WEB_PUBLIC",
+          quizScore: quizCorrect * 100, quizCorrect, quizTotal: 1,
           createdAt: D(-i, 12),
         },
       });

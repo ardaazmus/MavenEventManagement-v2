@@ -12,6 +12,7 @@ import { Separator } from "@/components/ui/separator";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { NotificationBell } from "./notification-bell";
 
 function ModuleIcon({ name, className }: { name: string; className?: string }) {
   const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[name] ?? Icons.Circle;
@@ -142,7 +143,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   try { window.localStorage.setItem("maven.edition", v); } catch { /* yoksay */ }
                 }}
               >
-                <SelectTrigger className="h-9 w-[220px] gap-2" aria-label="Edisyon seçici">
+                <SelectTrigger className="h-9 w-[150px] gap-2 sm:w-[220px]" aria-label="Edisyon seçici">
                   <SelectValue placeholder="Edisyon seçin" />
                 </SelectTrigger>
                 <SelectContent>
@@ -175,6 +176,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <Button variant="ghost" size="icon" aria-label="Yenile" onClick={() => bootstrap()} disabled={loading}>
                 <Icons.RefreshCw className={cn("size-4", loading && "animate-spin text-primary")} />
               </Button>
+              <NotificationBell />
               <Avatar className="size-8">
                 <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">EK</AvatarFallback>
               </Avatar>

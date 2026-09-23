@@ -69,6 +69,17 @@ export async function POST(req: NextRequest) {
 
     const status = verdict.isSpam ? "SPAM" : form.autoApprove ? "APPROVED" : "PENDING";
 
+    // QA_QUIZ scoring — mobil QA motoru: doğru cevabı işaretlenmiş quiz alanları puanlanır
+    const quizFields = form.fields.filter((f) => f.type === "QA_QUIZ" && f.correctAnswer);
+    let quizScore: number | null = null;
+    let quizCorrect: number | null = null;
+    let quizTotal: number | null = null;
+    if (quizFields.length > 0) {
+      quizTotal = quizFields.length;
+      quizCorrect = quizFields.filter((f) => String(answers[f.id] ?? "").trim() === f.correctAnswer).length;
+      quizScore = Math.round((quizCorrect / quizTotal) * 100);
+    }
+
     const submission = await db.formSubmission.create({
       data: {
         formId: form.id,
@@ -84,6 +95,9 @@ export async function POST(req: NextRequest) {
         elapsedSeconds: body.elapsedSeconds ?? null,
         submitIp: ip,
         source: body.source ?? "WEB_PUBLIC",
+        quizScore,
+        quizCorrect,
+        quizTotal,
       },
     });
 
@@ -132,6 +146,9 @@ export async function POST(req: NextRequest) {
       status: submission.status,
       spamScore: submission.spamScore,
       spamReasons: verdict.reasons,
+      quizScore: submission.quizScore,
+      quizCorrect: submission.quizCorrect,
+      quizTotal: submission.quizTotal,
       chainError,
       registration: chain?.registration ?? null,
       order: chain?.order ?? null,

@@ -30,6 +30,7 @@ interface FormFieldDef {
   id: string; formId: string; order: number; label: string; type: string;
   required: string; options?: string | null; placeholder?: string | null; helpText?: string | null;
   sensitivity: string; mobileInteractive: boolean; conditionField?: string | null; conditionValue?: string | null;
+  correctAnswer?: string | null;
 }
 interface FormDef {
   id: string; editionId: string; name: string; type: string; status: string;
@@ -42,6 +43,7 @@ interface SubmissionRow {
   id: string; respondentName: string; respondentEmail: string; phone?: string | null; organization?: string | null;
   status: string; spamScore: number; spamReasons?: string | null; elapsedSeconds?: number | null;
   source: string; createdAt: string; submitIp?: string | null;
+  quizScore?: number | null; quizCorrect?: number | null; quizTotal?: number | null;
   form?: { id: string; name: string; type: string; status: string } | null;
   registration?: { confirmationNo: string; status: string; category?: { name: string } | null } | null;
 }
@@ -61,14 +63,18 @@ interface FieldStat {
   nps?: { score: number; promoters: number; passives: number; detractors: number } | null;
   samples?: string[];
 }
+interface QuizFieldStat { fieldId: string; label: string; correctAnswer?: string | null; answered: number; correctCount: number; wrongCount: number; correctRate: number }
+interface QuizStats { questionCount: number; scoredCount: number; avgScore: number | null; passRate: number; buckets: { label: string; count: number }[]; fields: QuizFieldStat[] }
 interface FormStats {
   form: { id: string; name: string; type: string; status: string };
   totals: { submissions: number; valid: number; spam: number; spamRate: number; approved: number; pending: number; rejected: number; avgElapsedSeconds: number | null };
   daily: { date: string; count: number }[];
   fields: FieldStat[];
+  quiz?: QuizStats | null;
 }
 interface RegisterResult {
   submissionId: string; status: string; spamScore: number; spamReasons: string[]; chainError?: string | null;
+  quizScore?: number | null; quizCorrect?: number | null; quizTotal?: number | null;
   registration?: { id: string; confirmationNo: string; status: string } | null;
   order?: { id: string; orderNo: string; totalAmount: number; currency: string } | null;
   payment?: { id: string; amount: number; currency: string; status: string } | null;
@@ -167,7 +173,7 @@ export function FormCenterView() {
   const emptyNewField = {
     label: "", type: "TEXT", placeholder: "", helpText: "", options: "",
     required: "OPTIONAL", conditionField: "", conditionValue: "",
-    sensitivity: "STANDARD", mobileInteractive: false,
+    sensitivity: "STANDARD", mobileInteractive: false, correctAnswer: "",
   };
   const [newField, setNewField] = useState(emptyNewField);
 
@@ -366,6 +372,7 @@ export function FormCenterView() {
         conditionValue: newField.conditionValue,
         sensitivity: newField.sensitivity,
         mobileInteractive: newField.mobileInteractive,
+        correctAnswer: newField.type === "QA_QUIZ" ? (newField.correctAnswer || null) : null,
         order: selectedForm.fields.length + 1,
       });
       toast({ title: "Alan eklendi", description: `${newField.label} — sıra ${selectedForm.fields.length + 1}` });
@@ -411,6 +418,24 @@ export function FormCenterView() {
       bump();
     } catch (e) {
       toast({ title: "Alan silinemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // QA_QUIZ doğru cevabı — stüdyoda satır içi seçim, anında puanlamaya etki eder
+  const setCorrectAnswer = async (fieldId: string, value: string) => {
+    setBusy(`ca-${fieldId}`);
+    try {
+      await apiSend(`/api/form-fields/${fieldId}`, "PUT", { correctAnswer: value || null });
+      toast({
+        title: value ? `Doğru cevap: ${value}` : "Doğru cevap kaldırıldı",
+        description: value ? "Yeni gönderiler quiz puanıyla kaydedilir." : "Bu soru artık puanlanmaz.",
+      });
+      reload();
+      bump();
+    } catch (e) {
+      toast({ title: "Doğru cevap kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -693,6 +718,22 @@ export function FormCenterView() {
       <span className="text-xs text-muted-foreground">—</span>
     );
 
+  // ── QA_QUIZ skoru hücresi — bant bazlı renk (≥75 emerald, ≥50 amber, <50 rose) ─
+  const quizPill = (sub: { quizScore?: number | null; quizCorrect?: number | null; quizTotal?: number | null }) => {
+    if (sub.quizScore == null) return <span className="text-xs text-muted-foreground">—</span>;
+    const tone = sub.quizScore >= 75 ? STATUS_TONE.CONVERTED : sub.quizScore >= 50 ? STATUS_TONE.WAITING : STATUS_TONE.SPAM;
+    return (
+      <span
+        className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${tone}`}
+        title={`Quiz başarısı %${Math.round(sub.quizScore)} — 75+ yeşil, 50+ amber, altı kırmızı`}
+      >
+        <Icons.Sigma className="size-3" />
+        Quiz %{Math.round(sub.quizScore)}
+        {sub.quizCorrect != null && sub.quizTotal ? ` · ${sub.quizCorrect}/${sub.quizTotal}` : ""}
+      </span>
+    );
+  };
+
   const npsStat = stats?.fields.find((st) => st.type === "NPS" && st.nps) ?? null;
 
   // ───────────────────────────────────────────────────────────── RENDER ─────
@@ -871,6 +912,24 @@ export function FormCenterView() {
                                     <p className="mt-0.5 text-[11px] text-muted-foreground">
                                       Koşul: {f.conditionField} = {f.conditionValue ?? "—"}
                                     </p>
+                                  )}
+                                  {f.type === "QA_QUIZ" && (
+                                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700">
+                                        <Icons.KeyRound className="size-3" /> Doğru cevap:
+                                      </span>
+                                      <Select value={f.correctAnswer ?? undefined} onValueChange={(v) => setCorrectAnswer(f.id, v)}>
+                                        <SelectTrigger className="h-7 w-44 text-[11px]" disabled={busy !== null}>
+                                          <SelectValue placeholder="Seçin — puanlama kapalı" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {(f.options ?? "").split("\n").map((s) => s.trim()).filter(Boolean).map((opt) => (
+                                            <SelectItem key={opt} value={opt} className="text-xs">{opt}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      {busy === `ca-${f.id}` && <Icons.Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+                                    </div>
                                   )}
                                 </div>
                                 <div className="flex shrink-0 items-center gap-0.5">
@@ -1088,6 +1147,7 @@ export function FormCenterView() {
                         <th className="py-2 pr-3 font-medium">Form</th>
                         <th className="py-2 pr-3 font-medium">Durum</th>
                         <th className="py-2 pr-3 font-medium">Spam</th>
+                        <th className="py-2 pr-3 font-medium">Quiz</th>
                         <th className="py-2 pr-3 font-medium">Süre</th>
                         <th className="py-2 pr-3 font-medium">Kaynak</th>
                         <th className="py-2 pr-3 font-medium">Tarih</th>
@@ -1105,6 +1165,7 @@ export function FormCenterView() {
                           <td className="py-2 pr-3 text-xs">{s.form?.name ?? "—"}</td>
                           <td className="py-2 pr-3"><StatusBadge map={FORM_SUBMISSION_STATUS} value={s.status} /></td>
                           <td className="py-2 pr-3">{spamPill(s.spamScore)}</td>
+                          <td className="py-2 pr-3">{quizPill(s)}</td>
                           <td className="py-2 pr-3 text-xs tabular-nums">{s.elapsedSeconds != null ? `${Math.round(s.elapsedSeconds)} sn` : "—"}</td>
                           <td className="py-2 pr-3 text-xs">{label(SUBMISSION_SOURCES, s.source)}</td>
                           <td className="py-2 pr-3 text-xs text-muted-foreground">{fmtDate(s.createdAt)}</td>
@@ -1169,6 +1230,7 @@ export function FormCenterView() {
                         {s.organization && <span>{s.organization}</span>}
                         <span>{s.form?.name}</span>
                         {spamPill(s.spamScore)}
+                        {quizPill(s)}
                         <span>{s.elapsedSeconds != null ? `${Math.round(s.elapsedSeconds)} sn` : null}</span>
                         <span>{label(SUBMISSION_SOURCES, s.source)}</span>
                         <span>{fmtDate(s.createdAt)}</span>
@@ -1273,6 +1335,63 @@ export function FormCenterView() {
                           <p className="text-rose-700">Detractor: {npsStat.nps.detractors}</p>
                         </div>
                       </div>
+                    </SectionCard>
+                  )}
+
+                  {stats.quiz && (
+                    <SectionCard
+                      title="QA Quiz Sonuçları"
+                      desc={`${stats.quiz.questionCount} soru · ${stats.quiz.scoredCount} puanlanmış gönderi`}
+                      className={npsStat ? "lg:col-span-3" : "lg:col-span-2"}
+                    >
+                      <div className="grid gap-4 sm:grid-cols-3">
+                        <div className="rounded-lg border bg-muted/20 p-3 text-center">
+                          <p className="text-xs text-muted-foreground">Ortalama Skor</p>
+                          <p className={`text-3xl font-semibold tabular-nums ${(stats.quiz.avgScore ?? 0) >= 75 ? "text-emerald-600" : (stats.quiz.avgScore ?? 0) >= 50 ? "text-amber-600" : "text-rose-600"}`}>
+                            %{stats.quiz.avgScore != null ? Math.round(stats.quiz.avgScore * 10) / 10 : "—"}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border bg-muted/20 p-3 text-center">
+                          <p className="text-xs text-muted-foreground">Geçme Oranı (50+)</p>
+                          <p className="text-3xl font-semibold tabular-nums text-teal-600">%{stats.quiz.passRate}</p>
+                        </div>
+                        <div className="rounded-lg border bg-muted/20 p-3">
+                          <p className="mb-1.5 text-xs text-muted-foreground">Skor Dağılımı</p>
+                          <div className="space-y-1">
+                            {stats.quiz.buckets.map((b) => (
+                              <div key={b.label} className="flex items-center gap-2">
+                                <span className="w-12 shrink-0 text-[10px] tabular-nums text-muted-foreground">{b.label}</span>
+                                <div className="h-1.5 flex-1 overflow-hidden rounded bg-muted">
+                                  <div
+                                    className={`h-full rounded ${b.label === "75-100" ? "bg-emerald-500" : b.label === "50-74" ? "bg-amber-400" : "bg-rose-400"}`}
+                                    style={{ width: `${Math.max((b.count / Math.max(stats.quiz?.scoredCount ?? 1, 1)) * 100, b.count > 0 ? 6 : 0)}%` }}
+                                  />
+                                </div>
+                                <span className="w-4 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">{b.count}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                      {stats.quiz.fields.length > 0 && (
+                        <div className="mt-3 space-y-1.5 border-t pt-3">
+                          {stats.quiz.fields.map((qf) => (
+                            <div key={qf.fieldId} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                              <span className="min-w-0 flex-1 truncate font-medium">{qf.label}</span>
+                              <span className="text-[11px] text-muted-foreground">
+                                doğru cevap: <span className="font-medium text-emerald-700">{qf.correctAnswer ?? "—"}</span>
+                              </span>
+                              <div className="flex h-1.5 w-24 overflow-hidden rounded bg-muted" title={`${qf.correctCount} doğru / ${qf.wrongCount} yanlış`}>
+                                <div className="h-full bg-emerald-500" style={{ width: `${qf.correctRate}%` }} />
+                                <div className="h-full bg-rose-400" style={{ width: `${100 - qf.correctRate}%` }} />
+                              </div>
+                              <span className="w-14 text-right tabular-nums text-muted-foreground">
+                                {qf.correctCount}✓ {qf.wrongCount}✗
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </SectionCard>
                   )}
                 </div>
@@ -1467,6 +1586,17 @@ export function FormCenterView() {
                     )}
                     {liveResult.chainError && (
                       <p className="text-xs text-rose-600">Kayıt zinciri uyarısı: {liveResult.chainError}</p>
+                    )}
+
+                    {/* QA quiz anında puan — doğru cevabı işaretlenmiş sorular için */}
+                    {liveResult.quizScore != null && liveResult.status !== "SPAM" && (
+                      <div className="rounded-lg border border-teal-200 bg-teal-50/60 p-3 text-sm text-teal-800">
+                        <p className="flex items-center gap-2 font-semibold">
+                          <Icons.Sigma className="size-4" /> Quiz sonucu: %{Math.round(liveResult.quizScore)}
+                          {liveResult.quizCorrect != null && liveResult.quizTotal ? ` — ${liveResult.quizCorrect}/${liveResult.quizTotal} doğru` : ""}
+                        </p>
+                        <p className="mt-0.5 text-xs">Yanıtınız mobil QA motorunca otomatik puanlandı.</p>
+                      </div>
                     )}
 
                     {/* Online ödeme simülasyonu */}
@@ -1757,6 +1887,25 @@ export function FormCenterView() {
                 />
               </div>
             )}
+            {newField.type === "QA_QUIZ" && (
+              <div className="rounded-lg border bg-emerald-50/40 p-3">
+                <Label className="text-xs font-medium">Doğru Cevap (QA motoru puanlaması)</Label>
+                <Select
+                  value={newField.correctAnswer || undefined}
+                  onValueChange={(v) => setNewField({ ...newField, correctAnswer: v })}
+                >
+                  <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Seçeneklerden seçin…" /></SelectTrigger>
+                  <SelectContent>
+                    {newField.options.split("\n").map((s) => s.trim()).filter(Boolean).map((opt) => (
+                      <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  İşaretlenirse gönderiler otomatik puanlanır (quiz skoru %) — mobil uygulamada interaktif test olarak çalışır.
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFieldOpen(false)}>Vazgeç</Button>
@@ -1806,6 +1955,14 @@ export function FormCenterView() {
 
               <Separator />
               <p className="text-xs font-semibold">Alan Yanıtları</p>
+              {(detail.quizScore != null) && (
+                <div className="rounded-lg border border-teal-200 bg-teal-50/60 p-3 text-xs text-teal-800">
+                  <p className="flex items-center gap-2 font-semibold">
+                    <Icons.Sigma className="size-3.5" /> Quiz skoru: %{Math.round(detail.quizScore)}
+                    {detail.quizCorrect != null && detail.quizTotal ? ` — ${detail.quizCorrect}/${detail.quizTotal} doğru` : ""}
+                  </p>
+                </div>
+              )}
               <div className="max-h-64 space-y-1.5 overflow-y-auto maven-scroll pr-1">
                 {(detail.form?.fields ?? [])
                   .filter((f) => f.type !== "SECTION")
@@ -1814,9 +1971,19 @@ export function FormCenterView() {
                     let shown = raw;
                     if (f.type === "MULTI_CHOICE" || f.type === "QA_QUIZ") shown = parseJsonArray(raw).join(", ") || "—";
                     else if (f.type === "CHECKBOX") shown = raw === "true" ? "Evet" : raw === "false" ? "Hayır" : "—";
+                    const isQuiz = f.type === "QA_QUIZ" && Boolean(f.correctAnswer);
+                    const isCorrect = isQuiz && raw.trim() === f.correctAnswer;
                     return (
-                      <div key={f.id} className="flex items-start justify-between gap-3 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
-                        <span className="min-w-0 shrink-0 font-medium">{f.label}</span>
+                      <div key={f.id} className={`flex items-start justify-between gap-3 rounded-md px-2.5 py-1.5 text-xs ${isQuiz ? (isCorrect ? "border border-emerald-200 bg-emerald-50" : "border border-rose-200 bg-rose-50") : "bg-muted/50"}`}>
+                        <span className="min-w-0 shrink-0 font-medium">
+                          {f.label}
+                          {isQuiz && (
+                            <span className={`ml-1.5 inline-flex items-center gap-0.5 align-middle text-[10px] font-semibold ${isCorrect ? "text-emerald-700" : "text-rose-700"}`}>
+                              {isCorrect ? <Icons.Check className="size-3" /> : <Icons.X className="size-3" />}
+                              {isCorrect ? "doğru" : `yanlış — doğrusu: ${f.correctAnswer}`}
+                            </span>
+                          )}
+                        </span>
                         <span className="min-w-0 flex-1 truncate text-right text-muted-foreground" title={shown}>{shown || "—"}</span>
                       </div>
                     );

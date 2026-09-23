@@ -523,3 +523,39 @@ Unresolved / sonraki adımlar:
 - Merge ekranı yalnız mükerrer öneri kartından açılıyor; kişi 360 çekmecesi içinden "başka kayıtla birleştir" girişi eklenmeye aday
 - Kalan adaylar (öncelik sırasıyla): bildirim WebSocket taşıma (mini-service), CME kredi defteri rapor görünümü, portal için OTP'li gerçek dış bağlantı, Floor Studio otomatik yerleşiminde çakışma denetimi
 - Bellek alışkanlığı: agent turu sonunda agent-browser close sürdürülmeli (4GB sandbox)
+
+---
+Task ID: R8
+Agent: Z.ai Code (ana ajan)
+Task: Cron inceleme turu R8 — QA taraması, Canlı Bildirim Veri Yolu (WebSocket mini-servis), CME Resmî Akreditasyon Raporu (basılabilir belge + CSV), stil cilası
+
+Work Log:
+- QA DEĞERLENDİRMESİ: worklog (R7 sonrası devir listesi) + dev.log (0 yeni 5xx) + lint (0 hata) incelendi; upload/maven_docs HÂLÂ boş (zip-watcher ürünü yok → şema/UI mutabakatı gerekmedi). agent-browser ile app açıldı, sayfa hataları 0 → proje STABİL → özellik turu: devir listesinin 1 numaralı adayı "bildirim WebSocket taşıma" + 2 numaralı aday "CME rapor görünümü" bu turda birlikte uygulandı.
+- YENİ MİNİ-SERVİS mini-services/live-bus/ (bağımsız bun projesi, kendi package.json'ı, socket.io ^4.8.3):
+  - socket.io :3003 path "/" (Caddy XTransformPort kuralı aynen) — tarayıcı aboneliği: subscribe { editionId } → "global" + "edition:<id>" odaları
+  - HTTP yayın ucu :3004 (POST /publish { room, payload }, GET /health) — KRİTİK BULGU: socket.io path "/" ile AYNI portta HTTP uç çalışmıyor (engine.io tüm yolları yutuyor, "Transport unknown") → yayın ucu ayrı iç porta alındı; tarayıcı :3004'e asla dokunmaz
+  - Hazırlık takibi: socket başına edisyon, bağlantı/kopma olaylarında "presence" yayını (izleyici sayısı); durum yok — kalıcılık ActivityLog'ta, bus yalnız aktarım
+  - E2E doğrulandı (socket.io-client test istemcisi): subscribe → presence → publish → room'a doğru teslim (receivers:1)
+- TEK KANCA — Prisma $extends (src/lib/db.ts): 33+ çağrı noktasına dokunmadan TÜM activityLog.create/createMany işlemlerini yakalayıp canlıya düşer. İLK DENEMEDE DÜŞTÜĞÜ HATA: Prisma 6.11'de db.$use YOK ("db.$use is not a function" → tüm API'ler 500) → $extends query bileşeniyle yeniden yazıldı; globalThis önbelleği eski düz istemciyi tuttuğu için dev sunucusu bir kez yeniden başlatıldı (setsid). Fire-and-forget: 900 ms timeout, bus kapalıysa sessiz yutulur, iş akışı asla bloklanmaz.
+  - Paylaşılan meta çıkarıldı: src/lib/api/notification-meta.ts (SEVERITY_MAP + MODULE_MAP + TYPE_MODULE_MAP + severityFor/moduleFor) — /api/notifications ile canlı yayın aynı dili konuşur, mükerrer harita kalktı
+- BİLDİRİM ZİLİ CANLI OLDU (notification-bell.tsx): io("/?XTransformPort=3003") bağlantısı (websocket+polling, 12 deneme reconnect), connect'te subscribe; canlı olay listede BAŞA kayar (25 ile sınırlı, id dedupe), .maven-notif-in girişli; rose (kritik) olaylar ayrıca toast düşer; alt bantta bağlantı durumu: "Canlı akış" (yeşil nabızlı nokta + N izleyici) / "Yoklama modu" (amber); zil butonunda canlılık noktası; yoklama yedeği: canlıyken 3 dk, değilken 45 sn
+  - YAKALANAN HATA (bayat closure): connect handler'ı ilk render'ın currentEditionId'sini (null — bootstrap bitmeden) yakalayıp yalnız global odaya abone oluyordu → edisyon olayları hiç düşmüyordu. Çözüm: editionRef + güncelleyen effect; connect'te ref'ten okuma. Testte yakalandı (curl tetiklemesi popover'a düşmedi), düzeltme sonrası canlı teslim doğrulandı
+- YENİ API /api/cme/report (GET ?editionId=&format=json|csv): resmî rapor sözleşmesi — antet verisi (tenant + edisyon adı/label/tarih/mekân/şehir), özet (7 metrik), oturum dökümü (tarih, katılım, kredi), kişi defteri (YALNIZ kredi > 0; teyit no, roller, katılınan oturum, yüzde), generatedAt. CSV: BOM'lu UTF-8, ; ayraçlı (Excel TR), Content-Disposition attachment (cme-rapor-<slug>-<tarih>.csv), TOPLAM satırı
+- RAPOR BELGESİ UI (src/components/maven/cme-report.tsx + Program → CME Kredi sekmesi): "Resmî Rapor" (overlay) + "CSV" butonları Kapsam satırına eklendi. Belge: .maven-report-doc serif kimlik + kağıt gölgesi, .maven-report-letterhead antet bandı (tenant uppercase tracking + edisyon + mekân/tarih), "Sürekli Tıbbi Eğitim — Kredi Raporu" rozeti, 4'lü özet şeridi, oturum dökümü + kişi defteri (.maven-report-table resmî çizgi dili), imza blokları (Akreditasyon Sorumlusu / Organizasyon Sekreteri) + .maven-report-seal çift halkalı mühür, elektronik üretim künyesi footer'ı
+  - YAZDIRMA: "Yazdır" body.maven-printing ekler; @media print kuralları body * visibility:hidden + .maven-report-print absolute görünür → yalnız belge basılır (sandbox'ta window.open engellenebileceğinden new-window yerine yerinde yazdırma seçildi); aksiyon çubuğu .maven-no-print ile basılmaz
+- STİL CILASI (zorunlu): globals.css — maven-live-pulse (canlı nokta nabzı), maven-notif-in (canlı bildirim girişi), .maven-report-doc/letterhead/seal/table resmî belge dili, @media print kuralları; hepsi prefers-reduced-motion duyarlı
+- E2E (agent-browser, gateway :81 üzerinden): zil "Canlı akış · 5 izleyici" ✓; curl ile CME kredi ataması → AÇIK popover'a anında düştü (yoklamasız) ✓; kritik-seviye toast mekanizması rose eşlemesiyle bağlı ✓; Resmî Rapor: antet "Maven Etkinlik Çözümleri / No-Dig Turkey 2026 — 2026 / İKM, İstanbul" + 3/7, 6.5, 5, 7.5 özet + 2 tablo + mühür + imzalar görsel teyitli ✓; CSV ucu curl ile teyitli ✓; mobil 390px: rapor 358px sığar, ÖNCE BULUNAN TAŞMA (486 vs 390 — benim eklediğim Kapsam butonları flex-wrapsız) flex-wrap + min-w-24 ile GİDERİLDİ (390 vs 390) ✓; page errors 0, console hata 0 ✓
+- TEST SONRASI: reseed ile temiz demo bırakıldı (5 kredi kazanan, 7.5 dağıtılan — tohum değeriyle aynı); browser kapatıldı (1.8GB available); lint 0 hata; test penceresinde 5xx yok
+
+Stage Summary:
+- Bu tur eklendi: (1) Canlı Bildirim Veri Yolu — mimarideki "domain event → UI" akışı artık gerçek zamanlı: Prisma katmanına tek $extends kancası (33+ nokta), bağımsız live-bus mini servisi (socket.io :3003 / yayın :3004), zil anında güncelleniyor, izleyici sayısı + bağlantı durumu görünür, REST yoklaması yalnız yedek; (2) CME Resmî Akreditasyon Raporu — antetli, mühürlü, imzalı basılabilir belge + Excel uyumlu CSV indirme; R7 devir listesinin ilk iki adayı kapandı.
+- Proje: 64 model (değişiklik yok), 19 modüllü SPA, 1 yeni mini-servis (live-bus), 2 yeni API (cme/report + meta çıkarımı), 1 yeni UI bileşeni (cme-report.tsx), lint 0 hata, E2E doğrulandı, reseed ile temiz demo.
+- Yapılan düzeltmeler: socket.io path "/" HTTP çakışması (ayrı yayın portu), Prisma $use yokluğu ($extends ile), globalThis bayat istemci (dev restart), zilde bayat-closure abonelik hatası (ref), mobil Kapsam satırı taşması (flex-wrap).
+
+Unresolved / sonraki adımlar:
+- live-bus bellek alışkanlığı: servis `cd mini-services/live-bus && (setsid bun run dev > live-bus.log 2>&1 &)` ile ayağa kalkar; sandbox yeniden başlatılırsa yeniden çalıştırılmalı (health: curl 127.0.0.1:3004/health)
+- Canlı yayın sunucu-içi localhost:3004'e gider — çoklu实例 (PM2/cluster) senaryosunda yayın hedefi ortam değişkenine alınmalı (tek dev örneğinde sorun yok)
+- Kritik (rose) olay toast'ı zil açıkken de düşer (çift bildirim algısı) — istenirse popover açıkken toast bastırılabilir
+- Yazdırma çıktısı yalnız kural setiyle doğrulandı (headless'ta gerçek print önizlemesi test edilemez); kenar boşlukları kullanıcı tarafında kontrol edilmeli
+- Kalan adaylar (öncelik sırasıyla): portal için OTP'li gerçek dış bağlantı, Floor Studio otomatik yerleşiminde çakışma denetimi, deliverable dosya yükleme (depolama), bildirim tercih/abonelik ayarları (zil hangi olay tiplerini alsın)
+- Bellek alışkanlığı: agent turu sonunda agent-browser close sürdürülmeli (4GB sandbox)

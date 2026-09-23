@@ -190,3 +190,80 @@
 @media (prefers-reduced-motion: reduce) {
   .maven-winner-glow { animation: none; }
 }
+
+/* ── Canlı bildirim veri yolu (live-bus) ───────────────────────────────────── */
+
+/* canlı bağlantı noktası — yumuşak nabız */
+@keyframes maven-live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.72 0.17 155 / 0.5); }
+  60% { box-shadow: 0 0 0 4px oklch(0.72 0.17 155 / 0); }
+}
+.maven-live-dot { animation: maven-live-pulse 2.4s ease-out infinite; }
+
+/* canlı bildirim satırının soluk giriş animasyonu */
+@keyframes maven-notif-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.maven-notif-in { animation: maven-notif-in 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .maven-live-dot { animation: none; }
+  .maven-notif-in { animation: none; }
+}
+
+/* ── CME Resmî Akreditasyon Raporu (basılabilir belge) ────────────────────── */
+
+/* resmî belge sayfası: kağıt dokusu + serif kimlik */
+.maven-report-doc {
+  font-family: ui-serif, Georgia, "Times New Roman", serif;
+  background: #fff;
+  color: #1a2626;
+  box-shadow: 0 24px 60px -24px rgb(0 0 0 / 0.35);
+}
+
+/* belge üst antet bandı */
+.maven-report-letterhead {
+  background:
+    radial-gradient(circle at 90% 20%, rgb(13 148 136 / 0.08) 0, transparent 40%),
+    linear-gradient(to bottom, rgb(13 148 136 / 0.06), transparent 70%);
+  border-bottom: 2.5px solid rgb(13 148 136 / 0.75);
+}
+
+/* mühür — kesikli çift halka + yıldız ışıltısı */
+.maven-report-seal {
+  background:
+    radial-gradient(circle at 32% 30%, rgb(13 148 136 / 0.16), transparent 60%),
+    conic-gradient(from 0deg, rgb(13 148 136 / 0.16), rgb(13 148 136 / 0.04), rgb(13 148 136 / 0.16));
+}
+
+/* rapor tablosu — resmî çizgi dili */
+.maven-report-table th {
+  border-bottom: 1.5px solid rgb(13 148 136 / 0.55);
+  background: rgb(13 148 136 / 0.06);
+}
+.maven-report-table td { border-bottom: 1px solid rgb(13 148 136 / 0.14); }
+.maven-report-table tr:last-child td { border-bottom: none; }
+
+/* ── Yazdırma: yalnız rapor gövdesi basılır ───────────────────────────────── */
+@media print {
+  body.maven-printing * { visibility: hidden !important; }
+  body.maven-printing .maven-report-print,
+  body.maven-printing .maven-report-print * { visibility: visible !important; }
+  body.maven-printing .maven-report-print {
+    position: absolute !important;
+    inset: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  body.maven-printing .maven-report-doc {
+    box-shadow: none !important;
+    border: none !important;
+    max-height: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    border-radius: 0 !important;
+  }
+  .maven-no-print { display: none !important; }
+}

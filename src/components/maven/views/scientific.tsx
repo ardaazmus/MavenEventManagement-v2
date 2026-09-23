@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { CmeReportOverlay } from "../cme-report";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -224,6 +225,7 @@ export function ProgramView() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [bulkDefaults, setBulkDefaults] = useState<Record<string, string>>({});
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   const { data: sessions, error, reload, loading } = useApi<SessionRow[]>(() => listEntity<SessionRow>("sessions", { editionId: currentEditionId ?? undefined, limit: 200 }), [currentEditionId, refreshKey]);
   const { data: rooms } = useApi<{ id: string; name: string; capacity: number }[]>(() => listEntity("rooms", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
@@ -384,13 +386,19 @@ export function ProgramView() {
                   <KpiCard label="Dağıtılan Kredi" value={cme.summary.creditsIssued} sub={`ort. ${cme.summary.avgCredits} kredi/kişi`} tone="amber" icon={<Icons.Award className="size-4" />} />
                 </div>
 
-                {/* Kapsam satırı */}
-                <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 shadow-sm">
+                {/* Kapsam satırı + resmî rapor aksiyonları */}
+                <div className="flex flex-wrap items-center gap-2 gap-y-2 rounded-xl border bg-card px-4 py-3 shadow-sm sm:gap-3">
                   <span className="text-xs font-medium text-muted-foreground">Kapsam</span>
-                  <div className="h-1.5 flex-1 overflow-hidden rounded bg-muted">
+                  <div className="h-1.5 min-w-24 flex-1 overflow-hidden rounded bg-muted">
                     <div className="h-full rounded bg-teal-500 transition-all duration-300" style={{ width: `${cme.summary.coveragePercent}%` }} />
                   </div>
                   <span className="whitespace-nowrap text-xs text-muted-foreground">{`Oturumların %${cme.summary.coveragePercent}'i kredili`}</span>
+                  <Button size="sm" variant="outline" className="ml-auto h-8 shrink-0" onClick={() => setReportOpen(true)} disabled={!currentEditionId}>
+                    <Icons.FileBadge className="size-3.5" /> Resmî Rapor
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-8 shrink-0" onClick={() => window.open(`/api/cme/report?editionId=${encodeURIComponent(currentEditionId ?? "")}&format=csv`, "_blank")}>
+                    <Icons.Download className="size-3.5" /> CSV
+                  </Button>
                 </div>
 
                 {/* Oturum kredi editörü */}
@@ -530,6 +538,10 @@ export function ProgramView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {reportOpen && currentEditionId && (
+        <CmeReportOverlay editionId={currentEditionId} onClose={() => setReportOpen(false)} />
+      )}
     </div>
   );
 }

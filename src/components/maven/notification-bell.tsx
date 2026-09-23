@@ -65,8 +65,17 @@ export function NotificationBell() {
   const [live, setLive] = useState(false);
   const [viewers, setViewers] = useState(0);
   const [flash, setFlash] = useState(false);
+  const [liveIds, setLiveIds] = useState<Set<string>>(new Set());
   const socketRef = useRef<Socket | null>(null);
-  const editionRef = useRef<string | null>(null);
+  // güncel edisyonu ref'te tut — socket connect closure'ı bayat state yakalamasın
+  const editionRef = useRef<string | null>(currentEditionId);
+
+  useEffect(() => {
+    editionRef.current = currentEditionId;
+    if (socketRef.current?.connected) {
+      socketRef.current.emit("subscribe", { editionId: currentEditionId });
+    }
+  }, [currentEditionId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,6 +89,7 @@ export function NotificationBell() {
   // canlı olay — listeye başa ekle, tekrar geleni atla
   const handleLive = useCallback((item: NotifItem) => {
     if (!item?.id) return;
+    setLiveIds((prev) => new Set(prev).add(item.id));
     setItems((prev) => {
       if (prev.some((p) => p.id === item.id)) return prev;
       const next = [item, ...prev].slice(0, MAX_ITEMS);
@@ -114,8 +124,7 @@ export function NotificationBell() {
 
     socket.on("connect", () => {
       setLive(true);
-      editionRef.current = currentEditionId;
-      socket.emit("subscribe", { editionId: currentEditionId });
+      socket.emit("subscribe", { editionId: editionRef.current });
     });
 
     socket.on("disconnect", () => setLive(false));
@@ -130,16 +139,7 @@ export function NotificationBell() {
       socket.disconnect();
       socketRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // bağlantı bir kez kurulur; edisyon değişimi ayrı izlenir
-
-  // edisyon değişince odayı yenile
-  useEffect(() => {
-    if (socketRef.current?.connected && editionRef.current !== currentEditionId) {
-      editionRef.current = currentEditionId;
-      socketRef.current.emit("subscribe", { editionId: currentEditionId });
-    }
-  }, [currentEditionId]);
+  }, []); // bağlantı bir kez kurulur; edisyon değişimi ref üzerinden izlenir
 
   // yoklama — canlı bağlıyken yavaş güvenlik ağı (3 dk), değilse hızlı yedek (45 sn)
   useEffect(() => {
@@ -215,7 +215,11 @@ export function NotificationBell() {
                     {idx > 0 && <Separator className="opacity-60" />}
                     <button
                       onClick={() => openItem(item)}
-                      className={cn("flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-muted/50", isNew && "bg-primary/[0.04]")}
+                      className={cn(
+                        "flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-muted/50",
+                        isNew && "bg-primary/[0.04]",
+                        liveIds.has(item.id) && "maven-notif-in",
+                      )}
                     >
                       <span className={cn("mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg", SEVERITY_CLS[item.severity] ?? SEVERITY_CLS.teal)}>
                         <SevIcon className="size-3.5" />

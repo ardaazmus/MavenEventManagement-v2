@@ -230,19 +230,132 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(edition);
       }
 
-      // ── Kişi birleştirme (önerili + onaylı, geçmişi koruyarak) ──
+      // ── Kişi birleştirme (çakışma çözümlü, tek işlemde — Kimlik kuralı 2) ──
+      // Aynı edisyonda iki katılım @@unique([editionId, personId]) yüzünden taşınamaz:
+      // resolutions[editionId] = "target" | "source" kazanan katılımı seçer; kaybeden katılımın
+      // tüm geçmişi (kayıtlar, rozetler, taramalar, haklar, program, konaklama…) kazanan tarafına
+      // taşınır ve boşalan katılım silinir — geçmiş silinmez, sahibi değişir.
       case "person.merge": {
-        const { sourceId, targetId } = body as { sourceId: string; targetId: string };
+        const { sourceId, targetId, resolutions, fillProfile } = body as {
+          sourceId: string; targetId: string;
+          resolutions?: Record<string, "target" | "source">;
+          fillProfile?: boolean;
+        };
         if (!sourceId || !targetId || sourceId === targetId) return NextResponse.json({ error: "Geçersiz birleştirme" }, { status: 400 });
-        // katılımları taşı
-        await db.eventParticipation.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
-        await db.submission.updateMany({ where: { submitterId: sourceId }, data: { submitterId: targetId } });
-        await db.authorship.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
-        await db.reviewAssignment.updateMany({ where: { reviewerId: sourceId }, data: { reviewerId: targetId } });
-        await db.scanEvent.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
-        await db.person.update({ where: { id: sourceId }, data: { status: "MERGED", mergedIntoId: targetId } });
-        await db.activityLog.create({ data: { type: ActivityType.PERSON_MERGED, message: `Kişi birleştirildi: ${sourceId.slice(-6)} → ${targetId.slice(-6)} (geçmiş korundu)`, actorName: "Operasyon" } });
-        return NextResponse.json({ ok: true });
+        if (sourceId === targetId) return NextResponse.json({ error: "Kaynak ve hedef aynı olamaz" }, { status: 400 });
+
+        const result = await db.$transaction(async (tx) => {
+          const [source, target] = await Promise.all([
+            tx.person.findUnique({ where: { id: sourceId } }),
+            tx.person.findUnique({ where: { id: targetId } }),
+          ]);
+          if (!source || !target) throw new Error("Kişi bulunamadı");
+          if (source.status === "MERGED" || target.status === "MERGED") throw new Error("Birleştirilmiş kayıt tekrar birleştirilemez");
+
+          const srcParts = await tx.eventParticipation.findMany({ where: { personId: sourceId } });
+          const tgtParts = await tx.eventParticipation.findMany({ where: { personId: targetId } });
+          const tgtByEdition = new Map(tgtParts.map((p) => [p.editionId, p]));
+
+          let mergedRegistrations = 0;
+          let resolvedEditions = 0;
+
+          // ── edisyon çakışmaları: kazanan katılıma geçmiş taşı, kaybedeni boşalt-sil ──
+          for (const srcPart of srcParts) {
+            const tgtPart = tgtByEdition.get(srcPart.editionId);
+            if (!tgtPart) continue; // çakışmasız — aşağıda toplu taşınacak
+            const winner: "target" | "source" = resolutions?.[srcPart.editionId] ?? "target";
+            const keep = winner === "target" ? tgtPart : srcPart;
+            const drop = winner === "target" ? srcPart : tgtPart;
+
+            // kaybeden katılımın çocuklarını kazanan katılıma taşı (geçmiş korunur)
+            const movedRegs = await tx.registration.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            mergedRegistrations += movedRegs.count;
+            await tx.eventProfileSnapshot.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            await tx.badgeInstance.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            await tx.credential.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            await tx.scanEvent.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            await tx.entitlementClaim.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            await tx.programAssignment.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            await tx.reservation.updateMany({ where: { primaryGuestParticipationId: drop.id }, data: { primaryGuestParticipationId: keep.id } });
+            await tx.occupancySlot.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            await tx.companion.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            await tx.orderLine.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            await tx.formAnswer.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+            await tx.waitlistEntry.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+
+            // benzersiz kısıtlı çocuklar: hedefte aynı kayıt varsa kaybeden silinir, yoksa taşınır
+            const srcCerts = await tx.certificateIssue.findMany({ where: { participationId: drop.id } });
+            for (const ci of srcCerts) {
+              const dup = await tx.certificateIssue.findUnique({ where: { definitionId_participationId: { definitionId: ci.definitionId, participationId: keep.id } } });
+              if (dup) await tx.certificateIssue.delete({ where: { id: ci.id } });
+              else await tx.certificateIssue.update({ where: { id: ci.id }, data: { participationId: keep.id } });
+            }
+            const srcMembers = await tx.delegationMember.findMany({ where: { participationId: drop.id } });
+            for (const dm of srcMembers) {
+              const dup = await tx.delegationMember.findUnique({ where: { delegationId_participationId: { delegationId: dm.delegationId, participationId: keep.id } } });
+              if (dup) await tx.delegationMember.delete({ where: { id: dm.id } });
+              else await tx.delegationMember.update({ where: { id: dm.id }, data: { participationId: keep.id } });
+            }
+            // roller: aynı rol hedefte zaten varsa kopya oluşturma
+            const keepRoles = await tx.eventRoleAssignment.findMany({ where: { participationId: keep.id }, select: { role: true } });
+            const keepRoleSet = new Set(keepRoles.map((r) => r.role));
+            const srcRoles = await tx.eventRoleAssignment.findMany({ where: { participationId: drop.id } });
+            for (const ra of srcRoles) {
+              if (keepRoleSet.has(ra.role)) await tx.eventRoleAssignment.delete({ where: { id: ra.id } });
+              else await tx.eventRoleAssignment.update({ where: { id: ra.id }, data: { participationId: keep.id } });
+            }
+
+            // oda arkadaşı istekleri: taraf olunan katılımlar kazananı göstersin
+            await tx.roommateRequest.updateMany({ where: { requesterParticipationId: drop.id }, data: { requesterParticipationId: keep.id } });
+            await tx.roommateRequest.updateMany({ where: { targetParticipationId: drop.id }, data: { targetParticipationId: keep.id } });
+
+            // boşalan katılım silinir — tüm çocukları taşındı, geçmiş kaybı yok
+            await tx.eventParticipation.delete({ where: { id: drop.id } });
+            resolvedEditions += 1;
+          }
+
+          // ── kişi-düzeyi taşımalar (artık çakışma yok) ──
+          await tx.eventParticipation.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+          await tx.submission.updateMany({ where: { submitterId: sourceId }, data: { submitterId: targetId } });
+          await tx.reviewAssignment.updateMany({ where: { reviewerId: sourceId }, data: { reviewerId: targetId } });
+          await tx.scanEvent.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+          await tx.task.updateMany({ where: { assigneeId: sourceId }, data: { assigneeId: targetId } });
+          await tx.organizationContact.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+          await tx.delegation.updateMany({ where: { leaderId: sourceId }, data: { leaderId: targetId } });
+          await tx.waitlistEntry.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+          await tx.programAssignment.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+
+          // yazarlıklar: aynı bildiride çift yazarlık satırı oluşmasın
+          const srcAuthorships = await tx.authorship.findMany({ where: { personId: sourceId } });
+          for (const au of srcAuthorships) {
+            const dup = await tx.authorship.findFirst({ where: { submissionId: au.submissionId, personId: targetId } });
+            if (dup) await tx.authorship.update({ where: { id: au.id }, data: { personId: null } }); // isimli harici yazar olarak kalır
+            else await tx.authorship.update({ where: { id: au.id }, data: { personId: targetId } });
+          }
+
+          // profil: boş hedef alanları kaynaktan doldur (çakışanlar hedefte kalır — seçim kullanıcıda)
+          if (fillProfile !== false) {
+            const fill: Record<string, string> = {};
+            for (const f of ["email", "phone", "title", "company", "city", "country", "bio"] as const) {
+              if (!target[f] && source[f]) fill[f] = source[f] as string;
+            }
+            if (Object.keys(fill).length > 0) {
+              await tx.person.update({ where: { id: targetId }, data: fill });
+            }
+          }
+
+          await tx.person.update({ where: { id: sourceId }, data: { status: "MERGED", mergedIntoId: targetId } });
+          await tx.activityLog.create({
+            data: {
+              type: ActivityType.PERSON_MERGED,
+              message: `Kişi birleştirildi: ${source.firstName} ${source.lastName} → ${target.firstName} ${target.lastName} · ${mergedRegistrations} kayıt taşındı${resolvedEditions > 0 ? ` · ${resolvedEditions} edisyonda çakışma çözüldü` : ""} (geçmiş korundu)`,
+              actorName: "Operasyon",
+            },
+          });
+          return { mergedRegistrations, resolvedEditions };
+        });
+
+        return NextResponse.json({ ok: true, ...result });
       }
 
       // ── LCV yanıtı (gelecek → kayıt yolu, gelmeyecek → hakkı bırakma kuralı) ──

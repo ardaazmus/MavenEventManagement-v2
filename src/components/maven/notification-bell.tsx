@@ -1,12 +1,15 @@
 "use client";
 // Bildirim merkezi zili — aktivite günlüğünden türetilen canlı bildirimler (§47 domain event → UI)
+// Canlı akış live-bus mini servisi üzerinden (socket.io) anında düşer; REST yoklaması yedek kanaldır.
 // Okunmamış sayacı localStorage zaman damgasıyla tutulur; tıklanınca ilgili modüle gider.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { io, type Socket } from "socket.io-client";
 import { apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
+import { useToast } from "@/hooks/use-toast";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +19,7 @@ interface NotifItem {
 }
 
 const SEEN_KEY = "maven.notif.seen";
+const MAX_ITEMS = 25;
 
 function readSeen(): number {
   try {
@@ -53,10 +57,16 @@ const SEVERITY_ICON: Record<NotifItem["severity"], string> = {
 
 export function NotificationBell() {
   const { currentEditionId, setModule } = useApp();
+  const { toast } = useToast();
   const [items, setItems] = useState<NotifItem[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [seenTs, setSeenTs] = useState(0);
+  const [live, setLive] = useState(false);
+  const [viewers, setViewers] = useState(0);
+  const [flash, setFlash] = useState(false);
+  const socketRef = useRef<Socket | null>(null);
+  const editionRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,13 +77,76 @@ export function NotificationBell() {
     finally { setLoading(false); }
   }, [currentEditionId]);
 
-  // ilk yükleme + edisyon değişimi + 60 sn'de bir hafif yoklama
+  // canlı olay — listeye başa ekle, tekrar geleni atla
+  const handleLive = useCallback((item: NotifItem) => {
+    if (!item?.id) return;
+    setItems((prev) => {
+      if (prev.some((p) => p.id === item.id)) return prev;
+      const next = [item, ...prev].slice(0, MAX_ITEMS);
+      return next;
+    });
+    if (new Date(item.createdAt).getTime() > readSeen()) {
+      setFlash(true);
+      window.setTimeout(() => setFlash(false), 1600);
+    }
+    // kritik olaylar (rose) canlı toast ile de düşer
+    if (item.severity === "rose") {
+      toast({ title: "Kritik olay", description: item.message, variant: "destructive" });
+    }
+  }, [toast]);
+
+  // ilk yükleme + edisyon değişimi
   useEffect(() => {
     setSeenTs(readSeen());
     void load();
-    const t = setInterval(() => { void load(); }, 60000);
-    return () => clearInterval(t);
   }, [load]);
+
+  // canlı veri yolu — socket bağlantısı (live-bus, XTransformPort=3003)
+  useEffect(() => {
+    const socket = io("/?XTransformPort=3003", {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 12,
+      reconnectionDelay: 2000,
+      timeout: 8000,
+    });
+    socketRef.current = socket;
+
+    socket.on("connect", () => {
+      setLive(true);
+      editionRef.current = currentEditionId;
+      socket.emit("subscribe", { editionId: currentEditionId });
+    });
+
+    socket.on("disconnect", () => setLive(false));
+
+    socket.on("activity", (item: NotifItem) => handleLive(item));
+
+    socket.on("presence", (data: { clients?: number }) => {
+      if (typeof data?.clients === "number") setViewers(data.clients);
+    });
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // bağlantı bir kez kurulur; edisyon değişimi ayrı izlenir
+
+  // edisyon değişince odayı yenile
+  useEffect(() => {
+    if (socketRef.current?.connected && editionRef.current !== currentEditionId) {
+      editionRef.current = currentEditionId;
+      socketRef.current.emit("subscribe", { editionId: currentEditionId });
+    }
+  }, [currentEditionId]);
+
+  // yoklama — canlı bağlıyken yavaş güvenlik ağı (3 dk), değilse hızlı yedek (45 sn)
+  useEffect(() => {
+    const interval = live ? 180000 : 45000;
+    const t = setInterval(() => { void load(); }, interval);
+    return () => clearInterval(t);
+  }, [live, load]);
 
   const unread = items.filter((i) => new Date(i.createdAt).getTime() > seenTs).length;
 
@@ -93,13 +166,21 @@ export function NotificationBell() {
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) void load(); }}>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" aria-label={`Bildirimler${unread > 0 ? ` — ${unread} okunmamış` : ""}`} className={cn("relative", unread > 0 && "text-primary")}>
-          <Icons.Bell className={cn("size-4 transition-transform", open && "scale-110", unread > 0 && "animate-[swing_1.6s_ease-in-out_infinite]")} />
+          <Icons.Bell className={cn("size-4 transition-transform", open && "scale-110", (unread > 0 || flash) && "animate-[swing_1.6s_ease-in-out_infinite]")} />
           {unread > 0 && (
             <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-4 text-white shadow-sm">
               {unread > 9 ? "9+" : unread}
               <span aria-hidden className="absolute inline-flex size-full animate-ping rounded-full bg-rose-400 opacity-50" />
             </span>
           )}
+          {/* canlı veri yolu göstergesi */}
+          <span
+            aria-hidden
+            className={cn(
+              "absolute bottom-1 right-1 size-1.5 rounded-full ring-2 ring-background transition-colors",
+              live ? "bg-emerald-500 maven-live-dot" : "bg-zinc-400",
+            )}
+          />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[min(380px,calc(100vw-1.5rem))] p-0">
@@ -155,8 +236,19 @@ export function NotificationBell() {
             </ul>
           )}
         </div>
-        <div className="border-t bg-muted/20 px-3 py-1.5 text-center text-[10px] text-muted-foreground">
-          Son 25 edisyon olayı — kritik olaylar kırmızı, olumlu olaylar yeşil işaretlenir
+        <div className="flex items-center justify-between gap-2 border-t bg-muted/20 px-3 py-1.5 text-[10px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className={cn(
+                "size-1.5 rounded-full",
+                live ? "bg-emerald-500 maven-live-dot" : "bg-amber-500",
+              )}
+            />
+            {live ? "Canlı akış" : "Yoklama modu"}
+            {live && viewers > 1 && <span className="text-primary/70">· {viewers} izleyici</span>}
+          </span>
+          <span>Son {MAX_ITEMS} edisyon olayı</span>
         </div>
       </PopoverContent>
     </Popover>

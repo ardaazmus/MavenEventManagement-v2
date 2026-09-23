@@ -1,0 +1,12 @@
+{
+  "name": "maven-live-bus",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Maven canlı bildirim veri yolu — socket.io yayıncı bus (port 3003)",
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.3"
+  }
+}

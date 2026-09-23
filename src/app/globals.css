@@ -180,3 +180,13 @@
   .maven-portal-enter { animation: none; }
   .maven-step-pulse { animation: none; }
 }
+
+/* Kişi birleştirme: kazanan katılım seçimi — kazanan kutuda yumuşak teal hale */
+@keyframes maven-winner-glow {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.72 0.1 187 / 0.35); }
+  55% { box-shadow: 0 0 0 4px oklch(0.72 0.1 187 / 0); }
+}
+.maven-winner-glow { animation: maven-winner-glow 2.2s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .maven-winner-glow { animation: none; }
+}

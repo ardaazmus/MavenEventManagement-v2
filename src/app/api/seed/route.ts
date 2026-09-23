@@ -59,6 +59,7 @@ export async function POST() {
       ["Ahmet", "Yılmaz", "ahmet.yilmaz@example.com", "ABC Pharma", "Ar-Ge Müdürü"],
       ["Mehmet", "Demir", "mehmet.demir@example.com", "Delta Üniversitesi", "Prof. Dr."],
       ["Ayşe", "Kara", "ayse.kara@example.com", "Delta Üniversitesi", "Doç. Dr."],
+      ["Defne", "Kaya", "defne.kaya@example.com", "Delta Üniversitesi", "Öğretim Üyesi"],
       ["Fatma", "Çelik", "fatma.celik@example.com", "Beta Mühendislik", "Genel Müdür"],
       ["Mustafa", "Koç", "mustafa.koc@example.com", "Yol Yapım A.Ş.", "Proje Direktörü"],
       ["Zeynep", "Aydın", "zeynep.aydin@example.com", "Hükümet Metrosu Daire Başkanlığı", "Mühendis"],
@@ -780,6 +781,53 @@ export async function POST() {
       }
       badgeNo++;
     }
+
+    // ── Mükerrer kişi senaryosu (R7): aynı e-posta + aynı edisyonda İKİ katılım ──
+    // Defne Kaya (eski kayıt — hedef adayı): onaylı kongre kaydı + basılmış rozet + tarama
+    // Defne Kaya (yeni kayıt — kaynak adayı): öğrenci kategorisinde onay bekleyen + rozet yok
+    const defne2 = await db.person.create({
+      data: { tenantId: tenant.id, firstName: "Defne", lastName: "Kaya", email: "defne.kaya@example.com", phone: "+90 532 111 22 33", company: "Yol Yapım A.Ş.", title: "Saha Mühendisi", country: "Türkiye" },
+    });
+    const defne1 = P["Defne"];
+    const partDefne1 = await db.eventParticipation.upsert({
+      where: { editionId_personId: { editionId: edition1.id, personId: defne1.id } },
+      create: { editionId: edition1.id, personId: defne1.id, source: "PUBLIC_FORM", attendance: "CHECKED_IN" },
+      update: {},
+    });
+    await db.registration.create({
+      data: {
+        editionId: edition1.id, participationId: partDefne1.id, categoryId: catRegular.id,
+        confirmationNo: `REG-2026-${String(regNo).padStart(4, "0")}`,
+        source: "PUBLIC_FORM", fundingSource: "SELF_PAID", status: "CONFIRMED",
+        submittedAt: D(-12), decidedAt: D(-10), decidedBy: "Kaan Yıldız",
+      },
+    });
+    regNo++;
+    await db.eventProfileSnapshot.create({ data: { participationId: partDefne1.id, badgeName: "Defne Kaya", company: "Delta Üniversitesi", title: "Öğretim Üyesi", country: "Türkiye" } });
+    await db.eventRoleAssignment.create({ data: { participationId: partDefne1.id, role: "ATTENDEE", status: "ACTIVE" } });
+    const badgeDefne1 = await db.badgeInstance.create({
+      data: { participationId: partDefne1.id, profileId: bpDelegate.id, badgeNo: `BDG-2026-${String(badgeNo).padStart(4, "0")}`, status: "PRINTED", issuedAt: D(-3), printedAt: D(-2) },
+    });
+    await db.credential.create({ data: { participationId: partDefne1.id, badgeId: badgeDefne1.id, code: `QR-${String(badgeNo).padStart(4, "0")}`, type: "QR", accessProfile: bpDelegate.accessAreas, validFrom: D(-1), validUntil: D(3) } });
+    await db.scanEvent.create({ data: { participationId: partDefne1.id, personId: defne1.id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(0, 9, 5) } });
+    badgeNo++;
+
+    const partDefne2 = await db.eventParticipation.create({
+      data: { editionId: edition1.id, personId: defne2.id, source: "PUBLIC_FORM", attendance: "NOT_ARRIVED" },
+    });
+    await db.registration.create({
+      data: {
+        editionId: edition1.id, participationId: partDefne2.id, categoryId: catStudent.id,
+        confirmationNo: `REG-2026-${String(regNo).padStart(4, "0")}`,
+        source: "PUBLIC_FORM", fundingSource: "SELF_PAID", status: "SUBMITTED", submittedAt: D(-2),
+      },
+    });
+    regNo++;
+    await db.eventProfileSnapshot.create({ data: { participationId: partDefne2.id, badgeName: "Defne Kaya", company: "Yol Yapım A.Ş.", title: "Saha Mühendisi", country: "Türkiye" } });
+    await db.badgeInstance.create({
+      data: { participationId: partDefne2.id, profileId: bpDelegate.id, badgeNo: `BDG-2026-${String(badgeNo).padStart(4, "0")}`, status: "NOT_ELIGIBLE" },
+    });
+    badgeNo++;
 
     // taramalar: bugün ~18 giriş + 3 tekrar + 2 ret + oturum girişleri
     const scanNames = ["Ahmet", "Mehmet", "Ayşe", "Fatma", "Mustafa", "Zeynep", "Emre", "Seda", "Deniz", "Ece", "Kerem", "Leyla", "Onur", "Serpil", "Tolga", "Vildan", "Yusuf"];

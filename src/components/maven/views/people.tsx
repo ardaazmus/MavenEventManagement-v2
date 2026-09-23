@@ -1,7 +1,7 @@
 "use client";
 // Kişiler & Kurumlar — 360 görünümleri (§54, §55)
 // Kişi 360: kimlik → katılımlar → roller → kayıt/ödeme → bilimsel → program → konaklama → rozet/tarama → sertifika
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { listEntity, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -39,6 +39,24 @@ interface Person360 {
 interface DuplicatePerson { id: string; fullName: string; email?: string | null; phone?: string | null; title?: string | null; company?: string | null; city?: string | null; status: string; createdAt: string; }
 interface DuplicateSuggestion { key: string; reason: string; persons: DuplicatePerson[]; olderId?: string | null; note?: string | null; }
 interface DuplicatesData { totalPersons: number; suggestions: DuplicateSuggestion[]; reasonLabels: Record<string, string>; }
+
+// Birleştirme önizlemesi (/api/people/merge-preview sözleşmesi)
+interface MergePreviewSide { participationId: string; regStatus: string | null; regNo: string | null; categoryName: string | null; attendance: string; badgeCount: number; }
+interface MergeConflictEdition { editionId: string; editionName: string; startDate: string; source: MergePreviewSide; target: MergePreviewSide; defaultWinner: "target" | "source"; }
+interface MergePreview {
+  source: { id: string; firstName: string; lastName: string; createdAt: string };
+  target: { id: string; firstName: string; lastName: string; createdAt: string };
+  conflictingEditions: MergeConflictEdition[];
+  movableParticipations: number;
+  moves: { submissions: number; authorships: number; reviewAssignments: number; scanEvents: number; tasks: number; contacts: number; delegationsLed: number; waitlistEntries: number };
+  fieldDiffs: { field: string; source: string | null; target: string | null; kind: "fill" | "conflict" }[];
+  loserBadges: number;
+}
+const MERGE_FIELD_LABELS: Record<string, string> = { email: "E-posta", phone: "Telefon", title: "Unvan", company: "Kurum", city: "Şehir", country: "Ülke", bio: "Bio" };
+const MERGE_MOVE_LABELS: Record<string, string> = {
+  submissions: "bildiri", authorships: "yazarlık", reviewAssignments: "hakemlik", scanEvents: "saha taraması",
+  tasks: "görev", contacts: "iletişim", delegationsLed: "delegasyon liderliği", waitlistEntries: "bekleme kaydı",
+};
 const REASON_TONE: Record<string, "emerald" | "amber" | "violet"> = { EMAIL: "emerald", NAME_PHONE: "amber", NAME_ORG: "violet" };
 interface OrgRow { id: string; name: string; type?: string | null; city?: string | null; country?: string | null; website?: string | null; _count?: { eventAssignments?: number; sponsorAgreements?: number } }
 interface Org360 {
@@ -84,6 +102,9 @@ export function PeopleView() {
   const [mergeSug, setMergeSug] = useState<DuplicateSuggestion | null>(null);
   const [mergeTarget, setMergeTarget] = useState<string | null>(null); // korunacak (hedef) kişi id
   const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergePreview, setMergePreview] = useState<MergePreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [resolutions, setResolutions] = useState<Record<string, "target" | "source">>({});
 
   const { data, error, reload, loading } = useApi<PersonRow[]>(() => listEntity<PersonRow>("people", { q, limit: 300 }), [q]);
 
@@ -122,9 +143,31 @@ export function PeopleView() {
     const def = s.olderId && s.persons.some((p) => p.id === s.olderId) ? s.olderId : s.persons[0]?.id ?? null;
     setMergeSug(s);
     setMergeTarget(def);
+    setMergePreview(null);
+    setResolutions({});
   };
 
-  // Onaylı birleştirme — kaynak ≠ hedef savunmacı kontrolü ile (sunucuda da denetlenir)
+  // hedef seçilince çakışma önizlemesi + varsayılan çözümler
+  useEffect(() => {
+    if (!mergeSug || !mergeTarget) { setMergePreview(null); return; }
+    const source = mergeSug.persons.find((p) => p.id !== mergeTarget);
+    if (!source) { setMergePreview(null); return; }
+    let alive = true;
+    setPreviewLoading(true);
+    apiGet<MergePreview>(`/api/people/merge-preview?sourceId=${source.id}&targetId=${mergeTarget}`)
+      .then((d) => {
+        if (!alive) return;
+        setMergePreview(d);
+        const def: Record<string, "target" | "source"> = {};
+        for (const c of d.conflictingEditions) def[c.editionId] = c.defaultWinner;
+        setResolutions(def);
+      })
+      .catch(() => { if (alive) setMergePreview(null); })
+      .finally(() => { if (alive) setPreviewLoading(false); });
+    return () => { alive = false; };
+  }, [mergeSug, mergeTarget]);
+
+  // Onaylı birleştirme — çakışma çözümleriyle (sunucu tek işlemde taşır)
   const confirmMerge = async () => {
     const sug = mergeSug;
     if (!sug || !mergeTarget) return;
@@ -136,10 +179,16 @@ export function PeopleView() {
     }
     setMergeBusy(true);
     try {
-      await apiSend("/api/flows", "POST", { action: "person.merge", sourceId: source.id, targetId: target.id });
-      toast({ title: "Kişiler birleştirildi — geçmiş korundu", description: `${source.fullName} kaydı ${target.fullName} içine taşındı.` });
+      const r = await apiSend<{ mergedRegistrations?: number; resolvedEditions?: number }>("/api/flows", "POST", {
+        action: "person.merge", sourceId: source.id, targetId: target.id, resolutions, fillProfile: true,
+      });
+      toast({
+        title: "Kişiler birleştirildi — geçmiş korundu",
+        description: `${source.fullName} → ${target.fullName}${r.mergedRegistrations ? ` · ${r.mergedRegistrations} kayıt taşındı` : ""}${r.resolvedEditions ? ` · ${r.resolvedEditions} edisyonda çakışma çözüldü` : ""}`,
+      });
       setMergeSug(null);
       setMergeTarget(null);
+      setMergePreview(null);
       reload(); dupReload(); bump(); // kişi listesi + mükerrer listesi + global sayaçlar
     } catch (e) {
       toast({ title: "Birleştirme başarısız", description: e instanceof Error ? e.message : "Kişiler birleştirilemedi", variant: "destructive" });
@@ -232,13 +281,14 @@ export function PeopleView() {
         </div>
       )}
 
-      {/* ── Birleştirme onay diyaloğu (R2-b) — kaynak hedefe taşınır, geri alınamaz ── */}
+      {/* ── Birleştirme onay diyaloğu — hedef seçimi + çakışma çözümü (R7) ── */}
       <Dialog open={Boolean(mergeSug)} onOpenChange={(o) => { if (!o) setMergeSug(null); }}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Kişileri Birleştir</DialogTitle>
             <DialogDescription>{mergeSug?.note ?? "Kaynak kişi hedefe taşınır; hedef kayıt korunur."}</DialogDescription>
           </DialogHeader>
+
           <div role="radiogroup" aria-label="Korunacak kişi" className="grid gap-2 sm:grid-cols-2">
             {mergeSug?.persons.map((p, i) => {
               const checked = mergeTarget === p.id;
@@ -267,13 +317,109 @@ export function PeopleView() {
               );
             })}
           </div>
+
+          {/* ── Çakışma önizlemesi — hedef seçilince yüklenir ── */}
+          {previewLoading && (
+            <p className="flex items-center gap-2 py-2 text-xs text-muted-foreground"><Icons.Loader2 className="size-3.5 animate-spin" /> Çakışma analizi yapılıyor…</p>
+          )}
+          {mergePreview && !previewLoading && (
+            <div className="maven-portal-enter space-y-3">
+              {/* profil alan farkları */}
+              {mergePreview.fieldDiffs.length > 0 && (
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold"><Icons.SlidersHorizontal className="size-3.5 text-primary" /> Profil alanları</p>
+                  <ul className="space-y-1">
+                    {mergePreview.fieldDiffs.map((f) => (
+                      <li key={f.field} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+                        <span className="w-14 shrink-0 font-medium text-muted-foreground">{MERGE_FIELD_LABELS[f.field] ?? f.field}</span>
+                        {f.kind === "fill" ? (
+                          <Chip tone="teal">hedef boş → "{f.source}" kaynaktan doldurulur</Chip>
+                        ) : (
+                          <Chip tone="amber">farklı: hedef "{f.target}" · kaynak "{f.source}" → hedef korunur</Chip>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* aynı edisyonda iki katılım — çözüm zorunlu */}
+              {mergePreview.conflictingEditions.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800">
+                    <Icons.TriangleAlert className="size-3.5" aria-hidden />
+                    {mergePreview.conflictingEditions.length} edisyonda iki katılım var — kazanan seçilmeli
+                  </p>
+                  {mergePreview.conflictingEditions.map((c) => {
+                    const winner = resolutions[c.editionId] ?? c.defaultWinner;
+                    const SideBox = ({ sideName, s }: { sideName: "source" | "target"; s: MergePreviewSide }) => {
+                      const name = sideName === "target" ? `${mergePreview.target.firstName} ${mergePreview.target.lastName}` : `${mergePreview.source.firstName} ${mergePreview.source.lastName}`;
+                      const active = winner === sideName;
+                      return (
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          onClick={() => setResolutions((r) => ({ ...r, [c.editionId]: sideName }))}
+                          className={cn(
+                            "flex-1 rounded-lg border p-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                            active ? "maven-winner-glow border-primary bg-primary/5 ring-1 ring-primary/30" : "border-dashed opacity-70 hover:opacity-100 hover:border-primary/40"
+                          )}
+                        >
+                          <span className="flex items-center justify-between gap-1">
+                            <span className="truncate text-xs font-semibold">{name}</span>
+                            {active && <Icons.CheckCircle2 className="size-3.5 shrink-0 text-primary" aria-hidden />}
+                          </span>
+                          <span className="mt-1 block text-[10px] leading-relaxed text-muted-foreground">
+                            {s.regNo ? <><span className="font-mono">{s.regNo}</span> · </> : "kayıt yok · "}
+                            {s.regStatus ? <>{REGISTRATION_STATUS[s.regStatus] ?? s.regStatus}{s.categoryName ? ` (${s.categoryName})` : ""} · </> : ""}
+                            {s.badgeCount > 0 ? `${s.badgeCount} rozet` : "rozet yok"}
+                          </span>
+                        </button>
+                      );
+                    };
+                    return (
+                      <div key={c.editionId} className="rounded-lg border bg-card p-2.5">
+                        <p className="mb-1.5 text-[11px] font-semibold text-muted-foreground">{c.editionName} · {fmtDate(c.startDate)}</p>
+                        <div role="radiogroup" aria-label={`${c.editionName} için kazanacak katılım`} className="flex flex-col gap-2 sm:flex-row">
+                          <SideBox sideName="source" s={c.source} />
+                          <SideBox sideName="target" s={c.target} />
+                        </div>
+                        <p className="mt-1.5 text-[10px] text-muted-foreground">
+                          {winner === "target"
+                            ? `${mergePreview.source.firstName} katılımındaki kayıtlar/rozetler/taramalar ${mergePreview.target.firstName} katılımına taşınır, boşalan silinir.`
+                            : `${mergePreview.target.firstName} katılımındaki kayıtlar/rozetler/taramalar ${mergePreview.source.firstName} katılımına taşınır, boşalan silinir.`}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-700">
+                  <Icons.CheckCircle2 className="size-3.5" aria-hidden /> Edisyon çakışması yok — katılımlar doğrudan taşınır.
+                </p>
+              )}
+
+              {/* taşınacaklar özeti */}
+              <div className="flex flex-wrap gap-1.5">
+                {mergePreview.movableParticipations > 0 && <Chip tone="teal">{mergePreview.movableParticipations} katılım</Chip>}
+                {Object.entries(mergePreview.moves).filter(([, n]) => n > 0).map(([k, n]) => (
+                  <Chip key={k} tone="neutral">{n} {MERGE_MOVE_LABELS[k] ?? k}</Chip>
+                ))}
+                {mergePreview.loserBadges > 0 && (
+                  <Chip tone="amber">{mergePreview.loserBadges} rozet kaybeden taraftan kazanan tarafına taşınır</Chip>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
             <Icons.TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
-            <span>Birleştirme geri alınamaz. Kaynak kişinin katılımları, bildirileri, yazarlıkları, hakemlikleri ve saha taramaları hedefe taşınır; kaynak kişi MERGED durumuna geçer ve kişiler listesinde gizlenir.</span>
+            <span>Birleştirme geri alınamaz ve tek işlemde yapılır. Kaynak kişinin katılımları, bildirileri, yazarlıkları, hakemlikleri, görevleri ve saha taramaları hedefe taşınır; kaynak kişi MERGED durumuna geçer ve kişiler listesinde gizlenir.</span>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setMergeSug(null)} disabled={mergeBusy}>İptal</Button>
-            <Button onClick={confirmMerge} disabled={mergeBusy || !mergeTarget}>
+            <Button onClick={confirmMerge} disabled={mergeBusy || !mergeTarget || previewLoading}>
               {mergeBusy ? <Icons.Loader2 className="size-4 animate-spin" aria-hidden /> : <Icons.Merge className="size-4" aria-hidden />}
               Birleştir
             </Button>

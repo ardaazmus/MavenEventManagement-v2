@@ -31,7 +31,7 @@ interface InvitationRow { id: string; fullName: string; email: string; status: s
 // ── Bekleme listesi tipleri (/api/waitlist sözleşmesi) ──
 interface WaitlistPerson { id: string; firstName: string; lastName: string; email?: string | null; company?: string | null; title?: string | null; status: string }
 interface WaitlistEntryRow {
-  id: string; priority: number; status: string; offeredAt?: string | null; offerExpiresAt?: string | null; respondedAt?: string | null; notes?: string | null; createdAt: string;
+  id: string; personId: string; priority: number; status: string; offeredAt?: string | null; offerExpiresAt?: string | null; respondedAt?: string | null; notes?: string | null; createdAt: string;
   person: WaitlistPerson;
   category?: { id: string; name: string; code: string; capacity?: number | null } | null;
   convertedRegistration?: { id: string; confirmationNo: string; status: string } | null;
@@ -553,6 +553,13 @@ function WaitlistTab({ editionId, categories, onChanged }: { editionId: string |
                                   </Button>
                                 </>
                               )}
+                              <Button size="sm" variant="ghost" className="h-7 text-primary/70 hover:text-primary" disabled={busyAll} title="Kişinin portal görünümünü aç"
+                                onClick={() => {
+                                  try { sessionStorage.setItem("maven.portal.person", e.personId); } catch { /* yoksay */ }
+                                  useApp.getState().setModule("portals");
+                                }}>
+                                <Icons.ExternalLink className="size-3.5" />
+                              </Button>
                               <Button size="sm" variant="ghost" className="h-7 text-muted-foreground" disabled={busyAll} onClick={() => removeEntry(e)} title="Listeden çıkar">
                                 <Icons.ListX className="size-3.5" />
                               </Button>

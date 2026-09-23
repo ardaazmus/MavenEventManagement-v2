@@ -149,3 +149,34 @@
 @media (prefers-reduced-motion: reduce) {
   .maven-plan-block { animation: none; }
 }
+
+/* ── Dış Portal (§20/§60: ayrı uygulama, ortak kimlik) ─────────────────────── */
+
+/* portal üst bandı: katmanlı teal degrade + nokta dokusu */
+.maven-portal-hero {
+  background-image:
+    radial-gradient(circle at 85% 15%, rgba(255, 255, 255, 0.14) 0, transparent 34%),
+    radial-gradient(circle at 12% 88%, rgba(255, 255, 255, 0.1) 0, transparent 30%),
+    radial-gradient(rgba(255, 255, 255, 0.16) 1px, transparent 1.4px),
+    linear-gradient(120deg, oklch(0.52 0.09 190), oklch(0.46 0.1 168) 58%, oklch(0.5 0.09 175));
+  background-size: auto, auto, 18px 18px, auto;
+}
+
+/* portal gövdesi: hafif sıralı giriş animasyonu */
+@keyframes maven-portal-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.maven-portal-enter { animation: maven-portal-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+
+/* süreç adımındaki "şu anki" düğüm nabzı */
+@keyframes maven-step-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.72 0.1 187 / 0.45); }
+  55% { box-shadow: 0 0 0 7px oklch(0.72 0.1 187 / 0); }
+}
+.maven-step-pulse { animation: maven-step-pulse 2s ease-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .maven-portal-enter { animation: none; }
+  .maven-step-pulse { animation: none; }
+}

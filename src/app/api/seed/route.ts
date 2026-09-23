@@ -239,11 +239,16 @@ export async function POST() {
         create: { editionId: edition1.id, personId: person.id, source: "ADMIN_ENTRY", attendance: "NOT_ARRIVED" },
         update: {},
       });
+      // Ünsal'a canlı teklif: dış portal (Katılımcı Görünümü) kabul/ret akışının demosu
+      const isLiveOffer = name === "Ünsal";
+      const expires = new Date();
+      expires.setHours(expires.getHours() + 46);
       await db.waitlistEntry.create({
         data: {
           editionId: edition1.id, personId: person.id, participationId: participation.id,
           categoryId: cat.id, priority: prio, notes: note,
           createdAt: D(-8 + Math.floor(prio / 10), 10, 0),
+          ...(isLiveOffer ? { status: "OFFERED", offeredAt: new Date(), offerExpiresAt: expires } : {}),
         },
       });
     }

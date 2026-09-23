@@ -12,6 +12,7 @@ import { RegistrationsView } from "@/components/maven/views/registrations";
 import { ScientificView, ProgramView } from "@/components/maven/views/scientific";
 import { SponsorshipView } from "@/components/maven/views/sponsorship";
 import { FloorsView } from "@/components/maven/views/floors";
+import { PortalsView } from "@/components/maven/views/portals";
 import { AccommodationView } from "@/components/maven/views/accommodation";
 import { FinanceView } from "@/components/maven/views/finance";
 import { FormCenterView } from "@/components/maven/views/form-center";
@@ -70,6 +71,7 @@ function renderModule(module: string) {
   switch (module) {
     case "dashboard": return <DashboardView />;
     case "editions": return <EditionsView />;
+    case "portals": return <PortalsView />;
     case "people": return <PeopleView />;
     case "organizations": return <OrganizationsView />;
     case "registrations": return <RegistrationsView />;

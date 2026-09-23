@@ -1,6 +1,7 @@
 "use client";
 // Konaklama — gecelik stok (§32), rezervasyon teyidi (§09-E), oda-gece metriği
 // R9-d genişletmesi: occupancy/rate/gece düzenleme, no-show akışı, misafir hiyerarşisi (bağımlı kişi + refakatçi).
+// R10-c genişletmesi: Otel Ekle/Düzenle diyaloğu (tüm HotelProperty alanları) + Medya Arşivi'ne bağlantılı logo/kapak yükleme.
 import { useState } from "react";
 import { listEntity, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
@@ -10,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
@@ -20,6 +22,8 @@ import { cn } from "@/lib/utils";
 
 interface HotelRow {
   id: string; name: string; city?: string | null; district?: string | null; contactName?: string | null; contactPhone?: string | null;
+  address?: string | null; email?: string | null; website?: string | null; starRating?: number | null; checkInNote?: string | null; notes?: string | null;
+  logoUrl?: string | null; imageUrl?: string | null;
   roomTypes: { id: string; name: string; capacity: number; pricePerNight: number; currency: string }[];
   blocks: { id: string; name: string; releaseDate?: string | null; cancellationPolicy?: string | null; roomType: { name: string; id: string }; inventoryNights: { id: string; date: string; totalRooms: number; reservedRooms: number }[] }[];
 }
@@ -59,6 +63,15 @@ export function AccommodationView() {
   const [guestForm, setGuestForm] = useState({ firstName: "", lastName: "", relationType: "SPOUSE", ageType: "ADULT", makeCompanion: true, addSlot: true });
   const [busy, setBusy] = useState(false);
   const [guestTick, setGuestTick] = useState(0);
+
+  // ── otel ekle/düzenle: tüm HotelProperty alanları + Medya Arşivi'ne bağlantılı logo/kapak (R10-c)
+  const [hotelDialog, setHotelDialog] = useState<{ target: HotelRow | null } | null>(null);
+  const [hotelForm, setHotelForm] = useState({
+    name: "", city: "", district: "", address: "", starRating: "__none__", checkInNote: "",
+    contactName: "", contactPhone: "", email: "", website: "", notes: "", logoUrl: "", imageUrl: "",
+  });
+  const [hotelPending, setHotelPending] = useState<{ logo?: { dataUrl: string }; cover?: { dataUrl: string } }>({});
+  const [hotelMediaBusy, setHotelMediaBusy] = useState<"logo" | "cover" | null>(null);
 
   const { data: companions, reload: reloadCompanions } = useApi<CompanionRow[]>(
     () => listEntity<CompanionRow>("companions", { participationId: guestRes?.primaryGuest?.id ?? "__none__" }),
@@ -197,6 +210,146 @@ export function AccommodationView() {
     } finally { setBusy(false); }
   };
 
+  const openCreateHotel = () => {
+    setHotelForm({ name: "", city: "", district: "", address: "", starRating: "__none__", checkInNote: "", contactName: "", contactPhone: "", email: "", website: "", notes: "", logoUrl: "", imageUrl: "" });
+    setHotelPending({});
+    setHotelDialog({ target: null });
+  };
+
+  const openEditHotel = (h: HotelRow) => {
+    setHotelForm({
+      name: h.name, city: h.city ?? "", district: h.district ?? "", address: h.address ?? "",
+      starRating: h.starRating ? String(h.starRating) : "__none__", checkInNote: h.checkInNote ?? "",
+      contactName: h.contactName ?? "", contactPhone: h.contactPhone ?? "", email: h.email ?? "",
+      website: h.website ?? "", notes: h.notes ?? "", logoUrl: h.logoUrl ?? "", imageUrl: h.imageUrl ?? "",
+    });
+    setHotelPending({});
+    setHotelDialog({ target: h });
+  };
+
+  // Medya Arşivi → Otel Görselleri klasörüne benzersiz adla yükle + otel kaydına yaz
+  const uploadHotelMedia = async (hotelId: string, kind: "logo" | "cover", dataUrl: string) => {
+    const hotelName = hotelForm.name.trim() || "otel";
+    const r = await apiSend<{ asset: { id: string; dataUrl: string | null } }>("/api/media/upload-linked", "POST", {
+      editionId: currentEditionId,
+      systemFolder: "OTEL",
+      linkedType: "HOTEL",
+      linkedId: hotelId,
+      name: `${hotelName}-${kind === "logo" ? "logosu" : "kapak"}`,
+      dataUrl,
+    });
+    const url = r.asset.dataUrl ?? dataUrl;
+    await apiSend(`/api/hotels/${hotelId}`, "PUT", kind === "logo" ? { logoUrl: url } : { imageUrl: url });
+  };
+
+  const onHotelMediaPick = (kind: "logo" | "cover", file: File) => {
+    if (file.size > 600 * 1024) {
+      toast({ title: "Dosya 600KB sınırı aşılıyor", description: "Daha küçük bir görsel seçin — arşive gömme tavanı 600KB'dir.", variant: "destructive" });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!dataUrl) return;
+      setHotelForm((prev) => ({ ...prev, [kind === "logo" ? "logoUrl" : "imageUrl"]: dataUrl })); // anında önizleme
+      if (hotelDialog?.target) {
+        // düzenleme modu: hemen yükle ve kayda yaz
+        setHotelMediaBusy(kind);
+        uploadHotelMedia(hotelDialog.target.id, kind, dataUrl)
+          .then(() => {
+            toast({ title: kind === "logo" ? "Logo yüklendi" : "Kapak görseli yüklendi", description: "Medya Arşivi → Otel Görselleri klasörüne benzersiz adla kaydedildi." });
+            reload(); bump();
+          })
+          .catch((e) => toast({ title: "Görsel yüklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" }))
+          .finally(() => setHotelMediaBusy(null));
+      } else {
+        // yeni otel: POST id döndükten sonra yüklenecek (saveHotel içinde)
+        setHotelPending((prev) => ({ ...prev, [kind]: { dataUrl } }));
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const saveHotel = async () => {
+    if (!currentEditionId || !hotelForm.name.trim()) return;
+    setBusy(true);
+    try {
+      // yalnızca skaler alanlar — registry include'u roomTypes/blocks döndürür, asla gönderilmez
+      const scalars = {
+        name: hotelForm.name.trim(),
+        city: hotelForm.city.trim(),
+        district: hotelForm.district.trim(),
+        address: hotelForm.address.trim(),
+        starRating: hotelForm.starRating === "__none__" ? null : Number(hotelForm.starRating),
+        checkInNote: hotelForm.checkInNote.trim(),
+        contactName: hotelForm.contactName.trim(),
+        contactPhone: hotelForm.contactPhone.trim(),
+        email: hotelForm.email.trim(),
+        website: hotelForm.website.trim(),
+        notes: hotelForm.notes.trim(),
+      };
+      let hotelId = hotelDialog?.target?.id ?? null;
+      if (hotelId) {
+        // düzenleme: görsel alanlarını da taşı ("" → null ile kaldırma desteklenir)
+        await apiSend(`/api/hotels/${hotelId}`, "PUT", { ...scalars, logoUrl: hotelForm.logoUrl || null, imageUrl: hotelForm.imageUrl || null });
+      } else {
+        const created = await apiSend<{ id: string }>("/api/hotels", "POST", { editionId: currentEditionId, ...scalars });
+        hotelId = created.id;
+      }
+      // bekleyen logo/kapak — yeni otelde id döndükten sonra yüklenir
+      for (const kind of ["logo", "cover"] as const) {
+        const pm = hotelPending[kind];
+        if (pm?.dataUrl) await uploadHotelMedia(hotelId, kind, pm.dataUrl);
+      }
+      toast({
+        title: hotelDialog?.target ? "Otel güncellendi" : "Otel eklendi",
+        description: hotelDialog?.target
+          ? `${scalars.name} — iletişim ve kontrat ayrıntıları kaydedildi.`
+          : `${scalars.name} · logo/kapak görselleri Medya Arşivi → Otel Görselleri klasörüne bağlandı.`,
+      });
+      setHotelDialog(null);
+      reload(); bump();
+    } catch (e) {
+      toast({ title: "Otel kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  // diyaloğa gömülü medya seçici (logo / kapak)
+  const renderHotelMediaPicker = (kind: "logo" | "cover") => {
+    const isLogo = kind === "logo";
+    const preview = isLogo ? hotelForm.logoUrl : hotelForm.imageUrl;
+    const inputId = isLogo ? "hotel-logo-input" : "hotel-cover-input";
+    return (
+      <div className="space-y-2">
+        <p className="flex items-center gap-1.5 text-xs font-semibold"><Icons.Image className="size-3.5 text-muted-foreground" /> {isLogo ? "Otel logosu" : "Kapak görseli"}</p>
+        <div className="flex items-center gap-2.5">
+          <span className={cn("grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg border", preview ? "bg-white" : "bg-muted")}>
+            {preview ? <img src={preview} alt={isLogo ? "Logo önizleme" : "Kapak önizleme"} className={cn("size-full", isLogo ? "object-contain p-1" : "object-cover")} /> : <Icons.Building2 className="size-5 text-muted-foreground/50" />}
+          </span>
+          <div className="min-w-0 space-y-1">
+            <label htmlFor={inputId} className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border bg-card px-2 text-[11px] font-medium transition-colors hover:bg-muted">
+              {hotelMediaBusy === kind ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Upload className="size-3" />}
+              {preview ? "Değiştir" : "Görsel seç"}
+            </label>
+            {preview && (
+              <button type="button" className="block text-[10px] text-rose-600 hover:underline" onClick={() => { setHotelForm((p) => ({ ...p, [isLogo ? "logoUrl" : "imageUrl"]: "" })); setHotelPending((p) => ({ ...p, [kind]: undefined })); }}>
+                Kaldır
+              </button>
+            )}
+          </div>
+        </div>
+        <Input
+          id={inputId}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          aria-label={isLogo ? "Otel logosu yükle" : "Kapak görseli yükle"}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onHotelMediaPick(kind, f); e.target.value = ""; }}
+        />
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-5">
       <PageHeader title="Konaklama & Seyahat" desc="Oda stoğu gün bazlıdır — 1 oda × 3 gece = 3 oda-gece; bir gece eksikse teyit engellenir" />
@@ -224,45 +377,124 @@ export function AccommodationView() {
         <span className="ml-auto text-[11px] text-muted-foreground">no-show ve iptaller dağılıma katılmaz</span>
       </div>
 
-      {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (hotels ?? []).length === 0 ? (
-        <EmptyState title="Henüz oda bloğu tanımlanmadı" desc="Konaklama taleplerini açmadan önce otel ve tarihleri ekleyin." />
-      ) : (
-        (hotels ?? []).map((h) => (
-          <SectionCard key={h.id} title={h.name} desc={`${h.district ?? h.city ?? ""} · iletişim: ${h.contactName ?? "—"}`}>
-            <div className="space-y-4">
-              {h.blocks.map((b) => {
-                const total = b.inventoryNights.reduce((s, n) => s + n.totalRooms, 0);
-                const reserved = b.inventoryNights.reduce((s, n) => s + n.reservedRooms, 0);
-                return (
-                  <div key={b.id} className="rounded-lg border p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm font-semibold">{b.name} <span className="font-normal text-muted-foreground">· {b.roomType.name}</span></p>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>satılabilir {total} oda-gece · ayrılan {reserved} (%{total ? Math.round((reserved / total) * 100) : 0})</span>
-                        {b.releaseDate && <Chip tone={new Date(b.releaseDate) < new Date(Date.now() + 7 * 86400000) ? "rose" : "neutral"}>release {fmtDate(b.releaseDate)}</Chip>}
+      <SectionCard
+        title="Oteller"
+        desc="kontratlı oteller, iletişim ayrıntıları ve oda stoğu — çift tıkla düzenle"
+        action={
+          <Button size="sm" onClick={openCreateHotel}>
+            <Icons.Hotel className="size-4" /> Otel Ekle
+          </Button>
+        }
+      >
+        {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (hotels ?? []).length === 0 ? (
+          <EmptyState title="Henüz oda bloğu tanımlanmadı" desc="'Otel Ekle' ile ilk oteli ekleyin — logo, adres, ilgili kişi ve e-posta ayrıntılarıyla." />
+        ) : (
+          <div className="space-y-4">
+            {(hotels ?? []).map((h) => (
+              <div
+                key={h.id}
+                onDoubleClick={() => openEditHotel(h)}
+                title="Çift tık: oteli düzenle"
+                className="cursor-pointer overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md"
+              >
+                {h.imageUrl && (
+                  <div className="aspect-video min-h-0 w-full overflow-hidden bg-muted">
+                    <img src={h.imageUrl} alt={`${h.name} kapak görseli`} loading="lazy" className="size-full object-cover" />
+                  </div>
+                )}
+                <div className="space-y-3 p-4">
+                  <div className="flex items-start gap-3">
+                    {h.logoUrl ? (
+                      <img src={h.logoUrl} alt={`${h.name} logosu`} className="size-12 shrink-0 rounded-lg border bg-white object-contain p-1" />
+                    ) : (
+                      <span className="grid size-12 shrink-0 place-items-center rounded-lg border bg-muted text-muted-foreground"><Icons.Building className="size-5" /></span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold">{h.name}</p>
+                      <p className="truncate text-xs text-muted-foreground">{[h.district, h.city].filter(Boolean).join(" · ") || "konum belirtilmedi"}</p>
+                      {h.starRating ? (
+                        <p className="mt-0.5 text-xs text-amber-500" aria-label={`${h.starRating} yıldız`}>
+                          {"★".repeat(h.starRating)}
+                          <span className="text-muted-foreground/30">{"★".repeat(5 - h.starRating)}</span>
+                        </p>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`${h.name} otelini düzenle`}
+                      onClick={() => openEditHotel(h)}
+                      className="grid size-7 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    >
+                      <Icons.Pencil className="size-3.5" />
+                    </button>
+                  </div>
+
+                  {(h.address || h.checkInNote || h.contactName || h.contactPhone) && (
+                    <div className="space-y-1.5">
+                      {h.address && (
+                        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <Icons.MapPin className="size-3 shrink-0" aria-hidden />
+                          <span className="min-w-0 truncate" title={h.address}>{h.address}</span>
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-1.5">
+                        {h.contactName && <Chip tone="teal"><Icons.UserRound className="mr-1 inline size-3" />{h.contactName}</Chip>}
+                        {h.contactPhone && <Chip tone="teal"><Icons.Phone className="mr-1 inline size-3" />{h.contactPhone}</Chip>}
+                        {h.checkInNote && <Chip tone="amber"><Icons.KeyRound className="mr-1 inline size-3" />{h.checkInNote}</Chip>}
                       </div>
                     </div>
-                    {/* gecelik stok çizelgesi */}
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {b.inventoryNights.map((n) => {
-                        const free = n.totalRooms - n.reservedRooms;
-                        const pctFill = n.totalRooms ? (n.reservedRooms / n.totalRooms) * 100 : 0;
-                        return (
-                          <div key={n.id} className={cn("w-20 rounded-md border p-1.5 text-center text-[10px]", free === 0 ? "border-rose-300 bg-rose-50" : pctFill > 80 ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50/60")}>
-                            <p className="font-semibold">{fmtDate(n.date).slice(0, 6)}</p>
-                            <p className="tabular-nums font-bold text-xs">{n.reservedRooms}/{n.totalRooms}</p>
-                            <p className="text-muted-foreground">{free === 0 ? "dolu" : `${free} boş`}</p>
-                          </div>
-                        );
-                      })}
+                  )}
+
+                  {(h.email || h.website) && (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                      {h.email && (
+                        <a href={`mailto:${h.email}`} className="inline-flex min-w-0 items-center gap-1 text-teal-700 hover:underline">
+                          <Icons.Mail className="size-3 shrink-0" aria-hidden /><span className="truncate">{h.email}</span>
+                        </a>
+                      )}
+                      {h.website && (
+                        <a href={h.website.startsWith("http") ? h.website : `https://${h.website}`} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1 text-teal-700 hover:underline">
+                          <Icons.ExternalLink className="size-3 shrink-0" aria-hidden /> web sitesi
+                        </a>
+                      )}
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </SectionCard>
-        ))
-      )}
+                  )}
+
+                  {h.blocks.map((b) => {
+                    const total = b.inventoryNights.reduce((s, n) => s + n.totalRooms, 0);
+                    const reserved = b.inventoryNights.reduce((s, n) => s + n.reservedRooms, 0);
+                    return (
+                      <div key={b.id} className="rounded-lg border p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-semibold">{b.name} <span className="font-normal text-muted-foreground">· {b.roomType.name}</span></p>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span>satılabilir {total} oda-gece · ayrılan {reserved} (%{total ? Math.round((reserved / total) * 100) : 0})</span>
+                            {b.releaseDate && <Chip tone={new Date(b.releaseDate) < new Date(Date.now() + 7 * 86400000) ? "rose" : "neutral"}>release {fmtDate(b.releaseDate)}</Chip>}
+                          </div>
+                        </div>
+                        {/* gecelik stok çizelgesi */}
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {b.inventoryNights.map((n) => {
+                            const free = n.totalRooms - n.reservedRooms;
+                            const pctFill = n.totalRooms ? (n.reservedRooms / n.totalRooms) * 100 : 0;
+                            return (
+                              <div key={n.id} className={cn("w-20 rounded-md border p-1.5 text-center text-[10px]", free === 0 ? "border-rose-300 bg-rose-50" : pctFill > 80 ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50/60")}>
+                                <p className="font-semibold">{fmtDate(n.date).slice(0, 6)}</p>
+                                <p className="tabular-nums font-bold text-xs">{n.reservedRooms}/{n.totalRooms}</p>
+                                <p className="text-muted-foreground">{free === 0 ? "dolu" : `${free} boş`}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
 
       <SectionCard title="Rezervasyonlar" desc="varış/çıkış, doluluk tipi, gecelik fiyat, misafir bağlantıları — rezervasyon ile ödeyen aynı olmak zorunda değil (§35)">
         {(reservations ?? []).length === 0 ? (
@@ -548,6 +780,92 @@ export function AccommodationView() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddGuestOpen(false)}>Vazgeç</Button>
             <Button onClick={addGuestProfile} disabled={busy || !guestForm.firstName.trim() || !guestForm.lastName.trim()}>{busy ? "Ekleniyor…" : "Ekle"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Otel ekle/düzenle diyaloğu — tüm HotelProperty alanları + bağlantılı medya (R10-c) */}
+      <Dialog open={Boolean(hotelDialog)} onOpenChange={(o) => !o && setHotelDialog(null)}>
+        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Icons.Hotel className="size-4 text-teal-600" /> {hotelDialog?.target ? "Otel Düzenle" : "Otel Ekle"}</DialogTitle>
+            <DialogDescription>
+              {hotelDialog?.target
+                ? `${hotelDialog.target.name} — iletişim, adres ve kontrat ayrıntılarını güncelleyin.`
+                : "Kontratlı oteli tüm ayrıntılarıyla tanımlayın; logo ve kapak görseli Medya Arşivi'ne bağlanır."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
+              {renderHotelMediaPicker("logo")}
+              {renderHotelMediaPicker("cover")}
+              <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground sm:col-span-2">
+                <Icons.Info className="mt-0.5 size-3 shrink-0" aria-hidden />
+                Medya Arşivi → Otel Görselleri klasörüne benzersiz adla kaydedilir (≤600KB).
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="h-name">Otel adı *</Label>
+                <Input id="h-name" value={hotelForm.name} onChange={(e) => setHotelForm({ ...hotelForm, name: e.target.value })} placeholder="örn. Hilton İstanbul Bomonti" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="h-city">Şehir</Label>
+                <Input id="h-city" value={hotelForm.city} onChange={(e) => setHotelForm({ ...hotelForm, city: e.target.value })} placeholder="İstanbul" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="h-district">Semt / İlçe</Label>
+                <Input id="h-district" value={hotelForm.district} onChange={(e) => setHotelForm({ ...hotelForm, district: e.target.value })} placeholder="Bomonti" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Yıldız derecesi</Label>
+                <Select value={hotelForm.starRating} onValueChange={(v) => setHotelForm({ ...hotelForm, starRating: v })}>
+                  <SelectTrigger aria-label="Yıldız derecesi"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Belirtilmedi</SelectItem>
+                    {[5, 4, 3, 2, 1].map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        <span className="text-amber-500">{"★".repeat(n)}</span> ({n} yıldız)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="h-address">Adres</Label>
+                <Textarea id="h-address" rows={2} value={hotelForm.address} onChange={(e) => setHotelForm({ ...hotelForm, address: e.target.value })} placeholder="Mahalle, sokak, numara…" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="h-contact">İlgili kişi</Label>
+                <Input id="h-contact" value={hotelForm.contactName} onChange={(e) => setHotelForm({ ...hotelForm, contactName: e.target.value })} placeholder="Rezervasyon müdürü" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="h-phone">Telefon</Label>
+                <Input id="h-phone" type="tel" value={hotelForm.contactPhone} onChange={(e) => setHotelForm({ ...hotelForm, contactPhone: e.target.value })} placeholder="+90 212 000 00 00" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="h-email">E-posta</Label>
+                <Input id="h-email" type="email" value={hotelForm.email} onChange={(e) => setHotelForm({ ...hotelForm, email: e.target.value })} placeholder="rezervasyon@otel.com" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="h-web">Web sitesi</Label>
+                <Input id="h-web" value={hotelForm.website} onChange={(e) => setHotelForm({ ...hotelForm, website: e.target.value })} placeholder="https://otel.com" />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="h-checkin">Giriş / çıkış notu</Label>
+                <Input id="h-checkin" value={hotelForm.checkInNote} onChange={(e) => setHotelForm({ ...hotelForm, checkInNote: e.target.value })} placeholder="Giriş 14:00 / Çıkış 12:00" />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="h-notes">Notlar</Label>
+                <Textarea id="h-notes" rows={2} value={hotelForm.notes} onChange={(e) => setHotelForm({ ...hotelForm, notes: e.target.value })} placeholder="kontrat şartları, iptal politikası, servet…" />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHotelDialog(null)}>Vazgeç</Button>
+            <Button onClick={saveHotel} disabled={busy || !hotelForm.name.trim()}>
+              {busy ? "Kaydediliyor…" : hotelDialog?.target ? "Kaydet" : "Otel Ekle"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

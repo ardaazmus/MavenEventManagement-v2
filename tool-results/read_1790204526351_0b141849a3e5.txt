@@ -1,0 +1,654 @@
+     1→"use client";
+     2→// Kayıt & Katılımcılar — çok eksenli durum (kayıt × ödeme × katılım ayrı), onay akışı, LCV, bekleme listesi
+     3→import { useState } from "react";
+     4→import { listEntity, apiSend, apiGet } from "@/lib/client";
+     5→import { useApp } from "@/lib/store";
+     6→import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
+     7→import { REGISTRATION_STATUS, WAITLIST_STATUS, REG_SOURCES, FUNDING_SOURCES, ATTENDANCE_STATUS, INVITATION_STATUS, fmtDateTime, fmtDate, label } from "@/lib/constants";
+     8→import { Input } from "@/components/ui/input";
+     9→import { Button } from "@/components/ui/button";
+    10→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    11→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+    12→import { Textarea } from "@/components/ui/textarea";
+    13→import { Label } from "@/components/ui/label";
+    14→import { useToast } from "@/hooks/use-toast";
+    15→import * as Icons from "lucide-react";
+    16→import { cn } from "@/lib/utils";
+    17→
+    18→interface RegRow {
+    19→  id: string; confirmationNo: string; status: string; source: string; fundingSource: string; submittedAt?: string | null; decidedAt?: string | null; notes?: string | null;
+    20→  category?: { id: string; name: string; basePrice: number; currency: string } | null;
+    21→  participation: {
+    22→    id: string; attendance: string;
+    23→    person: { id: string; firstName: string; lastName: string; email?: string | null; company?: string | null };
+    24→    roleAssignments?: { role: string }[];
+    25→  };
+    26→  entitlementClaims?: { id: string; status: string; entitlement: { label: string } }[];
+    27→}
+    28→interface CategoryRow { id: string; name: string; code: string; basePrice: number; currency: string; requiresApproval: boolean; capacity?: number | null; paymentInstruction?: string | null; isActive: boolean; _count?: { registrations: number } }
+    29→interface InvitationRow { id: string; fullName: string; email: string; status: string; sentAt?: string | null; respondedAt?: string | null; organization?: { name: string } | null }
+    30→
+    31→// ── Bekleme listesi tipleri (/api/waitlist sözleşmesi) ──
+    32→interface WaitlistPerson { id: string; firstName: string; lastName: string; email?: string | null; company?: string | null; title?: string | null; status: string }
+    33→interface WaitlistEntryRow {
+    34→  id: string; personId: string; priority: number; status: string; offeredAt?: string | null; offerExpiresAt?: string | null; respondedAt?: string | null; notes?: string | null; createdAt: string;
+    35→  person: WaitlistPerson;
+    36→  category?: { id: string; name: string; code: string; capacity?: number | null } | null;
+    37→  convertedRegistration?: { id: string; confirmationNo: string; status: string } | null;
+    38→}
+    39→interface WaitlistCategory { id: string; name: string; code: string; capacity: number | null; taken: number; seatsLeft: number | null; waitingCount: number; offeredCount: number; fillPercent: number | null }
+    40→interface WaitlistData {
+    41→  summary: { waiting: number; offered: number; converted: number; declinedExpired: number; fullCategories: number; categoriesWithQueue: number };
+    42→  categories: WaitlistCategory[];
+    43→  entries: WaitlistEntryRow[];
+    44→}
+    45→interface PersonLite { id: string; firstName: string; lastName: string; email?: string | null; company?: string | null }
+    46→
+    47→export function RegistrationsView() {
+    48→  const { currentEditionId, bump, refreshKey } = useApp();
+    49→  const { toast } = useToast();
+    50→  const [statusFilter, setStatusFilter] = useState("ALL");
+    51→  const [q, setQ] = useState("");
+    52→  const [decideTarget, setDecideTarget] = useState<{ reg: RegRow; decision: "CONFIRMED" | "REJECTED" | "CANCELLED" } | null>(null);
+    53→  const [reason, setReason] = useState("");
+    54→  const [busy, setBusy] = useState(false);
+    55→  const [tab, setTab] = useState<"list" | "waitlist" | "lcv">("list");
+    56→
+    57→  const regsLoader = async () => {
+    58→    const items = await listEntity<RegRow>("registrations", { editionId: currentEditionId ?? undefined, status: statusFilter === "ALL" ? undefined : statusFilter, limit: 400 });
+    59→    const needle = q.toLocaleLowerCase("tr-TR");
+    60→    return needle ? items.filter((r) => `${r.participation.person.firstName} ${r.participation.person.lastName} ${r.participation.person.email ?? ""} ${r.confirmationNo}`.toLocaleLowerCase("tr-TR").includes(needle)) : items;
+    61→  };
+    62→  const { data: registrations, error, reload, loading } = useApi<RegRow[]>(regsLoader, [currentEditionId, statusFilter, q, refreshKey]);
+    63→  const { data: categories } = useApi<CategoryRow[]>(() => listEntity<CategoryRow>("registration-categories", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+    64→  const { data: invitations } = useApi<InvitationRow[]>(() => listEntity<InvitationRow>("invitations", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey, tab]);
+    65→
+    66→  const decide = async () => {
+    67→    if (!decideTarget) return;
+    68→    setBusy(true);
+    69→    try {
+    70→      if (decideTarget.decision === "CANCELLED") {
+    71→        const res = await apiSend<{ waitlistOffered?: { personName: string }[] }>("/api/flows", "POST", { action: "registration.cancel", registrationId: decideTarget.reg.id, reason });
+    72→        const offers = res.waitlistOffered ?? [];
+    73→        toast({
+    74→          title: "Kayıt iptal edildi",
+    75→          description: offers.length > 0
+    76→            ? `Koltuk boşaldı — bekleme listesinden teklif gönderildi: ${offers.map((o) => o.personName).join(", ")}`
+    77→            : "Rozet ve haklar etkilendi; etki önizlemesi kayıtta görülür.",
+    78→        });
+    79→      } else {
+    80→        await apiSend("/api/flows", "POST", { action: "registration.decide", registrationId: decideTarget.reg.id, decision: decideTarget.decision });
+    81→        toast({
+    82→          title: decideTarget.decision === "CONFIRMED" ? "Kayıt onaylandı" : "Kayıt reddedildi",
+    83→          description: decideTarget.decision === "CONFIRMED"
+    84→            ? "Hak claim'i CONSUMED'a geçti, rozet READY — ödeme durumu ayrı hesaplanır."
+    85→            : "Rozet ve haklar etkilendi; etki önizlemesi kayıtta görülür.",
+    86→        });
+    87→      }
+    88→      setDecideTarget(null); setReason(""); reload(); bump();
+    89→    } catch (e) {
+    90→      toast({ title: "İşlem başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    91→    } finally {
+    92→      setBusy(false);
+    93→    }
+    94→  };
+    95→
+    96→  const counts = (s: string) => (s === "ALL" ? (registrations ?? []).length : (registrations ?? []).filter((r) => r.status === s).length);
+    97→
+    98→  return (
+    99→    <div>
+   100→      <PageHeader title="Kayıt & Katılımcılar" desc="Kategori → form → onay akışı; kayıt/ödeme/katılım üç ayrı eksen">
+   101→        <div className="flex rounded-lg border p-0.5">
+   102→          <button onClick={() => setTab("list")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Kayıtlar</button>
+   103→          <button onClick={() => setTab("waitlist")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "waitlist" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Bekleme</button>
+   104→          <button onClick={() => setTab("lcv")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "lcv" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>LCV / Davetler</button>
+   105→        </div>
+   106→      </PageHeader>
+   107→
+   108→      {tab === "list" ? (
+   109→        <>
+   110→          {/* Kategori kartları — doluluk */}
+   111→          <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+   112→            {(categories ?? []).map((c) => (
+   113→              <KpiCard
+   114→                key={c.id}
+   115→                label={c.name}
+   116→                value={`${c._count?.registrations ?? 0}${c.capacity ? ` / ${c.capacity}` : ""}`}
+   117→                sub={c.basePrice > 0 ? `${c.basePrice.toLocaleString("tr-TR")} ${c.currency}` : "ücretsiz"}
+   118→                tone={c.requiresApproval ? "amber" : "teal"}
+   119→              />
+   120→            ))}
+   121→          </div>
+   122→
+   123→          <div className="mb-3 flex flex-wrap items-center gap-2">
+   124→            <Select value={statusFilter} onValueChange={setStatusFilter}>
+   125→              <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
+   126→              <SelectContent>
+   127→                <SelectItem value="ALL">Tüm durumlar ({counts("ALL")})</SelectItem>
+   128→                {Object.entries(REGISTRATION_STATUS).map(([k, v]) => (
+   129→                  <SelectItem key={k} value={k}>{v} ({counts(k)})</SelectItem>
+   130→                ))}
+   131→              </SelectContent>
+   132→            </Select>
+   133→            <Input placeholder="Ad / e-posta / kayıt no…" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-64" />
+   134→            <Button variant="ghost" size="sm" onClick={reload}><Icons.RefreshCw className="size-4" /></Button>
+   135→            <span className="ml-auto text-xs text-muted-foreground">{(registrations ?? []).length} kayıt listelendi</span>
+   136→          </div>
+   137→
+   138→          {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (registrations ?? []).length === 0 ? (
+   139→            <EmptyState title="Bu filtrelerle eşleşen kayıt yok" desc="Henüz kayıt yoksa kayıt bağlantısını paylaşın veya ilk kişiyi ekleyin." />
+   140→          ) : (
+   141→            <div className="overflow-hidden rounded-xl border bg-card">
+   142→              <div className="overflow-x-auto maven-scroll">
+   143→                <table className="w-full min-w-[900px] text-sm">
+   144→                  <thead>
+   145→                    <tr className="border-b bg-muted/50 text-left text-xs text-muted-foreground">
+   146→                      <th className="px-3 py-2.5 font-medium">Kişi</th>
+   147→                      <th className="px-3 py-2.5 font-medium">Kayıt No</th>
+   148→                      <th className="px-3 py-2.5 font-medium">Kategori</th>
+   149→                      <th className="px-3 py-2.5 font-medium">Kayıt Durumu</th>
+   150→                      <th className="px-3 py-2.5 font-medium">Fon Kaynağı</th>
+   151→                      <th className="px-3 py-2.5 font-medium">Kaynak</th>
+   152→                      <th className="px-3 py-2.5 font-medium">Katılım</th>
+   153→                      <th className="px-3 py-2.5 font-medium text-right">Eylem</th>
+   154→                    </tr>
+   155→                  </thead>
+   156→                  <tbody>
+   157→                    {(registrations ?? []).map((r) => (
+   158→                      <tr key={r.id} className="border-b transition hover:bg-muted/40 last:border-0">
+   159→                        <td className="px-3 py-2.5">
+   160→                          <p className="font-medium leading-tight">{r.participation.person.firstName} {r.participation.person.lastName}</p>
+   161→                          <p className="text-xs text-muted-foreground">{r.participation.person.company ?? "—"}</p>
+   162→                        </td>
+   163→                        <td className="px-3 py-2.5 font-mono text-xs">{r.confirmationNo}</td>
+   164→                        <td className="px-3 py-2.5">
+   165→                          {r.category?.name ?? "—"}
+   166→                          {r.entitlementClaims && r.entitlementClaims.length > 0 && (
+   167→                            <Chip tone="violet">{r.entitlementClaims[0].entitlement.label.slice(0, 22)}</Chip>
+   168→                          )}
+   169→                        </td>
+   170→                        <td className="px-3 py-2.5"><StatusBadge map={REGISTRATION_STATUS} value={r.status} /></td>
+   171→                        <td className="px-3 py-2.5 text-xs">{label(FUNDING_SOURCES, r.fundingSource)}</td>
+   172→                        <td className="px-3 py-2.5 text-xs">{label(REG_SOURCES, r.source)}</td>
+   173→                        <td className="px-3 py-2.5"><StatusBadge map={ATTENDANCE_STATUS} value={r.participation.attendance} /></td>
+   174→                        <td className="px-3 py-2.5">
+   175→                          <div className="flex justify-end gap-1">
+   176→                            {r.status === "PENDING_APPROVAL" && (
+   177→                              <>
+   178→                                <Button size="sm" variant="outline" className="h-7 border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={() => setDecideTarget({ reg: r, decision: "CONFIRMED" })}>
+   179→                                  <Icons.Check className="size-3.5" /> Onayla
+   180→                                </Button>
+   181→                                <Button size="sm" variant="outline" className="h-7 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => setDecideTarget({ reg: r, decision: "REJECTED" })}>
+   182→                                  <Icons.X className="size-3.5" /> Reddet
+   183→                                </Button>
+   184→                              </>
+   185→                            )}
+   186→                            {["CONFIRMED", "PENDING_APPROVAL", "SUBMITTED"].includes(r.status) && (
+   187→                              <Button size="sm" variant="ghost" className="h-7 text-muted-foreground" onClick={() => setDecideTarget({ reg: r, decision: "CANCELLED" })}>
+   188→                                İptal
+   189→                              </Button>
+   190→                            )}
+   191→                          </div>
+   192→                        </td>
+   193→                      </tr>
+   194→                    ))}
+   195→                  </tbody>
+   196→                </table>
+   197→              </div>
+   198→            </div>
+   199→          )}
+   200→        </>
+   201→      ) : tab === "waitlist" ? (
+   202→        <WaitlistTab editionId={currentEditionId} categories={categories ?? []} onChanged={() => { bump(); }} />
+   203→      ) : (
+   204→        <SectionCard title="LCV — Davet Listesi Yönetimi" desc="Davet bir kayıt yerine geçmez; 'gelecek' yanıtı kayıt yoluna yönlenir">
+   205→          {(invitations ?? []).length === 0 ? (
+   206→            <EmptyState title="Henüz davet oluşturmadınız" desc="Davetli ekleyin veya davet listesi yükleyin." />
+   207→          ) : (
+   208→            <div className="grid gap-2">
+   209→              {(invitations ?? []).map((inv) => (
+   210→                <div key={inv.id} className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+   211→                  <div className="min-w-0 flex-1">
+   212→                    <p className="text-sm font-medium">{inv.fullName}</p>
+   213→                    <p className="text-xs text-muted-foreground">{inv.email}{inv.organization ? ` · ${inv.organization.name}` : ""}</p>
+   214→                  </div>
+   215→                  <div className="text-xs text-muted-foreground">
+   216→                    {inv.sentAt ? `gönderim ${fmtDate(inv.sentAt)}` : "gönderilmedi"}
+   217→                    {inv.respondedAt ? ` · yanıt ${fmtDate(inv.respondedAt)}` : ""}
+   218→                  </div>
+   219→                  <StatusBadge map={INVITATION_STATUS} value={inv.status} />
+   220→                </div>
+   221→              ))}
+   222→            </div>
+   223→          )}
+   224→        </SectionCard>
+   225→      )}
+   226→
+   227→      {/* Onay/ret/iptal dialogu — etki önizlemesi ile */}
+   228→      <Dialog open={Boolean(decideTarget)} onOpenChange={(o) => !o && setDecideTarget(null)}>
+   229→        <DialogContent className="sm:max-w-md">
+   230→          <DialogHeader>
+   231→            <DialogTitle>
+   232→              {decideTarget?.decision === "CONFIRMED" ? "Kaydı onayla" : decideTarget?.decision === "REJECTED" ? "Kaydı reddet" : "Kaydı iptal et"}
+   233→            </DialogTitle>
+   234→            <DialogDescription>
+   235→              {decideTarget?.reg.participation.person.firstName} {decideTarget?.reg.participation.person.lastName} — {decideTarget?.reg.confirmationNo}
+   236→            </DialogDescription>
+   237→          </DialogHeader>
+   238→          <div className="rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
+   239→            <p className="mb-1 font-semibold text-foreground">Etki önizlemesi</p>
+   240→            {decideTarget?.decision === "CONFIRMED" && (
+   241→              <ul className="list-disc space-y-0.5 pl-4">
+   242→                <li>Ayrılmış hak claim'i <b>CONSUMED</b> olur (davette ayır, onayda kullan)</li>
+   243→                <li>Rozet <b>READY</b> durumuna geçer</li>
+   244→                <li>Ödeme gereksinimi ayrıca hesaplanır — fon kaynağı: {label(FUNDING_SOURCES, decideTarget?.reg.fundingSource)}</li>
+   245→              </ul>
+   246→            )}
+   247→            {decideTarget?.decision === "CANCELLED" && (
+   248→              <ul className="list-disc space-y-0.5 pl-4">
+   249→                <li>Rozet <b>VOID</b> olur ve erişim hakkı etkilenir</li>
+   250→                <li>Sponsor hakları geri yüklenir (politika gereği ayrıca karar)</li>
+   251→                <li>İade ayrı bir finansal işlemdir — burada otomatik yapılmaz</li>
+   252→                <li>Kategoride bekleme listesi varsa koltuk sıradakine <b>otomatik teklif edilir</b></li>
+   253→              </ul>
+   254→            )}
+   255→            {decideTarget?.decision === "REJECTED" && <ul className="list-disc space-y-0.5 pl-4"><li>Katılımcıya gerekçe ile bildirim gider</li></ul>}
+   256→          </div>
+   257→          {decideTarget?.decision !== "CONFIRMED" && (
+   258→            <div>
+   259→              <Label>Gerekçe</Label>
+   260→              <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Karar gerekçesi…" className="mt-1" />
+   261→            </div>
+   262→          )}
+   263→          <DialogFooter>
+   264→            <Button variant="outline" onClick={() => setDecideTarget(null)}>Vazgeç</Button>
+   265→            <Button
+   266→              onClick={decide}
+   267→              disabled={busy || (decideTarget?.decision !== "CONFIRMED" && !reason)}
+   268→              variant={decideTarget?.decision === "CONFIRMED" ? "default" : "destructive"}
+   269→            >
+   270→              {busy ? "İşleniyor…" : "Onayla"}
+   271→            </Button>
+   272→          </DialogFooter>
+   273→        </DialogContent>
+   274→      </Dialog>
+   275→    </div>
+   276→  );
+   277→}
+   278→
+   279→// ── Bekleme Listesi sekmesi — otomatik teklif motoru (§12 kayıt politikası) ──
+   280→function WaitlistTab({ editionId, categories, onChanged }: { editionId: string | null; categories: CategoryRow[]; onChanged: () => void }) {
+   281→  const { refreshKey } = useApp();
+   282→  const { toast } = useToast();
+   283→  const [catFilter, setCatFilter] = useState("ALL");
+   284→  const [busyId, setBusyId] = useState<string | null>(null);
+   285→  const [autoBusy, setAutoBusy] = useState(false);
+   286→  const [addOpen, setAddOpen] = useState(false);
+   287→  const [addPersonId, setAddPersonId] = useState("");
+   288→  const [addCategoryId, setAddCategoryId] = useState("GENERAL");
+   289→  const [addPriority, setAddPriority] = useState("");
+   290→  const [addNotes, setAddNotes] = useState("");
+   291→
+   292→  const loader = async (): Promise<WaitlistData | null> => {
+   293→    if (!editionId) return null;
+   294→    return apiGet<WaitlistData>(`/api/waitlist?editionId=${encodeURIComponent(editionId)}`);
+   295→  };
+   296→  const { data, error, reload, loading } = useApi<WaitlistData | null>(loader, [editionId, refreshKey]);
+   297→
+   298→  const { data: people } = useApi<PersonLite[]>(() => listEntity<PersonLite>("people", { limit: 300 }), [editionId]);
+   299→
+   300→  const entries = (data?.entries ?? []).filter((e) => catFilter === "ALL" || (catFilter === "GENERAL" ? !e.categoryId : e.categoryId === catFilter));
+   301→  const summary = data?.summary;
+   302→  const catName = (id?: string | null) => (data?.categories ?? []).find((c) => c.id === id)?.name;
+   303→  const isFullCategory = (categoryId?: string | null) => {
+   304→    if (!categoryId) return false;
+   305→    const c = (data?.categories ?? []).find((x) => x.id === categoryId);
+   306→    // açık teklifler de koltuk tutar — boş koltuk başına tek teklif kuralı
+   307→    return Boolean(c && c.capacity != null && (c.seatsLeft ?? 0) - c.offeredCount <= 0);
+   308→  };
+   309→
+   310→  // aktif sırada kategori içi pozisyon (WAITING + OFFERED)
+   311→  const positionOf = (e: WaitlistEntryRow): number | null => {
+   312→    if (!["WAITING", "OFFERED"].includes(e.status)) return null;
+   313→    const sameQueue = (data?.entries ?? []).filter((x) => x.categoryId === e.categoryId && ["WAITING", "OFFERED"].includes(x.status));
+   314→    return sameQueue.findIndex((x) => x.id === e.id) + 1;
+   315→  };
+   316→
+   317→  const offerCountdown = (e: WaitlistEntryRow): { text: string; expired: boolean } | null => {
+   318→    if (e.status !== "OFFERED" || !e.offerExpiresAt) return null;
+   319→    const ms = new Date(e.offerExpiresAt).getTime() - Date.now();
+   320→    if (ms <= 0) return { text: "Süresi doldu", expired: true };
+   321→    const hours = Math.floor(ms / 3600000);
+   322→    const minutes = Math.floor((ms % 3600000) / 60000);
+   323→    return { text: hours >= 1 ? `${hours} sa ${minutes} dk kaldı` : `${minutes} dk kaldı`, expired: false };
+   324→  };
+   325→
+   326→  const runAction = async (fn: () => Promise<{ toastTitle: string; toastDesc?: string }>, id?: string) => {
+   327→    setBusyId(id ?? "global");
+   328→    try {
+   329→      const t = await fn();
+   330→      toast({ title: t.toastTitle, description: t.toastDesc });
+   331→      reload(); onChanged();
+   332→    } catch (e) {
+   333→      toast({ title: "İşlem başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   334→    } finally {
+   335→      setBusyId(null);
+   336→    }
+   337→  };
+   338→
+   339→  const sendOffer = (e: WaitlistEntryRow) => runAction(async () => {
+   340→    await apiSend("/api/waitlist", "POST", { action: "offer", entryId: e.id });
+   341→    return { toastTitle: `Teklif gönderildi: ${e.person.firstName} ${e.person.lastName}`, toastDesc: "48 saat içinde yanıt beklenir — kabul edilirse kayıt açılır." };
+   342→  }, e.id);
+   343→
+   344→  const respond = (e: WaitlistEntryRow, response: "ACCEPT" | "DECLINE") => runAction(async () => {
+   345→    const res = await apiSend<{ chained?: { personName: string }[]; registration?: { confirmationNo: string } }>("/api/waitlist", "POST", { action: "respond", entryId: e.id, response });
+   346→    if (response === "ACCEPT") {
+   347→      return { toastTitle: `Teklif kabul edildi — kayıt açıldı: ${res.registration?.confirmationNo ?? ""}`, toastDesc: "Bekleme listesi girişi CONVERTED oldu, rozet READY." };
+   348→    }
+   349→    const chained = res.chained ?? [];
+   350→    return {
+   351→      toastTitle: `Teklif reddedildi: ${e.person.firstName} ${e.person.lastName}`,
+   352→      toastDesc: chained.length > 0 ? `Sıradakine teklif gitti: ${chained.map((c) => c.personName).join(", ")}` : "Sırada bekleyen yok.",
+   353→    };
+   354→  }, e.id);
+   355→
+   356→  const autoOffer = (categoryId?: string) => runAction(async () => {
+   357→    setAutoBusy(true);
+   358→    try {
+   359→      const res = await apiSend<{ total: number }>("/api/waitlist", "POST", { action: "auto-offer", editionId, categoryId });
+   360→      return {
+   361→        toastTitle: res.total > 0 ? `${res.total} otomatik teklif gönderildi` : "Otomatik teklif gönderilemedi",
+   362→        toastDesc: res.total > 0 ? "Boş koltuklar öncelik sırasına göre dağıtıldı (48 saat geçerli)." : "Boş koltuk olan kategoride bekleyen yok veya kategoriler dolu.",
+   363→      };
+   364→    } finally {
+   365→      setAutoBusy(false);
+   366→    }
+   367→  }, categoryId ?? "global");
+   368→
+   369→  const removeEntry = (e: WaitlistEntryRow) => runAction(async () => {
+   370→    const res = await apiSend<{ chained?: { personName: string }[] }>("/api/waitlist", "POST", { action: "cancel", entryId: e.id });
+   371→    const chained = res.chained ?? [];
+   372→    return {
+   373→      toastTitle: `Listeden çıkarıldı: ${e.person.firstName} ${e.person.lastName}`,
+   374→      toastDesc: chained.length > 0 ? `Boşalan teklif sıradakine gitti: ${chained.map((c) => c.personName).join(", ")}` : undefined,
+   375→    };
+   376→  }, e.id);
+   377→
+   378→  const addEntry = () => runAction(async () => {
+   379→    if (!addPersonId) throw new Error("Kişi seçin");
+   380→    await apiSend("/api/waitlist", "POST", {
+   381→      action: "add",
+   382→      editionId,
+   383→      personId: addPersonId,
+   384→      categoryId: addCategoryId === "GENERAL" ? null : addCategoryId,
+   385→      priority: addPriority ? Number(addPriority) : undefined,
+   386→      notes: addNotes || undefined,
+   387→    });
+   388→    setAddOpen(false); setAddPersonId(""); setAddPriority(""); setAddNotes("");
+   389→    return { toastTitle: "Bekleme listesine eklendi", toastDesc: "Koltuk boşaldığında öncelik sırasına göre otomatik teklif gider." };
+   390→  }, "add");
+   391→
+   392→  const busyAll = busyId != null;
+   393→
+   394→  if (!editionId) return <EmptyState title="Edisyon seçilmedi" desc="Bekleme listesi edisyona bağlıdır." />;
+   395→  if (loading && !data) return <Loading rows={5} />;
+   396→  if (error) return <ErrorState message={error} onRetry={reload} />;
+   397→
+   398→  const activeEntries = entries.filter((e) => ["WAITING", "OFFERED"].includes(e.status));
+   399→  const closedEntries = entries.filter((e) => !["WAITING", "OFFERED"].includes(e.status));
+   400→  const categoriesWithCapacity = (data?.categories ?? []).filter((c) => c.capacity != null || c.waitingCount > 0 || c.offeredCount > 0);
+   401→
+   402→  return (
+   403→    <div>
+   404→      {/* KPI satırı */}
+   405→      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+   406→        <KpiCard label="Bekleyen" value={summary?.waiting ?? 0} sub={`${summary?.categoriesWithQueue ?? 0} kategoride sıra`} icon={<Icons.Hourglass className="size-4" />} tone="amber" />
+   407→        <KpiCard label="Teklif Aşamasında" value={summary?.offered ?? 0} sub="48 saat yanıtlık" icon={<Icons.MailOpen className="size-4" />} tone="teal" />
+   408→        <KpiCard label="Kayda Dönüşen" value={summary?.converted ?? 0} sub="onaylı kayıt açıldı" icon={<Icons.UserCheck className="size-4" />} tone="emerald" />
+   409→        <KpiCard label="Ret / Süre Aşımı" value={summary?.declinedExpired ?? 0} sub="sıradakine geçildi" icon={<Icons.MailX className="size-4" />} tone="rose" />
+   410→        <KpiCard label="Tam Dolu Kategori" value={summary?.fullCategories ?? 0} sub="koltuk bekleniyor" icon={<Icons.Lock className="size-4" />} tone="violet" />
+   411→      </div>
+   412→
+   413→      {/* Kategori doluluk + otomatik teklif */}
+   414→      <SectionCard
+   415→        title="Kategori Doluluğu & Otomatik Teklif"
+   416→        desc="Koltuk boşaldığında sıradaki bekleyene 48 saatlik teklif otomatik gider (§12)"
+   417→        action={
+   418→          <Button size="sm" onClick={() => autoOffer()} disabled={busyAll || autoBusy}>
+   419→            {busyId === "global" || autoBusy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Wand2 className="size-4" />}
+   420→            Tümünü Tara
+   421→          </Button>
+   422→        }
+   423→        className="mb-4"
+   424→      >
+   425→        {categoriesWithCapacity.length === 0 ? (
+   426→          <EmptyState title="Kontenjanlı kategori yok" desc="Kategoriye capacity tanımlayın; doluluk ve bekleme burada izlenir." />
+   427→        ) : (
+   428→          <div className="grid gap-2.5">
+   429→            {categoriesWithCapacity.map((c) => {
+   430→              const full = c.capacity != null && (c.seatsLeft ?? 0) <= 0;
+   431→              const pct = c.fillPercent ?? 0;
+   432→              return (
+   433→                <div key={c.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-3 transition-colors hover:bg-muted/30">
+   434→                  <div className="min-w-36 flex-1">
+   435→                    <div className="flex items-center gap-2">
+   436→                      <p className="text-sm font-medium">{c.name}</p>
+   437→                      <Chip tone="neutral">{c.code}</Chip>
+   438→                      {full && <Chip tone="rose">Dolu</Chip>}
+   439→                      {c.waitingCount > 0 && <Chip tone="amber">{c.waitingCount} bekleyen</Chip>}
+   440→                      {c.offeredCount > 0 && <Chip tone="teal">{c.offeredCount} teklifte</Chip>}
+   441→                    </div>
+   442→                    <div className="mt-1.5 flex items-center gap-2">
+   443→                      <div className="h-1.5 w-full max-w-52 overflow-hidden rounded bg-muted">
+   444→                        <div className={cn("h-full rounded transition-all", full ? "bg-rose-400" : pct >= 80 ? "bg-amber-400" : "bg-teal-500")} style={{ width: `${c.capacity == null ? 100 : pct}%` }} />
+   445→                      </div>
+   446→                      <span className="text-xs tabular-nums text-muted-foreground">
+   447→                        {c.capacity == null ? `${c.taken} kayıt — sınırsız` : `${c.taken} / ${c.capacity} · boş ${c.seatsLeft}`}
+   448→                      </span>
+   449→                    </div>
+   450→                  </div>
+   451→                  <Button
+   452→                    size="sm"
+   453→                    variant={full ? "default" : "outline"}
+   454→                    className="h-8"
+   455→                    disabled={busyAll || c.waitingCount === 0}
+   456→                    onClick={() => autoOffer(c.id)}
+   457→                    title={full ? "Koltuk boşalınca otomatik çalışır — boşsa şimdi tarar" : "Boş koltuklara şimdi teklif dağıt"}
+   458→                  >
+   459→                    {busyId === c.id ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Wand2 className="size-4" />}
+   460→                    Otomatik Teklif
+   461→                  </Button>
+   462→                </div>
+   463→              );
+   464→            })}
+   465→          </div>
+   466→        )}
+   467→      </SectionCard>
+   468→
+   469→      {/* Sıra listesi */}
+   470→      <SectionCard
+   471→        title="Bekleme Sırası"
+   472→        desc="Öncelik numarası küçük olan önce teklif alır; pozisyon kategori bazlıdır"
+   473→        action={
+   474→          <div className="flex flex-wrap items-center justify-end gap-2">
+   475→            <Select value={catFilter} onValueChange={setCatFilter}>
+   476→              <SelectTrigger className="h-8 w-44"><SelectValue /></SelectTrigger>
+   477→              <SelectContent>
+   478→                <SelectItem value="ALL">Tüm kategoriler</SelectItem>
+   479→                <SelectItem value="GENERAL">Genel (kategorisiz)</SelectItem>
+   480→                {(data?.categories ?? []).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+   481→              </SelectContent>
+   482→            </Select>
+   483→            <Button size="sm" variant="outline" className="h-8 border-teal-200 text-teal-700 hover:bg-teal-50" onClick={() => setAddOpen(true)}>
+   484→              <Icons.UserPlus className="size-4" /> Listeye Ekle
+   485→            </Button>
+   486→          </div>
+   487→        }
+   488→      >
+   489→        {entries.length === 0 ? (
+   490→          <EmptyState title="Bekleme listesi boş" desc="Kategori dolduğunda kayıt formu otomatik bekleme önerir; buradan da elle ekleyebilirsiniz." />
+   491→        ) : (
+   492→          <>
+   493→            {/* aktif sıra */}
+   494→            <div className="overflow-hidden rounded-lg border">
+   495→              <div className="overflow-x-auto maven-scroll">
+   496→                <table className="w-full min-w-[820px] text-sm">
+   497→                  <thead>
+   498→                    <tr className="border-b bg-muted/50 text-left text-xs text-muted-foreground">
+   499→                      <th className="px-3 py-2.5 font-medium">Pozisyon</th>
+   500→                      <th className="px-3 py-2.5 font-medium">Kişi</th>
+   501→                      <th className="px-3 py-2.5 font-medium">Kategori</th>
+   502→                      <th className="px-3 py-2.5 font-medium">Öncelik</th>
+   503→                      <th className="px-3 py-2.5 font-medium">Durum</th>
+   504→                      <th className="px-3 py-2.5 font-medium">Teklif</th>
+   505→                      <th className="px-3 py-2.5 font-medium text-right">Eylem</th>
+   506→                    </tr>
+   507→                  </thead>
+   508→                  <tbody>
+   509→                    {activeEntries.map((e) => {
+   510→                      const pos = positionOf(e);
+   511→                      const cd = offerCountdown(e);
+   512→                      const rowBusy = busyId === e.id;
+   513→                      return (
+   514→                        <tr key={e.id} className="border-b transition hover:bg-muted/40 last:border-0">
+   515→                          <td className="px-3 py-2.5">
+   516→                            <span className="grid size-6 place-items-center rounded-full bg-muted text-xs font-semibold tabular-nums">{pos ?? "—"}</span>
+   517→                          </td>
+   518→                          <td className="px-3 py-2.5">
+   519→                            <p className="font-medium leading-tight">{e.person.firstName} {e.person.lastName}</p>
+   520→                            <p className="text-xs text-muted-foreground">{e.person.company ?? e.person.email ?? "—"}</p>
+   521→                          </td>
+   522→                          <td className="px-3 py-2.5 text-xs">{e.category ? catName(e.category.id) ?? e.category.name : <span className="text-muted-foreground">Genel</span>}</td>
+   523→                          <td className="px-3 py-2.5 font-mono text-xs tabular-nums">#{e.priority}</td>
+   524→                          <td className="px-3 py-2.5"><StatusBadge map={WAITLIST_STATUS} value={e.status} /></td>
+   525→                          <td className="px-3 py-2.5 text-xs">
+   526→                            {e.status === "OFFERED" && cd ? (
+   527→                              <span className={cn("inline-flex items-center gap-1.5", cd.expired ? "font-medium text-rose-600" : "text-muted-foreground")}>
+   528→                                <Icons.Clock3 className={cn("size-3.5", cd.expired && "text-rose-500")} />
+   529→                                {cd.expired ? "Süresi doldu" : `${fmtDateTime(e.offeredAt)} — ${cd.text}`}
+   530→                              </span>
+   531→                            ) : "—"}
+   532→                          </td>
+   533→                          <td className="px-3 py-2.5">
+   534→                            <div className="flex justify-end gap-1">
+   535→                              {e.status === "WAITING" && (
+   536→                                isFullCategory(e.categoryId) ? (
+   537→                                  <Button size="sm" variant="ghost" className="h-7 text-muted-foreground/60" disabled title="Koltuk başına tek teklif — açık teklif yanıtlanınca sıradakine geçer">
+   538→                                    <Icons.Lock className="size-3.5" /> Koltuk Bekleniyor
+   539→                                  </Button>
+   540→                                ) : (
+   541→                                  <Button size="sm" variant="outline" className="h-7 border-sky-200 text-sky-700 hover:bg-sky-50" disabled={busyAll} onClick={() => sendOffer(e)}>
+   542→                                    {rowBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Send className="size-3.5" />} Teklif Gönder
+   543→                                  </Button>
+   544→                                )
+   545→                              )}
+   546→                              {e.status === "OFFERED" && (
+   547→                                <>
+   548→                                  <Button size="sm" variant="outline" className="h-7 border-emerald-200 text-emerald-700 hover:bg-emerald-50" disabled={busyAll} onClick={() => respond(e, "ACCEPT")} title="Davetli teklifi kabul etti (portal yanıtı simülasyonu)">
+   549→                                    <Icons.Check className="size-3.5" /> Kabul
+   550→                                  </Button>
+   551→                                  <Button size="sm" variant="outline" className="h-7 border-rose-200 text-rose-700 hover:bg-rose-50" disabled={busyAll} onClick={() => respond(e, "DECLINE")} title="Davetli teklifi reddetti — sıradakine geçilir">
+   552→                                    <Icons.X className="size-3.5" /> Ret
+   553→                                  </Button>
+   554→                                </>
+   555→                              )}
+   556→                              <Button size="sm" variant="ghost" className="h-7 text-primary/70 hover:text-primary" disabled={busyAll} title="Kişinin portal görünümünü aç"
+   557→                                onClick={() => {
+   558→                                  try { sessionStorage.setItem("maven.portal.person", e.personId); } catch { /* yoksay */ }
+   559→                                  useApp.getState().setModule("portals");
+   560→                                }}>
+   561→                                <Icons.ExternalLink className="size-3.5" />
+   562→                              </Button>
+   563→                              <Button size="sm" variant="ghost" className="h-7 text-muted-foreground" disabled={busyAll} onClick={() => removeEntry(e)} title="Listeden çıkar">
+   564→                                <Icons.ListX className="size-3.5" />
+   565→                              </Button>
+   566→                            </div>
+   567→                          </td>
+   568→                        </tr>
+   569→                      );
+   570→                    })}
+   571→                  </tbody>
+   572→                </table>
+   573→              </div>
+   574→            </div>
+   575→
+   576→            {/* geçmiş (terminal durumlar) */}
+   577→            {closedEntries.length > 0 && (
+   578→              <div className="mt-4">
+   579→                <p className="mb-2 text-xs font-medium text-muted-foreground">Geçmiş ({closedEntries.length})</p>
+   580→                <div className="grid gap-1.5">
+   581→                  {closedEntries.map((e) => (
+   582→                    <div key={e.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-muted/20 px-3 py-2 text-xs">
+   583→                      <span className="font-medium">{e.person.firstName} {e.person.lastName}</span>
+   584→                      <span className="text-muted-foreground">{e.category ? catName(e.category.id) ?? e.category.name : "Genel"}</span>
+   585→                      {e.status === "CONVERTED" && e.convertedRegistration && (
+   586→                        <span className="font-mono text-[11px] text-emerald-700">{e.convertedRegistration.confirmationNo}</span>
+   587→                      )}
+   588→                      <span className="ml-auto text-muted-foreground">{e.respondedAt ? `yanıt ${fmtDate(e.respondedAt)}` : `eklenme ${fmtDate(e.createdAt)}`}</span>
+   589→                      <StatusBadge map={WAITLIST_STATUS} value={e.status} />
+   590→                    </div>
+   591→                  ))}
+   592→                </div>
+   593→              </div>
+   594→            )}
+   595→          </>
+   596→        )}
+   597→      </SectionCard>
+   598→
+   599→      {/* Listeye ekle dialogu */}
+   600→      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+   601→        <DialogContent className="sm:max-w-md">
+   602→          <DialogHeader>
+   603→            <DialogTitle>Bekleme listesine ekle</DialogTitle>
+   604→            <DialogDescription>Kişi koltuk boşaldığında öncelik sırasına göre otomatik teklif alır.</DialogDescription>
+   605→          </DialogHeader>
+   606→          <div className="space-y-3">
+   607→            <div>
+   608→              <Label>Kişi *</Label>
+   609→              <Select value={addPersonId} onValueChange={setAddPersonId}>
+   610→                <SelectTrigger className="mt-1"><SelectValue placeholder="Kişi seçin…" /></SelectTrigger>
+   611→                <SelectContent>
+   612→                  {(people ?? []).map((p) => (
+   613→                    <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}{p.company ? ` — ${p.company}` : ""}</SelectItem>
+   614→                  ))}
+   615→                </SelectContent>
+   616→              </Select>
+   617→            </div>
+   618→            <div>
+   619→              <Label>Kategori</Label>
+   620→              <Select value={addCategoryId} onValueChange={setAddCategoryId}>
+   621→                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+   622→                <SelectContent>
+   623→                  <SelectItem value="GENERAL">Genel (kategorisiz sıra)</SelectItem>
+   624→                  {categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name} ({c.code})</SelectItem>)}
+   625→                </SelectContent>
+   626→              </Select>
+   627→            </div>
+   628→            <div className="grid grid-cols-2 gap-3">
+   629→              <div>
+   630→                <Label>Öncelik</Label>
+   631→                <Input type="number" min={1} value={addPriority} onChange={(e) => setAddPriority(e.target.value)} placeholder="otomatik: sıra sonu" className="mt-1" />
+   632→              </div>
+   633→              <div className="flex items-end">
+   634→                <p className="text-xs text-muted-foreground">Küçük sayı önce teklif alır. Boş bırakılırsa sıranın sonuna eklenir.</p>
+   635→              </div>
+   636→            </div>
+   637→            <div>
+   638→              <Label>Not</Label>
+   639→              <Textarea value={addNotes} onChange={(e) => setAddNotes(e.target.value)} placeholder="Örn. sponsor ile görüştü…" className="mt-1" rows={2} />
+   640→            </div>
+   641→          </div>
+   642→          <DialogFooter>
+   643→            <Button variant="outline" onClick={() => setAddOpen(false)}>Vazgeç</Button>
+   644→            <Button onClick={addEntry} disabled={busyAll || !addPersonId}>
+   645→              {busyId === "add" ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.UserPlus className="size-4" />}
+   646→              Listeye Ekle
+   647→            </Button>
+   648→          </DialogFooter>
+   649→        </DialogContent>
+   650→      </Dialog>
+   651→    </div>
+   652→  );
+   653→}
+   654→

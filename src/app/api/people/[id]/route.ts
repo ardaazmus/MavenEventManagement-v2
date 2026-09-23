@@ -1,6 +1,10 @@
-// /api/people/[id] — Person 360 (§54): tüm modüllerin gerçeklerini birleştirir
+// /api/people/[id] — Person 360 (§54): tüm modüllerin gerçeklerini birleştiren GET
+// + PUT kişi güncellemesi (R10-a): dedicated route generic /api/[entity]/[id]
+// yolunu gölgeler; PUT eksik olduğundan kişi düzenleme 405'e düşüyordu.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { sanitize } from "@/lib/api/registry";
+import { ActivityType } from "@/lib/api/activity";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
@@ -29,5 +33,29 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   } catch (e) {
     console.error("GET /api/people/[id]", e);
     return NextResponse.json({ error: "360 verisi alınamadı" }, { status: 500 });
+  }
+}
+
+// R10-a: kişi güncelleme — generic registry PUT ile birebir aynı sözleşme
+// (yalnız skaler alanlar; sanitize "" → null; MERGED koruması liste where'indedir).
+export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+  try {
+    const body = await req.json();
+    const data = sanitize(body);
+    const updated = await db.person.update({ where: { id }, data });
+    await db.activityLog.create({
+      data: {
+        type: ActivityType.PERSON_SAVED,
+        message: `Kişi güncellendi: ${updated.firstName} ${updated.lastName}`,
+        entityType: "people",
+        entityId: id,
+        actorName: "Yönetici",
+      },
+    }).catch(() => undefined);
+    return NextResponse.json(updated);
+  } catch (e) {
+    console.error("PUT /api/people/[id]", e);
+    return NextResponse.json({ error: "Güncelleme başarısız" }, { status: 400 });
   }
 }

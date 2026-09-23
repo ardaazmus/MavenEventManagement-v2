@@ -1,9 +1,31 @@
 // Sertifika Baskı Sayfası — custom boyut + arka plan layer + kişi-özel metin (düşünce bulutu 9)
 // POST /api/certificates/print-sheet { editionId, definitionId, participationIds[] }
 // Yer tutucular: {{fullName}} {{title}} {{company}} {{edition}} {{type}} {{date}} {{serial}} {{tier}}
+// R10-b: def.designJson varsa elemanlar mm cinsinden mutlak konumlu div'ler olarak basılır
+//        (kanvas tasarımcısıyla aynı yerleşim); yoksa bodyTemplate fallback devam eder.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { BADGE_FONTS } from "@/lib/constants";
+import QRCode from "qrcode";
+
+// kanvas eleman modeli — onsite.tsx CertElement ile aynı sözleşme
+interface DesignElement {
+  id?: string;
+  type?: string; // text | image | line | qr
+  x?: number; y?: number; w?: number; h?: number; // mm
+  text?: string; fontSize?: number; fontWeight?: number; color?: string; align?: string;
+  imageDataUrl?: string; radius?: number;
+}
+
+function parseDesign(json: string | null | undefined): DesignElement[] {
+  try {
+    const arr = json ? (JSON.parse(json) as DesignElement[]) : [];
+    return Array.isArray(arr) ? arr.filter((e) => e && typeof e.x === "number" && typeof e.y === "number") : [];
+  } catch { return []; }
+}
+
+// mm değerlerini güvenli yaz (CSS mm birimi doğrudan kullanılır — baskıda 1mm=1mm)
+const mm = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n * 100) / 100 : 0);
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,7 +56,9 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const pages = issues.map((issue, i) => {
+    const design = parseDesign(def.designJson); // R10-b: kanvas tasarımı (boşsa bodyTemplate fallback)
+
+    const pages = await Promise.all(issues.map(async (issue, i) => {
       const person = issue.participation.person;
       const snap = issue.participation.snapshots[issue.participation.snapshots.length - 1];
       const reg = issue.participation.registrations[0];
@@ -53,24 +77,53 @@ export async function POST(req: NextRequest) {
         .replace(/\{\{roles\}\}/g, roles)
         .replace(/\{\{signer\}\}/g, def.signerName ?? "")
         .replace(/\n/g, "<br/>");
+
+      // R10-b: kanvas elemanları — mm mutlak konum; text/image/line/qr
+      const elementsHtml = design.length > 0 ? (await Promise.all(design.map(async (el) => {
+        const pos = `left:${mm(el.x)}mm;top:${mm(el.y)}mm;width:${mm(el.w)}mm;height:${mm(el.h)}mm;`;
+        const color = `#${String(el.color ?? "1f2937").replace("#", "")}`;
+        if (el.type === "text") {
+          const style = `${pos}font-size:${mm(el.fontSize ?? 4)}mm;font-weight:${mm(el.fontWeight ?? 400)};color:${color};text-align:${el.align ?? "left"};`;
+          return `<div class="el" style="${style}">${fill(String(el.text ?? ""))}</div>`;
+        }
+        if (el.type === "line") {
+          return `<div class="el" style="${pos}background:${color};opacity:.85;"></div>`;
+        }
+        if (el.type === "image" && typeof el.imageDataUrl === "string" && el.imageDataUrl.startsWith("data:")) {
+          return `<div class="el" style="${pos}"><img src="${el.imageDataUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:${mm(el.radius ?? 0)}mm;" alt="" /></div>`;
+        }
+        if (el.type === "qr") {
+          // baskıda gerçek QR — seri numarası + kişi doğrulama özeti (badge print-sheet desenindeki qrcode paketi)
+          const qrPayload = `MAVEN|${edition.name}|${serial}|${person.firstName} ${person.lastName}`;
+          const qrData = await QRCode.toDataURL(qrPayload, { margin: 0, width: 320 });
+          return `<div class="el" style="${pos}"><img src="${qrData}" style="width:100%;height:100%;" alt="QR" /></div>`;
+        }
+        return ""; // verisiz görsel alanı / bilinmeyen tür — baskıda sessizce atlanır
+      }))).filter(Boolean).join("\n") : "";
+
       const bodyHtml = def.bodyTemplate
         ? fill(def.bodyTemplate)
         : `<p>Bu belge, <b>${fill("{{edition}}")}</b> etkinliğine <b>${fill("{{tier}}") || "katılımcı"}</b> olarak katılımını< br/> belgelemek üzere düzenlenmiştir.</p>`;
+
+      const faceInner = design.length > 0
+        ? elementsHtml
+        : `<div class="brand">${fill("{{series}}")}</div>
+        <div class="cert-title">${escapeHtml(def.name)}</div>
+        <div class="cert-no">${serial}</div>
+        <div class="cert-body">${bodyHtml}</div>
+        <div class="sign-row">
+          <div class="sign"><div class="sign-line"></div><div class="sign-name">${escapeHtml(def.signerName ?? "Yetkili")}</div><div class="sign-role">Organizasyon Sekreteri</div></div>
+          <div class="seal"><span>MAVEN</span><small>${escapeHtml(fill("{{date}}"))}</small></div>
+          <div class="sign"><div class="sign-line"></div><div class="sign-name">Akreditasyon</div><div class="sign-role">Bilimsel Komite</div></div>
+        </div>`;
+
       return `
       <div class="cert" style="width:${totalW}mm;height:${totalH}mm;">
         <div class="face" style="border-radius:2mm;${def.backgroundDataUrl ? `background-image:url('${def.backgroundDataUrl}');` : "background:linear-gradient(150deg,#fffdf6 0%,#faf6ea 55%,#f1ead4 100%);"}color:#${def.textColor.replace("#", "")};">
-          <div class="brand">${fill("{{series}}")}</div>
-          <div class="cert-title">${escapeHtml(def.name)}</div>
-          <div class="cert-no">${serial}</div>
-          <div class="cert-body">${bodyHtml}</div>
-          <div class="sign-row">
-            <div class="sign"><div class="sign-line"></div><div class="sign-name">${escapeHtml(def.signerName ?? "Yetkili")}</div><div class="sign-role">Organizasyon Sekreteri</div></div>
-            <div class="seal"><span>MAVEN</span><small>${escapeHtml(fill("{{date}}"))}</small></div>
-            <div class="sign"><div class="sign-line"></div><div class="sign-name">Akreditasyon</div><div class="sign-role">Bilimsel Komite</div></div>
-          </div>
+          ${faceInner}
         </div>
       </div>`;
-    }).join("\n");
+    }));
 
     const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8" />
 <title>${escapeHtml(def.name)} — ${escapeHtml(edition.name)}</title>
@@ -80,6 +133,7 @@ export async function POST(req: NextRequest) {
   body { font-family: ${font}; background: #d1d5db; }
   .cert { page-break-after: always; position: relative; }
   .face { position: absolute; inset: ${def.bleedMm}mm; overflow: hidden; background-size: cover; background-position: center; display: flex; flex-direction: column; padding: 16mm 20mm; }
+  .el { position: absolute; overflow: hidden; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
   .brand { text-align: center; font-size: 4mm; letter-spacing: 4px; text-transform: uppercase; opacity: .7; }
   .cert-title { text-align: center; font-size: 11mm; font-weight: 700; margin-top: 8mm; }
   .cert-no { text-align: center; font-family: monospace; font-size: 2.6mm; opacity: .55; margin-top: 2mm; }
@@ -99,8 +153,8 @@ export async function POST(req: NextRequest) {
   }
   @media print { .toolbar { display: none; } body { background: #fff; padding: 0; } }
 </style></head><body>
-<div class="toolbar"><span>${issues.length} sertifika · ${def.widthMm}×${def.heightMm}mm${def.bleedMm ? ` + ${def.bleedMm}mm baskı payı` : ""} · ${def.orientation}</span><button onclick="window.print()">🖨️ Yazdır / PDF kaydet</button></div>
-${pages}
+<div class="toolbar"><span>${issues.length} sertifika · ${def.widthMm}×${def.heightMm}mm${def.bleedMm ? ` + ${def.bleedMm}mm baskı payı` : ""} · ${def.orientation}${design.length > 0 ? ` · kanvas yerleşimi (${design.length} eleman)` : ""}</span><button onclick="window.print()">🖨️ Yazdır / PDF kaydet</button></div>
+${pages.join("\n")}
 </body></html>`;
 
     // baskı sayfası üretimi durum günceller: ELIGIBLE → GENERATED

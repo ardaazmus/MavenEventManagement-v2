@@ -16,6 +16,7 @@ import { PageHeader, SectionCard, StatusBadge, Chip, EmptyState, Loading, ErrorS
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +24,14 @@ import { cn } from "@/lib/utils";
 type PersonRow = { id: string; firstName: string; lastName: string; title?: string | null; company?: string | null };
 type ParticipationRow = { id: string; person: PersonRow; registrations?: { status: string }[] };
 type AgreementRow = { id: string; organization: { id: string; name: string }; status: string; tier?: { name: string } | null };
+
+// R10-c: dış portal üst bant tasarımı — EventEdition üzerindeki portalHeader* skalerleri
+type PortalHeaderDraft = { title: string; subtitle: string; imageUrl: string; accent: string };
+type EditionRow = {
+  id: string; name: string;
+  portalHeaderTitle?: string | null; portalHeaderSubtitle?: string | null;
+  portalHeaderImageUrl?: string | null; portalHeaderAccent?: string | null;
+};
 
 type PortalOrder = {
   id: string; orderNo: string; status: string; totalAmount: number; currency: string; payerName?: string | null;
@@ -84,7 +93,7 @@ function offerCountdown(expiresAt?: string | null, now = Date.now()) {
   return { text: `${h} sa ${m} dk kaldı`, expired: false as const, hours: h };
 }
 
-// portal durumu adımları: Katılım → Kayıt → Onay → Rozet → Giriş
+// portal durumu adımları: Katılım → Kayıt → Onay → Yaka Kartı → Giriş
 function buildSteps(p: NonNullable<ParticipantData["participation"]>, regs: ParticipantData["registrations"]) {
   const activeReg = regs.find((r) => r.status !== "CANCELLED") ?? regs[0];
   const badge = p.badges[0];
@@ -103,8 +112,8 @@ function buildSteps(p: NonNullable<ParticipantData["participation"]>, regs: Part
         ? { key: "appr", title: "Onay", state: "current", hint: "İncelemede" }
         : { key: "appr", title: "Onay", state: activeReg ? "pending" : "pending" },
     badge
-      ? { key: "badge", title: "Rozet", state: ["READY", "PRINTED", "REPRINTED", "ISSUED"].includes(badge.status) ? "done" : "current", hint: badge.badgeNo }
-      : { key: "badge", title: "Rozet", state: "pending" },
+      ? { key: "badge", title: "Yaka Kartı", state: ["READY", "PRINTED", "REPRINTED", "ISSUED"].includes(badge.status) ? "done" : "current", hint: badge.badgeNo }
+      : { key: "badge", title: "Yaka Kartı", state: "pending" },
     p.attendance === "CHECKED_IN" || p.attendance === "CHECKED_OUT"
       ? { key: "in", title: "Giriş", state: "done", hint: label(ATTENDANCE_STATUS, p.attendance) }
       : { key: "in", title: "Giriş", state: "pending", hint: label(ATTENDANCE_STATUS, p.attendance) },
@@ -136,18 +145,33 @@ function PortalFrame({ url, children }: { url: string; children: React.ReactNode
 }
 
 // ─── portal üst bandı: etkinlik kimliği + ziyaretçi ─────────────────────────
+// R10-c: edition üzerindeki portalHeader* alanlarıyla üst bant özelleştirilir
+// (arka plan görseli + koyu degrade, başlık/alt başlık, vurgu rengi). Alanlar
+// null ise mevcut görünüm aynen korunur.
 function PortalHero({
-  name, dates, venue, seriesName, avatarText, visitorName, visitorSub, badge,
+  name, dates, venue, seriesName, avatarText, visitorName, visitorSub, badge, design,
 }: {
   name: string; dates: string; venue?: string | null; seriesName?: string | null;
   avatarText: string; visitorName: string; visitorSub?: string | null; badge?: React.ReactNode;
+  design?: PortalHeaderDraft | null;
 }) {
+  const title = design?.title?.trim() ? design.title : name;
+  const subtitle = design?.subtitle?.trim() ? design.subtitle : null;
+  const accent = design?.accent?.trim() || null;
   return (
     <div className="maven-portal-hero relative overflow-hidden px-5 pb-5 pt-6 text-white sm:px-7">
+      {design?.imageUrl && (
+        <>
+          <img src={design.imageUrl} alt="" aria-hidden className="absolute inset-0 size-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/40 to-black/25" aria-hidden />
+        </>
+      )}
       <div className="relative flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           {seriesName && <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/70">{seriesName}</p>}
-          <h3 className="mt-0.5 text-xl font-bold tracking-tight sm:text-2xl">{name}</h3>
+          <h3 className="mt-0.5 text-xl font-bold tracking-tight sm:text-2xl">{title}</h3>
+          {accent && <div className="mt-1.5 h-1 w-14 rounded-full" style={{ backgroundColor: accent }} aria-hidden />}
+          {subtitle && <p className="mt-2 max-w-xl text-xs text-white/85 sm:text-sm">{subtitle}</p>}
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/85">
             <span className="inline-flex items-center gap-1.5"><Icons.CalendarDays className="size-3.5" /> {dates}</span>
             {venue && <span className="inline-flex items-center gap-1.5"><Icons.MapPin className="size-3.5" /> {venue}</span>}
@@ -270,7 +294,7 @@ function PortalEmpty({ icon: I, title, desc }: { icon: typeof Icons.Inbox; title
 }
 
 // ═══ KATILIMCI PORTALI ═══════════════════════════════════════════════════════
-function ParticipantPortal({ editionId }: { editionId: string }) {
+function ParticipantPortal({ editionId, headerDesign }: { editionId: string; headerDesign?: PortalHeaderDraft | null }) {
   const { toast } = useToast();
   const now = useNow();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -399,6 +423,7 @@ function ParticipantPortal({ editionId }: { editionId: string }) {
               avatarText={initials(`${d.person.firstName} ${d.person.lastName}`)}
               visitorName={`${d.person.firstName} ${d.person.lastName}`}
               visitorSub={d.person.organizationName ?? d.person.title ?? "Katılımcı"}
+              design={headerDesign}
               badge={
                 d.participation ? (
                   <>
@@ -522,7 +547,7 @@ function ParticipantPortal({ editionId }: { editionId: string }) {
                       )}
                     </section>
 
-                    {/* konaklama + rozet + belgeler */}
+                    {/* konaklama + yaka kartı + belgeler */}
                     <section className="maven-portal-enter space-y-4 rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "200ms" }}>
                       <div>
                         <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.BedDouble className="size-4 text-primary" /> Konaklama</h4>
@@ -543,7 +568,7 @@ function ParticipantPortal({ editionId }: { editionId: string }) {
                         )}
                       </div>
                       <div className="border-t pt-3">
-                        <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.IdCard className="size-4 text-primary" /> Rozet & Belgeler</h4>
+                        <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.IdCard className="size-4 text-primary" /> Yaka Kartı & Belgeler</h4>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {d.participation.badges.map((b) => <StatusBadge key={b.id} map={{ NOT_ELIGIBLE: "Hak yok", READY: "Hazır", PRINTED: "Basıldı", REPRINTED: "Yeniden basıldı", ISSUED: "Verildi", VOID: "İptal" }} value={b.status} />)}
                           {d.participation.certificates.map((c) => <StatusBadge key={c.id} map={{ NOT_ELIGIBLE: "Hak yok", ELIGIBLE: "Hak kazandı", GENERATED: "Üretildi", DELIVERED: "Teslim edildi", REVOKED: "İptal" }} value={c.status} />)}
@@ -583,7 +608,7 @@ const DELIVERABLE_ICON: Record<string, typeof Icons.FileImage> = {
 // portaldan gönderilebilir teslim durumları
 const SUBMITTABLE = ["NOT_STARTED", "WAITING_SPONSOR", "REJECTED"];
 
-function SponsorPortal({ editionId }: { editionId: string }) {
+function SponsorPortal({ editionId, headerDesign }: { editionId: string; headerDesign?: PortalHeaderDraft | null }) {
   const { toast } = useToast();
   const [orgId, setOrgId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -681,6 +706,7 @@ function SponsorPortal({ editionId }: { editionId: string }) {
               avatarText={initials(d.organization.name)}
               visitorName={d.organization.name}
               visitorSub={d.agreements[0]?.tierName ?? "Sponsor"}
+              design={headerDesign}
               badge={d.agreements.map((a) => (
                 <span key={a.id} className="rounded-full border border-white/25 bg-white/10 px-2 py-0.5 text-[10px] font-medium">
                   {a.tierName ?? a.packageName ?? "Sponsor"} · {label({ PROSPECT: "Aday", NEGOTIATION: "Görüşme", CONTRACTED: "Sözleşmeli", ACTIVE: "Aktif", COMPLETED: "Tamamlandı", CANCELLED: "İptal" }, a.status)}
@@ -823,11 +849,179 @@ function SponsorPortal({ editionId }: { editionId: string }) {
   );
 }
 
+// ═══ PORTAL HEADER TASARIMCISI (R10-c) ══════════════════════════════════════
+// EventEdition.portalHeader* skaler alanlarını düzenler; canlı önizleme yazarken
+// güncellenir, "Kaydet" PUT /api/editions/{id} ile kalıcılaştırır.
+function PortalHeaderDesigner({
+  editionId, editionName, draft, setDraft,
+}: {
+  editionId: string; editionName: string;
+  draft: PortalHeaderDraft; setDraft: React.Dispatch<React.SetStateAction<PortalHeaderDraft>>;
+}) {
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+  const [mediaBusy, setMediaBusy] = useState(false);
+
+  const validAccent = /^#[0-9a-fA-F]{3,8}$/.test(draft.accent.trim()) ? draft.accent.trim() : "#0d9488";
+
+  const onImagePick = (file: File) => {
+    if (file.size > 600 * 1024) {
+      toast({ title: "Dosya 600KB sınırı aşılıyor", description: "Daha küçük bir görsel seçin — arşive gömme tavanı 600KB'dir.", variant: "destructive" });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!dataUrl.startsWith("data:")) return;
+      setMediaBusy(true);
+      try {
+        const r = await apiSend<{ asset: { id: string; dataUrl: string | null } }>("/api/media/upload-linked", "POST", {
+          editionId, systemFolder: "PORTAL", linkedType: "PORTAL", name: "portal-header-arkaplan", dataUrl,
+        });
+        setDraft((d) => ({ ...d, imageUrl: r.asset.dataUrl ?? dataUrl }));
+        toast({ title: "Arka plan görseli yüklendi", description: "Medya Arşivi → Portal Görselleri klasörüne benzersiz adla kaydedildi." });
+      } catch (e) {
+        toast({ title: "Görsel yüklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      } finally {
+        setMediaBusy(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiSend(`/api/editions/${editionId}`, "PUT", {
+        portalHeaderTitle: draft.title.trim(),
+        portalHeaderSubtitle: draft.subtitle.trim(),
+        portalHeaderImageUrl: draft.imageUrl.trim() || null,
+        portalHeaderAccent: draft.accent.trim() || null,
+      });
+      toast({ title: "Portal header kaydedildi", description: "Katılımcı ve sponsor portalının üst bandı bu tasarımı kullanır." });
+    } catch (e) {
+      toast({ title: "Kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SectionCard
+      title="Portal Header Tasarımcısı"
+      desc="Dış portalın üst bandını tasarlayın — kaydedilen başlık, alt başlık, vurgu rengi ve arka plan katılımcı + sponsor portalında görünür."
+    >
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* form */}
+        <div className="min-w-0 space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="ph-title">Portal başlığı</Label>
+            <Input id="ph-title" value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} maxLength={120} placeholder="Boş bırakılırsa etkinlik adı kullanılır" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ph-subtitle">Alt başlık</Label>
+            <Input id="ph-subtitle" value={draft.subtitle} onChange={(e) => setDraft((d) => ({ ...d, subtitle: e.target.value }))} maxLength={160} placeholder="örn. Kayıt, ödeme ve programınız tek yerde" />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="ph-accent">Vurgu rengi</Label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={validAccent}
+                  onChange={(e) => setDraft((d) => ({ ...d, accent: e.target.value }))}
+                  aria-label="Vurgu rengi seçici"
+                  className="size-9 shrink-0 cursor-pointer rounded-md border bg-card p-1"
+                />
+                <Input id="ph-accent" value={draft.accent} onChange={(e) => setDraft((d) => ({ ...d, accent: e.target.value }))} placeholder="#0d9488" className="w-28 font-mono text-xs uppercase" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ph-image">Arka plan görseli</Label>
+              <div className="flex items-center gap-2">
+                <label htmlFor="ph-image" className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground">
+                  {mediaBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ImagePlus className="size-3.5" aria-hidden />}
+                  {draft.imageUrl ? "Değiştir" : "Görsel yükle"}
+                </label>
+                {draft.imageUrl && (
+                  <Button type="button" size="sm" variant="ghost" className="h-9 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => setDraft((d) => ({ ...d, imageUrl: "" }))}>
+                    Kaldır
+                  </Button>
+                )}
+              </div>
+              <Input
+                id="ph-image"
+                type="file"
+                accept="image/*"
+                className="hidden"
+                aria-label="Portal arka plan görseli yükle"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) onImagePick(f); e.target.value = ""; }}
+              />
+            </div>
+          </div>
+          <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+            <Icons.Info className="mt-0.5 size-3 shrink-0" aria-hidden />
+            Görsel Medya Arşivi → Portal Görselleri klasörüne benzersiz adla kaydedilir (≤600KB). Önizleme yazarken canlı güncellenir.
+          </p>
+          <Button onClick={save} disabled={saving}>
+            {saving ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Save className="size-4" aria-hidden />} Kaydet
+          </Button>
+        </div>
+
+        {/* canlı önizleme */}
+        <div className="min-w-0">
+          <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"><Icons.Eye className="size-3.5" aria-hidden /> Canlı önizleme</p>
+          <div className="overflow-hidden rounded-xl border shadow-sm">
+            <div className={cn("relative flex min-h-44 flex-col justify-center px-5 py-6 text-white sm:px-7", !draft.imageUrl && "maven-portal-hero")}>
+              {draft.imageUrl && (
+                <>
+                  <img src={draft.imageUrl} alt="" aria-hidden className="absolute inset-0 size-full object-cover" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/40 to-black/25" aria-hidden />
+                </>
+              )}
+              <div className="relative min-w-0">
+                <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/70">{editionName}</p>
+                <h4 className="mt-0.5 truncate text-2xl font-bold tracking-tight">{draft.title.trim() || editionName}</h4>
+                <div className="mt-1.5 h-1 w-16 rounded-full" style={{ backgroundColor: validAccent }} aria-hidden />
+                {draft.subtitle.trim() && <p className="mt-2 max-w-lg text-xs text-white/85 sm:text-sm">{draft.subtitle}</p>}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-semibold text-white shadow-sm" style={{ backgroundColor: validAccent }}>
+                    <Icons.CalendarDays className="size-3" aria-hidden /> Kayıt & Giriş
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p className="mt-1.5 text-[10px] text-muted-foreground">Arka plan görseline koyu degrade bindirilir — beyaz tipografi her görselde okunur.</p>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
 // ═══ MODÜL KÖKÜ ══════════════════════════════════════════════════════════════
 export function PortalsView() {
   const { currentEditionId, editions } = useApp();
   const edition = editions.find((e) => e.id === currentEditionId);
   const [tab, setTab] = useState("participant");
+
+  // R10-c: portal header taslağı — edisyon kaydı geldiğinde sunucudaki değerlerle doldurulur
+  const [headerDraft, setHeaderDraft] = useState<PortalHeaderDraft>({ title: "", subtitle: "", imageUrl: "", accent: "#0d9488" });
+  useEffect(() => {
+    if (!currentEditionId) return;
+    let alive = true;
+    listEntity<EditionRow>("editions", { limit: 100 }).then((rows) => {
+      if (!alive) return;
+      const src = rows.find((e) => e.id === currentEditionId);
+      setHeaderDraft({
+        title: src?.portalHeaderTitle ?? "",
+        subtitle: src?.portalHeaderSubtitle ?? "",
+        imageUrl: src?.portalHeaderImageUrl ?? "",
+        accent: src?.portalHeaderAccent ?? "#0d9488",
+      });
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [currentEditionId]);
 
   return (
     <div>
@@ -845,10 +1039,15 @@ export function PortalsView() {
 
       {!edition ? (
         <EmptyState title="Edisyon seçin" desc="Portal önizlemesi için bir edisyon gerekli." />
-      ) : tab === "participant" ? (
-        <ParticipantPortal editionId={edition.id} />
       ) : (
-        <SponsorPortal editionId={edition.id} />
+        <div className="space-y-4">
+          <PortalHeaderDesigner editionId={edition.id} editionName={edition.name} draft={headerDraft} setDraft={setHeaderDraft} />
+          {tab === "participant" ? (
+            <ParticipantPortal editionId={edition.id} headerDesign={headerDraft} />
+          ) : (
+            <SponsorPortal editionId={edition.id} headerDesign={headerDraft} />
+          )}
+        </div>
       )}
     </div>
   );

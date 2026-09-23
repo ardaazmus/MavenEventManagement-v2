@@ -35,14 +35,14 @@ export async function POST(req: NextRequest) {
               await recomputeEntitlement(c.entitlementId);
             }
           }
-          // rozet READY (uygun)
+          // yaka kartı READY (uygun)
           await db.badgeInstance.updateMany({ where: { participationId: reg.participationId, status: "NOT_ELIGIBLE" }, data: { status: "READY" } });
         }
         await db.activityLog.create({ data: { type: decision === "CONFIRMED" ? ActivityType.REGISTRATION_CONFIRMED : ActivityType.REGISTRATION_SAVED, editionId: reg.editionId, message: `Kayıt ${decision === "CONFIRMED" ? "onaylandı" : "reddedildi"}: ${reg.participation.person.firstName} ${reg.participation.person.lastName}`, entityType: "Registration", entityId: reg.id, actorName: decidedBy ?? "Kayıt Sorumlusu" } });
         return NextResponse.json(reg);
       }
 
-      // ── Kayıt iptali (etki önizlemesi: rozet + hak + ödeme ayrıca) ──
+      // ── Kayıt iptali (etki önizlemesi: yaka kartı + hak + ödeme ayrıca) ──
       case "registration.cancel": {
         const { registrationId, reason } = body as { registrationId: string; reason?: string };
         const reg = await db.registration.update({
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
           if (c.entitlementId) await recomputeEntitlement(c.entitlementId);
         }
         await db.badgeInstance.updateMany({ where: { participationId: reg.participationId, status: { in: ["READY", "ISSUED", "PRINTED"] } }, data: { status: "VOID", voidReason: `Kayıt iptali: ${reason ?? ""}` } });
-        await db.activityLog.create({ data: { type: ActivityType.REGISTRATION_CANCELLED, editionId: reg.editionId, message: `Kayıt iptal edildi: ${reg.participation.person.firstName} ${reg.participation.person.lastName} — rozet ve haklar etkilenir`, entityType: "Registration", entityId: reg.id, actorName: "Yönetici" } });
+        await db.activityLog.create({ data: { type: ActivityType.REGISTRATION_CANCELLED, editionId: reg.editionId, message: `Kayıt iptal edildi: ${reg.participation.person.firstName} ${reg.participation.person.lastName} — yaka kartı ve haklar etkilenir`, entityType: "Registration", entityId: reg.id, actorName: "Yönetici" } });
         // koltuk boşaldı → bekleme listesindeki sıradakine otomatik teklif (§12)
         const chainedOffers = reg.categoryId ? await autoOfferForCategory(reg.editionId, reg.categoryId) : [];
         if (chainedOffers.length > 0) {
@@ -197,7 +197,7 @@ export async function POST(req: NextRequest) {
         if (!def) return NextResponse.json({ error: "Kural bulunamadı" }, { status: 404 });
         if (!def.editionId) return NextResponse.json({ error: "Etkinlik yok" }, { status: 400 });
 
-        const participations = await db.eventParticipation.findMany({ where: { editionId: def.editionId }, include: { registrations: true, scanEvents: true } });
+        const participations = await db.eventParticipation.findMany({ where: { editionId: def.editionId }, include: { registrations: true, scanEvents: true, roleAssignments: true } });
         let eligible = 0;
         for (const p of participations) {
           const reg = p.registrations?.[0];
@@ -233,7 +233,7 @@ export async function POST(req: NextRequest) {
       // ── Kişi birleştirme (çakışma çözümlü, tek işlemde — Kimlik kuralı 2) ──
       // Aynı edisyonda iki katılım @@unique([editionId, personId]) yüzünden taşınamaz:
       // resolutions[editionId] = "target" | "source" kazanan katılımı seçer; kaybeden katılımın
-      // tüm geçmişi (kayıtlar, rozetler, taramalar, haklar, program, konaklama…) kazanan tarafına
+      // tüm geçmişi (kayıtlar, yaka kartları, taramalar, haklar, program, konaklama…) kazanan tarafına
       // taşınır ve boşalan katılım silinir — geçmiş silinmez, sahibi değişir.
       case "person.merge": {
         const { sourceId, targetId, resolutions, fillProfile } = body as {

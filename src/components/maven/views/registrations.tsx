@@ -20,7 +20,7 @@ interface RegRow {
   category?: { id: string; name: string; basePrice: number; currency: string } | null;
   participation: {
     id: string; attendance: string;
-    person: { id: string; firstName: string; lastName: string; email?: string | null; company?: string | null };
+    person: { id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; title?: string | null; company?: string | null; city?: string | null; country?: string | null };
     roleAssignments?: { role: string }[];
   };
   entitlementClaims?: { id: string; status: string; entitlement: { label: string } }[];
@@ -31,7 +31,7 @@ interface InvitationRow { id: string; fullName: string; email: string; status: s
 // ── Bekleme listesi tipleri (/api/waitlist sözleşmesi) ──
 interface WaitlistPerson { id: string; firstName: string; lastName: string; email?: string | null; company?: string | null; title?: string | null; status: string }
 interface WaitlistEntryRow {
-  id: string; personId: string; priority: number; status: string; offeredAt?: string | null; offerExpiresAt?: string | null; respondedAt?: string | null; notes?: string | null; createdAt: string;
+  id: string; personId: string; priority: number; status: string; offeredAt?: string | null; offerExpiresAt?: string | null; respondedAt?: string | null; notes?: string | null; createdAt: string; categoryId?: string | null;
   person: WaitlistPerson;
   category?: { id: string; name: string; code: string; capacity?: number | null } | null;
   convertedRegistration?: { id: string; confirmationNo: string; status: string } | null;
@@ -54,6 +54,53 @@ export function RegistrationsView() {
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<"list" | "waitlist" | "lcv">("list");
 
+  // ── R10-a: çift tıkla tam durum düzenleme — kişi + katılım + kayıt tek diyaloğda ──
+  const [editOpen, setEditOpen] = useState(false);
+  const [editRow, setEditRow] = useState<RegRow | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const emptyEdit = { firstName: "", lastName: "", email: "", phone: "", title: "", company: "", city: "", country: "", attendance: "NOT_ARRIVED", categoryId: "", status: "DRAFT", fundingSource: "SELF_PAID", notes: "" };
+  const [editForm, setEditForm] = useState(emptyEdit);
+
+  const openFullEdit = (r: RegRow) => {
+    setEditRow(r);
+    setEditForm({
+      firstName: r.participation.person.firstName, lastName: r.participation.person.lastName,
+      email: r.participation.person.email ?? "", phone: r.participation.person.phone ?? "",
+      title: r.participation.person.title ?? "", company: r.participation.person.company ?? "",
+      city: r.participation.person.city ?? "", country: r.participation.person.country ?? "",
+      attendance: r.participation.attendance,
+      categoryId: r.category?.id ?? "", status: r.status, fundingSource: r.fundingSource, notes: r.notes ?? "",
+    });
+    setEditOpen(true);
+  };
+
+  const saveFullEdit = async () => {
+    if (!editRow) return;
+    setEditBusy(true);
+    try {
+      // 1) Kişi — yalnız skaler alanlar (registry sanitize: "" → null; asla iç içe nesne yok)
+      await apiSend(`/api/people/${editRow.participation.person.id}`, "PUT", {
+        firstName: editForm.firstName, lastName: editForm.lastName,
+        email: editForm.email || null, phone: editForm.phone || null, title: editForm.title || null,
+        company: editForm.company || null, city: editForm.city || null, country: editForm.country || null,
+      });
+      // 2) Katılım — katılım durumu
+      await apiSend(`/api/participations/${editRow.participation.id}`, "PUT", { attendance: editForm.attendance });
+      // 3) Kayıt — kategori + durum + fon kaynağı + not
+      await apiSend(`/api/registrations/${editRow.id}`, "PUT", {
+        categoryId: editForm.categoryId || null, status: editForm.status,
+        fundingSource: editForm.fundingSource, notes: editForm.notes || null,
+      });
+      toast({ title: "Değişiklikler kaydedildi", description: "Kişi, katılım ve kayıt alanları güncellendi." });
+      setEditOpen(false); setEditRow(null);
+      reload(); bump();
+    } catch (e) {
+      toast({ title: "Kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
   const regsLoader = async () => {
     const items = await listEntity<RegRow>("registrations", { editionId: currentEditionId ?? undefined, status: statusFilter === "ALL" ? undefined : statusFilter, limit: 400 });
     const needle = q.toLocaleLowerCase("tr-TR");
@@ -74,15 +121,15 @@ export function RegistrationsView() {
           title: "Kayıt iptal edildi",
           description: offers.length > 0
             ? `Koltuk boşaldı — bekleme listesinden teklif gönderildi: ${offers.map((o) => o.personName).join(", ")}`
-            : "Rozet ve haklar etkilendi; etki önizlemesi kayıtta görülür.",
+            : "Yaka kartı ve haklar etkilendi; etki önizlemesi kayıtta görülür.",
         });
       } else {
         await apiSend("/api/flows", "POST", { action: "registration.decide", registrationId: decideTarget.reg.id, decision: decideTarget.decision });
         toast({
           title: decideTarget.decision === "CONFIRMED" ? "Kayıt onaylandı" : "Kayıt reddedildi",
           description: decideTarget.decision === "CONFIRMED"
-            ? "Hak claim'i CONSUMED'a geçti, rozet READY — ödeme durumu ayrı hesaplanır."
-            : "Rozet ve haklar etkilendi; etki önizlemesi kayıtta görülür.",
+            ? "Hak claim'i CONSUMED'a geçti, yaka kartı READY — ödeme durumu ayrı hesaplanır."
+            : "Yaka kartı ve haklar etkilendi; etki önizlemesi kayıtta görülür.",
         });
       }
       setDecideTarget(null); setReason(""); reload(); bump();
@@ -132,7 +179,12 @@ export function RegistrationsView() {
             </Select>
             <Input placeholder="Ad / e-posta / kayıt no…" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-64" />
             <Button variant="ghost" size="sm" onClick={reload}><Icons.RefreshCw className="size-4" /></Button>
-            <span className="ml-auto text-xs text-muted-foreground">{(registrations ?? []).length} kayıt listelendi</span>
+            <span className="ml-auto flex items-center gap-2">
+              <Chip tone="neutral">
+                <span className="inline-flex items-center gap-1"><Icons.MousePointerClick className="size-3" aria-hidden />Çift tıklama ile de açılır</span>
+              </Chip>
+              <span className="text-xs text-muted-foreground">{(registrations ?? []).length} kayıt listelendi</span>
+            </span>
           </div>
 
           {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (registrations ?? []).length === 0 ? (
@@ -155,7 +207,12 @@ export function RegistrationsView() {
                   </thead>
                   <tbody>
                     {(registrations ?? []).map((r) => (
-                      <tr key={r.id} className="border-b transition hover:bg-muted/40 last:border-0">
+                      <tr
+                        key={r.id}
+                        className="cursor-pointer border-b transition hover:bg-muted/40 last:border-0"
+                        onDoubleClick={() => openFullEdit(r)}
+                        title="Çift tıkla: tüm durumları gör/düzenle"
+                      >
                         <td className="px-3 py-2.5">
                           <p className="font-medium leading-tight">{r.participation.person.firstName} {r.participation.person.lastName}</p>
                           <p className="text-xs text-muted-foreground">{r.participation.person.company ?? "—"}</p>
@@ -173,6 +230,14 @@ export function RegistrationsView() {
                         <td className="px-3 py-2.5"><StatusBadge map={ATTENDANCE_STATUS} value={r.participation.attendance} /></td>
                         <td className="px-3 py-2.5">
                           <div className="flex justify-end gap-1">
+                            <Button
+                              size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground"
+                              onClick={() => openFullEdit(r)}
+                              aria-label={`${r.participation.person.firstName} ${r.participation.person.lastName} kaydının tüm durumlarını gör/düzenle`}
+                              title="Tüm durumları gör/düzenle"
+                            >
+                              <Icons.Pencil className="size-3.5" />
+                            </Button>
                             {r.status === "PENDING_APPROVAL" && (
                               <>
                                 <Button size="sm" variant="outline" className="h-7 border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={() => setDecideTarget({ reg: r, decision: "CONFIRMED" })}>
@@ -240,13 +305,13 @@ export function RegistrationsView() {
             {decideTarget?.decision === "CONFIRMED" && (
               <ul className="list-disc space-y-0.5 pl-4">
                 <li>Ayrılmış hak claim'i <b>CONSUMED</b> olur (davette ayır, onayda kullan)</li>
-                <li>Rozet <b>READY</b> durumuna geçer</li>
+                <li>Yaka kartı <b>READY</b> durumuna geçer</li>
                 <li>Ödeme gereksinimi ayrıca hesaplanır — fon kaynağı: {label(FUNDING_SOURCES, decideTarget?.reg.fundingSource)}</li>
               </ul>
             )}
             {decideTarget?.decision === "CANCELLED" && (
               <ul className="list-disc space-y-0.5 pl-4">
-                <li>Rozet <b>VOID</b> olur ve erişim hakkı etkilenir</li>
+                <li>Yaka kartı <b>VOID</b> olur ve erişim hakkı etkilenir</li>
                 <li>Sponsor hakları geri yüklenir (politika gereği ayrıca karar)</li>
                 <li>İade ayrı bir finansal işlemdir — burada otomatik yapılmaz</li>
                 <li>Kategoride bekleme listesi varsa koltuk sıradakine <b>otomatik teklif edilir</b></li>
@@ -268,6 +333,111 @@ export function RegistrationsView() {
               variant={decideTarget?.decision === "CONFIRMED" ? "default" : "destructive"}
             >
               {busy ? "İşleniyor…" : "Onayla"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── R10-a: tam durum düzenleme — kişi + katılım + kayıt tek diyaloğda (çift tık da açar) ── */}
+      <Dialog open={editOpen} onOpenChange={(o) => { if (!o) setEditOpen(false); }}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              Kaydı Düzenle — {editRow?.participation.person.firstName} {editRow?.participation.person.lastName}
+            </DialogTitle>
+            <DialogDescription>
+              Adı yanlış → değiştir, kategorisi yanlış → düzelt: kişi, katılım ve kayıt durumlarının tamamı burada. Kayıt no{" "}
+              <span className="font-mono">{editRow?.confirmationNo}</span> · çift tıklama ile de açılır.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* Bölüm 1: Kişi Bilgileri */}
+            <section>
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                <Icons.User className="size-3.5" aria-hidden /> Kişi Bilgileri
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div><Label>Ad *</Label><Input className="mt-1" value={editForm.firstName} onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} /></div>
+                <div><Label>Soyad *</Label><Input className="mt-1" value={editForm.lastName} onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} /></div>
+                <div><Label>E-posta</Label><Input type="email" className="mt-1" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} /></div>
+                <div><Label>Telefon</Label><Input type="tel" className="mt-1" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} /></div>
+                <div><Label>Unvan</Label><Input className="mt-1" value={editForm.title} onChange={(e) => setEditForm({ ...editForm, title: e.target.value })} /></div>
+                <div><Label>Kurum</Label><Input className="mt-1" value={editForm.company} onChange={(e) => setEditForm({ ...editForm, company: e.target.value })} /></div>
+                <div><Label>Şehir</Label><Input className="mt-1" value={editForm.city} onChange={(e) => setEditForm({ ...editForm, city: e.target.value })} /></div>
+                <div><Label>Ülke</Label><Input className="mt-1" value={editForm.country} onChange={(e) => setEditForm({ ...editForm, country: e.target.value })} /></div>
+              </div>
+            </section>
+
+            {/* Bölüm 2: Katılım */}
+            <section>
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                <Icons.ScanLine className="size-3.5" aria-hidden /> Katılım
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <Label>Katılım durumu</Label>
+                  <Select value={editForm.attendance} onValueChange={(v) => setEditForm({ ...editForm, attendance: v })}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(ATTENDANCE_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </section>
+
+            {/* Bölüm 3: Kayıt */}
+            <section>
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                <Icons.ClipboardList className="size-3.5" aria-hidden /> Kayıt
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <Label>Kategori</Label>
+                  <Select
+                    value={editForm.categoryId === "" ? "none" : editForm.categoryId}
+                    onValueChange={(v) => setEditForm({ ...editForm, categoryId: v === "none" ? "" : v })}
+                  >
+                    <SelectTrigger className="mt-1"><SelectValue placeholder="Kategori seçin" /></SelectTrigger>
+                    <SelectContent className="maven-scroll max-h-64">
+                      <SelectItem value="none">— Kategori yok —</SelectItem>
+                      {(categories ?? []).map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name} · {c.basePrice > 0 ? `${c.basePrice.toLocaleString("tr-TR")} ${c.currency}` : "ücretsiz"}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Kayıt durumu</Label>
+                  <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v })}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(REGISTRATION_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Fon kaynağı</Label>
+                  <Select value={editForm.fundingSource} onValueChange={(v) => setEditForm({ ...editForm, fundingSource: v })}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent className="maven-scroll max-h-64">
+                      {Object.entries(FUNDING_SOURCES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Notlar</Label>
+                  <Textarea rows={2} className="mt-1" value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Vazgeç</Button>
+            <Button onClick={saveFullEdit} disabled={editBusy || !editForm.firstName.trim() || !editForm.lastName.trim()}>
+              {editBusy ? "Kaydediliyor…" : "Değişiklikleri Kaydet"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -344,7 +514,7 @@ function WaitlistTab({ editionId, categories, onChanged }: { editionId: string |
   const respond = (e: WaitlistEntryRow, response: "ACCEPT" | "DECLINE") => runAction(async () => {
     const res = await apiSend<{ chained?: { personName: string }[]; registration?: { confirmationNo: string } }>("/api/waitlist", "POST", { action: "respond", entryId: e.id, response });
     if (response === "ACCEPT") {
-      return { toastTitle: `Teklif kabul edildi — kayıt açıldı: ${res.registration?.confirmationNo ?? ""}`, toastDesc: "Bekleme listesi girişi CONVERTED oldu, rozet READY." };
+      return { toastTitle: `Teklif kabul edildi — kayıt açıldı: ${res.registration?.confirmationNo ?? ""}`, toastDesc: "Bekleme listesi girişi CONVERTED oldu, yaka kartı READY." };
     }
     const chained = res.chained ?? [];
     return {

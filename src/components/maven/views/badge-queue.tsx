@@ -1,6 +1,6 @@
 "use client";
-// Rozet Baskı Merkezi — baskı kuyruğu, toplu baskı/teslim akışı ve baskı önizleme
-// (§40: rozet ≠ katılım — rozet durumu bağımsız yönetilir; §41: baskı şablonu BadgeProfile'dan)
+// Yaka Kartı Baskı Merkezi — baskı kuyruğu, toplu baskı/teslim akışı ve baskı önizleme
+// (§40: yaka kartı ≠ katılım — yaka kartı durumu bağımsız yönetilir; §41: baskı şablonu BadgeProfile'dan)
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
@@ -68,13 +68,13 @@ function formatAccessAreas(v: string | string[] | null | undefined): string {
 const ACTION_VERBS: Record<BadgeAction, string> = { PRINT: "basıldı", ISSUE: "teslim edildi", REPRINT: "yeniden basıldı" };
 const ACTION_NOTES: Record<BadgeAction, string> = {
   PRINT: "PRINTED — baskı şablonu BadgeProfile ayarlarından gelir.",
-  ISSUE: "ISSUED — rozet sahadan teslim edildi.",
+  ISSUE: "ISSUED — yaka kartı sahadan teslim edildi.",
   REPRINT: "REPRINTED — yeni baskı kaydedildi.",
 };
 const ACTION_SKIP: Record<BadgeAction, string> = {
   PRINT: "durumu uygun değil",
   ISSUE: "basılı durumda değil",
-  REPRINT: "basılı rozet değil",
+  REPRINT: "basılı yaka kartı değil",
 };
 
 // ─── View ────────────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ export function BadgeQueueView() {
   // tek/çoklu aksiyon — sunucu durum makinesi kontrollü, sonuç toast'ta özetlenir
   const runAction = async (action: BadgeAction, ids: string[]) => {
     if (ids.length === 0) {
-      toast({ title: "Rozet seçilmedi", description: "Kuyruktan en az bir rozet seçin.", variant: "destructive" });
+      toast({ title: "Yaka Kartı seçilmedi", description: "Kuyruktan en az bir yaka kartı seçin.", variant: "destructive" });
       return;
     }
     if (ids.length > 1) setBulkBusy(action);
@@ -143,7 +143,7 @@ export function BadgeQueueView() {
     try {
       const res = await apiSend<ActionResult>("/api/badges/print-queue", "POST", { ids, action });
       toast({
-        title: `${res.succeeded} rozet ${ACTION_VERBS[action]}`,
+        title: `${res.succeeded} yaka kartı ${ACTION_VERBS[action]}`,
         description: res.failed > 0 ? `${res.failed} atlandı (${ACTION_SKIP[action]})` : ACTION_NOTES[action],
         variant: res.succeeded === 0 && res.failed > 0 ? "destructive" : "default",
       });
@@ -165,7 +165,7 @@ export function BadgeQueueView() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Rozet Baskı" desc="Baskıya hazır rozetler, toplu baskı ve teslim akışı — rozet ≠ katılım (§40): durum bağımsız yönetilir.">
+      <PageHeader title="Yaka Kartı Baskı" desc="Baskıya hazır yaka kartları, toplu baskı ve teslim akışı — yaka kartı ≠ katılım (§40): durum bağımsız yönetilir.">
         <Chip tone="teal">{selectedInQueue.length} seçili</Chip>
       </PageHeader>
 
@@ -199,14 +199,14 @@ export function BadgeQueueView() {
           <KpiCard label="Yeniden Basılan" value={stats.reprinted} tone="amber" icon={<Icons.RefreshCcw className="size-4" />} />
           <KpiCard label="Uygun Değil" value={stats.notEligible} tone="neutral" icon={<Icons.Ban className="size-4" />} />
         </div>
-        <p className="text-xs text-muted-foreground">Toplam {stats.total} rozet kuyrukta</p>
+        <p className="text-xs text-muted-foreground">Toplam {stats.total} yaka kartı kuyrukta</p>
       </div>
 
       {/* 2 — Profil kırılımı */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card px-4 py-3 shadow-sm">
         <span className="text-xs font-medium text-muted-foreground">Profil kırılımı:</span>
         {byProfile.length === 0 ? (
-          <span className="text-xs text-muted-foreground">Kuyrukta rozet yok — kırılım oluşmaz.</span>
+          <span className="text-xs text-muted-foreground">Kuyrukta yaka kartı yok — kırılım oluşmaz.</span>
         ) : (
           byProfile.map((p) => (
             <Chip key={p.name}>
@@ -227,7 +227,7 @@ export function BadgeQueueView() {
         <Button variant="ghost" size="sm" onClick={clearSelection} disabled={selectedInQueue.length === 0}>
           <Icons.X className="size-3.5" /> Seçimi Temizle
         </Button>
-        <span className="text-xs text-muted-foreground">{visible.length} / {queue.length} rozet görünüyor</span>
+        <span className="text-xs text-muted-foreground">{visible.length} / {queue.length} yaka kartı görünüyor</span>
         <div className="ms-auto flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={() => runAction("PRINT", selectedInQueue)} disabled={anyBusy}>
             {bulkBusy === "PRINT" ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Printer className="size-3.5" />} Baskıya Gönder (PRINT)
@@ -244,7 +244,7 @@ export function BadgeQueueView() {
       {/* 4-6 — Kuyruk tablosu + durum filtresi + arama */}
       <SectionCard
         title="Baskı Kuyruğu"
-        desc="satıra tıklayarak seç, rozet numarası baskı önizlemesini açar — aksiyonlar sunucuda durum kontrollüdür"
+        desc="satıra tıklayarak seç, yaka kartı numarası baskı önizlemesini açar — aksiyonlar sunucuda durum kontrollüdür"
       >
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -256,15 +256,15 @@ export function BadgeQueueView() {
           </Select>
           <div className="relative flex-1">
             <Icons.Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Kişi / rozet no / profil ara" className="pl-8" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Kişi / yaka kartı no / profil ara" className="pl-8" />
           </div>
         </div>
 
         <div className="mt-3">
           {loading ? <Loading rows={6} /> : error ? <ErrorState message={error} onRetry={reload} /> : visible.length === 0 ? (
             <EmptyState
-              title={queue.length === 0 ? "Kuyrukta rozet yok" : "Filtreye uyan rozet yok"}
-              desc={queue.length === 0 ? "Kayıt onaylandığında rozetler otomatik hazırlanır (READY) ve burada listelenir." : "Durum filtresini veya aramayı temizleyin."}
+              title={queue.length === 0 ? "Kuyrukta yaka kartı yok" : "Filtreye uyan yaka kartı yok"}
+              desc={queue.length === 0 ? "Kayıt onaylandığında yaka kartları otomatik hazırlanır (READY) ve burada listelenir." : "Durum filtresini veya aramayı temizleyin."}
             />
           ) : (
             <div className="maven-scroll max-h-96 overflow-y-auto rounded-lg border">
@@ -272,7 +272,7 @@ export function BadgeQueueView() {
                 <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
                   <tr>
                     <th className="w-10 px-3 py-2 font-medium"><span className="sr-only">Seçim</span></th>
-                    <th className="px-3 py-2 font-medium">Rozet No</th>
+                    <th className="px-3 py-2 font-medium">Yaka Kartı No</th>
                     <th className="px-3 py-2 font-medium">Kişi</th>
                     <th className="px-3 py-2 font-medium">Profil</th>
                     <th className="hidden px-3 py-2 font-medium lg:table-cell">Kategori</th>
@@ -290,7 +290,7 @@ export function BadgeQueueView() {
                       className={`cursor-pointer border-t transition ${selected.has(b.id) ? "bg-teal-50/60" : "hover:bg-muted/40"}`}
                     >
                       <td className="w-10 px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                        <Checkbox checked={selected.has(b.id)} onCheckedChange={() => toggleOne(b.id)} aria-label={`${b.person.fullName} rozetini seç`} />
+                        <Checkbox checked={selected.has(b.id)} onCheckedChange={() => toggleOne(b.id)} aria-label={`${b.person.fullName} yaka kartını seç`} />
                       </td>
                       <td className="whitespace-nowrap px-3 py-2">
                         <button
@@ -368,7 +368,7 @@ export function BadgeQueueView() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Baskı Önizleme</DialogTitle>
-            <DialogDescription>Rozet kartı, baskı şablonunun sade temsilidir.</DialogDescription>
+            <DialogDescription>Yaka kartı, baskı şablonunun sade temsilidir.</DialogDescription>
           </DialogHeader>
           {preview && (
             <div className="mx-auto w-[320px] overflow-hidden rounded-xl border bg-card shadow-sm">

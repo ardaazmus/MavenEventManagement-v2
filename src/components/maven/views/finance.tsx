@@ -96,7 +96,7 @@ export function FinanceView() {
                     <span className="ml-auto text-xs text-muted-foreground">{fmtDate(o.createdAt)}</span>
                   </summary>
                   <div className="mt-3 grid gap-3 lg:grid-cols-3">
-                    <div className="lg:col-span-2">
+                    <div className="min-w-0 lg:col-span-2">
                       <p className="mb-1 text-xs font-semibold text-muted-foreground">Kalemler</p>
                       <div className="space-y-1">
                         {o.lines.map((l) => (

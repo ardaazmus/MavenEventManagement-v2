@@ -865,7 +865,7 @@ export function FormCenterView() {
               {selectedForm && (
                 <div className="grid gap-4 lg:grid-cols-5">
                   {/* SOL — Alan listesi */}
-                  <div className="lg:col-span-3">
+                  <div className="min-w-0 lg:col-span-3">
                     <SectionCard
                       title="Alanlar"
                       desc={`${selectedForm.fields.length} alan — sıra numarasına göre gösterilir`}
@@ -964,7 +964,7 @@ export function FormCenterView() {
                   </div>
 
                   {/* SAĞ — Ayar panelleri */}
-                  <div className="space-y-4 lg:col-span-2">
+                  <div className="space-y-4 min-w-0 lg:col-span-2">
                     <SectionCard title="Form Ayarları" desc="başlık, açıklama ve gönderi sonrası mesaj">
                       <div className="grid gap-3">
                         <div className="grid gap-1">
@@ -1298,7 +1298,7 @@ export function FormCenterView() {
                   <SectionCard
                     title="Günlük Akış"
                     desc="son 14 gün gönderi adedi"
-                    className={npsStat ? "lg:col-span-2" : "lg:col-span-3"}
+                    className={npsStat ? "min-w-0 lg:col-span-2" : "min-w-0 lg:col-span-3"}
                   >
                     {(() => {
                       const max = Math.max(...stats.daily.map((d) => d.count), 1);
@@ -1342,7 +1342,7 @@ export function FormCenterView() {
                     <SectionCard
                       title="QA Quiz Sonuçları"
                       desc={`${stats.quiz.questionCount} soru · ${stats.quiz.scoredCount} puanlanmış gönderi`}
-                      className={npsStat ? "lg:col-span-3" : "lg:col-span-2"}
+                      className={npsStat ? "min-w-0 lg:col-span-3" : "min-w-0 lg:col-span-2"}
                     >
                       <div className="grid gap-4 sm:grid-cols-3">
                         <div className="rounded-lg border bg-muted/20 p-3 text-center">

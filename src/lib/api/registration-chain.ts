@@ -106,8 +106,8 @@ export async function createRegistrationFromSubmission(
 
   // 4) SİPARİŞ + KALEM + ÖDEME — ücretli kategoriyse (Sipariş ≠ Ödeme)
   const fee = category?.basePrice ?? 0;
-  let order = null;
-  let payment = null;
+  let order: Awaited<ReturnType<typeof db.order.create>> | null = null;
+  let payment: Awaited<ReturnType<typeof db.payment.create>> | null = null;
   if (fee > 0) {
     order = await db.order.create({
       data: {

@@ -1,4 +1,4 @@
-// Rozet baskı kuyruğu (§40-42) — baskıya hazır rozetler + toplu baskı/teslim aksiyonları
+// Yaka kartı baskı kuyruğu (§40-42) — baskıya hazır rozetler + toplu baskı/teslim aksiyonları
 // GET  /api/badges/print-queue?editionId=  → kuyruk + profil kırılımı + durum sayaçları
 // POST /api/badges/print-queue { ids: string[], action: "PRINT"|"ISSUE"|"REPRINT" }
 //   PRINT: READY → PRINTED (printedAt) · ISSUE: PRINTED → ISSUED (issuedAt) · REPRINT: basılı → REPRINTED
@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as { ids?: string[]; action?: string };
     const ids = (body.ids ?? []).filter(Boolean);
     const action = body.action ?? "PRINT";
-    if (ids.length === 0) return NextResponse.json({ error: "Rozet seçilmedi" }, { status: 422 });
+    if (ids.length === 0) return NextResponse.json({ error: "Yaka kartı seçilmedi" }, { status: 422 });
     if (!["PRINT", "ISSUE", "REPRINT"].includes(action)) {
       return NextResponse.json({ error: "Geçersiz aksiyon (PRINT|ISSUE|REPRINT)" }, { status: 400 });
     }
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
         (action === "ISSUE" && ["PRINTED", "REPRINTED"].includes(b.status)) ||
         (action === "REPRINT" && ["PRINTED", "ISSUED", "REPRINTED"].includes(b.status));
       if (!allowed) {
-        results.push({ id: b.id, ok: false, message: `${b.status} durumundaki rozet ${action} alamaz` });
+        results.push({ id: b.id, ok: false, message: `${b.status} durumundaki yaka kartı ${action} alamaz` });
         continue;
       }
       const data =
@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
           tenantId: first?.participation?.edition?.tenantId ?? "",
           editionId: first?.participation?.edition?.id ?? null,
           type: ActivityType.BADGE_SAVED,
-          message: `Rozet ${action.toLowerCase()} tamamlandı: ${succeeded} adet${action === "PRINT" ? " (baskı kuyruğundan)" : ""}`,
+          message: `Yaka kartı ${action.toLowerCase()} tamamlandı: ${succeeded} adet${action === "PRINT" ? " (baskı kuyruğundan)" : ""}`,
           entityType: "BadgeInstance",
           entityId: ids[0],
           actorName: "Baskı Merkezi",

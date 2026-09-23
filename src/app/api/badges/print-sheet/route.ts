@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     const design = await db.badgeDesign.findUnique({ where: { id: body.designId } });
     if (!design) return NextResponse.json({ error: "Tasarım bulunamadı" }, { status: 404 });
 
-    const edition = await db.eventEdition.findUnique({ where: { id: body.editionId } });
+    const edition = await db.eventEdition.findUnique({ where: { id: body.editionId }, include: { series: true } });
     if (!edition) return NextResponse.json({ error: "Edisyon bulunamadı" }, { status: 404 });
 
     const font = BADGE_FONTS[design.fontKey]?.css ?? "Inter, sans-serif";

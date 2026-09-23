@@ -1,6 +1,6 @@
 "use client";
 // Paylaşılan UI parçaları — §3 ortak ekran kalıbı
-// KPI kartı, durum rozeti, boş durum, bölüm kartı, yükleniyor.
+// KPI kartı, durum yaka kartı, boş durum, bölüm kartı, yükleniyor.
 import { ReactNode, useEffect, useState } from "react";
 import { STATUS_TONE } from "@/lib/constants";
 import { Skeleton } from "@/components/ui/skeleton";

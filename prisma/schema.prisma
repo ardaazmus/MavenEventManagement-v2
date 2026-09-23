@@ -175,6 +175,11 @@ model EventEdition {
   coverColor  String?   // UI vurgu rengi
   languages   String?   // "tr,en"
   isFeatured  Boolean   @default(false)
+  // — Dış portal header tasarımı (kullanıcı isteği: arka resim + başlık) —
+  portalHeaderTitle    String?
+  portalHeaderSubtitle String?
+  portalHeaderImageUrl String? // medya klasörü PORTAL bağlantılı
+  portalHeaderAccent   String? // vurgu rengi hex
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -770,6 +775,13 @@ model HotelProperty {
   contactName String?
   contactPhone String?
   notes       String?
+  // — Detaylı otel girişi (kullanıcı isteği: logo, resim, adres, ilgili kişi, mail) —
+  logoUrl      String? // medya klasörü OTEL bağlantılı (upload-linked)
+  imageUrl     String? // kapak/oda görseli — medya klasörü OTEL bağlantılı
+  email        String? // rezervasyon/irtibat e-postası
+  website      String?
+  starRating   Int?     // 1-5 yıldız
+  checkInNote  String?  // giriş/çıkış saat notu (örn. "14:00 / 12:00")
 
   edition     EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
   roomTypes   RoomType[]
@@ -1133,6 +1145,8 @@ model CertificateDefinition {
   bodyTemplate       String? // kişi-özel gövde metni: {{fullName}}, {{title}}, {{edition}}... yer tutucular
   tierNote           String? // düzey/katılım notu
   mailDeliveredCount Int     @default(0)
+  // — Kanvas tabanlı sertifika tasarımcısı (yaka kartı tasarımcısı mimarisi) —
+  designJson   String? // eleman dizisi: {type,x,y,w,h,...} mm — farklı alanlara farklı yerleşim
 
   edition EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
   issues  CertificateIssue[]

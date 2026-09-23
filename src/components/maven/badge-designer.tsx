@@ -100,7 +100,7 @@ export function BadgeDesigner() {
     [currentEditionId, refreshKey],
   );
 
-  // gerçek veriyle önizleme — katılımcılar (person + kayıt + rozet + roller dahil)
+  // gerçek veriyle önizleme — katılımcılar (person + kayıt + yaka kartı + roller dahil)
   const { data: participations } = useApi<ParticipationRow[]>(
     () => (currentEditionId ? listEntity<ParticipationRow>("participations", { editionId: currentEditionId, limit: 30 }) : Promise.resolve([])),
     [currentEditionId, refreshKey],
@@ -399,7 +399,7 @@ export function BadgeDesigner() {
 
       <div className="grid gap-4 lg:grid-cols-12">
         {/* SOL — tasarım listesi */}
-        <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none lg:col-span-3">
+        <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none min-w-0 lg:col-span-3">
           <SectionCard title="Tasarımlar" desc="edisyon bazlı kayıtlı yaka kartı şablonları">
             {loading ? <Loading rows={4} /> : error ? (
               <p className="text-xs text-rose-600">{error}</p>
@@ -492,7 +492,7 @@ export function BadgeDesigner() {
         </div>
 
         {/* ORTA — kanvas */}
-        <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none lg:col-span-5" style={{ animationDelay: "60ms" }}>
+        <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none min-w-0 lg:col-span-5" style={{ animationDelay: "60ms" }}>
           <SectionCard
             title="Kanvas"
             desc={draft ? `${draft.widthMm + draft.bleedMm * 2}×${draft.heightMm + draft.bleedMm * 2} mm (baskı payı dahil kesim) · ızgara: 5 mm` : "tasarım seçin"}
@@ -598,7 +598,7 @@ export function BadgeDesigner() {
         </div>
 
         {/* SAĞ — özellik paneli */}
-        <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none lg:col-span-4" style={{ animationDelay: "120ms" }}>
+        <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none min-w-0 lg:col-span-4" style={{ animationDelay: "120ms" }}>
           {/* tasarım özellikleri */}
           <SectionCard title="Tasarım Özellikleri" desc="ölçüler mm cinsindendir">
             {!draft ? <p className="text-xs text-muted-foreground">Tasarım seçin.</p> : (

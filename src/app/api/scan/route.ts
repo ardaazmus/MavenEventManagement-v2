@@ -1,7 +1,7 @@
 // /api/scan — Onsite tarama motoru (§42, §07 Onsite kontrol)
 // Kurallar:
 // - İlk geçerli ENTRY → katılım CHECKED_IN; tekrar tarama RESCAN_WARNING, geçmiş silinmez
-// - Geçersiz rozet/iptal → DENIED + manuel istisna gerekçesi
+// - Geçersiz yaka kartı/iptal → DENIED + manuel istisna gerekçesi
 // - Oturum girişi etkinlik girişinden ayrı sayılır
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
       (code.startsWith("part_") ? await db.eventParticipation.findUnique({ where: { id: code.slice(5) }, include: { person: true, registrations: { include: { category: true } }, badgeInstances: { include: { profile: true } } } }) : null);
 
     if (!participation) {
-      return NextResponse.json({ result: "DENIED", reason: "Böyle bir rozet/kod bulunamadı. Sahada yeni kayıt yönlendirmesi yapın.", tone: "red" }, { status: 404 });
+      return NextResponse.json({ result: "DENIED", reason: "Böyle bir yaka kartı/kod bulunamadı. Sahada yeni kayıt yönlendirmesi yapın.", tone: "red" }, { status: 404 });
     }
 
     const person = participation.person;
@@ -38,8 +38,8 @@ export async function POST(req: NextRequest) {
 
     // engel kontrolleri
     const blockers: string[] = [];
-    if (credential && credential.status !== "ACTIVE") blockers.push(`Rozet Credential durumu: ${credential.status}`);
-    if (badge?.status === "VOID") blockers.push("Rozet geçersiz kılınmış (VOID)");
+    if (credential && credential.status !== "ACTIVE") blockers.push(`Yaka Kartı Credential durumu: ${credential.status}`);
+    if (badge?.status === "VOID") blockers.push("Yaka Kartı geçersiz kılınmış (VOID)");
     if (reg && ["CANCELLED", "REJECTED"].includes(reg.status)) blockers.push(`Kayıt durumu: ${reg.status}`);
 
     if (blockers.length > 0 && !forceReason) {

@@ -1,0 +1,750 @@
+     1→"use client";
+     2→// Medya Arşivi — klasör mimarisi + etkinlik içi izolasyon (düşünce bulutu 3)
+     3→// İki panelli: solda klasör ağacı (self-ref parentId), sağda varlık ızgarası + yükleme/detay.
+     4→import { useEffect, useMemo, useRef, useState } from "react";
+     5→import { listEntity, apiSend } from "@/lib/client";
+     6→import { useApp } from "@/lib/store";
+     7→import { PageHeader, SectionCard, EmptyState, Loading, ErrorState, useApi, Chip, KpiCard } from "../bits";
+     8→import { MEDIA_KIND, label } from "@/lib/constants";
+     9→import { Button } from "@/components/ui/button";
+    10→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+    11→import {
+    12→  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+    13→  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+    14→} from "@/components/ui/alert-dialog";
+    15→import { Input } from "@/components/ui/input";
+    16→import { Label } from "@/components/ui/label";
+    17→import { Textarea } from "@/components/ui/textarea";
+    18→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    19→import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+    20→import { useToast } from "@/hooks/use-toast";
+    21→import { cn } from "@/lib/utils";
+    22→import * as Icons from "lucide-react";
+    23→
+    24→interface MediaFolderRow {
+    25→  id: string; editionId: string; parentId?: string | null; name: string; color?: string | null;
+    26→  systemKey?: string | null; description?: string | null; createdAt: string;
+    27→}
+    28→interface MediaAssetRow {
+    29→  id: string; editionId: string; folderId?: string | null; name: string; kind: string; mimeType?: string | null;
+    30→  sizeKb?: number | null; externalUrl?: string | null; dataUrl?: string | null; tags?: string | null;
+    31→  notes?: string | null; linkedType?: string | null; linkedId?: string | null; uploadedBy?: string | null; createdAt: string;
+    32→}
+    33→interface FolderNode { folder: MediaFolderRow; children: FolderNode[]; count: number; depth: number }
+    34→
+    35→// klasör renk dili — nokta + seçili zemin
+    36→const FOLDER_COLORS: Record<string, { dot: string; active: string }> = {
+    37→  teal: { dot: "bg-teal-500", active: "border-teal-300 bg-teal-500/10 text-teal-900" },
+    38→  amber: { dot: "bg-amber-500", active: "border-amber-300 bg-amber-500/10 text-amber-900" },
+    39→  violet: { dot: "bg-violet-500", active: "border-violet-300 bg-violet-500/10 text-violet-900" },
+    40→  rose: { dot: "bg-rose-500", active: "border-rose-300 bg-rose-500/10 text-rose-900" },
+    41→  emerald: { dot: "bg-emerald-500", active: "border-emerald-300 bg-emerald-500/10 text-emerald-900" },
+    42→  neutral: { dot: "bg-neutral-400", active: "border-neutral-300 bg-muted text-foreground" },
+    43→};
+    44→const COLOR_PALETTE = ["teal", "amber", "violet", "rose", "emerald", "neutral"];
+    45→
+    46→const SYSTEM_ICON: Record<string, keyof typeof Icons> = { PHOTOS: "Camera", LOGOS: "PenTool", DOCUMENTS: "FileStack", PRESENTATIONS: "Presentation", VIDEOS: "Clapperboard" };
+    47→
+    48→const KIND_ICON: Record<string, keyof typeof Icons> = {
+    49→  IMAGE: "Image", VIDEO: "Clapperboard", AUDIO: "AudioLines", DOCUMENT: "FileText",
+    50→  SPREADSHEET: "Sheet", ARCHIVE: "Archive", FONT: "Type", OTHER: "File",
+    51→};
+    52→const KIND_TONE: Record<string, string> = {
+    53→  IMAGE: "bg-teal-500/10 text-teal-600", VIDEO: "bg-violet-500/10 text-violet-600",
+    54→  AUDIO: "bg-amber-500/10 text-amber-600", DOCUMENT: "bg-rose-500/10 text-rose-600",
+    55→  SPREADSHEET: "bg-emerald-500/10 text-emerald-600", ARCHIVE: "bg-neutral-500/10 text-neutral-600",
+    56→  FONT: "bg-violet-500/10 text-violet-600", OTHER: "bg-muted text-muted-foreground",
+    57→};
+    58→
+    59→const MAX_DATAURL_KB = 400;
+    60→
+    61→function fmtSize(sizeKb?: number | null): string {
+    62→  if (!sizeKb) return "—";
+    63→  return sizeKb >= 1024 ? `${(sizeKb / 1024).toFixed(1).replace(".", ",")} MB` : `${sizeKb} KB`;
+    64→}
+    65→
+    66→// mime → MEDIA_KIND (uzantı yedeğiyle)
+    67→function kindFromMime(mime: string, fileName: string): string {
+    68→  const m = (mime || "").toLowerCase();
+    69→  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+    70→  if (m.startsWith("image/")) return "IMAGE";
+    71→  if (m.startsWith("video/")) return "VIDEO";
+    72→  if (m.startsWith("audio/")) return "AUDIO";
+    73→  if (m.includes("spreadsheet") || m.includes("excel") || m.includes("csv")) return "SPREADSHEET";
+    74→  if (m.includes("pdf") || m.includes("word") || m.includes("presentation") || m.startsWith("text/")) return "DOCUMENT";
+    75→  if (m.includes("zip") || m.includes("compressed") || m.includes("tar") || m.includes("rar") || m.includes("7z") || m.includes("octet-stream")) return "ARCHIVE";
+    76→  if (m.startsWith("font/")) return "FONT";
+    77→  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "avif"].includes(ext)) return "IMAGE";
+    78→  if (["mp4", "mov", "webm", "avi", "mkv"].includes(ext)) return "VIDEO";
+    79→  if (["mp3", "wav", "m4a", "aac"].includes(ext)) return "AUDIO";
+    80→  if (["pdf", "doc", "docx", "ppt", "pptx", "txt", "md"].includes(ext)) return "DOCUMENT";
+    81→  if (["xls", "xlsx", "csv", "ods"].includes(ext)) return "SPREADSHEET";
+    82→  if (["zip", "rar", "7z", "tar", "gz", "dwg"].includes(ext)) return "ARCHIVE";
+    83→  if (["ttf", "otf", "woff", "woff2"].includes(ext)) return "FONT";
+    84→  return "OTHER";
+    85→}
+    86→
+    87→export function MediaArchiveView() {
+    88→  const { currentEditionId, editions, bump, refreshKey } = useApp();
+    89→  const { toast } = useToast();
+    90→
+    91→  const { data: folders, error: foldersError, reload: reloadFolders, loading: foldersLoading } = useApi<MediaFolderRow[]>(
+    92→    () => listEntity<MediaFolderRow>("media-folders", { editionId: currentEditionId ?? undefined }),
+    93→    [currentEditionId, refreshKey],
+    94→  );
+    95→  const { data: assets, error: assetsError, reload: reloadAssets, loading: assetsLoading } = useApi<MediaAssetRow[]>(
+    96→    () => listEntity<MediaAssetRow>("media-assets", { editionId: currentEditionId ?? undefined, limit: 500 }),
+    97→    [currentEditionId, refreshKey],
+    98→  );
+    99→
+   100→  const [selectedId, setSelectedId] = useState<string | null>(null); // null = "Tümü"
+   101→  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+   102→  const initExpanded = useRef(false);
+   103→  useEffect(() => {
+   104→    if (folders && !initExpanded.current) {
+   105→      setExpanded(new Set(folders.map((f) => f.id)));
+   106→      initExpanded.current = true;
+   107→    }
+   108→  }, [folders]);
+   109→
+   110→  const [search, setSearch] = useState("");
+   111→
+   112→  // ── diyaloklar
+   113→  const [folderDialog, setFolderDialog] = useState<{ mode: "create" | "edit"; parent: MediaFolderRow | null; target?: MediaFolderRow } | null>(null);
+   114→  const [folderForm, setFolderForm] = useState({ name: "", color: "teal" });
+   115→  const [deleteFolder, setDeleteFolder] = useState<MediaFolderRow | null>(null);
+   116→  const [uploadOpen, setUploadOpen] = useState(false);
+   117→  const [uploadMode, setUploadMode] = useState<"file" | "link">("file");
+   118→  const [uploadForm, setUploadForm] = useState({ name: "", kind: "OTHER", folderId: "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 });
+   119→  const [busy, setBusy] = useState(false);
+   120→  const [detail, setDetail] = useState<MediaAssetRow | null>(null);
+   121→  const [detailForm, setDetailForm] = useState({ tags: "", notes: "", folderId: "__none__" });
+   122→
+   123→  const editionName = editions.find((e) => e.id === currentEditionId)?.name ?? "bu etkinliğin";
+   124→
+   125→  // ── klasör ağacı (parentId → self-ref) + klasör başına varlık sayısı
+   126→  const tree = useMemo<FolderNode[]>(() => {
+   127→    const list = folders ?? [];
+   128→    const byId = new Map<string, FolderNode>();
+   129→    for (const f of list) byId.set(f.id, { folder: f, children: [], count: 0, depth: 0 });
+   130→    const roots: FolderNode[] = [];
+   131→    for (const node of byId.values()) {
+   132→      const parent = node.folder.parentId ? byId.get(node.folder.parentId) : undefined;
+   133→      if (parent) { parent.children.push(node); node.depth = parent.depth + 1; } else roots.push(node);
+   134→    }
+   135→    const counts = new Map<string, number>();
+   136→    for (const a of assets ?? []) {
+   137→      if (a.folderId) counts.set(a.folderId, (counts.get(a.folderId) ?? 0) + 1);
+   138→    }
+   139→    const walk = (n: FolderNode): number => {
+   140→      n.count = counts.get(n.folder.id) ?? 0;
+   141→      for (const c of n.children) n.count += walk(c);
+   142→      return n.count;
+   143→    };
+   144→    roots.forEach(walk);
+   145→    const sortRec = (nodes: FolderNode[]) => {
+   146→      nodes.sort((a, b) => a.folder.name.localeCompare(b.folder.name, "tr"));
+   147→      nodes.forEach((n) => sortRec(n.children));
+   148→    };
+   149→    sortRec(roots);
+   150→    return roots;
+   151→  }, [folders, assets]);
+   152→
+   153→  // seçili klasörün alt dahil tüm varlıkları (klasör = kendi + torunları)
+   154→  const descendantIds = useMemo(() => {
+   155→    const scope = new Set<string>();
+   156→    if (!selectedId) return scope; // boş = tümü
+   157→    const walk = (n: FolderNode): boolean => {
+   158→      if (n.folder.id === selectedId) {
+   159→        const collect = (m: FolderNode) => { scope.add(m.folder.id); m.children.forEach(collect); };
+   160→        collect(n);
+   161→        return true;
+   162→      }
+   163→      return n.children.some(walk);
+   164→    };
+   165→    tree.forEach((n) => walk(n));
+   166→    return scope;
+   167→  }, [tree, selectedId]);
+   168→
+   169→  const visibleAssets = useMemo(() => {
+   170→    const q = search.trim().toLowerCase();
+   171→    return (assets ?? []).filter((a) => {
+   172→      if (selectedId && !descendantIds.has(a.folderId ?? "")) return false;
+   173→      if (!q) return true;
+   174→      return (a.name ?? "").toLowerCase().includes(q) || (a.tags ?? "").toLowerCase().includes(q);
+   175→    });
+   176→  }, [assets, search, selectedId, descendantIds]);
+   177→
+   178→  const flatFolders = useMemo(() => {
+   179→    const out: { f: MediaFolderRow; depth: number }[] = [];
+   180→    const walk = (n: FolderNode) => { out.push({ f: n.folder, depth: n.depth }); n.children.forEach(walk); };
+   181→    tree.forEach(walk);
+   182→    return out;
+   183→  }, [tree]);
+   184→
+   185→  const imageCount = (assets ?? []).filter((a) => a.kind === "IMAGE").length;
+   186→  const videoCount = (assets ?? []).filter((a) => a.kind === "VIDEO").length;
+   187→  const selectedFolder = (folders ?? []).find((f) => f.id === selectedId) ?? null;
+   188→
+   189→  // ── aksiyonlar
+   190→  const toggleExpand = (id: string) => {
+   191→    setExpanded((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+   192→  };
+   193→
+   194→  const saveFolder = async () => {
+   195→    if (!folderDialog || !folderForm.name.trim() || !currentEditionId) return;
+   196→    setBusy(true);
+   197→    try {
+   198→      if (folderDialog.mode === "create") {
+   199→        await apiSend("/api/media-folders", "POST", {
+   200→          editionId: currentEditionId, parentId: folderDialog.parent?.id ?? null,
+   201→          name: folderForm.name.trim(), color: folderForm.color,
+   202→        });
+   203→        toast({ title: "Klasör eklendi", description: `"${folderForm.name.trim()}" ağaca yerleşti.` });
+   204→      } else if (folderDialog.target) {
+   205→        await apiSend(`/api/media-folders/${folderDialog.target.id}`, "PUT", { name: folderForm.name.trim(), color: folderForm.color });
+   206→        toast({ title: "Klasör güncellendi" });
+   207→      }
+   208→      setFolderDialog(null);
+   209→      reloadFolders(); bump();
+   210→    } catch (e) {
+   211→      toast({ title: "Klasör kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   212→    } finally { setBusy(false); }
+   213→  };
+   214→
+   215→  const removeFolder = async () => {
+   216→    if (!deleteFolder) return;
+   217→    setBusy(true);
+   218→    try {
+   219→      await apiSend(`/api/media-folders/${deleteFolder.id}`, "DELETE");
+   220→      toast({ title: "Klasör silindi", description: "İçindeki varlıklar silinmedi — klasörsüz olarak 'Tümü' altında kalır." });
+   221→      if (selectedId === deleteFolder.id) setSelectedId(null);
+   222→      setDeleteFolder(null);
+   223→      reloadFolders(); reloadAssets(); bump();
+   224→    } catch (e) {
+   225→      toast({ title: "Silinemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   226→    } finally { setBusy(false); }
+   227→  };
+   228→
+   229→  const onPickFile = (file: File) => {
+   230→    const kind = kindFromMime(file.type, file.name);
+   231→    const sizeKb = Math.round(file.size / 1024);
+   232→    setUploadForm((prev) => ({
+   233→      ...prev,
+   234→      name: prev.name || file.name.replace(/\.[^.]+$/, ""),
+   235→      kind,
+   236→      mimeType: file.type || "application/octet-stream",
+   237→      sizeKb,
+   238→      dataUrl: "",
+   239→    }));
+   240→    if (file.size <= MAX_DATAURL_KB * 1024) {
+   241→      const reader = new FileReader();
+   242→      reader.onload = () => setUploadForm((prev) => ({ ...prev, dataUrl: typeof reader.result === "string" ? reader.result : "" }));
+   243→      reader.readAsDataURL(file);
+   244→    } else {
+   245→      toast({ title: "Dosya 400KB sınırı aşılıyor", description: "400KB üstü dosyalar için bağlantı modunu kullanın — bağlantı ekleme moduna geçildi.", variant: "destructive" });
+   246→      setUploadMode("link");
+   247→    }
+   248→  };
+   249→
+   250→  const uploadAsset = async () => {
+   251→    if (!uploadForm.name.trim() || !currentEditionId) return;
+   252→    if (uploadMode === "link" && !uploadForm.externalUrl.trim()) return;
+   253→    setBusy(true);
+   254→    try {
+   255→      await apiSend("/api/media-assets", "POST", {
+   256→        editionId: currentEditionId,
+   257→        folderId: uploadForm.folderId === "__none__" ? null : uploadForm.folderId,
+   258→        name: uploadForm.name.trim(), kind: uploadForm.kind,
+   259→        mimeType: uploadForm.mimeType || null,
+   260→        sizeKb: uploadForm.sizeKb || null,
+   261→        externalUrl: uploadMode === "link" ? uploadForm.externalUrl.trim() : null,
+   262→        dataUrl: uploadMode === "file" && uploadForm.dataUrl ? uploadForm.dataUrl : null,
+   263→        tags: uploadForm.tags.trim() || null,
+   264→        notes: uploadForm.notes.trim() || null,
+   265→        uploadedBy: "Yönetici",
+   266→      });
+   267→      toast({ title: "Varlık arşive eklendi", description: `${uploadForm.name.trim()} · ${label(MEDIA_KIND, uploadForm.kind)}` });
+   268→      setUploadOpen(false);
+   269→      setUploadForm({ name: "", kind: "OTHER", folderId: selectedId ?? "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 });
+   270→      reloadAssets(); bump();
+   271→    } catch (e) {
+   272→      toast({ title: "Yüklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   273→    } finally { setBusy(false); }
+   274→  };
+   275→
+   276→  const openDetail = (a: MediaAssetRow) => {
+   277→    setDetail(a);
+   278→    setDetailForm({ tags: a.tags ?? "", notes: a.notes ?? "", folderId: a.folderId ?? "__none__" });
+   279→  };
+   280→
+   281→  const saveDetail = async () => {
+   282→    if (!detail) return;
+   283→    setBusy(true);
+   284→    try {
+   285→      await apiSend(`/api/media-assets/${detail.id}`, "PUT", {
+   286→        tags: detailForm.tags.trim() || null,
+   287→        notes: detailForm.notes.trim() || null,
+   288→        folderId: detailForm.folderId === "__none__" ? null : detailForm.folderId,
+   289→      });
+   290→      toast({ title: "Varlık güncellendi", description: detailForm.folderId !== detail.folderId ? "Varlık taşındı." : "Etiket/not kaydedildi." });
+   291→      setDetail(null);
+   292→      reloadAssets(); bump();
+   293→    } catch (e) {
+   294→      toast({ title: "Kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   295→    } finally { setBusy(false); }
+   296→  };
+   297→
+   298→  const deleteAsset = async () => {
+   299→    if (!detail) return;
+   300→    setBusy(true);
+   301→    try {
+   302→      await apiSend(`/api/media-assets/${detail.id}`, "DELETE");
+   303→      toast({ title: "Varlık arşivden kaldırıldı", description: "Bu bir arşiv kaydıdır — kaynak depodaki dosyayı etkilemez." });
+   304→      setDetail(null);
+   305→      reloadAssets(); bump();
+   306→    } catch (e) {
+   307→      toast({ title: "Silinemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   308→    } finally { setBusy(false); }
+   309→  };
+   310→
+   311→  if (foldersLoading && !folders) return <Loading rows={6} />;
+   312→  if (foldersError) return <ErrorState message={foldersError} onRetry={reloadFolders} />;
+   313→
+   314→  // ── klasör ağacı satırı
+   315→  const renderNode = (node: FolderNode) => {
+   316→    const f = node.folder;
+   317→    const isOpen = expanded.has(f.id);
+   318→    const color = FOLDER_COLORS[f.color ?? "neutral"] ?? FOLDER_COLORS.neutral;
+   319→    const isActive = selectedId === f.id;
+   320→    const SysIcon = f.systemKey && SYSTEM_ICON[f.systemKey] ? (Icons[SYSTEM_ICON[f.systemKey]] as typeof Icons.Folder) : null;
+   321→    return (
+   322→      <div key={f.id} className="animate-in fade-in slide-in-from-left-1 fill-mode-backwards" style={{ animationDelay: `${Math.min(node.depth, 4) * 30}ms` }}>
+   323→        <div
+   324→          className={cn(
+   325→            "group flex items-center gap-1 rounded-lg border border-transparent px-1.5 py-1 transition-colors hover:bg-muted/60",
+   326→            isActive && cn("border", color.active),
+   327→          )}
+   328→        >
+   329→          <button
+   330→            type="button"
+   331→            onClick={() => toggleExpand(f.id)}
+   332→            aria-label={isOpen ? "Klasörü daralt" : "Klasörü genişlet"}
+   333→            className={cn("grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted", !node.children.length && "invisible")}
+   334→          >
+   335→            {isOpen ? <Icons.ChevronDown className="size-3.5" /> : <Icons.ChevronRight className="size-3.5" />}
+   336→          </button>
+   337→          <button
+   338→            type="button"
+   339→            onClick={() => setSelectedId(f.id)}
+   340→            className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left"
+   341→            aria-current={isActive ? "true" : undefined}
+   342→          >
+   343→            <span className={cn("size-2 shrink-0 rounded-full", color.dot)} aria-hidden />
+   344→            {SysIcon
+   345→              ? <SysIcon className="size-3.5 shrink-0 text-muted-foreground" />
+   346→              : (isOpen && node.children.length ? <Icons.FolderOpen className="size-3.5 shrink-0 text-muted-foreground" /> : <Icons.Folder className="size-3.5 shrink-0 text-muted-foreground" />)}
+   347→            <span className="truncate text-[13px] font-medium">{f.name}</span>
+   348→            <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">{node.count}</span>
+   349→          </button>
+   350→          <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+   351→            <TooltipLite label="Alt klasör ekle">
+   352→              <button type="button" aria-label="Alt klasör ekle" onClick={() => { setFolderDialog({ mode: "create", parent: f }); setFolderForm({ name: "", color: f.color ?? "teal" }); }} className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground">
+   353→                <Icons.Plus className="size-3" />
+   354→              </button>
+   355→            </TooltipLite>
+   356→            <TooltipLite label="Yeniden adlandır">
+   357→              <button type="button" aria-label="Klasörü yeniden adlandır" onClick={() => { setFolderDialog({ mode: "edit", parent: null, target: f }); setFolderForm({ name: f.name, color: f.color ?? "teal" }); }} className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground">
+   358→                <Icons.Pencil className="size-3" />
+   359→              </button>
+   360→            </TooltipLite>
+   361→            <TooltipLite label="Klasörü sil">
+   362→              <button type="button" aria-label="Klasörü sil" onClick={() => setDeleteFolder(f)} className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-rose-50 hover:text-rose-600">
+   363→                <Icons.Trash2 className="size-3" />
+   364→              </button>
+   365→            </TooltipLite>
+   366→          </div>
+   367→        </div>
+   368→        {isOpen && node.children.length > 0 && (
+   369→          <div className="ml-[13px] border-l pl-1.5">{node.children.map(renderNode)}</div>
+   370→        )}
+   371→      </div>
+   372→    );
+   373→  };
+   374→
+   375→  return (
+   376→    <div className="space-y-5">
+   377→      <PageHeader title="Medya Arşivi" desc="Klasör mimarisi ve etkinlik içi izolasyon — her varlık kendi edisyonunda arşivlenir.">
+   378→        <Button variant="outline" size="sm" onClick={() => { setFolderDialog({ mode: "create", parent: selectedFolder }); setFolderForm({ name: "", color: "teal" }); }}>
+   379→          <Icons.FolderPlus className="size-4" /> Yeni Klasör
+   380→        </Button>
+   381→        <Button size="sm" onClick={() => { setUploadMode("file"); setUploadForm({ name: "", kind: "OTHER", folderId: selectedId ?? "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 }); setUploadOpen(true); }}>
+   382→          <Icons.Upload className="size-4" /> Varlık Yükle
+   383→        </Button>
+   384→      </PageHeader>
+   385→
+   386→      {/* Üst KPI şeridi + etkinlik izolasyonu */}
+   387→      <div className="flex flex-wrap items-center gap-2">
+   388→        <Chip tone="teal"><Icons.ShieldCheck className="mr-1 inline size-3" /> Bu arşiv yalnızca {editionName} verilerini içerir — etkinlik izolasyonu</Chip>
+   389→      </div>
+   390→      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+   391→        <KpiCard label="Toplam Varlık" value={(assets ?? []).length} icon={<Icons.Files className="size-4" />} />
+   392→        <KpiCard label="Görsel" value={imageCount} tone="teal" icon={<Icons.Image className="size-4" />} />
+   393→        <KpiCard label="Video" value={videoCount} tone="violet" icon={<Icons.Clapperboard className="size-4" />} />
+   394→        <KpiCard label="Klasör" value={(folders ?? []).length} tone="amber" icon={<Icons.FolderOpen className="size-4" />} />
+   395→      </div>
+   396→
+   397→      {/* İki panel — lg altında üst üste */}
+   398→      <div className="grid items-start gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
+   399→        {/* SOL: klasör ağacı */}
+   400→        <SectionCard
+   401→          title="Klasörler"
+   402→          desc="iç içe mimari — seçili: Tümü"
+   403→          className="lg:sticky lg:top-4"
+   404→          action={<button type="button" aria-label="Kök klasör ekle" onClick={() => { setFolderDialog({ mode: "create", parent: null }); setFolderForm({ name: "", color: "teal" }); }} className="grid size-7 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"><Icons.Plus className="size-3.5" /></button>}
+   405→        >
+   406→          <div className="maven-scroll max-h-96 space-y-0.5 overflow-y-auto pr-1 lg:max-h-[480px]">
+   407→            <button
+   408→              type="button"
+   409→              onClick={() => setSelectedId(null)}
+   410→              className={cn(
+   411→                "flex w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left text-[13px] font-medium transition-colors hover:bg-muted/60",
+   412→                !selectedId && "border-teal-300 bg-teal-500/10 text-teal-900",
+   413→              )}
+   414→            >
+   415→              <Icons.Library className="size-3.5 text-muted-foreground" />
+   416→              Tümü
+   417→              <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{(assets ?? []).length}</span>
+   418→            </button>
+   419→            {tree.map(renderNode)}
+   420→            {(folders ?? []).length === 0 && (
+   421→              <p className="px-2 py-3 text-xs text-muted-foreground">Henüz klasör yok — sağ üstten ilk klasörü ekleyin.</p>
+   422→            )}
+   423→          </div>
+   424→        </SectionCard>
+   425→
+   426→        {/* SAĞ: varlık ızgarası */}
+   427→        <SectionCard
+   428→          title={selectedFolder ? selectedFolder.name : "Tüm Varlıklar"}
+   429→          desc={selectedFolder
+   430→            ? (selectedFolder.description ?? `${selectedFolder.systemKey ? "sistem klasörü · " : ""}klasör içeriği`)
+   431→            : "tüm klasörler ve klasörsüz varlıklar"}
+   432→          action={
+   433→            <div className="relative">
+   434→              <Icons.Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+   435→              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Ad veya etiket ara…" className="h-8 w-44 pl-8 text-xs sm:w-56" aria-label="Varlık ara" />
+   436→            </div>
+   437→          }
+   438→        >
+   439→          {assetsLoading && !assets ? <Loading rows={3} /> : assetsError ? <ErrorState message={assetsError} onRetry={reloadAssets} /> : visibleAssets.length === 0 ? (
+   440→            <EmptyState
+   441→              title={search ? "Aramaya uyan varlık yok" : "Bu klasörde varlık yok"}
+   442→              desc={search ? "Farklı bir ad/etiket deneyin." : "'Varlık Yükle' ile dosya bağlantısı ekleyin ya da küçük dosyaları doğrudan arşive gömün."}
+   443→            />
+   444→          ) : (
+   445→            <div className="maven-scroll grid max-h-[520px] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+   446→              {visibleAssets.map((a, i) => {
+   447→                const KIcon = (Icons[KIND_ICON[a.kind] ?? "File"] as typeof Icons.File);
+   448→                const tagList = (a.tags ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+   449→                return (
+   450→                  <button
+   451→                    key={a.id}
+   452→                    type="button"
+   453→                    onClick={() => openDetail(a)}
+   454→                    className="group animate-in flex flex-col gap-2 rounded-xl border bg-card p-3 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md fade-in slide-in-from-bottom-1 fill-mode-backwards focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+   455→                    style={{ animationDelay: `${Math.min(i, 9) * 40}ms` }}
+   456→                  >
+   457→                    <div className="flex items-start justify-between gap-2">
+   458→                      <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg transition-transform duration-200 group-hover:scale-110", KIND_TONE[a.kind] ?? KIND_TONE.OTHER)}>
+   459→                        <KIcon className="size-4" />
+   460→                      </span>
+   461→                      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label(MEDIA_KIND, a.kind)}</span>
+   462→                    </div>
+   463→                    <p className="truncate text-[13px] font-semibold" title={a.name}>{a.name}</p>
+   464→                    <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+   465→                      <span className="tabular-nums">{fmtSize(a.sizeKb)}</span>
+   466→                      {a.uploadedBy && <span>· {a.uploadedBy}</span>}
+   467→                      {a.linkedType && <Chip tone="violet">{a.linkedType}</Chip>}
+   468→                    </div>
+   469→                    {tagList.length > 0 && (
+   470→                      <div className="flex flex-wrap gap-1">
+   471→                        {tagList.slice(0, 3).map((t) => <Chip key={t}>{t}</Chip>)}
+   472→                        {tagList.length > 3 && <Chip>+{tagList.length - 3}</Chip>}
+   473→                      </div>
+   474→                    )}
+   475→                  </button>
+   476→                );
+   477→              })}
+   478→            </div>
+   479→          )}
+   480→        </SectionCard>
+   481→      </div>
+   482→
+   483→      {/* Klasör ekle/düzenle diyaloğu */}
+   484→      <Dialog open={Boolean(folderDialog)} onOpenChange={(o) => !o && setFolderDialog(null)}>
+   485→        <DialogContent className="sm:max-w-sm">
+   486→          <DialogHeader>
+   487→            <DialogTitle>{folderDialog?.mode === "edit" ? "Klasörü Yeniden Adlandır" : "Alt Klasör Ekle"}</DialogTitle>
+   488→            <DialogDescription>
+   489→              {folderDialog?.mode === "edit"
+   490→                ? (folderDialog?.target?.name ?? "")
+   491→                : `Üst klasör: ${folderDialog?.parent?.name ?? "Tümü (kök)"}`}
+   492→            </DialogDescription>
+   493→          </DialogHeader>
+   494→          <div className="space-y-4">
+   495→            <div className="space-y-1.5">
+   496→              <Label htmlFor="folder-name">Klasör adı</Label>
+   497→              <Input id="folder-name" value={folderForm.name} onChange={(e) => setFolderForm({ ...folderForm, name: e.target.value })} placeholder="örn. 2027 Basın Kiti" />
+   498→            </div>
+   499→            <div className="space-y-1.5">
+   500→              <Label>Renk</Label>
+   501→              <div className="flex flex-wrap gap-2">
+   502→                {COLOR_PALETTE.map((c) => (
+   503→                  <button
+   504→                    key={c}
+   505→                    type="button"
+   506→                    aria-label={`Renk: ${c}`}
+   507→                    aria-pressed={folderForm.color === c}
+   508→                    onClick={() => setFolderForm({ ...folderForm, color: c })}
+   509→                    className={cn(
+   510→                      "grid size-8 place-items-center rounded-lg border transition-all",
+   511→                      folderForm.color === c ? "border-foreground/40 ring-2 ring-ring/40" : "border-transparent hover:border-border",
+   512→                    )}
+   513→                  >
+   514→                    <span className={cn("size-4 rounded-full", FOLDER_COLORS[c].dot)} />
+   515→                  </button>
+   516→                ))}
+   517→              </div>
+   518→            </div>
+   519→          </div>
+   520→          <DialogFooter>
+   521→            <Button variant="outline" onClick={() => setFolderDialog(null)}>Vazgeç</Button>
+   522→            <Button onClick={saveFolder} disabled={busy || !folderForm.name.trim()}>{busy ? "Kaydediliyor…" : "Kaydet"}</Button>
+   523→          </DialogFooter>
+   524→        </DialogContent>
+   525→      </Dialog>
+   526→
+   527→      {/* Klasör silme onayı — varlıklar klasörsüz kalır */}
+   528→      <AlertDialog open={Boolean(deleteFolder)} onOpenChange={(o) => !o && setDeleteFolder(null)}>
+   529→        <AlertDialogContent>
+   530→          <AlertDialogHeader>
+   531→            <AlertDialogTitle>"{deleteFolder?.name}" silinsin mi?</AlertDialogTitle>
+   532→            <AlertDialogDescription>
+   533→              Klasör ağaçtan kaldırılır. İçindeki varlıklar <b>silinmez</b> — klasörsüz olarak &quot;Tümü&quot; altında arşivlenmeye devam eder. Alt klasörler de silinir.
+   534→            </AlertDialogDescription>
+   535→          </AlertDialogHeader>
+   536→          <AlertDialogFooter>
+   537→            <AlertDialogCancel>Vazgeç</AlertDialogCancel>
+   538→            <AlertDialogAction onClick={removeFolder} className="bg-rose-600 text-white hover:bg-rose-700">{busy ? "Siliniyor…" : "Klasörü Sil"}</AlertDialogAction>
+   539→          </AlertDialogFooter>
+   540→        </AlertDialogContent>
+   541→      </AlertDialog>
+   542→
+   543→      {/* Yükleme diyaloğu — dosya gömme / bağlantı ekleme */}
+   544→      <Dialog open={uploadOpen} onOpenChange={(o) => !o && setUploadOpen(false)}>
+   545→        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-lg">
+   546→          <DialogHeader>
+   547→            <DialogTitle>Varlık Yükle</DialogTitle>
+   548→            <DialogDescription>
+   549→              ≤400KB dosyalar arşive gömülür (dataURL); büyük dosyalar için bağlantı ekleyin.
+   550→            </DialogDescription>
+   551→          </DialogHeader>
+   552→          <div className="space-y-4">
+   553→            <div className="grid grid-cols-2 gap-1 rounded-lg border bg-muted/40 p-1" role="tablist" aria-label="Yükleme modu">
+   554→              {(["file", "link"] as const).map((m) => (
+   555→                <button
+   556→                  key={m}
+   557→                  type="button"
+   558→                  role="tab"
+   559→                  aria-selected={uploadMode === m}
+   560→                  onClick={() => setUploadMode(m)}
+   561→                  className={cn(
+   562→                    "flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+   563→                    uploadMode === m ? "bg-card shadow-sm" : "text-muted-foreground hover:text-foreground",
+   564→                  )}
+   565→                >
+   566→                  {m === "file" ? <><Icons.HardDriveUpload className="size-3.5" /> Dosya yükle</> : <><Icons.Link2 className="size-3.5" /> Bağlantı ekle</>}
+   567→                </button>
+   568→              ))}
+   569→            </div>
+   570→
+   571→            {uploadMode === "file" ? (
+   572→              <div className="space-y-1.5">
+   573→                <Label htmlFor="asset-file">Dosya seç</Label>
+   574→                <Input
+   575→                  id="asset-file"
+   576→                  type="file"
+   577→                  accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.zip,.rar,.7z,.dwg,.ttf,.otf"
+   578→                  onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); }}
+   579→                  className="file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-0.5 file:text-xs"
+   580→                />
+   581→                <p className="text-[11px] text-muted-foreground">
+   582→                  {uploadForm.sizeKb > 0 && <>Seçildi: {fmtSize(uploadForm.sizeKb)} · {uploadForm.mimeType} · {uploadForm.dataUrl ? "arşive gömülecek ✓" : "bağlantı modu önerilir"}</>}
+   583→                  {uploadForm.sizeKb === 0 && "Görsel, video, belge, arşiv — mime tipinden tür otomatik tanınır."}
+   584→                </p>
+   585→              </div>
+   586→            ) : (
+   587→              <div className="space-y-1.5">
+   588→                <Label htmlFor="asset-url">Dış bağlantı</Label>
+   589→                <Input id="asset-url" value={uploadForm.externalUrl} onChange={(e) => setUploadForm({ ...uploadForm, externalUrl: e.target.value })} placeholder="https://assets.ornek.com/dosya.pdf" />
+   590→                <p className="text-[11px] text-muted-foreground">CDN, bulut depolama veya varsa kurum sunucusu adresi.</p>
+   591→              </div>
+   592→            )}
+   593→
+   594→            <div className="grid gap-3 sm:grid-cols-2">
+   595→              <div className="space-y-1.5">
+   596→                <Label htmlFor="asset-name">Ad</Label>
+   597→                <Input id="asset-name" value={uploadForm.name} onChange={(e) => setUploadForm({ ...uploadForm, name: e.target.value })} placeholder="dosya adından otomatik" />
+   598→              </div>
+   599→              <div className="space-y-1.5">
+   600→                <Label>Tür</Label>
+   601→                <Select value={uploadForm.kind} onValueChange={(v) => setUploadForm({ ...uploadForm, kind: v })}>
+   602→                  <SelectTrigger aria-label="Varlık türü"><SelectValue /></SelectTrigger>
+   603→                  <SelectContent>{Object.entries(MEDIA_KIND).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+   604→                </Select>
+   605→              </div>
+   606→              <div className="space-y-1.5">
+   607→                <Label>Klasör</Label>
+   608→                <Select value={uploadForm.folderId} onValueChange={(v) => setUploadForm({ ...uploadForm, folderId: v })}>
+   609→                  <SelectTrigger aria-label="Hedef klasör"><SelectValue /></SelectTrigger>
+   610→                  <SelectContent>
+   611→                    <SelectItem value="__none__">Klasörsüz (Tümü)</SelectItem>
+   612→                    {flatFolders.map(({ f, depth }) => (
+   613→                      <SelectItem key={f.id} value={f.id}>{depth > 0 ? `${"— ".repeat(depth)}${f.name}` : f.name}</SelectItem>
+   614→                    ))}
+   615→                  </SelectContent>
+   616→                </Select>
+   617→              </div>
+   618→              <div className="space-y-1.5">
+   619→                <Label htmlFor="asset-tags">Etiketler</Label>
+   620→                <Input id="asset-tags" value={uploadForm.tags} onChange={(e) => setUploadForm({ ...uploadForm, tags: e.target.value })} placeholder="virgülle: logo, basın" />
+   621→              </div>
+   622→              <div className="space-y-1.5 sm:col-span-2">
+   623→                <Label htmlFor="asset-notes">Notlar</Label>
+   624→                <Textarea id="asset-notes" value={uploadForm.notes} onChange={(e) => setUploadForm({ ...uploadForm, notes: e.target.value })} rows={2} placeholder="kullanım amacı, lisans, telif…" />
+   625→              </div>
+   626→            </div>
+   627→          </div>
+   628→          <DialogFooter>
+   629→            <Button variant="outline" onClick={() => setUploadOpen(false)}>Vazgeç</Button>
+   630→            <Button onClick={uploadAsset} disabled={busy || !uploadForm.name.trim() || (uploadMode === "link" && !uploadForm.externalUrl.trim())}>
+   631→              {busy ? "Ekleniyor…" : "Arşive Ekle"}
+   632→            </Button>
+   633→          </DialogFooter>
+   634→        </DialogContent>
+   635→      </Dialog>
+   636→
+   637→      {/* Varlık detay diyaloğu */}
+   638→      <Dialog open={Boolean(detail)} onOpenChange={(o) => !o && setDetail(null)}>
+   639→        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-lg">
+   640→          <DialogHeader>
+   641→            <DialogTitle className="flex items-center gap-2 pr-6">
+   642→              {(() => { const KIcon = (Icons[KIND_ICON[detail?.kind ?? "OTHER"] ?? "File"] as typeof Icons.File); return <KIcon className="size-4 text-muted-foreground" />; })()}
+   643→              <span className="truncate">{detail?.name}</span>
+   644→            </DialogTitle>
+   645→            <DialogDescription>{label(MEDIA_KIND, detail?.kind)} · {fmtSize(detail?.sizeKb)}{detail?.uploadedBy ? ` · ${detail.uploadedBy}` : ""}{detail?.createdAt ? ` · ${new Date(detail.createdAt).toLocaleDateString("tr-TR")}` : ""}</DialogDescription>
+   646→          </DialogHeader>
+   647→
+   648→          {detail && (
+   649→            <div className="space-y-4">
+   650→              {/* önizleme */}
+   651→              <div className="grid min-h-36 place-items-center overflow-hidden rounded-lg border bg-muted/30 p-3">
+   652→                {detail.dataUrl && detail.dataUrl.startsWith("data:image") ? (
+   653→                  <img src={detail.dataUrl} alt={detail.name} className="max-h-64 rounded object-contain" />
+   654→                ) : detail.kind === "IMAGE" && detail.externalUrl ? (
+   655→                  <ExternalImage src={detail.externalUrl} alt={detail.name} />
+   656→                ) : detail.dataUrl && detail.dataUrl.startsWith("data:") ? (
+   657→                  <a href={detail.dataUrl} download={detail.name} className="flex flex-col items-center gap-2 text-xs font-medium text-teal-700 hover:underline">
+   658→                    <Icons.FileDown className="size-8" /> Gömülü dosyayı indir
+   659→                  </a>
+   660→                ) : detail.externalUrl ? (
+   661→                  detail.kind === "VIDEO" ? (
+   662→                    <a href={detail.externalUrl} target="_blank" rel="noreferrer" className="flex flex-col items-center gap-2 text-xs font-medium text-violet-700 hover:underline">
+   663→                      <Icons.Clapperboard className="size-8" /> Videoyu dış bağlantıda aç
+   664→                    </a>
+   665→                  ) : (
+   666→                    <a href={detail.externalUrl} target="_blank" rel="noreferrer" className="flex flex-col items-center gap-2 text-xs font-medium text-teal-700 hover:underline">
+   667→                      <Icons.FileDown className="size-8" /> Belgeyi indir / aç
+   668→                    </a>
+   669→                  )
+   670→                ) : (
+   671→                  <div className="flex flex-col items-center gap-1.5 text-muted-foreground">
+   672→                    <Icons.FileQuestion className="size-8" />
+   673→                    <span className="text-xs">Önizleme yok — gömülü içerik veya bağlantı ekleyin</span>
+   674→                  </div>
+   675→                )}
+   676→              </div>
+   677→
+   678→              <div className="grid gap-3 sm:grid-cols-2">
+   679→                <div className="space-y-1.5 sm:col-span-2">
+   680→                  <Label htmlFor="detail-folder">Klasöre taşı</Label>
+   681→                  <Select value={detailForm.folderId} onValueChange={(v) => setDetailForm({ ...detailForm, folderId: v })}>
+   682→                    <SelectTrigger aria-label="Klasör seç"><SelectValue /></SelectTrigger>
+   683→                    <SelectContent>
+   684→                      <SelectItem value="__none__">Klasörsüz (Tümü)</SelectItem>
+   685→                      {flatFolders.map(({ f, depth }) => (
+   686→                        <SelectItem key={f.id} value={f.id}>{depth > 0 ? `${"— ".repeat(depth)}${f.name}` : f.name}</SelectItem>
+   687→                      ))}
+   688→                    </SelectContent>
+   689→                  </Select>
+   690→                </div>
+   691→                <div className="space-y-1.5 sm:col-span-2">
+   692→                  <Label htmlFor="detail-tags">Etiketler</Label>
+   693→                  <Input id="detail-tags" value={detailForm.tags} onChange={(e) => setDetailForm({ ...detailForm, tags: e.target.value })} placeholder="virgülle ayırın" />
+   694→                </div>
+   695→                <div className="space-y-1.5 sm:col-span-2">
+   696→                  <Label htmlFor="detail-notes">Notlar</Label>
+   697→                  <Textarea id="detail-notes" value={detailForm.notes} onChange={(e) => setDetailForm({ ...detailForm, notes: e.target.value })} rows={2} />
+   698→                </div>
+   699→              </div>
+   700→
+   701→              {detail.externalUrl && (
+   702→                <p className="truncate rounded-md border bg-muted/40 px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground" title={detail.externalUrl}>
+   703→                  <Icons.Link2 className="mr-1 inline size-3" />{detail.externalUrl}
+   704→                </p>
+   705→              )}
+   706→            </div>
+   707→          )}
+   708→          <DialogFooter className="sm:justify-between">
+   709→            <Button variant="ghost" onClick={deleteAsset} disabled={busy} className="text-rose-600 hover:bg-rose-50 hover:text-rose-700">
+   710→              <Icons.Trash2 className="size-4" /> Sil
+   711→            </Button>
+   712→            <div className="flex gap-2">
+   713→              <Button variant="outline" onClick={() => setDetail(null)}>Vazgeç</Button>
+   714→              <Button onClick={saveDetail} disabled={busy}>{busy ? "Kaydediliyor…" : "Kaydet"}</Button>
+   715→            </div>
+   716→          </DialogFooter>
+   717→        </DialogContent>
+   718→      </Dialog>
+   719→    </div>
+   720→  );
+   721→}
+   722→
+   723→// dış görsel önizleme — yüklenemezse ikon yedeğine düşer
+   724→function ExternalImage({ src, alt }: { src: string; alt: string }) {
+   725→  const [failed, setFailed] = useState(false);
+   726→  if (failed) {
+   727→    return (
+   728→      <div className="flex flex-col items-center gap-1.5 text-muted-foreground">
+   729→        <Icons.ImageOff className="size-8" />
+   730→        <span className="text-xs">Görsel önizlenemedi — bağlantıyı kontrol edin</span>
+   731→      </div>
+   732→    );
+   733→  }
+   734→  return (
+   735→    <img src={src} alt={alt} onError={() => setFailed(true)} className="max-h-64 rounded object-contain" />
+   736→  );
+   737→}
+   738→
+   739→// minik tooltip sarıcısı (ağaç aksiyon butonları için)
+   740→function TooltipLite({ label, children }: { label: string; children: React.ReactNode }) {
+   741→  return (
+   742→    <TooltipProvider delayDuration={250}>
+   743→      <Tooltip>
+   744→        <TooltipTrigger asChild>{children}</TooltipTrigger>
+   745→        <TooltipContent side="top" className="text-xs">{label}</TooltipContent>
+   746→      </Tooltip>
+   747→    </TooltipProvider>
+   748→  );
+   749→}
+   750→

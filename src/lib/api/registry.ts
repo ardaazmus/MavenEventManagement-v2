@@ -28,6 +28,7 @@ export interface EntityConfig {
 export const registry: Record<string, EntityConfig> = {
   organizations: {
     delegate: db.organization as unknown as AnyDelegate,
+    include: { _count: { select: { eventAssignments: true, sponsorAgreements: true, contacts: true } } },
     searchFields: ["name", "city"],
     filterFields: ["tenantId", "type"],
     orderBy: { name: "asc" },
@@ -362,7 +363,7 @@ export const registry: Record<string, EntityConfig> = {
     include: { profile: true, participation: { include: { person: true } } },
     filterFields: ["participationId", "status", "profileId"],
     auditType: ActivityType.BADGE_SAVED,
-    auditMessage: (d) => `Rozet güncellendi: ${d.status ?? ""}`,
+    auditMessage: (d) => `Yaka kartı güncellendi: ${d.status ?? ""}`,
   },
   credentials: {
     delegate: db.credential as unknown as AnyDelegate,

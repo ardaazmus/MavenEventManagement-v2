@@ -3,7 +3,7 @@
 // Spam/Ret: bağlı kayıt iptal edilir (veri tutarlılığı)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { createRegistrationFromSubmission, cancelRegistrationOfSubmission } from "@/lib/api/registration-chain";
+import { createRegistrationFromSubmission, cancelRegistrationOfSubmission, type ChainResult } from "@/lib/api/registration-chain";
 import { ActivityType } from "@/lib/api/activity";
 
 type Params = { params: Promise<{ id: string }> };
@@ -40,7 +40,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
           data: { status: "APPROVED", notes: notes ?? submission.notes },
         });
         // 2) Kayıt formuysa zinciri kur / iptal edilen kaydı geri aç
-        let chain = null;
+        let chain: ChainResult | null = null;
         if (submission.form.type === "REGISTRATION") {
           chain = await createRegistrationFromSubmission(id);
           if (chain.existing && submission.registrationId) {

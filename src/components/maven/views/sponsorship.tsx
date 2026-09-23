@@ -50,7 +50,7 @@ const BOOTH_TONE: Record<string, string> = {
 // hak onay akışı — APPROVED teal, PROPOSED amber, REJECTED rose (renk dili)
 const APPROVAL_TONE: Record<string, "teal" | "amber" | "rose"> = { APPROVED: "teal", PROPOSED: "amber", REJECTED: "rose" };
 const ENT_TYPES: Record<string, string> = {
-  COMPLIMENTARY_REGISTRATION: "Ücretsiz Kayıt", BOOTH: "Stant", GALA_TICKET: "Gala Davetiyesi", BADGE: "Rozet",
+  COMPLIMENTARY_REGISTRATION: "Ücretsiz Kayıt", BOOTH: "Stant", GALA_TICKET: "Gala Davetiyesi", BADGE: "Yaka Kartı",
   LOUNGE_ACCESS: "Lounge Erişimi", DISCOUNT: "İndirim", SESSION_ACCESS: "Oturum Erişimi", HOTEL: "Konaklama", CUSTOM: "Özel",
 };
 

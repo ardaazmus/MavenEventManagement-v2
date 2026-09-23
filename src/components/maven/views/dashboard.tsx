@@ -61,7 +61,7 @@ export function DashboardView() {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-3">
-          <SectionCard title="Etkinlik Portföyü" desc="seri/edisyon bazında — karta tıklayınca edisyon açılır" className="lg:col-span-2">
+          <SectionCard title="Etkinlik Portföyü" desc="seri/edisyon bazında — karta tıklayınca edisyon açılır" className="min-w-0 lg:col-span-2">
             <div className="grid gap-3 sm:grid-cols-2">
               {(data.editions ?? []).map((e) => (
                 <button
@@ -183,7 +183,7 @@ export function DashboardView() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Finans kartları */}
-        <SectionCard title="Finans" desc="sipariş ≠ tahsilat ≠ iade — eksenler ayrı" className="lg:col-span-2">
+        <SectionCard title="Finans" desc="sipariş ≠ tahsilat ≠ iade — eksenler ayrı" className="min-w-0 lg:col-span-2">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <KpiCard label="Sipariş Edilen" value={fmtMoney(num("ordered"))} sub="geçerli satır toplamı" />
             <KpiCard label="Tahsil Edilen" value={fmtMoney(num("collected"))} sub="iade düşülmemiş brüt" tone="emerald" />
@@ -215,7 +215,7 @@ export function DashboardView() {
 
       {/* Grafikler */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <SectionCard title="Kayıt Eğrisi" desc="gönderim tarihi bazlı — son 14 gün" className="lg:col-span-2">
+        <SectionCard title="Kayıt Eğrisi" desc="gönderim tarihi bazlı — son 14 gün" className="min-w-0 lg:col-span-2">
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={data.curve ?? []} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.9 0.01 190)" />

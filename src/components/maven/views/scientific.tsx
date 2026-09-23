@@ -1,7 +1,7 @@
 "use client";
 // Bilimsel — çağrı, bildiri, hakem, karar (kabul ≠ otomatik program slotu, Kimlik kuralı 6)
 // Program — oturum, salon, görevler, yayın durumu + CME kredi defteri (§08, CME_CREDITS yeteneği)
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listEntity, apiSend, apiGet } from "@/lib/client";
 import { useApp, hasCapability } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { CmeReportOverlay } from "../cme-report";
 import * as Icons from "lucide-react";
@@ -22,6 +23,7 @@ import { cn } from "@/lib/utils";
 
 interface SubmissionRow {
   id: string; code: string; title: string; abstract?: string | null; type: string; status: string; presentingAuthorName?: string | null; keywords?: string | null; fileStatus?: string | null; submittedAt?: string | null;
+  trackId?: string | null; submitterId?: string | null; fileUrl?: string | null; posterNo?: string | null;
   track?: { name: string } | null;
   authorships: { id: string; name: string; organizationName?: string | null; isPresenting: boolean; position: number }[];
   reviewAssignments: { id: string; status: string; dueDate?: string | null; reviewer?: { firstName: string; lastName: string } | null; reviews: { id: string; score?: number | null; recommendation?: string | null; comment?: string | null }[] }[];
@@ -29,11 +31,13 @@ interface SubmissionRow {
 }
 interface SessionRow {
   id: string; title: string; description?: string | null; type: string; status: string; startTime: string; endTime: string; capacity?: number | null; accessRule?: string | null; isVisible: boolean;
-  room?: { name: string; capacity: number } | null;
+  roomId?: string | null; trackId?: string | null; submissionId?: string | null; cmeCredits?: number | null;
+  room?: { id: string; name: string; capacity: number } | null;
   track?: { name: string } | null;
   submission?: { code: string; title: string } | null;
   assignments: { id: string; role: string; status: string; person?: { firstName: string; lastName: string } | null; participation?: { person: { firstName: string; lastName: string } } | null }[];
 }
+interface PersonRow { id: string; firstName: string; lastName: string; company?: string | null }
 
 // ── R9-c: içe aktarım raporu (/api/program/import sözleşmesi) ──────────────
 interface ImportMatchDetail { row: number; name?: string; email?: string; result: string; personId?: string }
@@ -54,6 +58,31 @@ interface MaterialRow {
   person?: { firstName: string; lastName: string } | null;
 }
 const MATERIAL_STATUS_LABEL: Record<string, string> = { PENDING: "Bekliyor", READY: "Hazır", MISSING: "Eksik" };
+
+// ── R10-b: manuel oturum/bildiri girişi sabitleri — import akışıyla tutarlı ─
+const SESSION_TYPES: Record<string, string> = { KEYNOTE: "Ana Konuşma", TALK: "Sunum", PANEL: "Panel", WORKSHOP: "Atölye", BREAK: "Ara", NETWORKING: "Ağ Oluşturma", POSTER_SESSION: "Poster Oturumu" };
+const SESSION_ACCESS: Record<string, string> = { OPEN: "Açık — herkes girebilir", REGISTRATION_REQUIRED: "Kayıt gerekli", SCAN: "Taramalı giriş" };
+const SUBMISSION_TYPES: Record<string, string> = { ORAL: "Sözlü", POSTER: "Poster", E_POSTER: "E-Poster", PANEL: "Panel", WORKSHOP: "Atölye" };
+const FILE_STATUS_OPTIONS: Record<string, string> = { MISSING: "Dosya Yok", FORMAT_ISSUE: "Biçim Hatalı", AV_PENDING: "AV Bekliyor", APPROVED: "Onaylı" };
+const ASSIGN_ROLES = ["SPEAKER", "MODERATOR", "SESSION_CHAIR", "PANELIST"] as const; // §29 + program import akışıyla aynı küme
+const MAX_FILE_BYTES = 600 * 1024; // Medya Arşivi gömme tavanı
+
+// ISO → datetime-local girdi değeri (tarayıcı yerel saati)
+const toLocalInput = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+// dosya → dataURL (boyut sınırı aşılırsa null)
+const fileToDataUrl = (file: File, maxBytes: number): Promise<string | null> =>
+  new Promise((resolve) => {
+    if (file.size > maxBytes) { resolve(null); return; }
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
 // eşleşme sonucu tonu — teal: eşleşti · emerald: yeni · amber: sınama · rose: eşleşmedi
 const importTone = (r: string): "teal" | "emerald" | "amber" | "rose" | "neutral" =>
   r.includes("ile eşleşti") ? "teal"
@@ -97,6 +126,14 @@ export function ScientificView() {
   const [rationale, setRationale] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // ── R10-b: bildiri ayrıntılı giriş/düzenleme ──
+  const [subOpen, setSubOpen] = useState(false);
+  const [subBusy, setSubBusy] = useState(false);
+  const [editingSub, setEditingSub] = useState<SubmissionRow | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
+  const emptySub = { title: "", abstract: "", type: "ORAL", keywords: "", presentingAuthorName: "", status: "SUBMITTED", trackId: "none", fileUrl: "", posterNo: "", fileStatus: "MISSING", submittedAt: "" };
+  const [subForm, setSubForm] = useState(emptySub);
+
   const { data: subs, error, reload, loading } = useApi<SubmissionRow[]>(() => listEntity<SubmissionRow>("submissions", { editionId: currentEditionId ?? undefined, limit: 300 }), [currentEditionId, refreshKey]);
   const { data: tracks } = useApi<{ id: string; name: string }[]>(() => listEntity("tracks", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
 
@@ -117,9 +154,59 @@ export function ScientificView() {
     } finally { setBusy(false); }
   };
 
+  // ── R10-b: bildiri ekle/düzenle + hızlı durum değişimi ──
+  const openSubNew = () => { setEditingSub(null); setSubForm(emptySub); setSubOpen(true); };
+  const openSubEdit = (s: SubmissionRow) => {
+    setEditingSub(s);
+    setSubForm({
+      title: s.title, abstract: s.abstract ?? "", type: s.type, keywords: s.keywords ?? "",
+      presentingAuthorName: s.presentingAuthorName ?? "", status: s.status,
+      trackId: s.trackId ?? "none", fileUrl: s.fileUrl ?? "", posterNo: s.posterNo ?? "",
+      fileStatus: s.fileStatus ?? "MISSING", submittedAt: s.submittedAt ? toLocalInput(s.submittedAt) : "",
+    });
+    setSubOpen(true);
+  };
+  const changeStatus = async (s: SubmissionRow, status: string) => {
+    if (status === s.status || statusBusyId) return;
+    setStatusBusyId(s.id);
+    try {
+      await apiSend(`/api/submissions/${s.id}`, "PUT", { status });
+      toast({ title: "Bildiri durumu güncellendi", description: `${s.code} → ${label(SUBMISSION_STATUS, status)}` });
+      reload(); bump();
+    } catch (e) {
+      toast({ title: "Durum güncellenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setStatusBusyId(null); }
+  };
+  const saveSub = async () => {
+    if (!subForm.title.trim() || !currentEditionId) return;
+    setSubBusy(true);
+    try {
+      const payload = {
+        title: subForm.title.trim(), abstract: subForm.abstract || null,
+        type: subForm.type, keywords: subForm.keywords || null,
+        presentingAuthorName: subForm.presentingAuthorName || null,
+        status: subForm.status,
+        trackId: subForm.trackId === "none" ? null : subForm.trackId,
+        fileUrl: subForm.fileUrl || null, posterNo: subForm.posterNo || null,
+        fileStatus: subForm.fileStatus || null,
+        submittedAt: subForm.submittedAt ? new Date(subForm.submittedAt).toISOString() : null,
+      };
+      if (editingSub) await apiSend(`/api/submissions/${editingSub.id}`, "PUT", payload);
+      else await apiSend("/api/submissions", "POST", { editionId: currentEditionId, ...payload, code: `SUB-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 9)}` });
+      toast({ title: editingSub ? "Bildiri güncellendi" : "Bildiri kaydedildi", description: subForm.title.trim() });
+      setSubOpen(false); reload(); bump();
+    } catch (e) {
+      toast({ title: "Bildiri kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setSubBusy(false); }
+  };
+
   return (
     <div className="space-y-5">
-      <PageHeader title="Bilimsel Süreç" desc="Çağrı → bildiri → hakem → komite kararı; bilimsel karar ile programlama ayrı modüllerdedir (§28)" />
+      <PageHeader title="Bilimsel Süreç" desc="Çağrı → bildiri → hakem → komite kararı; bilimsel karar ile programlama ayrı modüllerdedir (§28)">
+        <Button size="sm" onClick={openSubNew} disabled={!currentEditionId} aria-label="Yeni bildiri ekle">
+          <Icons.FilePlus2 className="size-4" /> Bildiri Ekle
+        </Button>
+      </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <KpiCard label="Gönderilen" value={(subs ?? []).filter((s) => s.status !== "DRAFT").length} sub="taslak hariç" icon={<Icons.FileText className="size-4" />} />
@@ -141,7 +228,11 @@ export function ScientificView() {
         <div className="space-y-2">
           {(subs ?? []).map((s) => (
             <details key={s.id} className="rounded-xl border bg-card">
-              <summary className="flex cursor-pointer flex-wrap items-center gap-2 p-3.5 text-sm">
+              <summary
+                className="flex cursor-pointer flex-wrap items-center gap-2 p-3.5 text-sm"
+                onDoubleClick={() => openSubEdit(s)}
+                title="Çift tıkla: düzenle"
+              >
                 <span className="font-mono text-xs text-muted-foreground">{s.code}</span>
                 <span className="min-w-0 flex-1 truncate font-medium">{s.title}</span>
                 <Chip tone={s.type === "POSTER" ? "violet" : "teal"}>{s.type}</Chip>
@@ -149,8 +240,26 @@ export function ScientificView() {
                 <StatusBadge map={SUBMISSION_STATUS} value={s.status} />
                 {s.fileStatus && <Chip tone={s.fileStatus === "APPROVED" ? "emerald" : "amber"}>dosya: {s.fileStatus}</Chip>}
               </summary>
+              {/* R10-b: hızlı durum değişimi — yalnız status alanına PUT */}
+              <div className="flex flex-wrap items-center gap-1.5 border-t px-4 py-2.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Durumu hızlı değiştir</span>
+                {Object.entries(SUBMISSION_STATUS).map(([k, v]) => (
+                  <button
+                    key={k} type="button" disabled={statusBusyId === s.id}
+                    onClick={() => void changeStatus(s, k)}
+                    aria-label={`${s.code} durumunu ${v} yap`}
+                    className={cn(
+                      "rounded-full border px-2 py-0.5 text-[11px] transition",
+                      s.status === k ? "border-primary bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                      statusBusyId === s.id && "opacity-50",
+                    )}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
               <div className="grid gap-4 border-t p-4 lg:grid-cols-3">
-                <div className="lg:col-span-2 space-y-3">
+                <div className="min-w-0 lg:col-span-2 space-y-3">
                   <div>
                     <p className="mb-1 text-xs font-semibold text-muted-foreground">Yazarlar (sıra önemli)</p>
                     <div className="flex flex-wrap gap-1.5">
@@ -162,6 +271,17 @@ export function ScientificView() {
                     </div>
                   </div>
                   {s.abstract && <p className="text-xs leading-relaxed text-muted-foreground">{s.abstract}</p>}
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                    {s.presentingAuthorName && <span>Sunan: <span className="font-medium text-foreground">{s.presentingAuthorName}</span></span>}
+                    {s.keywords && <span className="min-w-0">Anahtar: <span className="break-words">{s.keywords}</span></span>}
+                    {s.posterNo && <span>Poster no: {s.posterNo}</span>}
+                    {s.submittedAt && <span>Gönderim: {fmtDateTime(s.submittedAt)}</span>}
+                    {s.fileUrl && (
+                      <a href={s.fileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-teal-600 transition hover:text-teal-800" aria-label="Bildiri dosyasını yeni sekmede aç">
+                        <Icons.FileDown className="size-3" /> dosya bağlantısı
+                      </a>
+                    )}
+                  </div>
                   <div>
                     <p className="mb-1 text-xs font-semibold text-muted-foreground">Hakem atamaları</p>
                     {s.reviewAssignments.length === 0 ? <p className="text-xs text-muted-foreground">atanmadı</p> : (
@@ -190,6 +310,9 @@ export function ScientificView() {
                       {d.rationale && <p className="mt-1 text-muted-foreground">{d.rationale}</p>}
                     </div>
                   ))}
+                  <Button size="sm" variant="outline" className="w-full" onClick={() => openSubEdit(s)} aria-label={`${s.title} bildirisini düzenle`}>
+                    <Icons.Pencil className="size-4" /> Bildiriyi Düzenle
+                  </Button>
                   {["SUBMITTED", "UNDER_REVIEW", "REVISION_REQUIRED"].includes(s.status) && (
                     <Button size="sm" className="w-full" onClick={() => setDecideTarget(s)}>
                       <Icons.Gavel className="size-4" /> Komite Kararı Ver
@@ -236,12 +359,89 @@ export function ScientificView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── R10-b: Bildiri ayrıntılı giriş/düzenleme diyaloğu ── */}
+      <Dialog open={subOpen} onOpenChange={setSubOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingSub ? "Bildiriyi Düzenle" : "Yeni Bildiri"}</DialogTitle>
+            <DialogDescription>{editingSub ? `${editingSub.code} — tüm alanlar düzenlenebilir` : "Bildiriyi ayrıntılarıyla kaydedin; kod otomatik üretilir"}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <Label>Başlık *</Label>
+              <Input className="mt-1" value={subForm.title} onChange={(e) => setSubForm({ ...subForm, title: e.target.value })} placeholder="Örn. Deprem Sonrası Yapısal Güçlendirme" />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Özet (abstract)</Label>
+              <Textarea className="mt-1" rows={5} value={subForm.abstract} onChange={(e) => setSubForm({ ...subForm, abstract: e.target.value })} placeholder="250 kelimeye kadar özet metni…" />
+            </div>
+            <div>
+              <Label>Tür</Label>
+              <Select value={subForm.type} onValueChange={(v) => setSubForm({ ...subForm, type: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(SUBMISSION_TYPES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Durum</Label>
+              <Select value={subForm.status} onValueChange={(v) => setSubForm({ ...subForm, status: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(SUBMISSION_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>İz (track)</Label>
+              <Select value={subForm.trackId} onValueChange={(v) => setSubForm({ ...subForm, trackId: v })}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                <SelectContent className="maven-scroll max-h-64">
+                  <SelectItem value="none">— İz atanmadı —</SelectItem>
+                  {(tracks ?? []).map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Sunan Yazar</Label>
+              <Input className="mt-1" value={subForm.presentingAuthorName} onChange={(e) => setSubForm({ ...subForm, presentingAuthorName: e.target.value })} placeholder="Örn. Prof. Dr. Ayşe Yılmaz" />
+            </div>
+            <div>
+              <Label>Anahtar Kelimeler</Label>
+              <Input className="mt-1" value={subForm.keywords} onChange={(e) => setSubForm({ ...subForm, keywords: e.target.value })} placeholder="virgülle ayırın: sismik, beton…" />
+            </div>
+            <div>
+              <Label>Dosya Durumu</Label>
+              <Select value={subForm.fileStatus} onValueChange={(v) => setSubForm({ ...subForm, fileStatus: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(FILE_STATUS_OPTIONS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Poster No</Label>
+              <Input className="mt-1 tabular-nums" value={subForm.posterNo} onChange={(e) => setSubForm({ ...subForm, posterNo: e.target.value })} placeholder="Örn. P-042" />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Dosya Bağlantısı (URL)</Label>
+              <Input className="mt-1" type="url" value={subForm.fileUrl} onChange={(e) => setSubForm({ ...subForm, fileUrl: e.target.value })} placeholder="https://…" />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Gönderim Zamanı (opsiyonel)</Label>
+              <Input className="mt-1 tabular-nums" type="datetime-local" value={subForm.submittedAt} onChange={(e) => setSubForm({ ...subForm, submittedAt: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSubOpen(false)}>Vazgeç</Button>
+            <Button onClick={saveSub} disabled={subBusy || !subForm.title.trim()}>
+              {subBusy ? "Kaydediliyor…" : editingSub ? "Güncelle" : "Bildiriyi Kaydet"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 export function ProgramView() {
-  const { currentEditionId, bump, refreshKey, editions } = useApp();
+  const { currentEditionId, tenant, bump, refreshKey, editions } = useApp();
   const { toast } = useToast();
   const [dayFilter, setDayFilter] = useState("ALL");
   const [publishTarget, setPublishTarget] = useState<SessionRow | null>(null);
@@ -262,7 +462,8 @@ export function ProgramView() {
   const [editingMat, setEditingMat] = useState<MaterialRow | null>(null);
   const [matOpen, setMatOpen] = useState(false);
   const [matBusy, setMatBusy] = useState(false);
-  const emptyMat = { type: "SLIDES", title: "", url: "", personId: "none", durationMin: "", status: "PENDING", notes: "" };
+  const emptyMat = { type: "SLIDES", title: "", url: "", personId: "none", durationMin: "", status: "PENDING", notes: "", dataUrl: "" };
+  const matFileRef = useRef<HTMLInputElement>(null);
   const [matForm, setMatForm] = useState(emptyMat);
 
   // CME Kredi Defteri — yalnız edisyonun CME_CREDITS yeteneği açıksa görünür
@@ -274,8 +475,30 @@ export function ProgramView() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
 
+  // ── R10-b: manuel oturum girişi/düzenleme ──
+  const [sesOpen, setSesOpen] = useState(false);
+  const [sesBusy, setSesBusy] = useState(false);
+  const [editingSes, setEditingSes] = useState<SessionRow | null>(null);
+  const [sesError, setSesError] = useState("");
+  const emptySes = { title: "", description: "", type: "TALK", roomId: "none", trackId: "none", submissionId: "none", startTime: "", endTime: "", capacity: "", accessRule: "OPEN", status: "DRAFT", isVisible: false, cmeCredits: "" };
+  const [sesForm, setSesForm] = useState(emptySes);
+  // görev atama satırı (diyalog içi)
+  const [asgPerson, setAsgPerson] = useState("none");
+  const [asgRole, setAsgRole] = useState("SPEAKER");
+  const [asgBusy, setAsgBusy] = useState(false);
+
   const { data: sessions, error, reload, loading } = useApi<SessionRow[]>(() => listEntity<SessionRow>("sessions", { editionId: currentEditionId ?? undefined, limit: 200 }), [currentEditionId, refreshKey]);
   const { data: rooms } = useApi<{ id: string; name: string; capacity: number }[]>(() => listEntity("rooms", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+  // ── R10-b: görev atama için kişiler + kaynak bildiri seçenekleri ──
+  const { data: people } = useApi<PersonRow[]>(() =>
+    tenant ? listEntity<PersonRow>("people", { tenantId: tenant.id, limit: 500 }) : Promise.resolve([]),
+    [tenant, refreshKey]);
+  const { data: subOptions } = useApi<{ id: string; code: string; title: string }[]>(() =>
+    currentEditionId ? listEntity("submissions", { editionId: currentEditionId, limit: 300 }) : Promise.resolve([]),
+    [currentEditionId, refreshKey]);
+  const { data: tracks } = useApi<{ id: string; name: string }[]>(() =>
+    currentEditionId ? listEntity("tracks", { editionId: currentEditionId }) : Promise.resolve([]),
+    [currentEditionId, refreshKey]);
   // ── R9-c: materyaller (edisyon geneli tek istek, oturuma göre gruplanır) + kişi seçenekleri ──
   const { data: materials, reload: reloadMaterials } = useApi<MaterialRow[]>(() =>
     currentEditionId ? listEntity<MaterialRow>("session-materials", { editionId: currentEditionId, limit: 300 }) : Promise.resolve([]),
@@ -387,7 +610,7 @@ export function ProgramView() {
   const openMatNew = (s: SessionRow) => { setEditingMat(null); setMatTarget(s); setMatForm(emptyMat); setMatOpen(true); };
   const openMatEdit = (m: MaterialRow) => {
     setEditingMat(m); setMatTarget(null);
-    setMatForm({ type: m.type, title: m.title, url: m.url ?? "", personId: m.personId ?? "none", durationMin: m.durationMin != null ? String(m.durationMin) : "", status: m.status, notes: m.notes ?? "" });
+    setMatForm({ type: m.type, title: m.title, url: m.url ?? "", personId: m.personId ?? "none", durationMin: m.durationMin != null ? String(m.durationMin) : "", status: m.status, notes: m.notes ?? "", dataUrl: "" });
     setMatOpen(true);
   };
   const saveMat = async () => {
@@ -400,9 +623,28 @@ export function ProgramView() {
         durationMin: matForm.type === "VIDEO" && matForm.durationMin ? Number(matForm.durationMin) : null,
         status: matForm.status, notes: matForm.notes || null,
       };
-      if (editingMat) await apiSend(`/api/session-materials/${editingMat.id}`, "PUT", payload);
-      else await apiSend("/api/session-materials", "POST", { sessionId: matTarget?.id, editionId: currentEditionId, ...payload });
-      toast({ title: editingMat ? "Materyal güncellendi" : "Materyal eklendi", description: matForm.title });
+      const created = editingMat
+        ? await apiSend<MaterialRow>(`/api/session-materials/${editingMat.id}`, "PUT", payload)
+        : await apiSend<MaterialRow>("/api/session-materials", "POST", { sessionId: matTarget?.id, editionId: currentEditionId, ...payload });
+      // R10-b: Medya Arşivi kopyası — dosya seçildiyse dataUrl, yoksa URL (yalnız yeni kayıt/yeni dosya)
+      const sessionId = editingMat?.sessionId ?? matTarget?.id ?? null;
+      let mediaNote = "";
+      if (currentEditionId && sessionId && (matForm.dataUrl || (!editingMat && matForm.url))) {
+        try {
+          const res = await apiSend<{ asset: { name: string } }>("/api/media/upload-linked", "POST", {
+            editionId: currentEditionId, systemFolder: "MATERYAL", name: matForm.title.trim(),
+            dataUrl: matForm.dataUrl || undefined,
+            externalUrl: matForm.dataUrl ? undefined : matForm.url || undefined,
+            linkedType: "SESSION", linkedId: sessionId,
+          });
+          mediaNote = `Medya: ${res.asset.name} (Materyaller klasörü)`;
+        } catch { /* arşiv yazımı materyal kaydını engellemez */ }
+      }
+      if (mediaNote) {
+        const merged = [created.notes ?? matForm.notes ?? "", mediaNote].filter(Boolean).join("\n");
+        await apiSend(`/api/session-materials/${created.id}`, "PUT", { notes: merged });
+      }
+      toast({ title: editingMat ? "Materyal güncellendi" : "Materyal eklendi", description: mediaNote ? `${matForm.title.trim()} — Medya Arşivi'ne kopyalandı` : matForm.title.trim() });
       setMatOpen(false); reloadMaterials(); bump();
     } catch (e) {
       toast({ title: "Hata", description: e instanceof Error ? e.message : "Materyal kaydedilemedi", variant: "destructive" });
@@ -415,6 +657,75 @@ export function ProgramView() {
       reloadMaterials();
     } catch (e) {
       toast({ title: "Hata", description: e instanceof Error ? e.message : "Silinemedi", variant: "destructive" });
+    }
+  };
+
+  // ── R10-b: manuel oturum CRUD + görev yönetimi ──
+  const openSesNew = () => { setEditingSes(null); setSesForm(emptySes); setSesError(""); setAsgPerson("none"); setSesOpen(true); };
+  const openSesEdit = (s: SessionRow) => {
+    setEditingSes(s);
+    setSesForm({
+      title: s.title, description: s.description ?? "", type: s.type,
+      roomId: s.roomId ?? "none", trackId: s.trackId ?? "none", submissionId: s.submissionId ?? "none",
+      startTime: toLocalInput(s.startTime), endTime: toLocalInput(s.endTime),
+      capacity: s.capacity != null ? String(s.capacity) : "",
+      accessRule: s.accessRule ?? "OPEN", status: s.status, isVisible: s.isVisible,
+      cmeCredits: s.cmeCredits != null ? String(s.cmeCredits) : "",
+    });
+    setSesError(""); setAsgPerson("none"); setAsgRole("SPEAKER"); setSesOpen(true);
+  };
+  const saveSes = async () => {
+    if (!sesForm.title.trim() || !currentEditionId) return;
+    if (!sesForm.startTime || !sesForm.endTime) { setSesError("Başlangıç ve bitiş zamanı zorunludur."); return; }
+    const start = new Date(sesForm.startTime);
+    const end = new Date(sesForm.endTime);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) { setSesError("Tarih/saat değeri okunamadı."); return; }
+    if (end <= start) { setSesError("Bitiş zamanı başlangıçtan sonra olmalıdır."); return; }
+    setSesError("");
+    setSesBusy(true);
+    try {
+      const payload = {
+        title: sesForm.title.trim(), description: sesForm.description || null,
+        type: sesForm.type,
+        roomId: sesForm.roomId === "none" ? null : sesForm.roomId,
+        trackId: sesForm.trackId === "none" ? null : sesForm.trackId,
+        submissionId: sesForm.submissionId === "none" ? null : sesForm.submissionId,
+        startTime: start.toISOString(), endTime: end.toISOString(),
+        capacity: sesForm.capacity ? Number(sesForm.capacity) : null,
+        accessRule: sesForm.accessRule, status: sesForm.status,
+        isVisible: sesForm.isVisible,
+        cmeCredits: sesForm.cmeCredits ? Number(sesForm.cmeCredits) : null,
+      };
+      if (editingSes) await apiSend(`/api/sessions/${editingSes.id}`, "PUT", payload);
+      else await apiSend("/api/sessions", "POST", { editionId: currentEditionId, ...payload });
+      toast({ title: editingSes ? "Oturum güncellendi" : "Oturum eklendi", description: sesForm.title.trim() });
+      setSesOpen(false); reload(); bump();
+    } catch (e) {
+      toast({ title: "Oturum kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setSesBusy(false); }
+  };
+  // diyaloğun açık olduğu oturumun taze verisi (reload sonrası atamalar güncel kalsın)
+  const sesDraft = editingSes ? ((sessions ?? []).find((x) => x.id === editingSes.id) ?? editingSes) : null;
+  const addAssignment = async () => {
+    if (!editingSes || asgPerson === "none") return;
+    setAsgBusy(true);
+    try {
+      await apiSend("/api/program-assignments", "POST", { sessionId: editingSes.id, personId: asgPerson, role: asgRole });
+      const pname = (people ?? []).find((p) => p.id === asgPerson);
+      toast({ title: "Görev atandı", description: `${pname ? `${pname.firstName} ${pname.lastName}` : "Kişi"} — ${label(EVENT_ROLES, asgRole)}` });
+      setAsgPerson("none");
+      reload();
+    } catch (e) {
+      toast({ title: "Görev atanamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setAsgBusy(false); }
+  };
+  const removeAssignment = async (a: { id: string; role: string }) => {
+    try {
+      await apiSend(`/api/program-assignments/${a.id}`, "DELETE");
+      toast({ title: "Görev kaldırıldı", description: label(EVENT_ROLES, a.role) });
+      reload();
+    } catch (e) {
+      toast({ title: "Görev kaldırılamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
     }
   };
 
@@ -434,6 +745,9 @@ export function ProgramView() {
   return (
     <div className="space-y-5">
       <PageHeader title="Program" desc="Salon, zaman, görevli — çakışmalı yayın engellenir; bilimsel kararı program modülü değiştirmez">
+        <Button size="sm" onClick={openSesNew} disabled={!currentEditionId} aria-label="Yeni oturum ekle">
+          <Icons.CalendarPlus className="size-4" /> Oturum Ekle
+        </Button>
         <Button size="sm" variant="outline" onClick={openImport} disabled={!currentEditionId} aria-label="Program veya katılımcı listesi içe aktar">
           <Icons.FileUp className="size-4" /> İçe Aktar
         </Button>
@@ -467,7 +781,7 @@ export function ProgramView() {
           ) : (
             <div className="space-y-2.5">
               {filtered.map((s) => (
-                <div key={s.id} className={cn("rounded-xl border bg-card p-4", clashes.has(s.id) && "border-rose-300")}>
+                <div key={s.id} className={cn("rounded-xl border bg-card p-4", clashes.has(s.id) && "border-rose-300")} onDoubleClick={() => openSesEdit(s)} title="Çift tıkla: düzenle">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold tabular-nums text-primary">
                       {new Date(s.startTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}–{new Date(s.endTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
@@ -497,6 +811,9 @@ export function ProgramView() {
                         {materialsBySession.get(s.id)!.map((m) => (
                           <div key={m.id} className="group flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-card px-2 py-1.5 text-xs transition-colors hover:bg-teal-500/5">
                             <Chip tone="teal">{label(MATERIAL_TYPE, m.type)}</Chip>
+                            {m.notes?.includes("Medya:") && (
+                              <Chip tone="violet"><Icons.FolderOpen className="size-3" aria-hidden /> Medya</Chip>
+                            )}
                             <span className="min-w-0 flex-1 truncate font-medium">{m.title}</span>
                             {m.type === "VIDEO" && m.durationMin != null && <span className="tabular-nums text-muted-foreground">{m.durationMin} dk</span>}
                             {m.personId && personOptions.get(m.personId) && <span className="hidden text-muted-foreground sm:inline">{personOptions.get(m.personId)}</span>}
@@ -522,6 +839,9 @@ export function ProgramView() {
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button size="sm" variant="ghost" className="h-7" onClick={() => openMatNew(s)} aria-label={`${s.title} oturumuna materyal ekle`}>
                       <Icons.Paperclip className="size-3.5" /> Materyal Ekle
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7" onClick={() => openSesEdit(s)} aria-label={`${s.title} oturumunu düzenle`}>
+                      <Icons.Pencil className="size-3.5" /> Düzenle
                     </Button>
                   </div>
                   {s.status !== "PUBLISHED" && (
@@ -905,6 +1225,36 @@ export function ProgramView() {
             </div>
             <div className="sm:col-span-2"><Label>Başlık *</Label><Input className="mt-1" value={matForm.title} onChange={(e) => setMatForm({ ...matForm, title: e.target.value })} placeholder="Örn. Açılış sunumu v2" /></div>
             <div className="sm:col-span-2"><Label>Bağlantı (URL)</Label><Input className="mt-1" type="url" value={matForm.url} onChange={(e) => setMatForm({ ...matForm, url: e.target.value })} placeholder="https://…" /></div>
+            {/* R10-b: dosya modu — Medya Arşivi'ne benzersiz adla kopyalanır */}
+            <div className="sm:col-span-2 rounded-lg border border-dashed bg-muted/20 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-medium"><Icons.FolderUp className="size-3.5 text-teal-600" /> Dosya (≤ 600 KB)</p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">Dosya Medya Arşivi → Materyaller klasörüne benzersiz adla kopyalanır.</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  ref={matFileRef} type="file" className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      if (f.size > MAX_FILE_BYTES) {
+                        toast({ title: "Dosya çok büyük", description: `En fazla 600 KB yüklenebilir — seçilen dosya ${(f.size / 1024).toFixed(0)} KB.`, variant: "destructive" });
+                      } else {
+                        void fileToDataUrl(f, MAX_FILE_BYTES).then((d) => { if (d) setMatForm((p) => ({ ...p, dataUrl: d })); });
+                      }
+                    }
+                    e.target.value = "";
+                  }}
+                />
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => matFileRef.current?.click()} aria-label="Materyal dosyası seç">
+                  <Icons.Upload className="size-3" /> Dosya seç
+                </Button>
+                {matForm.dataUrl && <Chip tone="teal">dosya hazır</Chip>}
+                {matForm.dataUrl && (
+                  <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-rose-600 hover:text-rose-700" onClick={() => setMatForm((p) => ({ ...p, dataUrl: "" }))} aria-label="Seçilen dosyayı kaldır">
+                    <Icons.Trash2 className="size-3" /> Kaldır
+                  </Button>
+                )}
+              </div>
+            </div>
             <div>
               <Label>Kişisi (opsiyonel)</Label>
               <Select value={matForm.personId} onValueChange={(v) => setMatForm({ ...matForm, personId: v })}>
@@ -926,6 +1276,154 @@ export function ProgramView() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setMatOpen(false)}>Vazgeç</Button>
             <Button onClick={saveMat} disabled={matBusy || !matForm.title.trim()}>{matBusy ? "Kaydediliyor…" : "Kaydet"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── R10-b: Oturum Ekle/Düzenle diyaloğu — tüm ProgramSession alanları + görevler ── */}
+      <Dialog open={sesOpen} onOpenChange={(o) => { if (!o) { setSesOpen(false); setSesError(""); } }}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingSes ? "Oturumu Düzenle" : "Yeni Oturum"}</DialogTitle>
+            <DialogDescription>{editingSes ? editingSes.title : "Program penceresinden manuel giriş — salon, iz, kaynak bildiri ve görevli atanabilir"}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <Label>Başlık *</Label>
+              <Input className="mt-1" value={sesForm.title} onChange={(e) => setSesForm({ ...sesForm, title: e.target.value })} placeholder="Örn. Panel: Şehirleşmede Yeni Yaklaşımlar" />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Açıklama</Label>
+              <Textarea className="mt-1" rows={2} value={sesForm.description} onChange={(e) => setSesForm({ ...sesForm, description: e.target.value })} placeholder="Oturum özeti…" />
+            </div>
+            <div>
+              <Label>Tür</Label>
+              <Select value={sesForm.type} onValueChange={(v) => setSesForm({ ...sesForm, type: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(SESSION_TYPES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Salon</Label>
+              <Select value={sesForm.roomId} onValueChange={(v) => setSesForm({ ...sesForm, roomId: v })}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                <SelectContent className="maven-scroll max-h-64">
+                  <SelectItem value="none">— Salon atanmadı —</SelectItem>
+                  {(rooms ?? []).map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>İz (track)</Label>
+              <Select value={sesForm.trackId} onValueChange={(v) => setSesForm({ ...sesForm, trackId: v })}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                <SelectContent className="maven-scroll max-h-64">
+                  <SelectItem value="none">— İz atanmadı —</SelectItem>
+                  {(tracks ?? []).map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Kaynak Bildiri (opsiyonel)</Label>
+              <Select value={sesForm.submissionId} onValueChange={(v) => setSesForm({ ...sesForm, submissionId: v })}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                <SelectContent className="maven-scroll max-h-64">
+                  <SelectItem value="none">— Bildiri bağlanmadı —</SelectItem>
+                  {(subOptions ?? []).map((s) => <SelectItem key={s.id} value={s.id}>{s.code} — {s.title}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Başlangıç *</Label>
+              <Input className="mt-1 tabular-nums" type="datetime-local" value={sesForm.startTime} onChange={(e) => setSesForm({ ...sesForm, startTime: e.target.value })} />
+            </div>
+            <div>
+              <Label>Bitiş *</Label>
+              <Input className="mt-1 tabular-nums" type="datetime-local" value={sesForm.endTime} onChange={(e) => setSesForm({ ...sesForm, endTime: e.target.value })} />
+            </div>
+            <div>
+              <Label>Kapasite</Label>
+              <Input className="mt-1 tabular-nums" type="number" min={0} max={100000} value={sesForm.capacity} onChange={(e) => setSesForm({ ...sesForm, capacity: e.target.value })} placeholder="örn. 150" />
+            </div>
+            <div>
+              <Label>CME Kredi</Label>
+              <Input className="mt-1 tabular-nums" type="number" min={0} max={99} step={0.5} value={sesForm.cmeCredits} onChange={(e) => setSesForm({ ...sesForm, cmeCredits: e.target.value })} placeholder="örn. 1.5" />
+            </div>
+            <div>
+              <Label>Giriş Kuralı</Label>
+              <Select value={sesForm.accessRule} onValueChange={(v) => setSesForm({ ...sesForm, accessRule: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(SESSION_ACCESS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Durum</Label>
+              <Select value={sesForm.status} onValueChange={(v) => setSesForm({ ...sesForm, status: v })}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(SESSION_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border px-3 py-2 sm:col-span-2">
+              <div>
+                <p className="text-xs font-medium">Kişisel programlarda görünür</p>
+                <p className="text-[11px] text-muted-foreground">Yayınlandıktan sonra katılımcı takvimlerine düşer</p>
+              </div>
+              <Switch checked={sesForm.isVisible} onCheckedChange={(v) => setSesForm({ ...sesForm, isVisible: v })} aria-label="Oturum görünür" />
+            </div>
+            {sesError && (
+              <p className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 sm:col-span-2">
+                <Icons.TriangleAlert className="mt-0.5 size-3 shrink-0" aria-hidden /> {sesError}
+              </p>
+            )}
+          </div>
+
+          {/* görevler — kayıtlı oturumda ekle/kaldır */}
+          {editingSes ? (
+            <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"><Icons.Users className="size-3.5" /> Oturum Görevlileri</p>
+              {(sesDraft?.assignments ?? []).length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">Henüz görev ataması yok — aşağıdan ekleyin.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {(sesDraft?.assignments ?? []).map((a) => {
+                    const name = a.person ? `${a.person.firstName} ${a.person.lastName}` : a.participation ? `${a.participation.person.firstName} ${a.participation.person.lastName}` : "—";
+                    return (
+                      <span key={a.id} className="inline-flex items-center gap-1 rounded-md border bg-card px-1.5 py-0.5">
+                        <Chip tone={a.status === "CONFIRMED" ? "emerald" : "amber"}>{label(EVENT_ROLES, a.role)}: {name}</Chip>
+                        <button type="button" onClick={() => void removeAssignment(a)} className="rounded p-0.5 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600" aria-label={`${name} görevini kaldır`}>
+                          <Icons.X className="size-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Select value={asgPerson} onValueChange={setAsgPerson}>
+                  <SelectTrigger className="h-8 flex-1 text-xs" aria-label="Görevli kişi seç"><SelectValue placeholder="Kişi seçin" /></SelectTrigger>
+                  <SelectContent className="maven-scroll max-h-64">
+                    <SelectItem value="none">— Kişi seçin —</SelectItem>
+                    {(people ?? []).map((p) => <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}{p.company ? ` — ${p.company}` : ""}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={asgRole} onValueChange={setAsgRole}>
+                  <SelectTrigger className="h-8 w-full text-xs sm:w-40" aria-label="Görev rolü seç"><SelectValue /></SelectTrigger>
+                  <SelectContent>{ASSIGN_ROLES.map((r) => <SelectItem key={r} value={r}>{label(EVENT_ROLES, r)}</SelectItem>)}</SelectContent>
+                </Select>
+                <Button size="sm" className="h-8 shrink-0" disabled={asgBusy || asgPerson === "none"} onClick={() => void addAssignment()} aria-label="Görev ekle">
+                  {asgBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Plus className="size-3.5" />} Ekle
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <p className="rounded-lg bg-sky-50 p-2.5 text-[11px] text-sky-800">Oturumu kaydettikten sonra konuşmacı/moderatör görev ataması yapabilirsiniz.</p>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSesOpen(false)}>Vazgeç</Button>
+            <Button onClick={saveSes} disabled={sesBusy || !sesForm.title.trim()}>
+              {sesBusy ? "Kaydediliyor…" : editingSes ? "Güncelle" : "Oturumu Kaydet"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

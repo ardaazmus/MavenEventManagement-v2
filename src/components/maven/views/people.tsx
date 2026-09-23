@@ -1,9 +1,10 @@
 "use client";
-// Kişiler & Kurumlar — 360 görünümleri (§54, §55)
-// Kişi 360: kimlik → katılımlar → roller → kayıt/ödeme → bilimsel → program → konaklama → rozet/tarama → sertifika
+// Kişiler & Kurum/Kuruluşlar — 360 görünümleri (§54, §55)
+// Kişi 360: kimlik → katılımlar → roller → kayıt/ödeme → bilimsel → program → konaklama → yaka kartı/tarama → sertifika
 // R9-c: Roller & Yetkiler sekmesi (özel rol motoru + hiyerarşi + giriş mock'u), CV & VCard, aile/refakatçi,
 //       kurumsal kimlik kartı + kontak yönetimi + kurum QR paneli
-import { useEffect, useState } from "react";
+// R10-a: çift tık → kişi düzenleme, kişi fotoğrafı + kurum logosu (upload-linked, benzersiz adla medya klasörüne)
+import { useEffect, useRef, useState } from "react";
 import { listEntity, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -24,8 +25,8 @@ import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface PersonRow {
-  id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; company?: string | null; title?: string | null; country?: string | null; status: string; mergedIntoId?: string | null;
-  parentPersonId?: string | null; relationType?: string | null;
+  id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; company?: string | null; title?: string | null; city?: string | null; country?: string | null; status: string; mergedIntoId?: string | null;
+  parentPersonId?: string | null; relationType?: string | null; photoUrl?: string | null; bio?: string | null; linkedin?: string | null;
 }
 interface Person360 {
   person: PersonRow;
@@ -65,7 +66,7 @@ const MERGE_MOVE_LABELS: Record<string, string> = {
   tasks: "görev", contacts: "iletişim", delegationsLed: "delegasyon liderliği", waitlistEntries: "bekleme kaydı",
 };
 const REASON_TONE: Record<string, "emerald" | "amber" | "violet"> = { EMAIL: "emerald", NAME_PHONE: "amber", NAME_ORG: "violet" };
-interface OrgRow { id: string; name: string; type?: string | null; city?: string | null; country?: string | null; website?: string | null; generalEmail?: string | null; locationNote?: string | null; _count?: { eventAssignments?: number; sponsorAgreements?: number } }
+interface OrgRow { id: string; name: string; type?: string | null; city?: string | null; country?: string | null; website?: string | null; generalEmail?: string | null; address?: string | null; description?: string | null; locationNote?: string | null; logoUrl?: string | null; _count?: { eventAssignments?: number; sponsorAgreements?: number } }
 interface Org360 {
   organization: OrgRow;
   eventAssignments: { id: string; role: string; edition: { name: string } }[];
@@ -116,6 +117,91 @@ const slugifyKey = (s: string) =>
     .replace(/ı/g, "i").replace(/ş/g, "s").replace(/ğ/g, "g").replace(/ü/g, "u").replace(/ö/g, "o").replace(/ç/g, "c")
     .replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
 const fullName = (p?: { firstName: string; lastName: string } | null) => (p ? `${p.firstName} ${p.lastName}` : "—");
+
+// ── R10-a: bağlantılı medya yükleyici (kişi fotoğrafı / kurum logosu) ───────
+// Kullanıcı kuralı: görsel, kaynak kaydıyla birlikte BENZERSİZ adla medya
+// klasörüne eklenir (POST /api/media/upload-linked) → PUT ile kayda yazılır.
+interface LinkedAsset { id: string; name: string; dataUrl?: string | null }
+interface UploadLinkedResult { asset: LinkedAsset; folder: { id: string; name: string; systemKey: string } }
+const MAX_IMAGE_KB = 600; // SQLite satırı tavanı — sunucu tarafıyla aynı
+
+function LinkedPhotoUploader({
+  editionId, systemFolder, linkedType, linkedId, assetName, currentUrl, onApply, folderLabel, alt, fit = "cover",
+}: {
+  editionId: string | null;
+  systemFolder: string; // KISI_FOTOGRAF | KURUM_LOGO
+  linkedType: "PERSON" | "ORGANIZATION";
+  linkedId: string;
+  assetName: string;
+  currentUrl?: string | null;
+  onApply: (dataUrl: string) => Promise<void>;
+  folderLabel: string;
+  alt: string;
+  fit?: "cover" | "contain";
+}) {
+  const { toast } = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<string | null>(currentUrl ?? null);
+  useEffect(() => { setPreview(currentUrl ?? null); }, [currentUrl]);
+
+  const pick = async (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = ""; // aynı dosya yeniden seçilebilsin
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Desteklenmeyen dosya", description: "Lütfen bir görsel dosyası seçin (image/*).", variant: "destructive" });
+      return;
+    }
+    if (file.size > MAX_IMAGE_KB * 1024) {
+      toast({ title: "Dosya çok büyük", description: `Görsel en fazla ${MAX_IMAGE_KB} KB olabilir — daha küçük bir dosya seçin.`, variant: "destructive" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result));
+        fr.onerror = () => reject(new Error("Dosya okunamadı"));
+        fr.readAsDataURL(file);
+      });
+      const res = await apiSend<UploadLinkedResult>("/api/media/upload-linked", "POST", {
+        editionId, systemFolder, name: assetName, dataUrl, linkedType, linkedId,
+      });
+      const finalUrl = res.asset.dataUrl ?? dataUrl;
+      await onApply(finalUrl);
+      setPreview(finalUrl);
+      toast({ title: "Görsel yüklendi", description: `Medya Arşivi → ${folderLabel}: ${res.asset.name}` });
+    } catch (e) {
+      toast({ title: "Yükleme başarısız", description: e instanceof Error ? e.message : "Görsel yüklenemedi", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-start gap-3">
+      {preview ? (
+        <img src={preview} alt={alt} className={cn("size-14 shrink-0 rounded-lg border bg-background", fit === "contain" ? "object-contain p-0.5" : "object-cover")} />
+      ) : (
+        <span className="grid size-14 shrink-0 place-items-center rounded-lg border border-dashed bg-muted/30 text-muted-foreground" aria-hidden>
+          <Icons.ImageUp className="size-5" />
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" variant="outline" disabled={busy || !editionId} onClick={() => fileRef.current?.click()}>
+            {busy ? <Icons.Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Icons.ImageUp className="size-3.5" />}
+            {preview ? "Değiştir" : "Görsel Seç"}
+          </Button>
+          <span className="text-[11px] text-muted-foreground">{preview ? "görsel bağlı" : "görsel yok"}</span>
+        </div>
+        <p className="mt-1 text-[11px] leading-snug text-muted-foreground">Medya Arşivi → {folderLabel} klasörüne benzersiz adla kaydedilir (≤ {MAX_IMAGE_KB} KB).</p>
+      </div>
+      <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={pick} disabled={busy} aria-label="Görsel dosyası seç" />
+    </div>
+  );
+}
 
 function Row360Line({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -784,7 +870,8 @@ export function PeopleView() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editingPerson, setEditingPerson] = useState<PersonRow | null>(null);
-  const [form, setForm] = useState({ firstName: "", lastName: "", email: "", company: "", title: "", parentPersonId: "none", relationType: "SPOUSE" });
+  // R10-a: tüm Person skaler alanları — adı/kurumu/şehri yanlışsa tek ekranda düzelt
+  const [form, setForm] = useState({ firstName: "", lastName: "", email: "", phone: "", company: "", title: "", city: "", country: "", bio: "", linkedin: "", status: "ACTIVE", parentPersonId: "none", relationType: "SPOUSE" });
   const [mergeSug, setMergeSug] = useState<DuplicateSuggestion | null>(null);
   const [mergeTarget, setMergeTarget] = useState<string | null>(null); // korunacak (hedef) kişi id
   const [mergeBusy, setMergeBusy] = useState(false);
@@ -812,21 +899,27 @@ export function PeopleView() {
     }
   };
 
-  const defaultForm = { firstName: "", lastName: "", email: "", company: "", title: "", parentPersonId: "none", relationType: "SPOUSE" };
+  const defaultForm = { firstName: "", lastName: "", email: "", phone: "", company: "", title: "", city: "", country: "", bio: "", linkedin: "", status: "ACTIVE", parentPersonId: "none", relationType: "SPOUSE" };
 
   const openCreate = () => { setEditingPerson(null); setForm(defaultForm); setCreateOpen(true); };
   const openEdit = (p: PersonRow) => {
     setEditingPerson(p);
     setForm({
-      firstName: p.firstName, lastName: p.lastName, email: p.email ?? "", company: p.company ?? "", title: p.title ?? "",
+      firstName: p.firstName, lastName: p.lastName, email: p.email ?? "", phone: p.phone ?? "",
+      company: p.company ?? "", title: p.title ?? "", city: p.city ?? "", country: p.country ?? "",
+      bio: p.bio ?? "", linkedin: p.linkedin ?? "", status: p.status === "PASSIVE" ? "PASSIVE" : "ACTIVE",
       parentPersonId: p.parentPersonId ?? "none", relationType: p.relationType ?? "SPOUSE",
     });
     setCreateOpen(true);
   };
 
   const savePerson = async () => {
+    // Yalnız skaler alanlar — registry sanitize "" → null; asla iç içe nesne gönderilmez
     const payload = {
-      firstName: form.firstName, lastName: form.lastName, email: form.email || null, company: form.company || null, title: form.title || null,
+      firstName: form.firstName, lastName: form.lastName,
+      email: form.email || null, phone: form.phone || null, company: form.company || null, title: form.title || null,
+      city: form.city || null, country: form.country || null, bio: form.bio || null, linkedin: form.linkedin || null,
+      status: form.status === "PASSIVE" ? "PASSIVE" : "ACTIVE",
       parentPersonId: form.parentPersonId === "none" ? null : form.parentPersonId,
       relationType: form.parentPersonId === "none" ? null : form.relationType,
     };
@@ -921,17 +1014,62 @@ export function PeopleView() {
         <Input placeholder="Ad, e-posta, kurum ara…" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild><Button size="sm" onClick={openCreate}><Icons.UserPlus className="size-4" /> Kişi Ekle</Button></DialogTrigger>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-md">
             <DialogHeader>
               <DialogTitle>{editingPerson ? "Kişiyi Düzenle" : "Yeni Kişi"}</DialogTitle>
-              <DialogDescription>Refakatçi/misafir profili için ana kişi bağlanabilir — kişi hiyerarşisi (Parent_ID).</DialogDescription>
+              <DialogDescription>Tüm kişi durumunu tek ekranda gör/düzenle — refakatçi/misafir profili için ana kişi bağlanabilir (Parent_ID). Çift tıklama ile de açılır.</DialogDescription>
             </DialogHeader>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div><Label>Ad</Label><Input value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} /></div>
-              <div><Label>Soyad</Label><Input value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} /></div>
+              <div><Label>Ad *</Label><Input value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} /></div>
+              <div><Label>Soyad *</Label><Input value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} /></div>
               <div className="sm:col-span-2"><Label>E-posta</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+              <div><Label>Telefon</Label><Input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+              <div><Label>Şehir</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
               <div><Label>Kurum</Label><Input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} /></div>
               <div><Label>Unvan</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
+              <div><Label>Ülke</Label><Input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} /></div>
+              <div>
+                <Label>LinkedIn</Label>
+                <Input value={form.linkedin} onChange={(e) => setForm({ ...form, linkedin: e.target.value })} placeholder="linkedin.com/in/…" />
+              </div>
+              <div>
+                <Label>Durum</Label>
+                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ACTIVE">Aktif</SelectItem>
+                    <SelectItem value="PASSIVE">Pasif</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="sm:col-span-2">
+                <Label>Bio</Label>
+                <Textarea rows={2} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} placeholder="Kısa özgeçmiş / tanıtım…" />
+              </div>
+              {/* R10-a: kişi fotoğrafı — benzersiz adla Medya Arşivi → Kişi Fotoğrafları klasörüne */}
+              {editingPerson ? (
+                <div className="rounded-lg border bg-muted/20 p-3 sm:col-span-2">
+                  <p className="mb-2 text-xs font-semibold">Kişi Fotoğrafı</p>
+                  <LinkedPhotoUploader
+                    editionId={currentEditionId}
+                    systemFolder="KISI_FOTOGRAF"
+                    linkedType="PERSON"
+                    linkedId={editingPerson.id}
+                    assetName={`${form.firstName || editingPerson.firstName}-${form.lastName || editingPerson.lastName}-fotografi`}
+                    currentUrl={editingPerson.photoUrl}
+                    onApply={async (dataUrl) => {
+                      await apiSend(`/api/people/${editingPerson.id}`, "PUT", { photoUrl: dataUrl });
+                      setEditingPerson({ ...editingPerson, photoUrl: dataUrl });
+                      reload();
+                      if (selected?.id === editingPerson.id) setDetail((d) => (d ? { ...d, person: { ...d.person, photoUrl: dataUrl } } : d));
+                    }}
+                    folderLabel="Kişi Fotoğrafları"
+                    alt={`${editingPerson.firstName} ${editingPerson.lastName} fotoğrafı`}
+                  />
+                </div>
+              ) : (
+                <p className="text-[11px] leading-snug text-muted-foreground sm:col-span-2">Fotoğraf, kişi kaydedildikten sonra “Kişiyi Düzenle” ekranından eklenir — benzersiz adla Medya Arşivi → Kişi Fotoğrafları klasörüne gider.</p>
+              )}
               <div className="sm:col-span-2">
                 <Label>Bağlı olduğu ana kişi (opsiyonel)</Label>
                 <Select value={form.parentPersonId} onValueChange={(v) => setForm({ ...form, parentPersonId: v })}>
@@ -952,7 +1090,7 @@ export function PeopleView() {
                     {Object.entries(RELATION_TYPE).filter(([k]) => k !== "SELF").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <p className="mt-1 text-[11px] text-muted-foreground">Eş, çocuk, misafir veya asistan — refakatçi rozetlerinde gösterilir.</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">Eş, çocuk, misafir veya asistan — refakatçi yaka kartlarında gösterilir.</p>
               </div>
             </div>
             <DialogFooter><Button onClick={savePerson} disabled={!form.firstName || !form.lastName}>{editingPerson ? "Kaydet" : "Oluştur"}</Button></DialogFooter>
@@ -1010,10 +1148,20 @@ export function PeopleView() {
           ) : (
             <div className="grid gap-2">
               {(data ?? []).map((p) => (
-                <button key={p.id} onClick={() => open360(p)} className="flex min-w-0 items-center gap-3 rounded-xl border bg-card p-3 text-left transition hover:border-primary/40 hover:shadow-sm">
-                  <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
-                    {p.firstName[0]}{p.lastName[0]}
-                  </span>
+                <button
+                  key={p.id}
+                  onClick={() => open360(p)}
+                  onDoubleClick={() => openEdit(p)}
+                  title="Çift tıkla: kişiyi düzenle — tüm kişi alanları tek diyaloğda"
+                  className="flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border bg-card p-3 text-left transition hover:border-primary/40 hover:shadow-sm"
+                >
+                  {p.photoUrl ? (
+                    <img src={p.photoUrl} alt={`${p.firstName} ${p.lastName} fotoğrafı`} className="size-9 shrink-0 rounded-full border object-cover" />
+                  ) : (
+                    <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                      {p.firstName[0]}{p.lastName[0]}
+                    </span>
+                  )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">
                       {p.firstName} {p.lastName}
@@ -1120,7 +1268,7 @@ export function PeopleView() {
                               <span className="mt-1 block text-[10px] leading-relaxed text-muted-foreground">
                                 {s.regNo ? <><span className="font-mono">{s.regNo}</span> · </> : "kayıt yok · "}
                                 {s.regStatus ? <>{REGISTRATION_STATUS[s.regStatus] ?? s.regStatus}{s.categoryName ? ` (${s.categoryName})` : ""} · </> : ""}
-                                {s.badgeCount > 0 ? `${s.badgeCount} rozet` : "rozet yok"}
+                                {s.badgeCount > 0 ? `${s.badgeCount} yaka kartı` : "yaka kartı yok"}
                               </span>
                             </button>
                           );
@@ -1134,8 +1282,8 @@ export function PeopleView() {
                             </div>
                             <p className="mt-1.5 text-[10px] text-muted-foreground">
                               {winner === "target"
-                                ? `${mergePreview.source.firstName} katılımındaki kayıtlar/rozetler/taramalar ${mergePreview.target.firstName} katılımına taşınır, boşalan silinir.`
-                                : `${mergePreview.target.firstName} katılımındaki kayıtlar/rozetler/taramalar ${mergePreview.source.firstName} katılımına taşınır, boşalan silinir.`}
+                                ? `${mergePreview.source.firstName} katılımındaki kayıtlar/yaka kartları/taramalar ${mergePreview.target.firstName} katılımına taşınır, boşalan silinir.`
+                                : `${mergePreview.target.firstName} katılımındaki kayıtlar/yaka kartları/taramalar ${mergePreview.source.firstName} katılımına taşınır, boşalan silinir.`}
                             </p>
                           </div>
                         );
@@ -1154,7 +1302,7 @@ export function PeopleView() {
                       <Chip key={k} tone="neutral">{n} {MERGE_MOVE_LABELS[k] ?? k}</Chip>
                     ))}
                     {mergePreview.loserBadges > 0 && (
-                      <Chip tone="amber">{mergePreview.loserBadges} rozet kaybeden taraftan kazanan tarafına taşınır</Chip>
+                      <Chip tone="amber">{mergePreview.loserBadges} yaka kartı kaybeden taraftan kazanan tarafına taşınır</Chip>
                     )}
                   </div>
                 </div>
@@ -1179,7 +1327,8 @@ export function PeopleView() {
             <SheetContent className="w-full overflow-y-auto maven-scroll sm:max-w-xl">
               <SheetHeader>
                 <SheetTitle className="flex items-center gap-2">
-                  {selected?.firstName} {selected?.lastName}
+                  {detail?.person.photoUrl && <img src={detail.person.photoUrl} alt="" className="size-8 shrink-0 rounded-full border object-cover" aria-hidden />}
+                  <span className="min-w-0 truncate">{selected?.firstName} {selected?.lastName}</span>
                   {detail?.person.status === "MERGED" && <Chip tone="rose">birleştirildi</Chip>}
                 </SheetTitle>
                 <SheetDescription>Kişi 360 — modüllerin gerçeklerini birleştiren görünüm; veri sahibi değildir.</SheetDescription>
@@ -1196,11 +1345,42 @@ export function PeopleView() {
                       </Button>
                     }
                   >
+                    {/* R10-a: kişi fotoğrafı — 360 panelinde de yüklenebilir */}
+                    <div className="mb-2 rounded-lg border bg-muted/20 p-3">
+                      <LinkedPhotoUploader
+                        editionId={currentEditionId}
+                        systemFolder="KISI_FOTOGRAF"
+                        linkedType="PERSON"
+                        linkedId={detail.person.id}
+                        assetName={`${detail.person.firstName}-${detail.person.lastName}-fotografi`}
+                        currentUrl={detail.person.photoUrl}
+                        onApply={async (dataUrl) => {
+                          await apiSend(`/api/people/${detail.person.id}`, "PUT", { photoUrl: dataUrl });
+                          setDetail((d) => (d ? { ...d, person: { ...d.person, photoUrl: dataUrl } } : d));
+                          setSelected((s) => (s && s.id === detail.person.id ? { ...s, photoUrl: dataUrl } : s));
+                          reload();
+                        }}
+                        folderLabel="Kişi Fotoğrafları"
+                        alt={`${detail.person.firstName} ${detail.person.lastName} fotoğrafı`}
+                      />
+                    </div>
                     <Row360Line label="E-posta">{detail.person.email ?? "—"}</Row360Line>
                     <Row360Line label="Telefon">{detail.person.phone ?? "—"}</Row360Line>
                     <Row360Line label="Kurum">{detail.person.company ?? "—"}</Row360Line>
                     <Row360Line label="Unvan">{detail.person.title ?? "—"}</Row360Line>
+                    <Row360Line label="Şehir">{detail.person.city ?? "—"}</Row360Line>
                     <Row360Line label="Ülke">{detail.person.country ?? "—"}</Row360Line>
+                    {detail.person.linkedin && (
+                      <Row360Line label="LinkedIn">
+                        <span className="block truncate text-xs text-primary underline-offset-2">{detail.person.linkedin}</span>
+                      </Row360Line>
+                    )}
+                    {detail.person.bio && (
+                      <>
+                        <Separator className="my-2" />
+                        <p className="text-xs leading-relaxed text-muted-foreground">{detail.person.bio}</p>
+                      </>
+                    )}
                   </SectionCard>
 
                   <FamilyPanel person={detail.person} />
@@ -1221,7 +1401,7 @@ export function PeopleView() {
                         <Row360Line label="Kategori">{reg?.category?.name ?? "—"}</Row360Line>
                         <Row360Line label="Fon kaynak">{label(FUNDING_SOURCES, reg?.fundingSource)}</Row360Line>
                         <Row360Line label="Katılım"><StatusBadge map={ATTENDANCE_STATUS} value={part.attendance} /></Row360Line>
-                        <Row360Line label="Rozet">
+                        <Row360Line label="Yaka Kartı">
                           {badge ? <span className="inline-flex items-center gap-1"><Chip tone="violet">{badge.profile?.name ?? "Profil"}</Chip> <StatusBadge map={BADGE_STATUS} value={badge.status} /></span> : "—"}
                         </Row360Line>
                         <Separator className="my-2" />
@@ -1506,7 +1686,7 @@ function OrgContactsPanel({ orgId, contacts, onChanged }: { orgId: string; conta
 }
 
 export function OrganizationsView() {
-  const { tenant, bump, refreshKey } = useApp();
+  const { tenant, bump, refreshKey, currentEditionId } = useApp();
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<OrgRow | null>(null);
@@ -1568,7 +1748,7 @@ export function OrganizationsView() {
 
   return (
     <div>
-      <PageHeader title="Kurumlar" desc="Sponsor bir TÜR değil, edisyona atanan ROL'dür (§4) — kalıcı profil burada, roller edisyon içinde">
+      <PageHeader title="Kurum/Kuruluşlar" desc="Sponsor bir TÜR değil, edisyona atanan ROL'dür (§4) — kalıcı profil burada, roller edisyon içinde">
         <Input placeholder="Kurum ara…" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild><Button size="sm" onClick={openCreate}><Icons.Building2 className="size-4" /> Kurum Ekle</Button></DialogTrigger>
@@ -1578,6 +1758,31 @@ export function OrganizationsView() {
               <DialogDescription>Kurumsal kimlik kartı alanları QR kartvizite gömülür.</DialogDescription>
             </DialogHeader>
             <div className="grid gap-3 sm:grid-cols-2">
+              {/* R10-a: kurum logosu — benzersiz adla Medya Arşivi → Kurum/Kuruluş Logoları klasörüne */}
+              {editingOrg ? (
+                <div className="rounded-lg border bg-muted/20 p-3 sm:col-span-2">
+                  <p className="mb-2 text-xs font-semibold">Kurum/Kuruluş Logosu</p>
+                  <LinkedPhotoUploader
+                    editionId={currentEditionId}
+                    systemFolder="KURUM_LOGO"
+                    linkedType="ORGANIZATION"
+                    linkedId={editingOrg.id}
+                    assetName={`${form.name || editingOrg.name}-logosu`}
+                    currentUrl={editingOrg.logoUrl}
+                    fit="contain"
+                    onApply={async (dataUrl) => {
+                      await apiSend(`/api/organizations/${editingOrg.id}`, "PUT", { logoUrl: dataUrl });
+                      setEditingOrg({ ...editingOrg, logoUrl: dataUrl });
+                      reload();
+                      if (selected?.id === editingOrg.id) setDetail((d) => (d ? { ...d, organization: { ...d.organization, logoUrl: dataUrl } } : d));
+                    }}
+                    folderLabel="Kurum/Kuruluş Logoları"
+                    alt={`${editingOrg.name} logosu`}
+                  />
+                </div>
+              ) : (
+                <p className="text-[11px] leading-snug text-muted-foreground sm:col-span-2">Logo, kurum kaydedildikten sonra “Kurumu Düzenle” ekranından eklenir — Medya Arşivi → Kurum/Kuruluş Logoları klasörüne benzersiz adla kaydedilir.</p>
+              )}
               <div className="sm:col-span-2"><Label>Ad</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
               <div>
                 <Label>Tür</Label>
@@ -1613,9 +1818,13 @@ export function OrganizationsView() {
       {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
           {(data ?? []).map((o, i) => (
-            <button key={o.id} onClick={() => open360(o)} className="maven-stagger-item min-w-0 rounded-xl border bg-card p-4 text-left transition hover:border-primary/40 hover:shadow-sm" style={{ animationDelay: `${i * 40}ms` }}>
+            <button key={o.id} onClick={() => open360(o)} onDoubleClick={() => openEdit(o)} title="Çift tıkla: kurumu düzenle" className="maven-stagger-item min-w-0 cursor-pointer rounded-xl border bg-card p-4 text-left transition hover:border-primary/40 hover:shadow-sm" style={{ animationDelay: `${i * 40}ms` }}>
               <div className="flex items-center gap-2">
-                <span className="grid size-9 place-items-center rounded-lg bg-violet-500/10 text-violet-600"><Icons.Building2 className="size-4" /></span>
+                {o.logoUrl ? (
+                  <img src={o.logoUrl} alt={`${o.name} logosu`} className="size-12 shrink-0 rounded-lg border bg-background object-contain p-0.5" />
+                ) : (
+                  <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-violet-500/10 text-violet-600"><Icons.Building2 className="size-4" /></span>
+                )}
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{o.name}</p>
                   <p className="text-xs text-muted-foreground">{o.city ?? "—"} · {label(ORG_TYPES, o.type)}</p>
@@ -1655,6 +1864,27 @@ export function OrganizationsView() {
                   </Button>
                 }
               >
+                {/* R10-a: logo — kurum 360 kimlik kartında görüntülenir ve buradan yüklenir */}
+                <div className="mb-2 rounded-lg border bg-muted/20 p-3">
+                  <p className="mb-2 text-xs font-semibold">Kurum/Kuruluş Logosu</p>
+                  <LinkedPhotoUploader
+                    editionId={currentEditionId}
+                    systemFolder="KURUM_LOGO"
+                    linkedType="ORGANIZATION"
+                    linkedId={detail.organization.id}
+                    assetName={`${detail.organization.name}-logosu`}
+                    currentUrl={detail.organization.logoUrl}
+                    fit="contain"
+                    onApply={async (dataUrl) => {
+                      await apiSend(`/api/organizations/${detail.organization.id}`, "PUT", { logoUrl: dataUrl });
+                      setDetail((d) => (d ? { ...d, organization: { ...d.organization, logoUrl: dataUrl } } : d));
+                      setSelected((s) => (s && s.id === detail.organization.id ? { ...s, logoUrl: dataUrl } : s));
+                      reload();
+                    }}
+                    folderLabel="Kurum/Kuruluş Logoları"
+                    alt={`${detail.organization.name} logosu`}
+                  />
+                </div>
                 <Row360Line label="Tür"><Chip tone="violet">{label(ORG_TYPES, detail.organization.type)}</Chip></Row360Line>
                 <Row360Line label="Genel E-posta">{detail.organization.generalEmail ?? "—"}</Row360Line>
                 <Row360Line label="Web">{detail.organization.website ?? "—"}</Row360Line>

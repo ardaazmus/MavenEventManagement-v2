@@ -1,7 +1,7 @@
 // QR VCard — kişinin yaka kartı/etiket için QR'lanabilir sanal kartviziti (düşünce bulutu 1)
 // GET /api/people/[id]/vcard?format=json  → vCard 3.0 metni + QR SVG data URL + meta
 // GET /api/people/[id]/vcard?format=vcf   → .vcf dosyası indir
-// GET /api/people/[id]/vcard?format=qr    → yalnız QR SVG data URL (rozet tasarımında kullanılır)
+// GET /api/people/[id]/vcard?format=qr    → yalnız QR SVG data URL (yaka kartı tasarımında kullanılır)
 import { NextRequest, NextResponse } from "next/server";
 import QRCode from "qrcode";
 import { db } from "@/lib/db";

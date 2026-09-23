@@ -1,8 +1,10 @@
 "use client";
 // Medya Arşivi — klasör mimarisi + etkinlik içi izolasyon (düşünce bulutu 3)
 // İki panelli: solda klasör ağacı (self-ref parentId), sağda varlık ızgarası + yükleme/detay.
+// R10-c genişletmesi: sistem klasörleri (ensure + pin ikonu + spec rengi/açıklaması), yükleme
+// diyaloğunda sistem klasörü hızlı seçimi + bağlı varlık tipi, ZIP olarak indirme.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { listEntity, apiSend } from "@/lib/client";
+import { listEntity, apiGet, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { PageHeader, SectionCard, EmptyState, Loading, ErrorState, useApi, Chip, KpiCard } from "../bits";
 import { MEDIA_KIND, label } from "@/lib/constants";
@@ -31,6 +33,20 @@ interface MediaAssetRow {
   notes?: string | null; linkedType?: string | null; linkedId?: string | null; uploadedBy?: string | null; createdAt: string;
 }
 interface FolderNode { folder: MediaFolderRow; children: FolderNode[]; count: number; depth: number }
+
+// sistem klasör sözleşmesi: GET /api/media/system-folders (R10-c)
+interface SystemFolderSpecRow { key: string; name: string; color: string; description: string }
+interface SystemFoldersResponse {
+  root: { id: string; name: string };
+  folders: Record<string, { id: string; name: string }>;
+  specs: SystemFolderSpecRow[];
+  assetCount: number;
+}
+// upload diyaloğundaki bağlı varlık tipi seçenekleri — MediaAsset.linkedType değerleri
+const LINKED_TYPE_LABEL: Record<string, string> = {
+  PERSON: "Kişi", ORGANIZATION: "Kurum", HOTEL: "Otel", SESSION: "Oturum",
+  SUBMISSION: "Gönderim", PORTAL: "Portal", CERTIFICATE: "Sertifika", BADGE_DESIGN: "Yaka Kartı Tasarımı",
+};
 
 // klasör renk dili — nokta + seçili zemin
 const FOLDER_COLORS: Record<string, { dot: string; active: string }> = {
@@ -97,15 +113,42 @@ export function MediaArchiveView() {
     [currentEditionId, refreshKey],
   );
 
+  // ── sistem klasörleri (R10-c): mount'ta ensure edilir; id'ye göre mevcut listeyle birleştirilir
+  const { data: sysFolders } = useApi<SystemFoldersResponse | null>(
+    () => (currentEditionId ? apiGet<SystemFoldersResponse>(`/api/media/system-folders?editionId=${currentEditionId}`) : Promise.resolve(null)),
+    [currentEditionId],
+  );
+  const mergedFolders = useMemo<MediaFolderRow[]>(() => {
+    const list = folders ?? [];
+    if (!sysFolders) return list;
+    const byId = new Set(list.map((f) => f.id));
+    const extras: MediaFolderRow[] = [];
+    for (const [key, f] of Object.entries(sysFolders.folders)) {
+      if (byId.has(f.id)) continue;
+      const spec = sysFolders.specs.find((s) => s.key === key);
+      extras.push({
+        id: f.id,
+        editionId: currentEditionId ?? "",
+        parentId: key === "ROOT" ? null : sysFolders.root.id,
+        name: f.name,
+        color: spec?.color ?? null,
+        systemKey: key,
+        description: spec?.description ?? null,
+        createdAt: "",
+      });
+    }
+    return extras.length ? [...list, ...extras] : list;
+  }, [folders, sysFolders, currentEditionId]);
+
   const [selectedId, setSelectedId] = useState<string | null>(null); // null = "Tümü"
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const initExpanded = useRef(false);
   useEffect(() => {
     if (folders && !initExpanded.current) {
-      setExpanded(new Set(folders.map((f) => f.id)));
+      setExpanded(new Set(mergedFolders.map((f) => f.id)));
       initExpanded.current = true;
     }
-  }, [folders]);
+  }, [folders, mergedFolders]);
 
   const [search, setSearch] = useState("");
 
@@ -115,16 +158,17 @@ export function MediaArchiveView() {
   const [deleteFolder, setDeleteFolder] = useState<MediaFolderRow | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadMode, setUploadMode] = useState<"file" | "link">("file");
-  const [uploadForm, setUploadForm] = useState({ name: "", kind: "OTHER", folderId: "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 });
+  const [uploadForm, setUploadForm] = useState({ name: "", kind: "OTHER", folderId: "__none__", linkedType: "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 });
   const [busy, setBusy] = useState(false);
+  const [zipping, setZipping] = useState(false);
   const [detail, setDetail] = useState<MediaAssetRow | null>(null);
   const [detailForm, setDetailForm] = useState({ tags: "", notes: "", folderId: "__none__" });
 
   const editionName = editions.find((e) => e.id === currentEditionId)?.name ?? "bu etkinliğin";
 
-  // ── klasör ağacı (parentId → self-ref) + klasör başına varlık sayısı
+  // ── klasör ağacı (parentId → self-ref) + klasör başına varlık sayısı — sistem klasörleri id ile birleşik
   const tree = useMemo<FolderNode[]>(() => {
-    const list = folders ?? [];
+    const list = mergedFolders;
     const byId = new Map<string, FolderNode>();
     for (const f of list) byId.set(f.id, { folder: f, children: [], count: 0, depth: 0 });
     const roots: FolderNode[] = [];
@@ -148,7 +192,7 @@ export function MediaArchiveView() {
     };
     sortRec(roots);
     return roots;
-  }, [folders, assets]);
+  }, [mergedFolders, assets]);
 
   // seçili klasörün alt dahil tüm varlıkları (klasör = kendi + torunları)
   const descendantIds = useMemo(() => {
@@ -184,7 +228,7 @@ export function MediaArchiveView() {
 
   const imageCount = (assets ?? []).filter((a) => a.kind === "IMAGE").length;
   const videoCount = (assets ?? []).filter((a) => a.kind === "VIDEO").length;
-  const selectedFolder = (folders ?? []).find((f) => f.id === selectedId) ?? null;
+  const selectedFolder = mergedFolders.find((f) => f.id === selectedId) ?? null;
 
   // ── aksiyonlar
   const toggleExpand = (id: string) => {
@@ -262,11 +306,12 @@ export function MediaArchiveView() {
         dataUrl: uploadMode === "file" && uploadForm.dataUrl ? uploadForm.dataUrl : null,
         tags: uploadForm.tags.trim() || null,
         notes: uploadForm.notes.trim() || null,
+        linkedType: uploadForm.linkedType === "__none__" ? null : uploadForm.linkedType,
         uploadedBy: "Yönetici",
       });
       toast({ title: "Varlık arşive eklendi", description: `${uploadForm.name.trim()} · ${label(MEDIA_KIND, uploadForm.kind)}` });
       setUploadOpen(false);
-      setUploadForm({ name: "", kind: "OTHER", folderId: selectedId ?? "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 });
+      setUploadForm({ name: "", kind: "OTHER", folderId: selectedId ?? "__none__", linkedType: "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 });
       reloadAssets(); bump();
     } catch (e) {
       toast({ title: "Yüklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
@@ -308,16 +353,63 @@ export function MediaArchiveView() {
     } finally { setBusy(false); }
   };
 
+  // ── ZIP olarak indir (R10-c): Medya/… klasör ağacı + manifest.json
+  const downloadZip = async () => {
+    if (!currentEditionId) return;
+    setZipping(true);
+    try {
+      const res = await fetch(`/api/media/export?editionId=${currentEditionId}`);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Arşiv indirilemedi (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `medya-arsivi-${editionName.toLocaleLowerCase("tr").replaceAll(" ", "-").replace(/[^a-z0-9\-ğüşöçı]/gi, "")}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast({ title: "Medya arşivi indirildi", description: "ZIP: klasör yapısı + manifest.json dahil." });
+    } catch (e) {
+      toast({ title: "ZIP indirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setZipping(false); }
+  };
+
   if (foldersLoading && !folders) return <Loading rows={6} />;
   if (foldersError) return <ErrorState message={foldersError} onRetry={reloadFolders} />;
 
-  // ── klasör ağacı satırı
+  // ── klasör ağacı satırı — sistem klasörleri pin ikonu + spec rengi + açıklama ipucu (R10-c)
   const renderNode = (node: FolderNode) => {
     const f = node.folder;
     const isOpen = expanded.has(f.id);
-    const color = FOLDER_COLORS[f.color ?? "neutral"] ?? FOLDER_COLORS.neutral;
+    const hexColor = f.color?.startsWith("#") ? f.color : null;
+    const color = FOLDER_COLORS[hexColor ? "neutral" : f.color ?? "neutral"] ?? FOLDER_COLORS.neutral;
     const isActive = selectedId === f.id;
+    const isSystem = Boolean(f.systemKey) && f.systemKey !== "ROOT";
     const SysIcon = f.systemKey && SYSTEM_ICON[f.systemKey] ? (Icons[SYSTEM_ICON[f.systemKey]] as typeof Icons.Folder) : null;
+    const nameButton = (
+      <button
+        type="button"
+        onClick={() => setSelectedId(f.id)}
+        className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left"
+        aria-current={isActive ? "true" : undefined}
+      >
+        {hexColor
+          ? <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: hexColor }} aria-hidden />
+          : <span className={cn("size-2 shrink-0 rounded-full", color.dot)} aria-hidden />}
+        {isSystem ? (
+          <Icons.Pin className="size-3.5 shrink-0 text-teal-600" aria-label="Sistem klasörü" />
+        ) : SysIcon ? (
+          <SysIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (isOpen && node.children.length ? <Icons.FolderOpen className="size-3.5 shrink-0 text-muted-foreground" /> : <Icons.Folder className="size-3.5 shrink-0 text-muted-foreground" />)}
+        <span className="truncate text-[13px] font-medium">{f.name}</span>
+        {isSystem && <Icons.Star className="size-2.5 shrink-0 text-amber-500" aria-hidden />}
+        <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">{node.count}</span>
+      </button>
+    );
     return (
       <div key={f.id} className="animate-in fade-in slide-in-from-left-1 fill-mode-backwards" style={{ animationDelay: `${Math.min(node.depth, 4) * 30}ms` }}>
         <div
@@ -325,6 +417,7 @@ export function MediaArchiveView() {
             "group flex items-center gap-1 rounded-lg border border-transparent px-1.5 py-1 transition-colors hover:bg-muted/60",
             isActive && cn("border", color.active),
           )}
+          style={isActive && hexColor ? { borderColor: hexColor, backgroundColor: `${hexColor}1a` } : undefined}
         >
           <button
             type="button"
@@ -334,19 +427,7 @@ export function MediaArchiveView() {
           >
             {isOpen ? <Icons.ChevronDown className="size-3.5" /> : <Icons.ChevronRight className="size-3.5" />}
           </button>
-          <button
-            type="button"
-            onClick={() => setSelectedId(f.id)}
-            className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left"
-            aria-current={isActive ? "true" : undefined}
-          >
-            <span className={cn("size-2 shrink-0 rounded-full", color.dot)} aria-hidden />
-            {SysIcon
-              ? <SysIcon className="size-3.5 shrink-0 text-muted-foreground" />
-              : (isOpen && node.children.length ? <Icons.FolderOpen className="size-3.5 shrink-0 text-muted-foreground" /> : <Icons.Folder className="size-3.5 shrink-0 text-muted-foreground" />)}
-            <span className="truncate text-[13px] font-medium">{f.name}</span>
-            <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">{node.count}</span>
-          </button>
+          {isSystem ? <TooltipLite label={f.description ?? "Sistem klasörü"}>{nameButton}</TooltipLite> : nameButton}
           <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <TooltipLite label="Alt klasör ekle">
               <button type="button" aria-label="Alt klasör ekle" onClick={() => { setFolderDialog({ mode: "create", parent: f }); setFolderForm({ name: "", color: f.color ?? "teal" }); }} className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground">
@@ -375,10 +456,13 @@ export function MediaArchiveView() {
   return (
     <div className="space-y-5">
       <PageHeader title="Medya Arşivi" desc="Klasör mimarisi ve etkinlik içi izolasyon — her varlık kendi edisyonunda arşivlenir.">
+        <Button variant="outline" size="sm" onClick={downloadZip} disabled={zipping || !currentEditionId} aria-label="Medya arşivini ZIP olarak indir">
+          {zipping ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.FileArchive className="size-4" />} ZIP olarak indir
+        </Button>
         <Button variant="outline" size="sm" onClick={() => { setFolderDialog({ mode: "create", parent: selectedFolder }); setFolderForm({ name: "", color: "teal" }); }}>
           <Icons.FolderPlus className="size-4" /> Yeni Klasör
         </Button>
-        <Button size="sm" onClick={() => { setUploadMode("file"); setUploadForm({ name: "", kind: "OTHER", folderId: selectedId ?? "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 }); setUploadOpen(true); }}>
+        <Button size="sm" onClick={() => { setUploadMode("file"); setUploadForm({ name: "", kind: "OTHER", folderId: selectedId ?? "__none__", linkedType: "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 }); setUploadOpen(true); }}>
           <Icons.Upload className="size-4" /> Varlık Yükle
         </Button>
       </PageHeader>
@@ -386,12 +470,16 @@ export function MediaArchiveView() {
       {/* Üst KPI şeridi + etkinlik izolasyonu */}
       <div className="flex flex-wrap items-center gap-2">
         <Chip tone="teal"><Icons.ShieldCheck className="mr-1 inline size-3" /> Bu arşiv yalnızca {editionName} verilerini içerir — etkinlik izolasyonu</Chip>
+        <Chip tone="violet"><Icons.Pin className="mr-1 inline size-3" /> Sistem klasörleri: {sysFolders?.specs.length ?? 9}</Chip>
+        <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+          <Icons.FileArchive className="size-3" aria-hidden /> ZIP çıktısı: klasör yapısı + manifest.json dahil
+        </span>
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard label="Toplam Varlık" value={(assets ?? []).length} icon={<Icons.Files className="size-4" />} />
         <KpiCard label="Görsel" value={imageCount} tone="teal" icon={<Icons.Image className="size-4" />} />
         <KpiCard label="Video" value={videoCount} tone="violet" icon={<Icons.Clapperboard className="size-4" />} />
-        <KpiCard label="Klasör" value={(folders ?? []).length} tone="amber" icon={<Icons.FolderOpen className="size-4" />} />
+        <KpiCard label="Klasör" value={mergedFolders.length} tone="amber" icon={<Icons.FolderOpen className="size-4" />} />
       </div>
 
       {/* İki panel — lg altında üst üste */}
@@ -417,7 +505,7 @@ export function MediaArchiveView() {
               <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{(assets ?? []).length}</span>
             </button>
             {tree.map(renderNode)}
-            {(folders ?? []).length === 0 && (
+            {mergedFolders.length === 0 && (
               <p className="px-2 py-3 text-xs text-muted-foreground">Henüz klasör yok — sağ üstten ilk klasörü ekleyin.</p>
             )}
           </div>
@@ -591,6 +679,36 @@ export function MediaArchiveView() {
               </div>
             )}
 
+            {/* sistem klasörü hızlı seçimi (R10-c) — Yaka Kartı, sertifika vs. kendi klasörüne */}
+            <div className="space-y-1.5">
+              <Label>Sistem klasörü — hızlı seç</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {(sysFolders?.specs ?? []).map((spec) => {
+                  const folderId = sysFolders?.folders[spec.key]?.id;
+                  const active = Boolean(folderId) && uploadForm.folderId === folderId;
+                  return (
+                    <button
+                      key={spec.key}
+                      type="button"
+                      disabled={!folderId}
+                      aria-pressed={active}
+                      title={spec.description}
+                      onClick={() => folderId && setUploadForm((p) => ({ ...p, folderId }))}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50",
+                        active ? "border-transparent text-white" : "border-border bg-card text-muted-foreground hover:bg-muted",
+                      )}
+                      style={active ? { backgroundColor: spec.color } : undefined}
+                    >
+                      {active ? <Icons.Pin className="size-3" aria-hidden /> : <span className="size-2 rounded-full" style={{ backgroundColor: spec.color }} aria-hidden />}
+                      {spec.name}
+                    </button>
+                  );
+                })}
+                {!sysFolders && <p className="text-[11px] text-muted-foreground">Sistem klasörleri hazırlanıyor…</p>}
+              </div>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="asset-name">Ad</Label>
@@ -616,6 +734,16 @@ export function MediaArchiveView() {
                 </Select>
               </div>
               <div className="space-y-1.5">
+                <Label>Bağlı varlık tipi</Label>
+                <Select value={uploadForm.linkedType} onValueChange={(v) => setUploadForm({ ...uploadForm, linkedType: v })}>
+                  <SelectTrigger aria-label="Bağlı varlık tipi"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Bağlantısız</SelectItem>
+                    {Object.entries(LINKED_TYPE_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
                 <Label htmlFor="asset-tags">Etiketler</Label>
                 <Input id="asset-tags" value={uploadForm.tags} onChange={(e) => setUploadForm({ ...uploadForm, tags: e.target.value })} placeholder="virgülle: logo, basın" />
               </div>

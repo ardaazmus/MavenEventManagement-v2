@@ -1,7 +1,7 @@
 "use client";
 // Sahada — canlı onsite kontrol (§07/§42): kapı seçimi, arama, tarama, tekrar/ret kuyruğu
 // + Sertifikalar (§43) + İletişim + Operasyon + Ayarlar
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { listEntity, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 
 interface ScanRow {
   id: string; location: string; doorName?: string | null; action: string; result: string; reason?: string | null; device?: string | null; operator?: string | null; scannedAt: string;
-  participation?: { person: { firstName: string; lastName: string } } | null;
+  participation?: { id: string; person: { firstName: string; lastName: string } } | null;
 }
 interface ScanResult {
   result: string; tone?: string; reason?: string | null;
@@ -86,7 +86,7 @@ export function OnsiteView() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
-        <SectionCard title="Tarama Masası" desc={`${door} · görevli kapsamı: etkinlik girişi + oturum`} className="lg:col-span-2">
+        <SectionCard title="Tarama Masası" desc={`${door} · görevli kapsamı: etkinlik girişi + oturum`} className="min-w-0 lg:col-span-2">
           <div className="flex gap-2">
             {["Kapı A", "Kapı B", "Gala", "VIP Lounge"].map((d) => (
               <button key={d} onClick={() => setDoor(d)} className={cn("rounded-lg border px-3 py-1.5 text-xs font-medium transition", door === d ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:border-primary/40")}>
@@ -119,7 +119,7 @@ export function OnsiteView() {
                 <div className="mt-2 flex flex-wrap gap-1 text-[11px]">
                   <Chip tone="teal">{last.registration.category ?? "kategori yok"}</Chip>
                   <Chip tone={last.registration.status === "CONFIRMED" ? "emerald" : "amber"}>kayıt: {last.registration.status}</Chip>
-                  {last.badge && <Chip tone="violet">rozet: {last.badge.profile} {last.badge.status}</Chip>}
+                  {last.badge && <Chip tone="violet">yaka kartı: {last.badge.profile} {last.badge.status}</Chip>}
                 </div>
               )}
               {last.reason && <p className="mt-2 text-xs text-muted-foreground">{last.reason}</p>}
@@ -130,10 +130,10 @@ export function OnsiteView() {
               )}
             </div>
           )}
-          <p className="mt-3 text-[11px] text-muted-foreground">Demo: QR-0001 … QR-0024 aktif rozetler; iptal/reddedilen katılımcı kodu yoktur → kırmızı durum.</p>
+          <p className="mt-3 text-[11px] text-muted-foreground">Demo: QR-0001 … QR-0024 aktif yaka kartları; iptal/reddedilen katılımcı kodu yoktur → kırmızı durum.</p>
         </SectionCard>
 
-        <SectionCard title="Canlı Tarama Akışı" desc="olay bazlı — ilk geçerli giriş ve tekrar tarama ayrı satır" className="lg:col-span-3" bodyClass="max-h-[420px] overflow-y-auto maven-scroll">
+        <SectionCard title="Canlı Tarama Akışı" desc="olay bazlı — ilk geçerli giriş ve tekrar tarama ayrı satır" className="min-w-0 lg:col-span-3" bodyClass="max-h-[420px] overflow-y-auto maven-scroll">
           {loading ? <Loading rows={6} /> : error ? <ErrorState message={error} onRetry={reload} /> : (scans ?? []).length === 0 ? (
             <EmptyState title="Bu kapı için giriş kaydı yok" desc="Doğru gün ve kapıyı seçtiğinizden emin olun." />
           ) : (
@@ -162,7 +162,7 @@ export function OnsiteView() {
       <Dialog open={Boolean(denyTarget)} onOpenChange={(o) => !o && setDenyTarget(null)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader><DialogTitle>Manuel İstisna</DialogTitle><DialogDescription>Gerekçe zorunlu; karar tarama geçmişine DENIED + istisna olarak işlenir.</DialogDescription></DialogHeader>
-          <div><Label>Gerekçe</Label><Textarea value={forceReason} onChange={(e) => setForceReason(e.target.value)} placeholder="Örn. rozet basımı sürüyor, kimlik ibraz edildi…" className="mt-1" /></div>
+          <div><Label>Gerekçe</Label><Textarea value={forceReason} onChange={(e) => setForceReason(e.target.value)} placeholder="Örn. yaka kartı basımı sürüyor, kimlik ibraz edildi…" className="mt-1" /></div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDenyTarget(null)}>Vazgeç</Button>
             <Button disabled={!forceReason} onClick={() => scan(forceReason)}>İstisna Uygula</Button>
@@ -179,7 +179,7 @@ interface CertDefRow {
   id: string; name: string; type: string; eligibilityRule?: string | null; signerName?: string | null;
   widthMm: number; heightMm: number; bleedMm: number; orientation: string; backgroundDataUrl: string | null;
   fontKey: string; textColor: string; bodyTemplate: string | null; tierNote: string | null;
-  issues: { id: string; status: string; eligibilityNote?: string | null }[];
+  designJson?: string | null; issues: { id: string; status: string; eligibilityNote?: string | null }[];
 }
 interface CertIssueRow {
   id: string; status: string; eligibilityNote?: string | null; generatedAt?: string | null; deliveredAt?: string | null;
@@ -189,12 +189,118 @@ interface CertDraft {
   id: string; name: string;
   widthMm: number; heightMm: number; bleedMm: number; orientation: string;
   fontKey: string; textColor: string; tierNote: string | null;
-  backgroundDataUrl: string | null; bodyTemplate: string | null;
+  backgroundDataUrl: string | null; bodyTemplate: string | null; designJson: string | null;
 }
 
 // gövde şablonu yer tutucuları — tıkla, metnin sonuna eklenir
 const CERT_TOKENS = ["{{fullName}}", "{{title}}", "{{company}}", "{{edition}}", "{{tier}}", "{{date}}", "{{serial}}"] as const;
 const MAX_BG_BYTES = 600 * 1024;
+
+// ── R10-b: KANVAS sertifika tasarımcısı — yaka kartı tasarımcısı mimarisi ───
+const CERT_PX_PER_MM = 2.2; // kanvas ölçeği (mobilde overflow-x kabı ile kaydırılır)
+
+type CertElementType = "text" | "image" | "line" | "qr";
+interface CertElement {
+  id: string;
+  type: CertElementType;
+  x: number; y: number; w: number; h: number; // mm
+  text?: string;               // metin içeriği — {{}} yer tutucuları serbest / görsel alan etiketi
+  placeholderBinding?: string; // ayrılmış bağlama: bodyTemplate | tierNote ...
+  fontSize?: number; fontWeight?: number; color?: string; align?: string;
+  imageDataUrl?: string;       // image elemanı dataURL (≤600KB)
+  radius?: number;             // köşe yarıçapı (mm)
+}
+const CERT_ELEMENT_LABELS: Record<CertElementType, string> = { text: "Metin", image: "Görsel", line: "Çizgi", qr: "QR" };
+const certR1 = (n: number) => Math.round(n * 10) / 10;
+const certClamp = (n: number, min: number, max: number) => Math.min(Math.max(n, min), max);
+const certUid = () => `ce${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+function parseCertElements(json: string | null): CertElement[] {
+  try {
+    const arr = json ? (JSON.parse(json) as CertElement[]) : [];
+    return Array.isArray(arr) ? arr.filter((e) => e && typeof e.x === "number" && typeof e.y === "number") : [];
+  } catch { return []; }
+}
+
+// yeni tasarım varsayılan eleman seti: başlık, gövde, düzey notu, imza, tarih, logo alanı
+const defaultCertElements = (editionName: string, bodyTemplate: string, tierNote: string): CertElement[] => [
+  { id: certUid(), type: "text", x: 20, y: 15, w: 257, h: 12, text: editionName, fontSize: 7.5, fontWeight: 800, color: "0f766e", align: "center" },
+  { id: certUid(), type: "text", x: 40, y: 62, w: 217, h: 9, text: tierNote || "{{tier}}", placeholderBinding: "tierNote", fontSize: 4, fontWeight: 600, color: "6b7280", align: "center" },
+  { id: certUid(), type: "text", x: 40, y: 84, w: 217, h: 42, text: bodyTemplate || "Bu belge {{fullName}} adına {{edition}} etkinliğine {{tier}} olarak katılımını belgelemek üzere düzenlenmiştir.", placeholderBinding: "bodyTemplate", fontSize: 4.4, fontWeight: 400, color: "1f2937", align: "center" },
+  { id: certUid(), type: "line", x: 200, y: 168, w: 50, h: 0.8, color: "1f2937" },
+  { id: certUid(), type: "text", x: 190, y: 170.5, w: 70, h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "1f2937", align: "center" },
+  { id: certUid(), type: "text", x: 24, y: 188, w: 60, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "6b7280", align: "left" },
+  { id: certUid(), type: "image", x: 252, y: 180, w: 28, h: 16, text: "Logo alanı", color: "94a3b8", radius: 1 },
+];
+
+// yerleşim şablonları — kullanıcı: "farklı alanlara farklı yerleşimler yapabileyim"
+interface CertPresetCtx { editionName: string; bodyTemplate: string; tierNote: string; widthMm: number; heightMm: number }
+const CERT_PRESETS: { key: string; label: string; orientation: string; build: (c: CertPresetCtx) => CertElement[] }[] = [
+  {
+    key: "classic", label: "Yatay Klasik", orientation: "LANDSCAPE",
+    build: (c) => {
+      const W = c.widthMm, H = c.heightMm;
+      return [
+        { id: certUid(), type: "text", x: certR1(W * 0.07), y: certR1(H * 0.075), w: certR1(W * 0.86), h: 12, text: c.editionName, fontSize: 7.5, fontWeight: 800, color: "0f766e", align: "center" },
+        { id: certUid(), type: "text", x: certR1(W * 0.13), y: certR1(H * 0.28), w: certR1(W * 0.74), h: 8, text: c.tierNote || "{{tier}}", fontSize: 4, fontWeight: 600, color: "6b7280", align: "center" },
+        { id: certUid(), type: "text", x: certR1(W * 0.13), y: certR1(H * 0.40), w: certR1(W * 0.74), h: 42, text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4.4, fontWeight: 400, color: "1f2937", align: "center" },
+        { id: certUid(), type: "line", x: certR1(W * 0.62), y: certR1(H * 0.80), w: certR1(W * 0.20), h: 0.8, color: "1f2937" },
+        { id: certUid(), type: "text", x: certR1(W * 0.60), y: certR1(H * 0.815), w: certR1(W * 0.24), h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "1f2937", align: "center" },
+        { id: certUid(), type: "text", x: certR1(W * 0.08), y: certR1(H * 0.90), w: 60, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "6b7280", align: "left" },
+        { id: certUid(), type: "image", x: certR1(W * 0.86), y: certR1(H * 0.86), w: 28, h: 16, text: "Logo alanı", color: "94a3b8", radius: 1 },
+      ];
+    },
+  },
+  {
+    key: "modern", label: "Dikey Modern", orientation: "PORTRAIT",
+    build: (c) => {
+      const W = c.widthMm, H = c.heightMm;
+      return [
+        { id: certUid(), type: "image", x: 16, y: 16, w: 36, h: 18, text: "Logo alanı", color: "94a3b8", radius: 1 },
+        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.15), w: W - 32, h: 14, text: c.editionName, fontSize: 7, fontWeight: 800, color: "0f172a", align: "left" },
+        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.22), w: W - 32, h: 8, text: c.tierNote || "{{tier}}", fontSize: 3.6, fontWeight: 600, color: "0f766e", align: "left" },
+        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.33), w: W - 32, h: certR1(H * 0.24), text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4, fontWeight: 400, color: "1f2937", align: "left" },
+        { id: certUid(), type: "line", x: 16, y: certR1(H * 0.85), w: 60, h: 0.8, color: "1f2937" },
+        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.865), w: 90, h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "1f2937", align: "left" },
+        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.93), w: 90, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "6b7280", align: "left" },
+        { id: certUid(), type: "qr", x: W - 42, y: certR1(H * 0.86), w: 26, h: 26, color: "0f766e" },
+      ];
+    },
+  },
+  {
+    key: "minimal", label: "Minimal", orientation: "LANDSCAPE",
+    build: (c) => {
+      const W = c.widthMm, H = c.heightMm;
+      return [
+        { id: certUid(), type: "text", x: certR1(W * 0.13), y: certR1(H * 0.36), w: certR1(W * 0.74), h: 12, text: c.editionName, fontSize: 7, fontWeight: 700, color: "1f2937", align: "center" },
+        { id: certUid(), type: "text", x: certR1(W * 0.17), y: certR1(H * 0.48), w: certR1(W * 0.66), h: 34, text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4.4, fontWeight: 400, color: "374151", align: "center" },
+      ];
+    },
+  },
+  {
+    key: "prestige", label: "Prestij", orientation: "LANDSCAPE",
+    build: (c) => {
+      const W = c.widthMm, H = c.heightMm;
+      const gold = "8a6d1a";
+      return [
+        { id: certUid(), type: "line", x: 12, y: 12, w: W - 24, h: 0.8, color: gold },
+        { id: certUid(), type: "line", x: 12, y: H - 12.8, w: W - 24, h: 0.8, color: gold },
+        { id: certUid(), type: "line", x: 12, y: 12, w: 0.8, h: H - 24, color: gold },
+        { id: certUid(), type: "line", x: W - 12.8, y: 12, w: 0.8, h: H - 24, color: gold },
+        { id: certUid(), type: "text", x: certR1(W * 0.10), y: certR1(H * 0.14), w: certR1(W * 0.80), h: 13, text: c.editionName, fontSize: 8.5, fontWeight: 800, color: gold, align: "center" },
+        { id: certUid(), type: "line", x: certR1(W * 0.37), y: certR1(H * 0.235), w: certR1(W * 0.26), h: 0.6, color: gold },
+        { id: certUid(), type: "text", x: certR1(W * 0.20), y: certR1(H * 0.28), w: certR1(W * 0.60), h: 8, text: c.tierNote || "{{tier}}", fontSize: 4, fontWeight: 600, color: "57534e", align: "center" },
+        { id: certUid(), type: "text", x: certR1(W * 0.17), y: certR1(H * 0.40), w: certR1(W * 0.66), h: 42, text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4.4, fontWeight: 400, color: "292524", align: "center" },
+        { id: certUid(), type: "line", x: certR1(W * 0.18), y: certR1(H * 0.80), w: 50, h: 0.8, color: "292524" },
+        { id: certUid(), type: "text", x: certR1(W * 0.15), y: certR1(H * 0.815), w: 70, h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "292524", align: "center" },
+        { id: certUid(), type: "line", x: certR1(W * 0.62), y: certR1(H * 0.80), w: 50, h: 0.8, color: "292524" },
+        { id: certUid(), type: "text", x: certR1(W * 0.59), y: certR1(H * 0.815), w: 70, h: 8, text: "Akreditasyon · Bilimsel Komite", fontSize: 3.2, fontWeight: 700, color: "292524", align: "center" },
+        { id: certUid(), type: "text", x: certR1(W * 0.08), y: certR1(H * 0.90), w: 60, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "57534e", align: "left" },
+        { id: certUid(), type: "image", x: certR1(W / 2 - 14), y: certR1(H * 0.85), w: 28, h: 16, text: "Logo alanı", color: "94a3b8", radius: 1 },
+      ];
+    },
+  },
+];
 
 export function CertificatesView() {
   const { currentEditionId, tenant, editions, bump, refreshKey } = useApp();
@@ -207,6 +313,13 @@ export function CertificatesView() {
   const [printing, setPrinting] = useState(false);
   const [mailBusyId, setMailBusyId] = useState<string | null>(null);
   const bgFileRef = useRef<HTMLInputElement>(null);
+  // ── R10-b: kanvas durumu ──
+  const [selElId, setSelElId] = useState<string | null>(null);
+  const [certPreviewMode, setCertPreviewMode] = useState(false);
+  const [previewPid, setPreviewPid] = useState<string | null>(null);
+  const [presetKey, setPresetKey] = useState("none");
+  const elFileRef = useRef<HTMLInputElement>(null);
+  const dragRef = useRef<{ id: string; mode: "move" | "resize"; startX: number; startY: number; origX: number; origY: number; origW: number; origH: number } | null>(null);
 
   const edition = editions.find((e) => e.id === currentEditionId);
 
@@ -232,7 +345,9 @@ export function CertificatesView() {
       orientation: d.orientation ?? "LANDSCAPE", fontKey: d.fontKey ?? "playfair",
       textColor: `#${(d.textColor ?? "1f2937").replace("#", "")}`, tierNote: d.tierNote ?? null,
       backgroundDataUrl: d.backgroundDataUrl ?? null, bodyTemplate: d.bodyTemplate ?? "",
+      designJson: d.designJson ?? null,
     });
+    setSelElId(null); setCertPreviewMode(false); setPreviewPid(null); setPresetKey("none");
   };
 
   const patchDraft = (patch: Partial<CertDraft>) => setDraft((d) => (d ? { ...d, ...patch } : d));
@@ -257,23 +372,37 @@ export function CertificatesView() {
         orientation: draft.orientation, fontKey: draft.fontKey,
         textColor: draft.textColor.replace("#", ""), tierNote: draft.tierNote,
         backgroundDataUrl: draft.backgroundDataUrl, bodyTemplate: draft.bodyTemplate,
+        designJson: draft.designJson, // R10-b: kanvas eleman dizisi
       });
-      toast({ title: "Sertifika tasarımı kaydedildi", description: `${saved.name} · ${saved.widthMm}×${saved.heightMm} mm · ${saved.orientation === "PORTRAIT" ? "dikey" : "yatay"}` });
+      toast({ title: "Sertifika tasarımı kaydedildi", description: `${saved.name} · ${saved.widthMm}×${saved.heightMm} mm · ${saved.orientation === "PORTRAIT" ? "dikey" : "yatay"} · ${parseCertElements(draft.designJson).length} eleman` });
       reload(); bump();
     } catch (e) {
       toast({ title: "Tasarım kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
     } finally { setSavingDesign(false); }
   };
 
+  // arka plan yükleme — Medya Arşivi → Sertifikalar klasörüne benzersiz adla kaydedilir
   const uploadBackground = (file: File) => {
     if (file.size > MAX_BG_BYTES) {
       toast({ title: "Görsel çok büyük", description: `En fazla 600 KB yüklenebilir — seçilen dosya ${(file.size / 1024).toFixed(0)} KB.`, variant: "destructive" });
       return;
     }
+    if (!draft || !currentEditionId) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      patchDraft({ backgroundDataUrl: String(reader.result) });
-      toast({ title: "Arka plan eklendi", description: "Tasarımcıdan gelen görsel en arka layer'a eklenir." });
+    reader.onload = async () => {
+      const dataUrl = String(reader.result);
+      try {
+        const res = await apiSend<{ asset: { dataUrl: string; name: string } }>("/api/media/upload-linked", "POST", {
+          editionId: currentEditionId, systemFolder: "SERTIFIKA", linkedType: "CERTIFICATE", linkedId: draft.id,
+          name: `${selectedDef?.name ?? draft.name}-arkaplan`, dataUrl,
+        });
+        patchDraft({ backgroundDataUrl: res.asset.dataUrl });
+        toast({ title: "Arka plan yüklendi", description: `${res.asset.name} — Medya Arşivi → Sertifikalar klasörüne benzersiz adla kaydedildi.` });
+      } catch (e) {
+        // arşiv yazılamazsa tasarımcıya yerel uygula — kayıt yine de mümkün
+        patchDraft({ backgroundDataUrl: dataUrl });
+        toast({ title: "Arka plan eklendi (arşiv dışı)", description: e instanceof Error ? e.message : "Medya Arşivi'ne yazılamadı", variant: "destructive" });
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -328,21 +457,172 @@ export function CertificatesView() {
     } finally { setMailBusyId(null); }
   };
 
-  // canlı önizleme — örnek veriyle gövde doldurma (print-sheet eşlemesiyle aynı)
-  const fillTemplate = (tpl: string): string => {
-    const editionName = edition ? edition.name + (edition.editionLabel ? ` — ${edition.editionLabel}` : "") : "Etkinlik";
-    return (tpl ?? "")
-      .replace(/\{\{fullName\}\}/g, "Ahmet Yılmaz")
-      .replace(/\{\{title\}\}/g, "Ar-Ge Müdürü")
-      .replace(/\{\{company\}\}/g, "ABC Pharma")
+  // ── R10-b: kanvas yardımcıları — kişi-özel doldurma + eleman CRUD + sürükleme ──
+  const editionName = edition ? `${edition.name}${edition.editionLabel ? ` — ${edition.editionLabel}` : ""}` : "Etkinlik";
+
+  const certElements = useMemo<CertElement[]>(() => {
+    if (!draft) return [];
+    const parsed = parseCertElements(draft.designJson);
+    if (parsed.length > 0) return parsed;
+    return defaultCertElements(editionName, draft.bodyTemplate ?? "", draft.tierNote ?? "");
+  }, [draft?.designJson, draft?.bodyTemplate, draft?.tierNote, editionName]);
+
+  // önizleme kişisi — seçili issue'nun katılımcı adı (print-sheet fill eşlemesi)
+  const previewIssue = (issues ?? []).find((i) => i.participation && i.participation.id === previewPid) ?? (issues ?? []).find((i) => i.participation) ?? null;
+  const fillFor = (tpl: string): string =>
+    (tpl ?? "")
+      .replace(/\{\{fullName\}\}/g, previewIssue?.participation ? `${previewIssue.participation.person.firstName} ${previewIssue.participation.person.lastName}` : "Ahmet Yılmaz")
+      .replace(/\{\{title\}\}/g, previewIssue?.participation?.person.title || "Ar-Ge Müdürü")
+      .replace(/\{\{company\}\}/g, previewIssue?.participation?.person.company || "ABC Pharma")
       .replace(/\{\{edition\}\}/g, editionName)
       .replace(/\{\{series\}\}/g, tenant?.name ?? "Maven")
       .replace(/\{\{type\}\}/g, draft?.name ?? "Sertifika")
       .replace(/\{\{tier\}\}/g, draft?.tierNote || "Katılımcı")
       .replace(/\{\{date\}\}/g, new Date().toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" }))
       .replace(/\{\{serial\}\}/g, "PAR-000001")
-      .replace(/\n/g, "<br/>");
+      .replace(/\{\{signer\}\}/g, selectedDef?.signerName ?? "Yetkili")
+      .replace(/\n/g, " ");
+
+  const setCertElements = (els: CertElement[]) => patchDraft({ designJson: JSON.stringify(els) });
+  const updateCertElement = (id: string, patch: Partial<CertElement>) =>
+    setCertElements(certElements.map((el) => (el.id === id ? { ...el, ...patch } : el)));
+  const addCertElement = (type: CertElementType) => {
+    const offset = certElements.length * 4;
+    const base: CertElement = {
+      id: certUid(), type, x: certR1(20 + offset), y: certR1(20 + offset),
+      w: type === "line" ? 60 : type === "qr" ? 24 : 60, h: type === "line" ? 0.8 : type === "qr" ? 24 : 12,
+      text: type === "text" ? "Metin" : type === "image" ? "Görsel alanı" : undefined,
+      fontSize: type === "text" ? 4.2 : undefined, fontWeight: type === "text" ? 400 : undefined,
+      color: "1f2937", align: type === "text" ? "left" : undefined, radius: type === "image" ? 1 : undefined,
+    };
+    setCertElements([...certElements, base]);
+    setSelElId(base.id);
   };
+  const removeCertElement = (id: string) => {
+    setCertElements(certElements.filter((el) => el.id !== id));
+    setSelElId(null);
+  };
+  // katman sırası: dizi sırası = çizim sırası; öne → sona taşı, arkaya → başa taşı
+  const reorderCertElement = (id: string, dir: 1 | -1) => {
+    const idx = certElements.findIndex((el) => el.id === id);
+    const target = idx + dir;
+    if (idx < 0 || target < 0 || target >= certElements.length) return;
+    const els = [...certElements];
+    [els[idx], els[target]] = [els[target], els[idx]];
+    setCertElements(els);
+  };
+
+  const applyPreset = (key: string) => {
+    const preset = CERT_PRESETS.find((p) => p.key === key);
+    if (!preset || !draft) return;
+    const isPortrait = preset.orientation === "PORTRAIT";
+    const widthMm = isPortrait ? Math.min(draft.widthMm, draft.heightMm) : Math.max(draft.widthMm, draft.heightMm);
+    const heightMm = isPortrait ? Math.max(draft.widthMm, draft.heightMm) : Math.min(draft.widthMm, draft.heightMm);
+    patchDraft({
+      designJson: JSON.stringify(preset.build({ editionName, bodyTemplate: draft.bodyTemplate ?? "", tierNote: draft.tierNote ?? "", widthMm, heightMm })),
+      orientation: preset.orientation, widthMm, heightMm,
+    });
+    setSelElId(null);
+    setPresetKey(key);
+    toast({ title: "Yerleşim uygulandı — Kaydet'i unutmayın", description: preset.label });
+  };
+
+  // sürükleme: pointer capture ile taşima + sağ alt köşe tutamacıyla boyutlandırma
+  const startDrag = (e: React.PointerEvent, el: CertElement, mode: "move" | "resize") => {
+    e.stopPropagation();
+    setSelElId(el.id);
+    dragRef.current = { id: el.id, mode, startX: e.clientX, startY: e.clientY, origX: el.x, origY: el.y, origW: el.w, origH: el.h };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const moveDrag = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d || !draft) return;
+    const dx = (e.clientX - d.startX) / CERT_PX_PER_MM;
+    const dy = (e.clientY - d.startY) / CERT_PX_PER_MM;
+    if (d.mode === "move") {
+      updateCertElement(d.id, { x: certR1(certClamp(d.origX + dx, 0, draft.widthMm)), y: certR1(certClamp(d.origY + dy, 0, draft.heightMm)) });
+    } else {
+      updateCertElement(d.id, { w: Math.max(1, certR1(d.origW + dx)), h: Math.max(0.4, certR1(d.origH + dy)) });
+    }
+  };
+  const endDrag = () => { dragRef.current = null; };
+
+  // klavye: ok tuşları 1mm (Shift = 5mm), Delete/Backspace elemanı siler
+  const onCanvasKeyDown = (e: React.KeyboardEvent) => {
+    if (!selElId) return;
+    const el = certElements.find((x) => x.id === selElId);
+    if (!el) return;
+    const step = e.shiftKey ? 5 : 1;
+    if (e.key === "ArrowLeft") { updateCertElement(selElId, { x: certR1(Math.max(0, el.x - step)) }); e.preventDefault(); }
+    else if (e.key === "ArrowRight") { updateCertElement(selElId, { x: certR1(el.x + step) }); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { updateCertElement(selElId, { y: certR1(Math.max(0, el.y - step)) }); e.preventDefault(); }
+    else if (e.key === "ArrowDown") { updateCertElement(selElId, { y: certR1(el.y + step) }); e.preventDefault(); }
+    else if (e.key === "Delete" || e.key === "Backspace") { removeCertElement(selElId); e.preventDefault(); }
+  };
+
+  const renderCertElement = (el: CertElement) => {
+    const selected = selElId === el.id;
+    const color = `#${(el.color ?? "1f2937").replace("#", "")}`;
+    const style: React.CSSProperties = {
+      position: "absolute", left: el.x * CERT_PX_PER_MM, top: el.y * CERT_PX_PER_MM,
+      width: el.w * CERT_PX_PER_MM, height: el.h * CERT_PX_PER_MM,
+      color, overflow: "hidden",
+    };
+    let content: React.ReactNode = null;
+    if (el.type === "text") {
+      style.fontSize = (el.fontSize ?? 4) * CERT_PX_PER_MM;
+      style.fontWeight = (el.fontWeight ?? 400) as React.CSSProperties["fontWeight"];
+      style.textAlign = (el.align ?? "left") as React.CSSProperties["textAlign"];
+      content = <span className="block whitespace-pre-wrap" style={{ wordBreak: "break-word" }}>{certPreviewMode ? fillFor(el.text ?? "") : (el.text || "Metin")}</span>;
+    } else if (el.type === "line") {
+      content = <div className="size-full" style={{ background: color, opacity: 0.85, borderRadius: (el.radius ?? 0) * CERT_PX_PER_MM }} />;
+    } else if (el.type === "image") {
+      content = el.imageDataUrl
+        ? <img src={el.imageDataUrl} alt="Sertifika görseli" className="size-full object-cover" style={{ borderRadius: (el.radius ?? 0) * CERT_PX_PER_MM }} />
+        : <span className={cn("flex size-full items-center justify-center rounded border border-dashed px-1 text-center text-[10px] leading-tight", selected ? "border-teal-500 text-teal-700" : "border-slate-400/70 text-slate-500")}>{el.text || "Görsel alanı"}</span>;
+    } else {
+      content = (
+        <span className={cn("flex size-full items-center justify-center rounded-[2px] border border-dashed", certPreviewMode ? "border-teal-600/50 bg-teal-50/60" : "border-teal-500/70 bg-teal-50")}>
+          <Icons.QrCode className="text-teal-700" style={{ width: el.h * CERT_PX_PER_MM * 0.62, height: el.h * CERT_PX_PER_MM * 0.62 }} />
+        </span>
+      );
+    }
+    return (
+      <div
+        key={el.id}
+        style={style}
+        onPointerDown={(e) => startDrag(e, el, "move")}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        className={cn(
+          "cursor-move touch-none select-none",
+          selected && "ring-2 ring-teal-500 ring-offset-1 ring-offset-white",
+          el.type === "text" && "bg-slate-500/5",
+        )}
+        title={`${CERT_ELEMENT_LABELS[el.type]} — sürükleyerek taşı`}
+      >
+        {content}
+        {selected && (
+          <span
+            onPointerDown={(e) => startDrag(e, el, "resize")}
+            onPointerMove={moveDrag}
+            onPointerUp={endDrag}
+            className="absolute -bottom-1.5 -right-1.5 size-3 cursor-nwse-resize rounded-sm border border-teal-600 bg-teal-500"
+            aria-label="Boyutlandırma tutamacı"
+          />
+        )}
+      </div>
+    );
+  };
+
+  const certNumField = (lbl: string, value: number, onChange: (n: number) => void, step = 1, min = 0, max = 600) => (
+    <div className="space-y-1">
+      <Label className="text-[11px] text-muted-foreground">{lbl}</Label>
+      <Input type="number" min={min} max={max} step={step} value={Number.isFinite(value) ? value : 0}
+        onChange={(e) => onChange(certR1(Number(e.target.value) || 0))}
+        className="h-8 text-xs tabular-nums" />
+    </div>
+  );
 
   const selectedIssuePids = (issues ?? []).filter((i) => issueSel.has(i.id) && i.participation).map((i) => i.participation!.id);
 
@@ -395,8 +675,8 @@ export function CertificatesView() {
             />
           ) : (
             <div className="grid gap-4 lg:grid-cols-12">
-              <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none lg:col-span-7">
-                <SectionCard title={`Sertifika Tasarımcısı — ${selectedDef.name}`} desc="ölçüler mm · gövde şablonu kişi-özeldir (yer tutuculara tıkla)">
+              <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none min-w-0 lg:col-span-5">
+                <SectionCard title={`Tasarım Özellikleri — ${selectedDef.name}`} desc="ölçüler mm · gövde şablonu kişi-özeldir (yer tutuculara tıkla)">
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {([
                       ["Genişlik (mm)", "widthMm", 100, 500, 5], ["Yükseklik (mm)", "heightMm", 100, 500, 5], ["Baskı payı (mm)", "bleedMm", 0, 15, 1],
@@ -483,48 +763,249 @@ export function CertificatesView() {
                 </SectionCard>
               </div>
 
-              {/* canlı önizleme */}
-              <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none lg:col-span-5" style={{ animationDelay: "60ms" }}>
-                <SectionCard title="Canlı Önizleme" desc="örnek veri: Ahmet Yılmaz · ABC Pharma">
-                  <div
-                    className="relative mx-auto flex w-full max-w-sm flex-col overflow-hidden rounded-md border shadow-sm"
-                    style={{
-                      aspectRatio: `${draft.widthMm} / ${draft.heightMm}`,
-                      background: draft.backgroundDataUrl ? `url('${draft.backgroundDataUrl}') center / cover no-repeat` : "linear-gradient(150deg,#fffdf6 0%,#faf6ea 55%,#f1ead4 100%)",
-                      color: draft.textColor,
-                      fontFamily: BADGE_FONTS[draft.fontKey]?.css ?? "Georgia, serif",
-                      padding: "6% 8%",
-                    }}
-                  >
-                    <p className="text-center uppercase tracking-[3px] opacity-70" style={{ fontSize: "clamp(8px,2.4cqw,12px)" }}>{tenant?.name ?? "Maven"}</p>
-                    <p className="mt-2 text-center font-bold" style={{ fontSize: "clamp(14px,5cqw,26px)" }}>{draft.name}</p>
-                    <p className="mt-1 text-center font-mono opacity-55" style={{ fontSize: "clamp(7px,1.8cqw,10px)" }}>PAR-000001</p>
-                    <div className="flex-1" />
-                    <div className="text-center leading-relaxed" style={{ fontSize: "clamp(9px,2.6cqw,13px)" }}
-                      dangerouslySetInnerHTML={{ __html: fillTemplate(draft.bodyTemplate ?? "<p>Gövde şablonu boş — soldaki yer tutucularla oluşturun.</p>") }} />
-                    <div className="flex-1" />
-                    <div className="flex items-end justify-between gap-2">
-                      <div className="text-center" style={{ minWidth: "26%" }}>
-                        <div className="border-t border-current opacity-60" />
-                        <p className="mt-1 font-bold" style={{ fontSize: "clamp(7px,1.8cqw,10px)" }}>{selectedDef.signerName ?? "Yetkili"}</p>
-                        <p className="opacity-65" style={{ fontSize: "clamp(6px,1.5cqw,9px)" }}>Organizasyon Sekreteri</p>
+              {/* R10-b: kanvas — mm koordinatlı eleman yerleşimi (yaka kartı tasarımcısı mimarisi) */}
+              <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none min-w-0 lg:col-span-7" style={{ animationDelay: "60ms" }}>
+                <SectionCard
+                  title={`Kanvas — ${selectedDef.name}`}
+                  desc={`${draft.widthMm}×${draft.heightMm} mm · ızgara 5 mm · elemanı sürükle, köşe tutamacıyla boyutlandır`}
+                >
+                  {/* araç çubuğu: yerleşim şablonu + önizleme + kaydet + eleman ekle */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select value={presetKey} onValueChange={applyPreset}>
+                      <SelectTrigger className="h-8 w-44 text-xs" aria-label="Yerleşim şablonu seç"><SelectValue placeholder="Yerleşim şablonu…" /></SelectTrigger>
+                      <SelectContent>
+                        {CERT_PRESETS.map((p) => <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Button variant={certPreviewMode ? "default" : "outline"} size="sm" className="h-8 text-xs"
+                      onClick={() => { setCertPreviewMode((v) => !v); setSelElId(null); }}
+                      title="Yer tutucuları seçili katılımcı verisiyle göster">
+                      {certPreviewMode ? <Icons.Pencil className="size-3.5" /> : <Icons.Eye className="size-3.5" />} {certPreviewMode ? "Tasarıma Dön" : "Gerçek Veriyle Önizle"}
+                    </Button>
+                    <Button size="sm" className="h-8 text-xs" onClick={saveDesign} disabled={savingDesign}>
+                      {savingDesign ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} Kaydet
+                    </Button>
+                    <span className="ms-auto flex items-center gap-1">
+                      <span className="mr-1 hidden text-[10px] font-medium uppercase tracking-wide text-muted-foreground sm:inline">Eleman Ekle</span>
+                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("text")} aria-label="Metin elemanı ekle"><Icons.Type className="size-3" /> Metin</Button>
+                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("line")} aria-label="Çizgi elemanı ekle"><Icons.Minus className="size-3" /> Çizgi</Button>
+                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("image")} aria-label="Görsel elemanı ekle"><Icons.Image className="size-3" /> Görsel</Button>
+                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("qr")} aria-label="QR elemanı ekle"><Icons.QrCode className="size-3" /> QR</Button>
+                    </span>
+                  </div>
+
+                  {/* kanvas yüzeyi — mobilde yatay kaydırma kabı */}
+                  <div className="maven-scroll mt-3 overflow-x-auto">
+                    {/* üst cetvel (mm) */}
+                    <div className="flex" style={{ marginLeft: 18 }}>
+                      {Array.from({ length: Math.floor(draft.widthMm / 10) + 1 }).map((_, i) => (
+                        <span key={i} className="shrink-0 border-l border-slate-300 text-[9px] tabular-nums text-muted-foreground" style={{ width: 10 * CERT_PX_PER_MM, paddingLeft: 2 }}>
+                          {i * 10}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex">
+                      {/* sol cetvel (mm) */}
+                      <div className="flex w-[18px] shrink-0 flex-col">
+                        {Array.from({ length: Math.floor(draft.heightMm / 10) + 1 }).map((_, i) => (
+                          <span key={i} className="shrink-0 border-t border-slate-300 text-[9px] leading-none tabular-nums text-muted-foreground" style={{ height: 10 * CERT_PX_PER_MM }}>{i * 10}</span>
+                        ))}
                       </div>
-                      <div className="grid aspect-square shrink-0 place-items-center rounded-full border-2 border-current font-extrabold opacity-85" style={{ width: "22%", borderWidth: "3px double currentColor" }}>
-                        <span className="text-center" style={{ fontSize: "clamp(6px,1.6cqw,10px)" }}>MAVEN<small className="block font-normal opacity-80">{new Date().toLocaleDateString("tr-TR")}</small></span>
-                      </div>
-                      <div className="text-center" style={{ minWidth: "26%" }}>
-                        <div className="border-t border-current opacity-60" />
-                        <p className="mt-1 font-bold" style={{ fontSize: "clamp(7px,1.8cqw,10px)" }}>Akreditasyon</p>
-                        <p className="opacity-65" style={{ fontSize: "clamp(6px,1.5cqw,9px)" }}>Bilimsel Komite</p>
+                      <div
+                        tabIndex={0} role="application" aria-label="Sertifika kanvası — elemanları sürükleyip ok tuşlarıyla ince ayar yapın"
+                        onKeyDown={onCanvasKeyDown}
+                        onPointerDown={() => setSelElId(null)}
+                        className="relative shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+                        style={{
+                          width: draft.widthMm * CERT_PX_PER_MM,
+                          height: draft.heightMm * CERT_PX_PER_MM,
+                          fontFamily: BADGE_FONTS[draft.fontKey]?.css ?? "Georgia, serif",
+                          background: draft.backgroundDataUrl ? `url('${draft.backgroundDataUrl}') center / cover no-repeat` : "linear-gradient(150deg,#fffdf6 0%,#faf6ea 55%,#f1ead4 100%)",
+                          color: draft.textColor,
+                          boxShadow: "0 1px 3px rgba(0,0,0,.18)",
+                        }}
+                      >
+                        {!draft.backgroundDataUrl && (
+                          <div
+                            className="pointer-events-none absolute inset-0"
+                            style={{
+                              backgroundImage:
+                                `repeating-linear-gradient(to right, rgba(13,148,136,.10) 0 1px, transparent 1px ${5 * CERT_PX_PER_MM}px),` +
+                                `repeating-linear-gradient(to bottom, rgba(13,148,136,.10) 0 1px, transparent 1px ${5 * CERT_PX_PER_MM}px),` +
+                                `repeating-linear-gradient(to right, rgba(13,148,136,.18) 0 1px, transparent 1px ${10 * CERT_PX_PER_MM}px),` +
+                                `repeating-linear-gradient(to bottom, rgba(13,148,136,.18) 0 1px, transparent 1px ${10 * CERT_PX_PER_MM}px)`,
+                            }}
+                          />
+                        )}
+                        {/* baskı payı kılavuzu */}
+                        {draft.bleedMm > 0 && (
+                          <div className="pointer-events-none absolute" title={`baskı payı ${draft.bleedMm} mm`}
+                            style={{ left: draft.bleedMm * CERT_PX_PER_MM, top: draft.bleedMm * CERT_PX_PER_MM, right: draft.bleedMm * CERT_PX_PER_MM, bottom: draft.bleedMm * CERT_PX_PER_MM, border: "1.5px dashed rgba(217,119,6,.45)" }} />
+                        )}
+                        {certElements.map((el) => renderCertElement(el))}
+                        {certPreviewMode && previewIssue?.participation && (
+                          <span className="absolute bottom-1 right-2 rounded-full bg-teal-600/85 px-2 py-0.5 text-[9px] font-medium text-white">
+                            {previewIssue.participation.person.firstName} {previewIssue.participation.person.lastName}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
-                  <p className="mt-2 text-center text-[11px] text-muted-foreground">QR (kimlik/vCard) yalnız baskı sayfasında üretilir — önizlemede gösterilmez.</p>
+                  <p className="mt-2 text-[10px] text-muted-foreground">Ok tuşları: 1 mm taşı (Shift = 5 mm) · Delete: seçili elemanı sil · mm cetvelli, baskı payı kesikli turuncu çerçeve.</p>
+
+                  {/* önizleme kişisi seçimi */}
+                  {certPreviewMode && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Label className="text-[11px] text-muted-foreground">Önizleme kişisi:</Label>
+                      <Select value={previewPid ?? previewIssue?.participation?.id ?? ""} onValueChange={setPreviewPid}>
+                        <SelectTrigger className="h-7 w-56 text-xs"><SelectValue placeholder="Belge listesinden kişi" /></SelectTrigger>
+                        <SelectContent className="maven-scroll max-h-64">
+                          {(issues ?? []).filter((i) => i.participation).map((i) => (
+                            <SelectItem key={i.id} value={i.participation!.id}>{i.participation!.person.firstName} {i.participation!.person.lastName}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </SectionCard>
+
+                {/* eleman listesi + özellik paneli */}
+                <SectionCard title="Elemanlar" className="mt-4" desc={selElId ? "seçili eleman özellikleri — mm cinsinden" : "kanvasta elemana tıklayarak seçin"}>
+                  <div className="maven-scroll max-h-40 space-y-1 overflow-y-auto">
+                    {certElements.length === 0 ? (
+                      <p className="py-2 text-center text-[11px] text-muted-foreground">Eleman yok — yukarıdaki Eleman Ekle düğmeleriyle başlayın.</p>
+                    ) : certElements.map((el, i) => (
+                      <button key={el.id} type="button" onClick={() => setSelElId(el.id)}
+                        className={cn("flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-[11px] transition hover:border-teal-400 hover:bg-teal-50/40", selElId === el.id && "border-teal-500 bg-teal-50/60")}>
+                        <Icons.GripVertical className="size-3 shrink-0 text-muted-foreground" />
+                        <span className="shrink-0 font-medium">{CERT_ELEMENT_LABELS[el.type]}</span>
+                        {el.text && <span className="min-w-0 flex-1 truncate text-muted-foreground">{el.text}</span>}
+                        <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">{el.x},{el.y} mm</span>
+                        <span className="sr-only">{i + 1}. eleman</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {selElId && certElements.find((el) => el.id === selElId) && (() => {
+                    const el = certElements.find((c) => c.id === selElId)!;
+                    const hex = `#${(el.color ?? "1f2937").replace("#", "")}`;
+                    return (
+                      <div className="mt-3 space-y-2.5 rounded-lg border bg-muted/20 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <Chip tone="teal">{CERT_ELEMENT_LABELS[el.type]}</Chip>
+                          <span className="flex items-center gap-1">
+                            <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => reorderCertElement(el.id, -1)} aria-label="Elemanı arkaya taşı" title="Arkaya taşı">
+                              <Icons.ArrowDownToLine className="size-3" /> arkaya
+                            </Button>
+                            <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => reorderCertElement(el.id, 1)} aria-label="Elemanı öne taşı" title="Öne taşı">
+                              <Icons.ArrowUpToLine className="size-3" /> öne
+                            </Button>
+                            <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px] text-rose-600 hover:text-rose-700" onClick={() => removeCertElement(el.id)}>
+                              <Icons.Trash2 className="size-3" /> Elemanı sil
+                            </Button>
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2">
+                          {certNumField("X (mm)", el.x, (n) => updateCertElement(el.id, { x: n }))}
+                          {certNumField("Y (mm)", el.y, (n) => updateCertElement(el.id, { y: n }))}
+                          {certNumField("G (mm)", el.w, (n) => updateCertElement(el.id, { w: Math.max(n, 1) }))}
+                          {certNumField("H (mm)", el.h, (n) => updateCertElement(el.id, { h: Math.max(n, 0.4) }))}
+                        </div>
+                        {el.type === "text" && (
+                          <>
+                            <div className="grid grid-cols-2 gap-2">
+                              {certNumField("Yazı boyu (mm)", el.fontSize ?? 4, (n) => updateCertElement(el.id, { fontSize: certClamp(n, 0.5, 30) }), 0.2, 0.5, 30)}
+                              <div className="space-y-1">
+                                <Label className="text-[11px] text-muted-foreground">Kalınlık</Label>
+                                <Select value={String(el.fontWeight ?? 400)} onValueChange={(v) => updateCertElement(el.id, { fontWeight: Number(v) })}>
+                                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    {[["400", "Normal"], ["500", "Medium"], ["600", "Semi Bold"], ["700", "Bold"], ["800", "Extra Bold"]].map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="space-y-1">
+                                <Label className="text-[11px] text-muted-foreground">Renk</Label>
+                                <div className="flex items-center gap-2">
+                                  <input type="color" value={hex} onChange={(e) => updateCertElement(el.id, { color: e.target.value.replace("#", "") })} className="h-8 w-10 cursor-pointer rounded border" aria-label="Eleman rengi" />
+                                  <Input value={hex} onChange={(e) => updateCertElement(el.id, { color: e.target.value.replace("#", "") })} className="h-8 font-mono text-[11px]" />
+                                </div>
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-[11px] text-muted-foreground">Hizalama</Label>
+                                <Select value={el.align ?? "left"} onValueChange={(v) => updateCertElement(el.id, { align: v })}>
+                                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="left">Sola</SelectItem>
+                                    <SelectItem value="center">Ortaya</SelectItem>
+                                    <SelectItem value="right">Sağa</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[11px] text-muted-foreground">Metin içeriği (yer tutucular serbest)</Label>
+                              <Textarea value={el.text ?? ""} onChange={(e) => updateCertElement(el.id, { text: e.target.value })} rows={3} className="text-xs" />
+                              <div className="flex flex-wrap gap-1">
+                                {([...CERT_TOKENS, "{{signer}}"] as string[]).map((t) => (
+                                  <button key={t} type="button"
+                                    onClick={() => updateCertElement(el.id, { text: (el.text ?? "") + t })}
+                                    className="rounded-md border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-teal-700 transition hover:border-teal-400 hover:bg-teal-50"
+                                    title={`Metne ${t} ekle`}>
+                                    {t}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </>
+                        )}
+                        {el.type === "image" && (
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">Görsel (≤ 600 KB) ve köşe yarıçapı</Label>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input ref={elFileRef} type="file" accept="image/*" className="hidden"
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  if (f) {
+                                    if (f.size > MAX_BG_BYTES) {
+                                      toast({ title: "Görsel çok büyük", description: `En fazla 600 KB — seçilen ${(f.size / 1024).toFixed(0)} KB.`, variant: "destructive" });
+                                    } else {
+                                      const reader = new FileReader();
+                                      reader.onload = () => updateCertElement(el.id, { imageDataUrl: String(reader.result) });
+                                      reader.readAsDataURL(f);
+                                    }
+                                  }
+                                  e.target.value = "";
+                                }} />
+                              <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => elFileRef.current?.click()} aria-label="Eleman görseli seç">
+                                <Icons.Upload className="size-3" /> Görsel seç
+                              </Button>
+                              {el.imageDataUrl && (
+                                <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-rose-600 hover:text-rose-700" onClick={() => updateCertElement(el.id, { imageDataUrl: undefined })} aria-label="Eleman görselini kaldır">
+                                  <Icons.Trash2 className="size-3" /> Kaldır
+                                </Button>
+                              )}
+                              <Input type="number" min={0} max={20} step={0.5} value={el.radius ?? 0} onChange={(e) => updateCertElement(el.id, { radius: Number(e.target.value) || 0 })} className="h-7 w-20 text-xs tabular-nums" aria-label="Köşe yarıçapı (mm)" placeholder="radius mm" />
+                            </div>
+                            <p className="text-[10px] text-muted-foreground">Logo alanı için görsel seçmeyin — etiket metni kanvasında görünür, baskıda yalnız yüklenmiş görsel basılır.</p>
+                          </div>
+                        )}
+                        {el.type === "line" && (
+                          <p className="text-[10px] text-muted-foreground">Çizgi: H değeri kalınlıktır; çerçeve için 4 çizgi elemanı birleştirin (Prestij yerleşiminde hazır).</p>
+                        )}
+                        {el.type === "qr" && (
+                          <p className="text-[10px] text-muted-foreground">QR: baskı sayfasında seri numarasıyla üretilir (qrcode); kanvasda yer tutucu gösterilir.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </SectionCard>
               </div>
 
               {/* 3 — belge listesi */}
-              <div className="lg:col-span-12">
+              <div className="min-w-0 lg:col-span-12">
                 <SectionCard
                   title={`Belge Listesi — ${selectedDef.name}`}
                   desc="satır seç → toplu yazdır; ELIGIBLE belge baskıda otomatik GENERATED olur"

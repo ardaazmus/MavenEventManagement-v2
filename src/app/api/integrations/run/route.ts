@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       }
       const url = integration.baseUrl.replace(/\{editionId\}/g, integration.editionId ?? "");
       if (body.dryRun) {
-        summary = `DRY-RUN → ${integration.method ?? "GET"} ${url}`;
+        summary = `DRY-RUN → ${integration.kind === "REST" ? "POST" : "GET"} ${url}`;
         ok = true; statusCode = null;
       } else {
         const controller = new AbortController();

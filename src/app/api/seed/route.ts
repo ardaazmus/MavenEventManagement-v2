@@ -1,9 +1,14 @@
 // /api/seed — Maven demo verisi (idempotent: önce temizler)
 // Senaryolar: canlı edisyon (No-Dig 2026), sponsor hak dökümü 20/14/2/4,
 // bilimsel akış, gecelik stok, finans çok eksenli, saha taramaları.
+// DETAY İLKESİ (kullanıcı): her demo kaydı TAM girişli olur — eksik verili
+// kayıt tutulmaz; kişi fotoğrafları, kurum logoları, otel görselleri medya
+// klasörüne BENZERSİZ adla eklenir.
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import type { Person } from "@prisma/client";
 import { createRegistrationFromSubmission } from "@/lib/api/registration-chain";
+import { ensureSystemFolders } from "@/lib/media-system";
 
 const D = (offsetDays: number, h = 9, m = 0) => {
   const d = new Date();
@@ -11,6 +16,16 @@ const D = (offsetDays: number, h = 9, m = 0) => {
   d.setHours(h, m, 0, 0);
   return d;
 };
+
+// — SVG dataURL üreteçleri (demo görselleri; tümü medya klasörüne benzersiz adla girer) —
+const svgUrl = (svg: string) => `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+const AVATAR_COLORS = ["0f766e", "7c3aed", "b45309", "be185d", "0369a1", "4d7c0f", "c2410c", "4338ca"];
+const avatarSvg = (initials: string, i: number) =>
+  svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="240" height="240" fill="#e2e8f0"/><circle cx="120" cy="96" r="44" fill="#${AVATAR_COLORS[i % AVATAR_COLORS.length]}"/><text x="120" y="112" font-family="Arial" font-size="36" font-weight="bold" fill="#fff" text-anchor="middle">${initials}</text><path d="M40 220 Q120 140 200 220 Z" fill="#${AVATAR_COLORS[i % AVATAR_COLORS.length]}"/></svg>`);
+const logoSvg = (name: string, color: string) =>
+  svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120"><rect width="320" height="120" rx="16" fill="#${color}"/><text x="24" y="56" font-family="Arial" font-size="26" font-weight="bold" fill="#fff">${name.slice(0, 18)}</text><text x="24" y="88" font-family="Arial" font-size="15" fill="#ffffffbb">${name.slice(0, 18).toLowerCase().replace(/[^a-z0-9]+/g, "")}.example</text></svg>`);
+const coverSvg = (title: string, c1: string, c2: string) =>
+  svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#${c1}"/><stop offset="1" stop-color="#${c2}"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><text x="32" y="64" font-family="Arial" font-size="30" font-weight="bold" fill="#ffffffe6">${title}</text><path d="M0 300 Q160 240 320 300 T640 300 V360 H0 Z" fill="#ffffff33"/><path d="M0 320 Q160 270 320 320 T640 320 V360 H0 Z" fill="#ffffff22"/></svg>`);
 
 export async function POST() {
   try {
@@ -34,16 +49,16 @@ export async function POST() {
       },
     });
 
-    // ── Kurumlar (sponsor TÜRÜ değil — rol ataması §4) ──
+    // ── Kurumlar (sponsor TÜRÜ değil — rol ataması §4) — TAM kimlik kartı girişli ──
     const [abcPharma, association, pco, icc, beta, media, uni, hotelOrg] = await Promise.all([
-      db.organization.create({ data: { tenantId: tenant.id, name: "ABC Pharma", type: "COMPANY", country: "Türkiye", city: "İstanbul", website: "https://abcpharma.example", taxNo: "1234567890" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "No-Dig Türkiye Derneği", type: "ASSOCIATION", country: "Türkiye", city: "Ankara" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "Eventiva PCO", type: "AGENCY", country: "Türkiye", city: "İstanbul" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "İstanbul Kongre Merkezi", type: "VENUE", country: "Türkiye", city: "İstanbul" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "Beta Mühendislik", type: "COMPANY", country: "Türkiye", city: "Ankara" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "TeknoBasın Medya", type: "COMPANY", country: "Türkiye", city: "İstanbul" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "Delta Üniversitesi", type: "UNIVERSITY", country: "Türkiye", city: "İzmir" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "Maslak Grand Otel", type: "HOTEL", country: "Türkiye", city: "İstanbul" } }),
+      db.organization.create({ data: { tenantId: tenant.id, name: "ABC Pharma", type: "COMPANY", country: "Türkiye", city: "İstanbul", website: "https://abcpharma.example", taxNo: "1234567890", generalEmail: "info@abcpharma.example", address: "Maslak Mah. Büyükdere Cad. No:255 Sarıyer / İstanbul", description: "ABC Pharma — 1998'den beri endüstriyel çözümler; No-Dig serisinin kurumsal sponsoru.", locationNote: "Fuar Alanı · Stand A24 · Maslak Grand Otel lobisi karşısı", notes: "Gold sponsor — 2026 sözleşmesi aktif" } }),
+      db.organization.create({ data: { tenantId: tenant.id, name: "No-Dig Türkiye Derneği", type: "ASSOCIATION", country: "Türkiye", city: "Ankara", website: "https://nodig.example", taxNo: "2345678901", generalEmail: "dernek@nodig.example", address: "Kızılay Meydanı No:7 Çankaya / Ankara", description: "Kazısız teknolojileri tanıtmak amacıyla kurulmuş meslek derneği; bilimsel sahibi.", locationNote: "Bilimsel Komite toplantıları: Dernek Merkezi Kat 3" } }),
+      db.organization.create({ data: { tenantId: tenant.id, name: "Eventiva PCO", type: "AGENCY", country: "Türkiye", city: "İstanbul", website: "https://eventiva.example", taxNo: "3456789012", generalEmail: "projeler@eventiva.example", address: "Levent Mah. Yönetim Cad. No:12 Beşiktaş / İstanbul", description: "Profesyonel kongre organizatörü — saha ve kayıt operasyonlarını yürütür.", locationNote: "Organizasyon ofisi: ICC Kat 2 / Oda 214" } }),
+      db.organization.create({ data: { tenantId: tenant.id, name: "İstanbul Kongre Merkezi", type: "VENUE", country: "Türkiye", city: "İstanbul", website: "https://icc.example", taxNo: "4567890123", generalEmail: "etkinlik@icc.example", address: "Taşkışla Caddesi No:1 Harbiye / Şişli İstanbul", description: "Ana mekan — Ana Salon (600), Salon B (120), Poster Alanı ve fuar salonu.", locationNote: "Yükleme boşaltma kapısı: arka blok B kapısı — 06:00-10:00" } }),
+      db.organization.create({ data: { tenantId: tenant.id, name: "Beta Mühendislik", type: "COMPANY", country: "Türkiye", city: "Ankara", website: "https://beta.example", taxNo: "5678901234", generalEmail: "info@beta.example", address: "Çukurambar Mah. Mühendisler Sok. No:8 Çankaya / Ankara", description: "Tünel ve altyapı mühendisliği — Silver sponsor; Beta Sound markasıyla saha ekipmanları.", locationNote: "Fuar Alanı · Stand B02 (Beta Sound)" } }),
+      db.organization.create({ data: { tenantId: tenant.id, name: "TeknoBasın Medya", type: "COMPANY", country: "Türkiye", city: "İstanbul", website: "https://teknobasin.example", taxNo: "6789012345", generalEmail: "haber@teknobasin.example", address: "Bomanti Mah. Medya Sok. No:4 Ümraniye / İstanbul", description: "Sektörel yayıncılık — baskı + dijital; medya sponsoru ve basın kitabı ortağı.", locationNote: "Basın odası akredite masası: ICC Fuaye" } }),
+      db.organization.create({ data: { tenantId: tenant.id, name: "Delta Üniversitesi", type: "UNIVERSITY", country: "Türkiye", city: "İzmir", website: "https://delta.example", taxNo: "7890123456", generalEmail: "kongre@delta.example", address: "Üniversite Cad. No:35 Urla / İzmir", description: "Akademik partner — Jeoteknik Mühendislik bölümü ve CME akreditasyon ortağı.", locationNote: "Heyet odası talebi: ICC Kat 3 VIP lounge yanlı" } }),
+      db.organization.create({ data: { tenantId: tenant.id, name: "Maslak Grand Otel", type: "HOTEL", country: "Türkiye", city: "İstanbul", website: "https://maslakgrand.example", taxNo: "8901234567", generalEmail: "rezervasyon@maslakgrand.example", address: "Maslak Mah. Oteller Cad. No:19 Sarıyer / İstanbul", description: "Kongre anlaşmalı oteli — 4 yıldız; tek/çift blok sözleşmesi yapıldı.", locationNote: "Mekâna yürüme mesafesi 7 dk — servis 08:30" } }),
     ]);
 
     await db.organizationContact.createMany({
@@ -54,39 +69,41 @@ export async function POST() {
       ],
     });
 
-    // ── Kişiler (tenant içinde tekil) ──
-    const peopleData = [
-      ["Ahmet", "Yılmaz", "ahmet.yilmaz@example.com", "ABC Pharma", "Ar-Ge Müdürü"],
-      ["Mehmet", "Demir", "mehmet.demir@example.com", "Delta Üniversitesi", "Prof. Dr."],
-      ["Ayşe", "Kara", "ayse.kara@example.com", "Delta Üniversitesi", "Doç. Dr."],
-      ["Defne", "Kaya", "defne.kaya@example.com", "Delta Üniversitesi", "Öğretim Üyesi"],
-      ["Fatma", "Çelik", "fatma.celik@example.com", "Beta Mühendislik", "Genel Müdür"],
-      ["Mustafa", "Koç", "mustafa.koc@example.com", "Yol Yapım A.Ş.", "Proje Direktörü"],
-      ["Zeynep", "Aydın", "zeynep.aydin@example.com", "Hükümet Metrosu Daire Başkanlığı", "Mühendis"],
-      ["Emre", "Özkan", "emre.ozkan@example.com", "Tünel İnşaat Ltd.", "Saha Şefi"],
-      ["Seda", "Polat", "seda.polat@example.com", "GeoLab Danışmanlık", "Jeoteknik Uzman"],
-      ["Can", "Arslan", "can.arslan@example.com", "Delta Üniversitesi", "Arş. Gör."],
-      ["Deniz", "Şahin", "deniz.sahin@example.com", "ABC Pharma", "Ürün Yöneticisi"],
-      ["Ece", "Doğan", "ece.dogan@example.com", "TeknoBasın Medya", "Muhabir"],
-      ["Kerem", "Aksoy", "kerem.aksoy@example.com", "Maven Ekibi", "Operasyon Görevlisi"],
-      ["Leyla", "Güneş", "leyla.gunes@example.com", "Maven Ekibi", "Kayıt Görevlisi"],
-      ["Barış", "Tekin", "baris.tekin@example.com", "Özel", "Bağımsız"],
-      ["Gizem", "Bulut", "gizem.bulut@example.com", "Yol Yapım A.Ş.", "Kalite Uzmanı"],
-      ["Onur", "Erdem", "onur.erdem@example.com", "Tünel İnşaat Ltd.", "Makine Mühendisi"],
-      ["Pınar", "Yavuz", "pinar.yavuz@example.com", "Delta Üniversitesi", "Y. Lisans Öğrencisi"],
-      ["Serpil", "Ateş", "serpil.ates@example.com", "GeoLab Danışmanlık", "Laborant"],
-      ["Tolga", "Uçar", "tolga.ucar@example.com", "Beta Mühendislik", "Satış Yöneticisi"],
-      ["Ünsal", "Kağan", "unsal.kagan@example.com", "Hükümet Metrosu", "İnşaat Mühendisi"],
-      ["Vildan", "Serin", "vildan.serin@example.com", "Özel", "Refakatçi"],
-      ["Yusuf", "Bilgin", "yusuf.bilgin@example.com", "Maven Ekibi", "Kapı Görevlisi"],
-      ["Hande", "Soyer", "hande.soyer@example.com", "ABC Pharma", "Medikal Temsilci"],
-      ["Murat", "İnce", "murat.ince@example.com", "ABC Pharma", "Satış Uzmanı"],
+    // ── Kişiler (tenant içinde tekil) — telefon, şehir, biyografi TAM girişli ──
+    const peopleData: [string, string, string, string, string, string, string, string][] = [
+      // ad, soyad, e-posta, kurum, unvan, telefon, şehir, biyografi
+      ["Ahmet", "Yılmaz", "ahmet.yilmaz@example.com", "ABC Pharma", "Ar-Ge Müdürü", "+90 532 210 11 01", "İstanbul", "12 yıllık TBM kesici kafa Ar-Ge deneyimi; 8 haklı patent."],
+      ["Mehmet", "Demir", "mehmet.demir@example.com", "Delta Üniversitesi", "Prof. Dr.", "+90 532 210 11 02", "İzmir", "Delta Üniversitesi Jeoteknik bölüm başkanı; kongre başkanı."],
+      ["Ayşe", "Kara", "ayse.kara@example.com", "Delta Üniversitesi", "Doç. Dr.", "+90 532 210 11 03", "İzmir", "HDD proje yönetimi ve risk analizi alanında akademisyen."],
+      ["Defne", "Kaya", "defne.kaya@example.com", "Delta Üniversitesi", "Öğretim Üyesi", "+90 532 210 11 04", "İzmir", "Zemin iyileştirme yöntemleri; TÜBİTAK 2 proje yürütücüsü."],
+      ["Fatma", "Çelik", "fatma.celik@example.com", "Beta Mühendislik", "Genel Müdür", "+90 532 210 11 05", "Ankara", "Beta Mühendislik kurucu ortağı; ABC Pharma heyet lideri."],
+      ["Mustafa", "Koç", "mustafa.koc@example.com", "Yol Yapım A.Ş.", "Proje Direktörü", "+90 532 210 11 06", "İstanbul", "Metro ve tünel projelerinde 18 yıl saha yönetimi."],
+      ["Zeynep", "Aydın", "zeynep.aydin@example.com", "Hükümet Metrosu Daire Başkanlığı", "Mühendis", "+90 532 210 11 07", "Ankara", "Kamu altyapı projelerinde teknik heyet üyesi."],
+      ["Emre", "Özkan", "emre.ozkan@example.com", "Tünel İnşaat Ltd.", "Saha Şefi", "+90 532 210 11 08", "İstanbul", "HDD ve mikro tünel sahalarında vardiya şefi."],
+      ["Seda", "Polat", "seda.polat@example.com", "GeoLab Danışmanlık", "Jeoteknik Uzman", "+90 532 210 11 09", "İstanbul", "Zemin ve kaya laboratuvar testleri; panelist ve uzman konuşmacı."],
+      ["Can", "Arslan", "can.arslan@example.com", "Delta Üniversitesi", "Arş. Gör.", "+90 532 210 11 10", "İzmir", "Doktora öğrencisi — derin kazı duvarları üzerine çalışıyor."],
+      ["Deniz", "Şahin", "deniz.sahin@example.com", "ABC Pharma", "Ürün Yöneticisi", "+90 532 210 11 11", "İstanbul", "Endüstriyel ürün portföyü yönetimi; fuar personeli."],
+      ["Ece", "Doğan", "ece.dogan@example.com", "TeknoBasın Medya", "Muhabir", "+90 532 210 11 12", "İstanbul", "Sektörel haberler ve roportajlar; akredite basın."],
+      ["Kerem", "Aksoy", "kerem.aksoy@example.com", "Maven Ekibi", "Operasyon Görevlisi", "+90 532 210 11 13", "İstanbul", "Etkinlik operasyonları ve saha koordinasyonu; MBA."],
+      ["Leyla", "Güneş", "leyla.gunes@example.com", "Maven Ekibi", "Kayıt Görevlisi", "+90 532 210 11 14", "İstanbul", "Kayıt masası ve misafir karşılama; 3 dil."],
+      ["Barış", "Tekin", "baris.tekin@example.com", "Bağımsız", "Danışman", "+90 532 210 11 15", "Bursa", "Bağımsız tünel danışmanı; kayıt onay bekliyor."],
+      ["Gizem", "Bulut", "gizem.bulut@example.com", "Yol Yapım A.Ş.", "Kalite Uzmanı", "+90 532 210 11 16", "İstanbul", "ISO 9001 denetçi; grup kaydı — Yol Yapım heyeti."],
+      ["Onur", "Erdem", "onur.erdem@example.com", "Tünel İnşaat Ltd.", "Makine Mühendisi", "+90 532 210 11 17", "İstanbul", "TBM bakım ve disk kesici ekonomisi üzerine çalışıyor."],
+      ["Pınar", "Yavuz", "pinar.yavuz@example.com", "Delta Üniversitesi", "Y. Lisans Öğrencisi", "+90 532 210 11 18", "İzmir", "Bentonit çamuru reolojisi üzerine yüksek lisans; öğrenci kaydı."],
+      ["Serpil", "Ateş", "serpil.ates@example.com", "GeoLab Danışmanlık", "Laborant", "+90 532 210 11 19", "İstanbul", "Epoxy enjeksiyon deneyleri; poster sunumu var."],
+      ["Tolga", "Uçar", "tolga.ucar@example.com", "Beta Mühendislik", "Satış Yöneticisi", "+90 532 210 11 20", "Ankara", "Beta Sound saha ekipman satışları; fuar personeli."],
+      ["Ünsal", "Kağan", "unsal.kagan@example.com", "Hükümet Metrosu", "İnşaat Mühendisi", "+90 532 210 11 21", "Ankara", "Metro inşaatları; taslak kayıt — kurumsal ödeme bekliyor."],
+      ["Vildan", "Serin", "vildan.serin@example.com", "Serbest", "Refakatçi", "+90 532 210 11 22", "İzmir", "Delta Üniversitesi heyetiyle gelen refakatçi."],
+      ["Yusuf", "Bilgin", "yusuf.bilgin@example.com", "Maven Ekibi", "Kapı Görevlisi", "+90 532 210 11 23", "İstanbul", "Erişim kontrol ve kapı operasyonları; ISO 20121 sertifikalı."],
+      ["Hande", "Soyer", "hande.soyer@example.com", "ABC Pharma", "Medikal Temsilci", "+90 532 210 11 24", "İstanbul", "ABC Pharma saha ekibi; sponsor hak ile kayıt beklemede."],
+      ["Murat", "İnce", "murat.ince@example.com", "ABC Pharma", "Satış Uzmanı", "+90 532 210 11 25", "İstanbul", "ABC Pharma satış; sponsor kotası dolduğu için kayıt reddedildi."],
     ] as const;
-    const people = [];
-    for (const [firstName, lastName, email, company, title] of peopleData) {
-      people.push(await db.person.create({ data: { tenantId: tenant.id, firstName, lastName, email, company, title, country: "Türkiye" } }));
+    const bioByFirst: Record<string, string> = Object.fromEntries(peopleData.map((r) => [r[0], r[7]]));
+    const people: Person[] = [];
+    for (const [firstName, lastName, email, company, title, phone, city] of peopleData) {
+      people.push(await db.person.create({ data: { tenantId: tenant.id, firstName, lastName, email, company, title, phone, city, country: "Türkiye", bio: bioByFirst[firstName] ?? null } }));
     }
-    const P = Object.fromEntries(people.map((p, i) => [peopleData[i][0], p]));
+    const P = Object.fromEntries(people.map((p, i) => [peopleData[i][0], p])) as Record<string, Person>;
 
     // ── Seriler & Edisyonlar ──
     const seriesNoDig = await db.eventSeries.create({
@@ -283,7 +300,7 @@ export async function POST() {
     await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "SPONSOR_PACKAGE", type: "GALA_TICKET", label: "Gala Davetiyesi Hakkı", quantityGranted: 10, quantityConsumed: 6 } });
     await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "SPONSOR_PACKAGE", type: "BOOTH", label: "12m² Stant Hakkı", quantityGranted: 1, quantityConsumed: 1 } });
     await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "SPONSOR_PACKAGE", type: "SESSION_ACCESS", label: "Workshop Salonu Erişimi", quantityGranted: 30, quantityConsumed: 11 } });
-    const entBadge = await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: beta.id, source: "SPONSOR_PACKAGE", type: "BADGE", label: "Fuarcı Personeli Rozeti", quantityGranted: 5, quantityConsumed: 5 } });
+    const entBadge = await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: beta.id, source: "SPONSOR_PACKAGE", type: "BADGE", label: "Fuarcı Personeli Yaka Kartı", quantityGranted: 5, quantityConsumed: 5 } });
     await db.entitlement.create({ data: { editionId: edition1.id, ownerPersonId: P.Mehmet.id, source: "SPEAKER", type: "COMPLIMENTARY_REGISTRATION", label: "Konuşmacı Ücretsiz Kayıt", quantityGranted: 1, quantityConsumed: 1 } });
 
     // claimleri gerçek havuza bağla + consumed/reserved say (12+2 = 14 tüketim görünümü)
@@ -395,26 +412,54 @@ export async function POST() {
     const tr2 = await db.track.create({ data: { editionId: edition1.id, name: "Tünel Mühendisliği", description: "Tasarım, işletme, bakım" } });
     const tr3 = await db.track.create({ data: { editionId: edition1.id, name: "Geoteknik", description: "Zemin iyileştirme, enjeksiyon" } });
 
-    const subData: [string, string, string, string, string, string | null, string | null][] = [
-      // title, track, type, status, presenting, decision, fileStatus
-      ["TBM Kesici Kafa Aşınmasının Makine Öğrenmesi ile Tahmini", "Kazı Teknolojileri", "ORAL", "ACCEPTED", "Ahmet Yılmaz", "ACCEPT_ORAL", "APPROVED"],
-      ["Mikro Tünel Uygulamalarında Yerleşim İzlerinin İzlenmesi", "Kazı Teknolojileri", "ORAL", "ACCEPTED", "Mehmet Demir", "ACCEPT_ORAL", "APPROVED"],
-      ["HDD Projelerinde Risk Matrisi Yaklaşımı", "Kazı Teknolojileri", "ORAL", "ACCEPTED", "Ayşe Kara", "ACCEPT_ORAL", null],
-      ["Tünel Havalandırmasında Enerji Optimizasyonu", "Tünel Mühendisliği", "POSTER", "ACCEPTED", "Seda Polat", "ACCEPT_POSTER", "MISSING"],
-      ["Enjeksiyon Basınç Parametrelerinin Saha Deneyimi", "Geoteknik", "POSTER", "ACCEPTED", "Emre Özkan", "ACCEPT_POSTER", "FORMAT_ISSUE"],
-      ["Derin Kazı Duvarlarında Dekonvolüsyon Analizi", "Geoteknik", "ORAL", "UNDER_REVIEW", "Can Arslan", null, null],
-      ["Tünel Açılmış Zeminlerde Çökme Tahmini", "Tünel Mühendisliği", "ORAL", "UNDER_REVIEW", "Gizem Bulut", null, null],
-      ["Yeni Nesil Bentonit Karışımlarının Laboratuvar Karşılaştırması", "Geoteknik", "ORAL", "UNDER_REVIEW", "Pınar Yavuz", null, null],
-      ["TBM Disk Kesicilerinde Yeniden Kullanım Ekonomisi", "Kazı Teknolojileri", "ORAL", "REVISION_REQUIRED", "Onur Erdem", "REVISION_REQUIRED", null],
-      ["Kentsel Kazılarda Titreşim Sınır Değerleri", "Tünel Mühendisliği", "ORAL", "SUBMITTED", "Barış Tekin", null, null],
-      ["Epoxy Enjeksiyonun Suya Doygun Zeminlerde Performansı", "Geoteknik", "POSTER", "SUBMITTED", "Serpil Ateş", null, null],
-      ["Tünel Yangın Senaryolarında Simülasyon Karşılaştırması", "Tünel Mühendisliği", "ORAL", "REJECTED", "Ünsal Kağan", "REJECT", null],
-      ["Hidrolik Fraktür İzleme Teknikleri", "Geoteknik", "ORAL", "WITHDRAWN", "Fatma Çelik", "WITHDRAWN", null],
-      ["Kesici Kafa Geometrisinin Torque Profiline Etkisi", "Kazı Teknolojileri", "ORAL", "DRAFT", "Ahmet Yılmaz", null, null],
+    const subData: [string, string, string, string, string, string | null, string | null, string, string][] = [
+      // title, track, type, status, presenting, decision, fileStatus, abstract, keywords
+      ["TBM Kesici Kafa Aşınmasının Makine Öğrenmesi ile Tahmini", "Kazı Teknolojileri", "ORAL", "ACCEPTED", "Ahmet Yılmaz", "ACCEPT_ORAL", "APPROVED",
+        "Çalışmada, İstanbul metro projelerinden derlenen 1.240 kesici kafa verisiyle eğitilen makine öğrenmesi modellerinin aşınma tahmini performansı karşılaştırılmıştır. Rastgele orman modeli %92 doğrulukla en iyi sonucu vermiş; kesme torque'u, kayıntı hızı ve formasyon dayanımı en etkili değişkenler olarak öne çıkmıştır. Saha mühendislerine yönelik erken uyarı eşiği önerisi sunulmaktadır.",
+        "TBM, kesici kafa, aşınma, makine öğrenmesi"],
+      ["Mikro Tünel Uygulamalarında Yerleşim İzlerinin İzlenmesi", "Kazı Teknolojileri", "ORAL", "ACCEPTED", "Mehmet Demir", "ACCEPT_ORAL", "APPROVED",
+        "Mikro tünel açılışlarında oluşan yüzey yerleşim izleri, üç farklı şehirde toplam 18 hat üzerinde optik nivelleme ve uzayda sabitlenmiş radar ile izlenmiştir. Yerleşim çukuru profilleri penetrasyon hızına bağlı olarak modellenmiş; boru çapı büyüdükçe maksimum yerleşimin doğrusal arttığı gözlemlenmiştir. Uygulamalı tolerans tabloları sunulmaktadır.",
+        "mikro tünel, yerleşim izi, optik nivelleme"],
+      ["HDD Projelerinde Risk Matrisi Yaklaşımı", "Kazı Teknolojileri", "ORAL", "ACCEPTED", "Ayşe Kara", "ACCEPT_ORAL", null,
+        "Yatay yönlü sondaj (HDD) projelerinde karşılaşılan 42 risk kategorisi FMEA yöntemiyle puanlanmış, yeraltı engel çakışması ve çamur kaçığı en yüksek risk skoruna sahip iki kategori olarak belirlenmiştir. Proje aşamasına göre değişen risk ağırlıkları için dinamik bir matris modeli önerilmekte ve üç pilot projede doğrulanmaktadır.",
+        "HDD, risk analizi, FMEA, çamur kaçığı"],
+      ["Tünel Havalandırmasında Enerji Optimizasyonu", "Tünel Mühendisliği", "POSTER", "ACCEPTED", "Seda Polat", "ACCEPT_POSTER", "MISSING",
+        "İnşaat fazındaki tünerlerde jet fan yerleşiminin enerji tüketimi üzerindeki etkisi CFD analizleriyle incelenmiştir. Fan sayısı sabit tutularak açı optimizasyonu yapıldığında %14 enerji tasarrufu sağlanmış; karbon ayak izi azaltımına karşılık gelen eşdeğer değer raporlanmıştır. Sunum dosyası tamamlanacak (dosya durumu: eksik).",
+        "havalandırma, jet fan, CFD, enerji"],
+      ["Enjeksiyon Basınç Parametrelerinin Saha Deneyimi", "Geoteknik", "POSTER", "ACCEPTED", "Emre Özkan", "ACCEPT_POSTER", "FORMAT_ISSUE",
+        "Farklı jeolojik ortamlarda yürütülen 26 enjeksiyon jobundan saha kayıtları derlenerek basınç/akış ilişkileri değerlendirilmiştir. Düşük başlangıç basıncı + kademeli artış şemasının delik kaybını %22 azalttığı saptanmıştır. Poster dosyası şablon uyumsuzluğu nedeniyle format düzeltmesi beklemektedir.",
+        "enjeksiyon, basınç, geoteknik, saha deneyi"],
+      ["Derin Kazı Duvarlarında Dekonvolüsyon Analizi", "Geoteknik", "ORAL", "UNDER_REVIEW", "Can Arslan", null, null,
+        "Ankara killerinde 18 m derinliğe kadar inen kazı duvarlarının inklometre verileri, yerleşim ölçümleriyle birlikte dekonvolüsyon yöntemiyle geri analiz edilmiştir. Duvar sertlik profilinin ölçüm gürültüsünden ayrıştırılmasında Wiener filtresi kullanılmıştır. İki hakem incelemesi sürmektedir.",
+        "derin kazı, inklometre, dekonvolüsyon"],
+      ["Tünel Açılmış Zeminlerde Çökme Tahmini", "Tünel Mühendisliği", "ORAL", "UNDER_REVIEW", "Gizem Bulut", null, null,
+        "Geçmiş 30 yıla ait tünel çökme vakaları bölgesel zemin verisiyle eşleştirilerek ampirik bir çökme olasılık modeli kurulmuştur. Model, oturmuş deneysel formüllerle uyumlu olmakla birlikte kil oranı eklendiğinde daha iyi performans vermektedir.",
+        "çökme, tünel, ampirik model, kil oranı"],
+      ["Yeni Nesil Bentonit Karışımlarının Laboratuvar Karşılaştırması", "Geoteknik", "ORAL", "UNDER_REVIEW", "Pınar Yavuz", null, null,
+        "Beş farklı polimer katkılı bentonit çamurunun reolojik özellikleri, filtrasyon davranışı ve göllerme süresi laboratuvarda karşılaştırılmıştır. Polimer katkılı karışımlar standart bentonite göre %31 daha düşük filtre kaybı göstermiştir. Yüksek lisans tez çalışmasının ilk sonuçlarıdır.",
+        "bentonit, reoloji, filtrasyon, polimer"],
+      ["TBM Disk Kesicilerinde Yeniden Kullanım Ekonomisi", "Kazı Teknolojileri", "ORAL", "REVISION_REQUIRED", "Onur Erdem", "REVISION_REQUIRED", null,
+        "Yeniden tıraşlanan disk kesicilerin maliyet-ömrü analizi, 3 projelik saha verisiyle karşılaştırılmıştır. Yeniden kullanım eşyüeri belirli aşınma eşiklerinin altında kaldığında ekonomik olmaktadır. Revizyon: metodoloji bölümünde veri seti ayrımı netleştirilmelidir.",
+        "disk kesici, maliyet analizi, yeniden kullanım"],
+      ["Kentsel Kazılarda Titreşim Sınır Değerleri", "Tünel Mühendisliği", "ORAL", "SUBMITTED", "Barış Tekin", null, null,
+        "Kentsel açık kazı ve tünel çalışmalarında ölçülen titreşim hızları, yapısal hasar eşikleriyle karşılaştırılmış; mevcut mevzuat sınır değerlerinin bazı hassas yapılarda yetersiz kaldığı gösterilmiştir. Değerlendirme hakem ataması beklemektedir.",
+        "titreşim, kentsel kazı, hasar eşiği"],
+      ["Epoxy Enjeksiyonun Suya Doygun Zeminlerde Performansı", "Geoteknik", "POSTER", "SUBMITTED", "Serpil Ateş", null, null,
+        "Suya doygun kum numunelerine uygulanan epoxy enjeksiyonun dayanım artışı, doygunluk derecesine bağlı olarak laboratuvarda ölçülmüştür. Tam doygunlukta bile 0,8 MPa dayanım artışı elde edilmiştir. Poster biçiminde sunulacaktır.",
+        "epoxy enjeksiyon, doygun zemin, dayanım"],
+      ["Tünel Yangın Senaryolarında Simülasyon Karşılaştırması", "Tünel Mühendisliği", "ORAL", "REJECTED", "Ünsal Kağan", "REJECT", null,
+        "FDS ve iki farklı ticari yazılımın aynı yangın senaryosundaki sıcaklık ve duman yayılımı tahminleri karşılaştırılmıştır. Komite özgünlük yetersizliği nedeniyle reddetmiştir; literatür taraması tek başına yeterli yenilik taşımamaktadır.",
+        "yangın, FDS, simülasyon"],
+      ["Hidrolik Fraktür İzleme Teknikleri", "Geoteknik", "ORAL", "WITHDRAWN", "Fatma Çelik", "WITHDRAWN", null,
+        "Hidrolik fraktür deneylerinde mikro-sismik izleme ve açısal deformasyon ölçüm tekniklerinin karşılaştırılması planlanmıştı; saha erişimi engeli nedeniyle yazarlar çalışmayı geri çekmiştir.",
+        "hidrolik fraktür, mikro-sismik"],
+      ["Kesici Kafa Geometrisinin Torque Profiline Etkisi", "Kazı Teknolojileri", "ORAL", "DRAFT", "Ahmet Yılmaz", null, null,
+        "Farklı kesici kafa açılarında torque dalgalanmasının simülasyonu; taslak aşamasında — henüz gönderilmemiştir.",
+        "kesici kafa, torque, simülasyon"],
     ];
     let subNo = 100;
     const subByName = new Map<string, string>();
-    for (const [title, trackName, type, status, presenting, decision, fileStatus] of subData) {
+    for (const [title, trackName, type, status, presenting, decision, fileStatus, abstract, keywords] of subData) {
       const track = [tr1, tr2, tr3].find((t) => t.name === trackName)!;
       const [pFirst, ...rest] = presenting.split(" ");
       const person = people.find((p) => p.firstName === pFirst && p.lastName === rest.join(" "));
@@ -423,8 +468,9 @@ export async function POST() {
           editionId: edition1.id, trackId: track.id, submitterId: person?.id,
           code: `SUB-${subNo}`, title, type, status, presentingAuthorName: presenting,
           fileStatus, submittedAt: status === "DRAFT" ? null : D(-44 + subNo % 20, 16),
-          abstract: `${title} — bu çalışmada saha ve laboratuvar verileri karşılaştırılmıştır.`,
-          keywords: "tünel, kazı, geoteknik",
+          abstract, keywords,
+          fileUrl: status === "ACCEPTED" && fileStatus === "APPROVED" ? `https://assets.maven.demo/sub-${subNo}-fulltext.pdf` : null,
+          posterNo: type === "POSTER" && status === "ACCEPTED" ? `P-${subNo - 99}` : null,
         },
       });
       await db.authorship.create({ data: { submissionId: sub.id, personId: person?.id, name: presenting, organizationName: person?.company, isPresenting: true, isCorresponding: true, position: 1 } });
@@ -450,13 +496,13 @@ export async function POST() {
     const roomB = await db.programRoom.create({ data: { editionId: edition1.id, name: "Salon B", capacity: 120, floor: "Kat 2" } });
     const roomPoster = await db.programRoom.create({ data: { editionId: edition1.id, name: "Poster Alanı", capacity: 300, floor: "Kat 1" } });
 
-    const sesKeynote = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Açılış Konuşması: Türkiye'de Kazısız Gelecek", type: "KEYNOTE", startTime: D(0, 9, 30), endTime: D(0, 10, 30), status: "PUBLISHED", isVisible: true, accessRule: "OPEN", cmeCredits: 2 } });
-    const ses1 = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, trackId: tr1.id, submissionId: subByName.get("TBM Kesici Kafa Aşınmasının Makine Öğrenmesi ile Tahmini"), title: "TBM Kesici Kafa Aşınması — ML Tahmini", type: "TALK", startTime: D(0, 11, 0), endTime: D(0, 11, 30), status: "PUBLISHED", isVisible: true, cmeCredits: 1.5 } });
-    const ses2 = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomB.id, title: "HDD Risk Yönetimi Atölyesi", type: "WORKSHOP", startTime: D(0, 14, 0), endTime: D(0, 16, 0), capacity: 40, status: "APPROVED", accessRule: "REGISTRATION_REQUIRED", cmeCredits: 3 } });
-    const sesPanel = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Büyük Projelerde Paydaş Paneli", type: "PANEL", startTime: D(1, 10, 0), endTime: D(1, 11, 30), status: "ASSIGNED" } });
-    const sesPoster = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomPoster.id, title: "Poster Oturumu I", type: "POSTER_SESSION", startTime: D(1, 13, 0), endTime: D(1, 14, 30), status: "DRAFT" } });
-    await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Öğle Arası", type: "BREAK", startTime: D(0, 12, 30), endTime: D(0, 14, 0), status: "PUBLISHED", isVisible: true } });
-    await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Kapanış & Sertifika Töreni", type: "NETWORKING", startTime: D(2, 16, 0), endTime: D(2, 17, 30), status: "DRAFT" } });
+    const sesKeynote = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Açılış Konuşması: Türkiye'de Kazısız Gelecek", description: "Kongre başkanı Prof. Dr. Mehmet Demir'in açılış konuşması: ulusal altyapı yatırımlarında kazısız teknolojilerin 10 yıllık görünümü ve 2026 yol haritası.", type: "KEYNOTE", startTime: D(0, 9, 30), endTime: D(0, 10, 30), status: "PUBLISHED", isVisible: true, accessRule: "OPEN", cmeCredits: 2 } });
+    const ses1 = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, trackId: tr1.id, submissionId: subByName.get("TBM Kesici Kafa Aşınmasının Makine Öğrenmesi ile Tahmini"), title: "TBM Kesici Kafa Aşınması — ML Tahmini", description: "Kabul edilen bildiri SUB-100 sunumu; 1.240 saha verisiyle eğitilen aşınma tahmin modelleri ve erken uyarı eşikleri.", type: "TALK", startTime: D(0, 11, 0), endTime: D(0, 11, 30), status: "PUBLISHED", isVisible: true, cmeCredits: 1.5 } });
+    const ses2 = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomB.id, title: "HDD Risk Yönetimi Atölyesi", description: "Sınırlı kontenjanlı uygulamalı atölye: FMEA tabanlı risk matrisi kurulumu, çamur kaçığı senaryoları ve saha vaka analizleri. Katılım kayıt gerektirir.", type: "WORKSHOP", startTime: D(0, 14, 0), endTime: D(0, 16, 0), capacity: 40, status: "APPROVED", accessRule: "REGISTRATION_REQUIRED", cmeCredits: 3 } });
+    const sesPanel = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Büyük Projelerde Paydaş Paneli", description: "Kamu, yüklenici ve akademi temsilcileriyle büyük ölçekli tünelleme projelerinde paydaş uyumu, periyot ve maliyet gerçekleri.", type: "PANEL", startTime: D(1, 10, 0), endTime: D(1, 11, 30), status: "ASSIGNED" } });
+    const sesPoster = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomPoster.id, title: "Poster Oturumu I", description: "Kabul edilen posterlerin yazarları panolarında; jüri dolaşımı 13:45'te başlar. Poster numaraları kabul kararındaki P- önekli sıradır.", type: "POSTER_SESSION", startTime: D(1, 13, 0), endTime: D(1, 14, 30), status: "DRAFT" } });
+    await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Öğle Arası", description: "Ara ikram — fuar alanında stantlar ziyarete açık. Cuma namını için ICC mescit katı kullanılabilir.", type: "BREAK", startTime: D(0, 12, 30), endTime: D(0, 14, 0), status: "PUBLISHED", isVisible: true } });
+    await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Kapanış & Sertifika Töreni", description: "Değerlendirme sonuçları, en iyi bildiri ödülleri ve katılımcı sertifikalarının törenle teslimi. Gala yemeği öncesi hatıra fotoğrafı.", type: "NETWORKING", startTime: D(2, 16, 0), endTime: D(2, 17, 30), status: "DRAFT" } });
 
     await db.programAssignment.createMany({
       data: [
@@ -469,15 +515,38 @@ export async function POST() {
     });
     // program bekleyen: kabul edilmiş ama oturumsuz (ses2/ses1 bağlandı; 3. kabul ve posterler bağlanmadı)
 
-    // ── Konaklama (§31-35) ──
-    const hotel = await db.hotelProperty.create({ data: { editionId: edition1.id, name: "Maslak Grand Otel", city: "İstanbul", district: "Maslak", contactName: "Rezervasyon", contactPhone: "+90 212 000 00 00" } });
+    // ── Konaklama (§31-35) — DETAYLI otel girişi: logo, kapak, adres, iletişim, yıldız ──
+    const hotel = await db.hotelProperty.create({
+      data: {
+        editionId: edition1.id, name: "Maslak Grand Otel", city: "İstanbul", district: "Maslak",
+        address: "Maslak Mah. Oteller Cad. No:19 Sarıyer / İstanbul — metro Maslak çıkışına 3 dk",
+        contactName: "Sibel Erten", contactPhone: "+90 212 000 00 00 (dahili 114)",
+        email: "rezervasyon@maslakgrand.example", website: "https://maslakgrand.example",
+        starRating: 4, checkInNote: "Giriş 14:00 / Çıkış 12:00 — kongre misafirlerine erken giriş önceliği",
+        notes: "Maven blok sözleşmesi: 30 tek + 20 çift oda. Kongre servisi lobiden 08:30 kalkış. Fatura kuruma düzenlenebilir (payerPolicy SELF olanlar hariç).",
+      },
+    });
+    const hotel2 = await db.hotelProperty.create({
+      data: {
+        editionId: edition1.id, name: "Boğaz Suit Otel", city: "İstanbul", district: "Etiler",
+        address: "Nispetiye Cad. No:42 Etiler / Beşiktaş İstanbul — sağ kol senaryosu (yedek otel)",
+        contactName: "Cem Akman", contactPhone: "+90 212 333 44 55",
+        email: "groups@bogazsuit.example", website: "https://bogazsuit.example",
+        starRating: 5, checkInNote: "Giriş 15:00 / Çıkış 12:00 — grup check-in 2. kat resepsiyondan",
+        notes: "Yedek/kalite yükseltme oteli — Maslak Grand dolulukta taşırma planı. 10 suit + 15 deluxe oda opsiyonu 05.05 tarihine kadar serbest.",
+      },
+    });
     const rtSingle = await db.roomType.create({ data: { hotelId: hotel.id, name: "Standard Single", capacity: 1, pricePerNight: 3500 } });
     const rtDouble = await db.roomType.create({ data: { hotelId: hotel.id, name: "Standard Double", capacity: 2, pricePerNight: 4200 } });
     const blockSingle = await db.roomBlock.create({ data: { hotelId: hotel.id, roomTypeId: rtSingle.id, name: "Maven Tek Kişilik Blok", releaseDate: D(7), cancellationPolicy: "Girişten 72 saat öncesine kadar ücretsiz", payerPolicy: "Rezervasyon bazında" } });
     const blockDouble = await db.roomBlock.create({ data: { hotelId: hotel.id, roomTypeId: rtDouble.id, name: "Maven Çift Kişilik Blok", releaseDate: D(7), cancellationPolicy: "Girişten 72 saat öncesine kadar ücretsiz", payerPolicy: "SELF" } });
+    // Yedek otel: suite blok (doluluk taşırma senaryosu)
+    const rtSuite = await db.roomType.create({ data: { hotelId: hotel2.id, name: "Deluxe Suite", capacity: 2, pricePerNight: 6800 } });
+    const blockSuite = await db.roomBlock.create({ data: { hotelId: hotel2.id, roomTypeId: rtSuite.id, name: "Maven Suite Yedek Blok", releaseDate: D(5), cancellationPolicy: "Girişten 48 saat öncesine kadar ücretsiz", payerPolicy: "Rezervasyon bazında" } });
     for (let i = -1; i <= 2; i++) {
       await db.inventoryNight.create({ data: { blockId: blockSingle.id, date: D(i), totalRooms: 30, reservedRooms: 12 } });
       await db.inventoryNight.create({ data: { blockId: blockDouble.id, date: D(i), totalRooms: 20, reservedRooms: i === 0 ? 18 : 11 } });
+      await db.inventoryNight.create({ data: { blockId: blockSuite.id, date: D(i), totalRooms: 10, reservedRooms: 0 } });
     }
     const res1 = await db.reservation.create({ data: { editionId: edition1.id, blockId: blockDouble.id, roomTypeId: rtDouble.id, primaryGuestParticipationId: participationMap.get("Mehmet")!.participationId, guestName: "Mehmet Demir", checkIn: D(-1), checkOut: D(2), payerType: "ORGANIZATION", payerName: "Delta Üniversitesi", status: "CONFIRMED" } });
     await db.occupancySlot.createMany({ data: [{ reservationId: res1.id, participationId: participationMap.get("Mehmet")!.participationId, guestName: "Mehmet Demir", position: 1 }] });
@@ -486,8 +555,8 @@ export async function POST() {
       data: [
         { editionId: edition1.id, blockId: blockSingle.id, roomTypeId: rtSingle.id, primaryGuestParticipationId: participationMap.get("Seda")!.participationId, guestName: "Seda Polat", checkIn: D(-1), checkOut: D(1), payerType: "SELF", status: "CONFIRMED" },
         { editionId: edition1.id, blockId: blockSingle.id, roomTypeId: rtSingle.id, primaryGuestParticipationId: participationMap.get("Can")!.participationId, guestName: "Can Arslan", checkIn: D(0), checkOut: D(2), payerType: "SELF", status: "REQUESTED" },
-        { editionId: edition1.id, blockId: blockDouble.id, roomTypeId: rtDouble.id, guestName: "Bekleme — Heyet Odası", checkIn: D(0), checkOut: D(2), payerType: "SPONSOR", payerName: "ABC Pharma", status: "WAITLIST" },
-        { editionId: edition1.id, blockId: blockSingle.id, roomTypeId: rtSingle.id, guestName: "İptal — Deneme", checkIn: D(-1), checkOut: D(0), payerType: "SELF", status: "CANCELLED" },
+        { editionId: edition1.id, blockId: blockDouble.id, roomTypeId: rtDouble.id, guestName: "ICC Heyet Odası (Blok Talebi)", checkIn: D(0), checkOut: D(2), payerType: "SPONSOR", payerName: "ABC Pharma", notes: "Delta Üniversitesi heyeti — VIP lounge yanlı oda talebi, sponsor karşılar", status: "WAITLIST" },
+        { editionId: edition1.id, blockId: blockSingle.id, roomTypeId: rtSingle.id, guestName: "Pelin Aksoy", checkIn: D(-1), checkOut: D(0), payerType: "SELF", notes: "Uçuş iptali nedeniyle rezervasyonu misafir iptal etti — 72 saat kuralı dışında ücret yok", status: "CANCELLED" },
       ],
     });
 
@@ -758,7 +827,7 @@ export async function POST() {
       ],
     });
 
-    // ── Rozet & Credential & Taramalar (§40-42) ──
+    // ── Yaka Kartı & Credential & Taramalar (§40-42) ──
     const bpDelegate = await db.badgeProfile.create({ data: { editionId: edition1.id, name: "Delegate", accessAreas: "Ana Salon, Poster Alanı", color: "teal" } });
     const bpSpeaker = await db.badgeProfile.create({ data: { editionId: edition1.id, name: "Speaker", accessAreas: "Ana Salon, Salon B, Backstage", color: "amber" } });
     const bpExhibitor = await db.badgeProfile.create({ data: { editionId: edition1.id, name: "Exhibitor", accessAreas: "Fuar Alanı, Kurulum Saatleri", color: "violet" } });
@@ -783,8 +852,8 @@ export async function POST() {
     }
 
     // ── Mükerrer kişi senaryosu (R7): aynı e-posta + aynı edisyonda İKİ katılım ──
-    // Defne Kaya (eski kayıt — hedef adayı): onaylı kongre kaydı + basılmış rozet + tarama
-    // Defne Kaya (yeni kayıt — kaynak adayı): öğrenci kategorisinde onay bekleyen + rozet yok
+    // Defne Kaya (eski kayıt — hedef adayı): onaylı kongre kaydı + basılmış yaka kartı + tarama
+    // Defne Kaya (yeni kayıt — kaynak adayı): öğrenci kategorisinde onay bekleyen + yaka kartı yok
     const defne2 = await db.person.create({
       data: { tenantId: tenant.id, firstName: "Defne", lastName: "Kaya", email: "defne.kaya@example.com", phone: "+90 532 111 22 33", company: "Yol Yapım A.Ş.", title: "Saha Mühendisi", country: "Türkiye" },
     });
@@ -839,9 +908,9 @@ export async function POST() {
     for (const name of ["Ahmet", "Mustafa", "Deniz"]) {
       const rec = participationMap.get(name)!;
       const cred = await db.credential.findFirst({ where: { participationId: rec.participationId } });
-      await db.scanEvent.create({ data: { participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "RESCAN", result: "RESCAN_WARNING", reason: "Bu rozet bugün daha önce okutuldu", device: "kapi-b-2", operator: "Leyla Güneş", scannedAt: D(0, 12, 15) } });
+      await db.scanEvent.create({ data: { participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "RESCAN", result: "RESCAN_WARNING", reason: "Bu yaka kartı bugün daha önce okutuldu", device: "kapi-b-2", operator: "Leyla Güneş", scannedAt: D(0, 12, 15) } });
     }
-    // reddedilen: Murat (kayıt REJECTED, rozet yok) — personId ile
+    // reddedilen: Murat (kayıt REJECTED, yaka kartı yok) — personId ile
     await db.scanEvent.create({ data: { personId: P.Murat.id, location: "MAIN_DOOR", doorName: "Kapı B", action: "ENTRY", result: "DENIED", reason: "Kayıt durumu: REJECTED", device: "kapi-b-2", operator: "Leyla Güneş", scannedAt: D(0, 10, 5) } });
     // oturum girişleri (ayrı tarama listesi)
     for (const name of ["Mehmet", "Ahmet", "Ayşe", "Seda", "Fatma"]) {
@@ -930,18 +999,87 @@ export async function POST() {
       ],
     });
 
-    // (3) Merkezi medya arşivi — klasör ağacı + varlıklar (etkinlik izolasyonu)
-    const mfPhotos = await db.mediaFolder.create({ data: { editionId: edition1.id, name: "Fotoğraflar", systemKey: "PHOTOS", color: "teal", description: "Etkinlik fotoğraf arşivi — gün sıralı" } });
-    const mfLogos = await db.mediaFolder.create({ data: { editionId: edition1.id, name: "Logolar", systemKey: "LOGOS", color: "amber", description: "Sponsor ve organizasyon logoları" } });
-    const mfDocs = await db.mediaFolder.create({ data: { editionId: edition1.id, name: "Belgeler", systemKey: "DOCUMENTS", color: "violet" } });
-    const mfPress = await db.mediaFolder.create({ data: { editionId: edition1.id, parentId: mfLogos.id, name: "2026 Basın Kiti", color: "amber" } });
+    // (3) Merkezi medya arşivi — SİSTEM klasörleri (kullanıcı kuralı: yaka kartı,
+    // sertifika, kişi fotoğrafı, kurum logosu, otel, materyal, portal KENDİ klasöründe;
+    // her yükleme BENZERSİZ adla) + kullanıcı klasörü örneği
+    const sysFolders = await ensureSystemFolders(edition1.id);
+    const F = sysFolders.folders;
+    const uniq = () => Date.now().toString(36).slice(-4) + Math.random().toString(36).slice(2, 6);
+
+    // Kişi fotoğrafları — her katılımcıya baş harfli avatar; kişi kaydına benzersiz adla bağlanır
+    for (const [i, p] of people.entries()) {
+      const initials = (p.firstName[0] + (p.lastName[0] ?? "")).toUpperCase();
+      const name = `kisi-${p.firstName}-${p.lastName}-fotografi-${uniq()}.svg`
+        .toLowerCase().replace(/[^a-z0-9.\-]+/g, "-");
+      const asset = await db.mediaAsset.create({
+        data: {
+          editionId: edition1.id, folderId: F.KISI_FOTOGRAF.id, name,
+          kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 1,
+          dataUrl: avatarSvg(initials, i), tags: "portre,demo",
+          linkedType: "PERSON", linkedId: p.id, uploadedBy: "Kayıt Görevlisi",
+        },
+      });
+      await db.person.update({ where: { id: p.id }, data: { photoUrl: asset.dataUrl } });
+    }
+
+    // Kurum/Kuruluş logoları — her kuruma marka rengiyle logo; benzersiz ad + medya bağlantısı
+    const orgLogos: [typeof abcPharma, string, string][] = [
+      [abcPharma, "ABC Pharma", "0f766e"], [association, "No-Dig Türkiye Derneği", "1d4ed8"], [pco, "Eventiva PCO", "b45309"],
+      [icc, "İstanbul Kongre Merkezi", "334155"], [beta, "Beta Mühendislik", "7c3aed"], [media, "TeknoBasın Medya", "be185d"],
+      [uni, "Delta Üniversitesi", "0369a1"], [hotelOrg, "Maslak Grand Otel", "92400e"],
+    ];
+    for (const [org, name, color] of orgLogos) {
+      const name2 = `kurum-${name}-logosu-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-");
+      const asset = await db.mediaAsset.create({
+        data: {
+          editionId: edition1.id, folderId: F.KURUM_LOGO.id, name: name2,
+          kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 2,
+          dataUrl: logoSvg(name, color), tags: "logo,kurum",
+          linkedType: "ORGANIZATION", linkedId: org.id, uploadedBy: "Elif Kaya",
+        },
+      });
+      await db.organization.update({ where: { id: org.id }, data: { logoUrl: asset.dataUrl } });
+    }
+    // Basın kiti — kurum logoları klasörünün altında kullanıcı klasörü
+    const mfPress = await db.mediaFolder.create({ data: { editionId: edition1.id, parentId: F.KURUM_LOGO.id, name: "2026 Basın Kiti", description: "Medya sponsoru ile paylaşılan baskı hazır materyaller" } });
+    await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: mfPress.id, name: `basin-kiti-2026-${uniq()}.pdf`, kind: "DOCUMENT", mimeType: "application/pdf", sizeKb: 15400, externalUrl: "https://assets.maven.demo/press2026.pdf", tags: "basın,kitapçık", uploadedBy: "Elif Kaya" } });
+
+    // Otel görselleri — logo + kapak (her otel için; OTEL klasörü)
+    for (const [h, color] of [[hotel, "92400e"], [hotel2, "0e7490"]] as [typeof hotel, string][]) {
+      const logoA = await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.OTEL.id, name: `otel-${h.name}-logosu-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 2, dataUrl: logoSvg(h.name, color), tags: "otel,logo", linkedType: "HOTEL", linkedId: h.id, uploadedBy: "Burak Demir" } });
+      const coverA = await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.OTEL.id, name: `otel-${h.name}-kapak-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 3, dataUrl: coverSvg(h.name, color, "0f172a"), tags: "otel,kapak", linkedType: "HOTEL", linkedId: h.id, uploadedBy: "Burak Demir" } });
+      await db.hotelProperty.update({ where: { id: h.id }, data: { logoUrl: logoA.dataUrl, imageUrl: coverA.dataUrl } });
+    }
+
+    // Portal görselleri — dış portal header arka planı + edisyon tasarım alanları
+    const portalBg = await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.PORTAL.id, name: `portal-header-arkaplan-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 4, dataUrl: coverSvg("No-Dig Turkey 2026 — Kayısız Gelecek", "134e4a", "0f172a"), tags: "portal,header", linkedType: "PORTAL", uploadedBy: "Burak Demir" } });
+    await db.eventEdition.update({
+      where: { id: edition1.id },
+      data: {
+        portalHeaderTitle: "No-Dig Turkey 2026",
+        portalHeaderSubtitle: "Kazısız Teknolojiler Ulusal Kongresi — 24-27 Eylül, İstanbul Kongre Merkezi",
+        portalHeaderImageUrl: portalBg.dataUrl,
+        portalHeaderAccent: "#14b8a6",
+      },
+    });
+
+    // Materyaller — oturum dosyalarının medya klasörü kopyaları (MATERYAL klasörü)
+    const allMaterials = await db.sessionMaterial.findMany({ where: { editionId: edition1.id } });
+    for (const m of allMaterials) {
+      const name = `materyal-${m.title}-${uniq()}.pdf`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-");
+      const asset = await db.mediaAsset.create({
+        data: { editionId: edition1.id, folderId: F.MATERYAL.id, name, kind: "DOCUMENT", mimeType: m.mimeType ?? "application/pdf", sizeKb: m.sizeKb, externalUrl: m.url, tags: "materyal,oturum", linkedType: "SESSION", linkedId: m.sessionId, uploadedBy: "Selin Öztürk" },
+      });
+      await db.sessionMaterial.update({ where: { id: m.id }, data: { notes: `Medya: ${asset.name} (Materyaller klasörü)` } });
+    }
+
+    // Etkinlik fotoğrafları — kullanıcı klasörü örneği (sistem klasörü değil)
+    const mfPhotos = await db.mediaFolder.create({ data: { editionId: edition1.id, name: "Etkinlik Fotoğrafları", description: "Gün sıralı saha fotoğraf arşivi — görevliler yükler" } });
     await db.mediaAsset.createMany({
       data: [
-        { editionId: edition1.id, folderId: mfLogos.id, name: "nodig-turkey-2026-logo.svg", kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 18, externalUrl: "https://assets.maven.demo/nodig2026.svg", tags: "logo,ana,2026", uploadedBy: "Elif Kaya" },
-        { editionId: edition1.id, folderId: mfPress.id, name: "basin-kiti-2026.pdf", kind: "DOCUMENT", mimeType: "application/pdf", sizeKb: 15400, externalUrl: "https://assets.maven.demo/press2026.pdf", tags: "basın,kitapçık", uploadedBy: "Elif Kaya" },
-        { editionId: edition1.id, folderId: mfPhotos.id, name: "acilis-genel-gorunum.jpg", kind: "IMAGE", mimeType: "image/jpeg", sizeKb: 6200, externalUrl: "https://assets.maven.demo/opening.jpg", tags: "açılış,ana salon", uploadedBy: "Kapı Görevlisi" },
-        { editionId: edition1.id, folderId: mfDocs.id, name: "floor-plan-v3.dwg", kind: "OTHER", mimeType: "application/dwg", sizeKb: 24800, externalUrl: "https://assets.maven.demo/floor-v3.dwg", tags: "floor studio,saha", uploadedBy: "Burak Demir", linkedType: "BOOTH" },
-        { editionId: edition1.id, folderId: null, name: "sponsor-karşılama-video.mp4", kind: "VIDEO", mimeType: "video/mp4", sizeKb: 148000, externalUrl: "https://video.maven.demo/sponsor-welcome", tags: "sponsor,hoş geldin", uploadedBy: "Selin Öztürk" },
+        { editionId: edition1.id, folderId: mfPhotos.id, name: `acilis-genel-gorunum-${uniq()}.jpg`, kind: "IMAGE", mimeType: "image/jpeg", sizeKb: 6200, externalUrl: "https://assets.maven.demo/opening.jpg", tags: "açılış,ana salon", uploadedBy: "Yusuf Bilgin" },
+        { editionId: edition1.id, folderId: mfPhotos.id, name: `kayit-masasi-sabah-${uniq()}.jpg`, kind: "IMAGE", mimeType: "image/jpeg", sizeKb: 4300, externalUrl: "https://assets.maven.demo/reg-desk.jpg", tags: "kayıt masası,1. gün", uploadedBy: "Leyla Güneş" },
+        { editionId: edition1.id, folderId: null, name: `sponsor-karsilama-video-${uniq()}.mp4`, kind: "VIDEO", mimeType: "video/mp4", sizeKb: 148000, externalUrl: "https://video.maven.demo/sponsor-welcome", tags: "sponsor,hoş geldin", uploadedBy: "Selin Öztürk" },
       ],
     });
 
@@ -1044,16 +1182,35 @@ export async function POST() {
         isDefault: true,
       },
     });
+    // (8-bis) Yaka kartı tasarımcısı — varsayılan tasarım + profillere bağla + arka plan (YAKA_KARTI klasörü)
+    const badgeBg = coverSvg("MAVEN", "134e4a", "0f766e");
+    const badgeBgAsset = await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.YAKA_KARTI.id, name: `yaka-karti-arkaplan-standart-dikey-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 3, dataUrl: badgeBg, tags: "yaka kartı,arka plan", linkedType: "BADGE_DESIGN", linkedId: badgeDesignMain.id, uploadedBy: "Burak Demir" } });
+    await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.YAKA_KARTI.id, name: `yaka-karti-tasarim-standart-dikey-${uniq()}.json`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "DOCUMENT", mimeType: "application/json", sizeKb: 4, externalUrl: "https://assets.maven.demo/badge-design-main.json", tags: "yaka kartı,tasarım", linkedType: "BADGE_DESIGN", linkedId: badgeDesignMain.id, uploadedBy: "Burak Demir" } });
+    await db.badgeDesign.update({ where: { id: badgeDesignMain.id }, data: { frontBackgroundDataUrl: badgeBgAsset.dataUrl } });
     await db.badgeProfile.update({ where: { id: bpDelegate.id }, data: { designId: badgeDesignMain.id } });
     await db.badgeProfile.update({ where: { id: bpSpeaker.id }, data: { designId: badgeDesignMain.id } });
 
-    // (9) Sertifika tasarımcısı — kişi-özel gövde şablonu + boyut
+    // (9) Sertifika tasarımcısı — KANVAS yerleşimi (designJson) + arka plan (SERTIFIKA klasörü)
+    const certBg = coverSvg("", "fffdf6", "f1ead4");
+    const certBgAsset = await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.SERTIFIKA.id, name: `sertifika-arkaplan-katilimci-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 2, dataUrl: certBg, tags: "sertifika,arka plan", linkedType: "CERTIFICATE", linkedId: certPart.id, uploadedBy: "Selin Öztürk" } });
     await db.certificateDefinition.updateMany({
       where: { editionId: edition1.id },
       data: {
         widthMm: 297, heightMm: 210, bleedMm: 5, fontKey: "playfair", textColor: "1f2937",
         bodyTemplate: "<p>Bu belge, <b>{{edition}}</b> etkinliğinde <b>{{tier}}</b> statüsüyle görev almasının onurunu taşıdığını belgelemek üzere {{date}} tarihinde düzenlenmiştir.</p><p style=\"margin-top:6mm\"><b>{{fullName}}</b><br/><span style=\"color:#6b7280\">{{title}} — {{company}}</span></p>",
         tierNote: "Katılımcı düzeyi",
+        backgroundDataUrl: certBgAsset.dataUrl,
+        designJson: JSON.stringify([
+          { id: "c1", type: "line", x: 12, y: 12, w: 273, h: 0, color: "b45309", align: "left" },
+          { id: "c2", type: "line", x: 12, y: 198, w: 273, h: 0, color: "b45309", align: "left" },
+          { id: "c3", type: "text", x: 30, y: 28, w: 237, h: 16, text: "NO-DIG TURKEY 2026", fontSize: 13, fontWeight: 800, color: "0f766e", align: "center" },
+          { id: "c4", type: "text", x: 30, y: 46, w: 237, h: 10, text: "Katılım Sertifikası", fontSize: 8, fontWeight: 500, color: "6b7280", align: "center" },
+          { id: "c5", type: "text", x: 40, y: 84, w: 217, h: 34, text: "Bu belge {{fullName}} kişisinin {{edition}} etkinliğine {{tier}} olarak katılımını belgeler.", fontSize: 6.5, fontWeight: 400, color: "1f2937", align: "center" },
+          { id: "c6", type: "text", x: 40, y: 128, w: 217, h: 12, text: "{{fullName}}", fontSize: 10, fontWeight: 700, color: "111827", align: "center" },
+          { id: "c7", type: "text", x: 40, y: 140, w: 217, h: 8, text: "{{title}} — {{company}}", fontSize: 5.5, fontWeight: 400, color: "6b7280", align: "center" },
+          { id: "c8", type: "text", x: 30, y: 172, w: 120, h: 10, text: "Prof. Dr. Mehmet Demir\nKongre Başkanı", fontSize: 5, fontWeight: 500, color: "374151", align: "left" },
+          { id: "c9", type: "text", x: 160, y: 172, w: 107, h: 10, text: "{{date}} — İstanbul", fontSize: 5, fontWeight: 400, color: "374151", align: "right" },
+        ]),
       },
     });
 

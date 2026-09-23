@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
               person = await db.person.create({
                 data: { tenantId: edition.tenantId, firstName, lastName, email: email || null, company: pick(row, "company") || null, title: pick(row, "title") || null },
               });
-            } else person = undefined;
+            } else person = null;
           } else { result = "Eşleşmedi (yeni kişi oluşturma kapalı)"; report.personsUnmatched++; }
         }
         report.matchDetails.push({ row: r + 1, name: fullName || undefined, email: email || undefined, result, personId: person?.id });

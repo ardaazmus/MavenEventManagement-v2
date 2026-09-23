@@ -3,6 +3,7 @@
 // bilimsel akış, gecelik stok, finans çok eksenli, saha taramaları.
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { createRegistrationFromSubmission } from "@/lib/api/registration-chain";
 
 const D = (offsetDays: number, h = 9, m = 0) => {
   const d = new Date();
@@ -422,14 +423,25 @@ export async function POST() {
       ],
     });
 
-    // ── Form & cevaplar (§44) ──
-    const form = await db.formDefinition.create({ data: { editionId: edition1.id, name: "Katılımcı Kayıt Formu", audience: "PARTICIPANT", status: "PUBLISHED", version: 3 } });
-    const f1 = await db.formField.create({ data: { formId: form.id, label: "Kurum / Şirket", type: "TEXT", required: "ALWAYS", order: 1 } });
+    // ── Form Merkezi (§44 + kullanıcı isteği: kayıt/anket/mobil QA + spam koruması) ──
+    const form = await db.formDefinition.create({
+      data: {
+        editionId: edition1.id, name: "Online Kayıt Formu", type: "REGISTRATION",
+        audience: "PARTICIPANT", status: "PUBLISHED", version: 3, isPublic: true,
+        description: "No-Dig Turkey 2026 online kayıt — onay akışı ve online ödeme entegre.",
+        honeypotEnabled: true, minSubmitSeconds: 4, maxPerEmailPerDay: 5,
+        blockedDomains: "spam.xyz, tempmail.xyz, guvensizmail.com",
+        autoApprove: false, enableOnlinePayment: true, defaultCategoryId: catRegular.id,
+        successMessage: "Kayıt başvurunuz alındı! Ödeme bağlantısı e-posta ile de gönderilir.",
+      },
+    });
+    const f1 = await db.formField.create({ data: { formId: form.id, label: "Kurum / Şirket", type: "TEXT", required: "ALWAYS", placeholder: "Örn. ABC Pharma", order: 1 } });
     const f2 = await db.formField.create({ data: { formId: form.id, label: "Unvan", type: "TEXT", order: 2 } });
     const f3 = await db.formField.create({ data: { formId: form.id, label: "Beslenme tercihi", type: "SINGLE_CHOICE", options: "Standart\nVejetaryen\nHelal\nGlutensiz", sensitivity: "OPERATIONAL_SENSITIVE", order: 3 } });
     const f4 = await db.formField.create({ data: { formId: form.id, label: "Erişim ihtiyacı var mı?", type: "CHECKBOX", sensitivity: "TEAM_ONLY", order: 4 } });
     const f5 = await db.formField.create({ data: { formId: form.id, label: "Konaklama istiyor musunuz?", type: "CHECKBOX", conditionField: "Kayıt kategorisi", conditionValue: "REG", order: 5 } });
     const f6 = await db.formField.create({ data: { formId: form.id, label: "Varış tarihi", type: "DATE", conditionField: "Konaklama istiyor musunuz?", conditionValue: "true", order: 6 } });
+    const f7 = await db.formField.create({ data: { formId: form.id, label: "Ödeme yöntemi", type: "SINGLE_CHOICE", options: "Online Kart\nHavale / EFT\nÖdeme Linki", required: "ALWAYS", order: 7, helpText: "Online Kart seçiminde sanal POS üzerinden anında ödeme yapabilirsiniz." } });
     for (const [name, rec] of [...participationMap].slice(0, 10)) {
       const person = P[name];
       await db.formAnswer.createMany({
@@ -440,6 +452,180 @@ export async function POST() {
         ],
       });
     }
+
+    // Anket formu — mobil interaktif alanlar (NPS/RATING/QA) + dağılım istatistiği demesi
+    const survey = await db.formDefinition.create({
+      data: {
+        editionId: edition1.id, name: "Kongre Memnuniyet Anketi", type: "SURVEY",
+        status: "PUBLISHED", isPublic: true, autoApprove: true,
+        description: "Oturum kalitesi ve öneri ölçümü — mobil uygulamada interaktif olarak da açılır.",
+        honeypotEnabled: true, minSubmitSeconds: 3, maxPerEmailPerDay: 3,
+        successMessage: "Görüşünüz için teşekkürler!",
+      },
+    });
+    const sv1 = await db.formField.create({ data: { formId: survey.id, label: "Kongreyi nereden duydunuz?", type: "SINGLE_CHOICE", options: "E-posta\nSosyal Medya\nArkadaş Önerisi\nDernek Duyurusu", order: 1 } });
+    const sv2 = await db.formField.create({ data: { formId: survey.id, label: "Oturum kalitesi (1-5)", type: "RATING", mobileInteractive: true, order: 2 } });
+    const sv3 = await db.formField.create({ data: { formId: survey.id, label: "Bizi bir meslektaşınıza önerme olasılığınız (0-10)", type: "NPS", mobileInteractive: true, order: 3 } });
+    const sv4 = await db.formField.create({ data: { formId: survey.id, label: "No-Dig teknolojisi hangi alanda kullanılır?", type: "QA_QUIZ", options: "Kazısız altyapı\nAçık ocak madenciliği\nZiraat", mobileInteractive: true, order: 4 } });
+    const sv5 = await db.formField.create({ data: { formId: survey.id, label: "Önerileriniz", type: "LONGTEXT", order: 5 } });
+    const surveyRespondents = [
+      ["İlkay Tan", "ilkay.tan@example.com", "E-posta", 4, 9, "Kazısız altyapı", "Program çok akıcıydı."],
+      ["Sercan Uz", "sercan.uz@example.com", "Sosyal Medya", 5, 10, "Kazısız altyapı", "Tebrikler!"],
+      ["Merve Ak", "merve.ak@example.com", "Arkadaş Önerisi", 3, 7, "Ziraat", "Salon ses sistemi geliştirilebilir."],
+      ["Hakan Vişne", "hakan.visne@example.com", "E-posta", 4, 8, "Kazısız altyapı", null],
+      ["Duygu Keser", "duygu.keser@example.com", "Dernek Duyurusu", 5, 10, "Kazısız altyapı", "Gelecek yıl 2 günlük atölye olsun."],
+      ["Baran Toprak", "baran.toprak@example.com", "Sosyal Medya", 2, 5, "Açık ocak madenciliği", "Kayıt masasında kuyruk oluştu."],
+      ["Esra Nur Akın", "esra.akin@example.com", "E-posta", 4, 9, "Kazısız altyapı", null],
+      ["Cem Doğrusöz", "cem.dogrusoz@example.com", "Arkadaş Önerisi", 5, 10, "Kazısız altyapı", "Mükemmel organizasyon."],
+    ] as const;
+    for (const [i, s] of surveyRespondents.entries()) {
+      const sub = await db.formSubmission.create({
+        data: {
+          formId: survey.id, editionId: edition1.id,
+          respondentName: s[0], respondentEmail: s[1],
+          status: "APPROVED", spamScore: 0, elapsedSeconds: 25 + i * 7,
+          source: i % 4 === 0 ? "MOBILE" : "WEB_PUBLIC",
+          createdAt: D(-i, 12),
+        },
+      });
+      await db.formAnswer.createMany({
+        data: [
+          { formId: survey.id, fieldId: sv1.id, submissionId: sub.id, answer: s[2] },
+          { formId: survey.id, fieldId: sv2.id, submissionId: sub.id, answer: String(s[3]) },
+          { formId: survey.id, fieldId: sv3.id, submissionId: sub.id, answer: String(s[4]) },
+          { formId: survey.id, fieldId: sv4.id, submissionId: sub.id, answer: s[5] },
+          ...(s[6] ? [{ formId: survey.id, fieldId: sv5.id, submissionId: sub.id, answer: s[6] }] : []),
+        ],
+      });
+    }
+
+    // Kayıt formu gönderileri — spam örnekleri + bekleyenler + onaylı zincir örneği
+    const spamSub1 = await db.formSubmission.create({
+      data: {
+        formId: form.id, editionId: edition1.id,
+        respondentName: "SEO Robot", respondentEmail: "promobot@spam.xyz",
+        status: "SPAM", spamScore: 100, honeypotValue: "http://bit.ly/reklam",
+        elapsedSeconds: 1.2, submitIp: "203.0.113.66", source: "WEB_PUBLIC",
+        spamReasons: JSON.stringify(["Gizli doğrulama alanı dolduruldu (honeypot) — otomatik bot davranışı"]),
+        createdAt: D(0, 7, 41),
+      },
+    });
+    const spamSub2 = await db.formSubmission.create({
+      data: {
+        formId: form.id, editionId: edition1.id,
+        respondentName: "Bulk Mail", respondentEmail: "kazanc@tempmail.xyz",
+        status: "SPAM", spamScore: 100, elapsedSeconds: 2.5, submitIp: "198.51.100.23",
+        spamReasons: JSON.stringify(["E-posta alan adı engelli listede: tempmail.xyz"]),
+        createdAt: D(0, 8, 3),
+      },
+    });
+    const spamSub3 = await db.formSubmission.create({
+      data: {
+        formId: form.id, editionId: edition1.id,
+        respondentName: "Hızlı Bot", respondentEmail: "hizli@hizlibot.net",
+        status: "SPAM", spamScore: 60, elapsedSeconds: 0.8, submitIp: "203.0.113.66",
+        spamReasons: JSON.stringify(["Form 0.8 sn'de dolduruldu (insan minimumu 4 sn)"]),
+        createdAt: D(0, 8, 11),
+      },
+    });
+    const pendSub1 = await db.formSubmission.create({
+      data: {
+        formId: form.id, editionId: edition1.id,
+        respondentName: "Zafer Kaya", respondentEmail: "zafer.kaya@example.com",
+        phone: "+90 532 111 22 33", organization: "Kaya İnşaat",
+        status: "PENDING", spamScore: 0, elapsedSeconds: 38, submitIp: "88.241.10.5",
+        spamReasons: null, createdAt: D(0, 9, 15),
+      },
+    });
+    await db.formAnswer.createMany({
+      data: [
+        { formId: form.id, fieldId: f1.id, submissionId: pendSub1.id, answer: "Kaya İnşaat" },
+        { formId: form.id, fieldId: f2.id, submissionId: pendSub1.id, answer: "Saha Müdürü" },
+        { formId: form.id, fieldId: f3.id, submissionId: pendSub1.id, answer: "Standart" },
+        { formId: form.id, fieldId: f7.id, submissionId: pendSub1.id, answer: "Online Kart" },
+      ],
+    });
+    const pendSub2 = await db.formSubmission.create({
+      data: {
+        formId: form.id, editionId: edition1.id,
+        respondentName: "Nil Aksu", respondentEmail: "nil.aksu@example.com",
+        organization: "GeoLab Danışmanlık", status: "PENDING", spamScore: 0,
+        elapsedSeconds: 52, submitIp: "78.163.44.9", createdAt: D(0, 10, 2),
+      },
+    });
+    await db.formAnswer.createMany({
+      data: [
+        { formId: form.id, fieldId: f1.id, submissionId: pendSub2.id, answer: "GeoLab Danışmanlık" },
+        { formId: form.id, fieldId: f7.id, submissionId: pendSub2.id, answer: "Havale / EFT" },
+      ],
+    });
+    const apprSub1 = await db.formSubmission.create({
+      data: {
+        formId: form.id, editionId: edition1.id,
+        respondentName: "Tuna Meriç", respondentEmail: "tuna.meric@example.com",
+        organization: "Meriç Zemin Sistemleri", status: "APPROVED", spamScore: 0,
+        elapsedSeconds: 44, submitIp: "85.99.71.2", createdAt: D(-1, 15, 40),
+      },
+    });
+    await db.formAnswer.createMany({
+      data: [
+        { formId: form.id, fieldId: f1.id, submissionId: apprSub1.id, answer: "Meriç Zemin Sistemleri" },
+        { formId: form.id, fieldId: f3.id, submissionId: apprSub1.id, answer: "Helal" },
+        { formId: form.id, fieldId: f7.id, submissionId: apprSub1.id, answer: "Online Kart" },
+      ],
+    });
+    // Onaylı gönderi → kayıt zinciri + ödemesi tahsil edilmiş sipariş (muhasebe demesi)
+    const { registration: apprReg, order: apprOrder, payment: apprPay } =
+      await createRegistrationFromSubmission(apprSub1.id, { paymentSource: "ONLINE_CARD" });
+    if (apprReg && apprOrder && apprPay) {
+      await db.payment.update({
+        where: { id: (apprPay as { id: string }).id },
+        data: { status: "SUCCEEDED", paidAt: D(-1, 16, 2), reference: "TR-SEED-0981" },
+      });
+      await db.order.update({ where: { id: (apprOrder as { id: string }).id }, data: { status: "PAID" } });
+    }
+    await db.formSubmission.update({ where: { id: apprSub1.id }, data: { registrationId: (apprReg as { id: string }).id } });
+
+    // Bağlantı cevapları: mevcut katılımcıların form yanıtlarını gönderiye bağla (geçmiş veri bütünlüğü görünümü)
+    await db.formSubmission.create({
+      data: {
+        formId: form.id, editionId: edition1.id,
+        respondentName: "Gizem Bulut", respondentEmail: "gizem.bulut@example.com",
+        organization: "Yol Yapım A.Ş.", status: "APPROVED", spamScore: 0,
+        elapsedSeconds: 61, source: "ADMIN", createdAt: D(-3, 11),
+      },
+    });
+
+    // Geri bildirim formu — kapalı durum örneği
+    await db.formDefinition.create({
+      data: {
+        editionId: edition1.id, name: "Oturum Geri Bildirimi (Salon B)", type: "FEEDBACK",
+        status: "CLOSED", description: "Salon B oturumları için anlık memnuniyet — oturum sonunda kapatıldı.",
+        honeypotEnabled: true, minSubmitSeconds: 2,
+      },
+    });
+    // Taslak özel form — TechDays fuarcı ihtiyaç formu
+    await db.formDefinition.create({
+      data: {
+        editionId: edition2.id, name: "TechDays Fuarcı İhtiyaç Formu", type: "CUSTOM",
+        audience: "ORGANIZATION", status: "DRAFT",
+        description: "Stand elektrik, mobilya ve katalog bilgileri — kurulum öncesi toplanacak.",
+      },
+    });
+
+    // ── Muhasebe: ek/saha harcamaları (kullanıcı isteği: kayıt muhasebesiyle entegre) ──
+    await db.expense.createMany({
+      data: [
+        { editionId: edition1.id, code: "GSN-2026-001", category: "FIELD_EXPENSE", title: "Kapı A yedek barkod okuyucu (acil alım)", description: "Tarama cihazı arızası — fuar günü sabah acil satın alma", amount: 4200, vendor: "Nokta Bilişim", incurredAt: D(0, 8, 30), spentBy: "Mert Şahin", paymentMethod: "CASH", status: "APPROVED", receiptNo: "FTR-1181", approvedBy: "Burak Demir" },
+        { editionId: edition1.id, code: "GSN-2026-002", category: "CATERING", title: "Ek kahve molası — Salon B", description: "Oturum yoğunluğu nedeniyle ikram sifarişi artırıldı", amount: 6800, vendor: "Lezzet Catering", incurredAt: D(-1, 14), spentBy: "Kerem Aksoy", paymentMethod: "COMPANY_CARD", status: "PENDING_RECEIPT" },
+        { editionId: edition1.id, code: "GSN-2026-003", category: "LOGISTICS", title: "Poster panosu kargo (Ankara → İstanbul)", amount: 2350, vendor: "Yurtiçi Kargo", incurredAt: D(-4), spentBy: "Selin Öztürk", paymentMethod: "BANK_TRANSFER", status: "PAID", receiptNo: "FTR-0972" },
+        { editionId: edition1.id, code: "GSN-2026-004", category: "TECH", title: "Yedek mikrofon seti kiralama", description: "Ana salon yedek ekipman — 3 günlük kiralama", amount: 9800, vendor: "Ses Sistemleri A.Ş.", incurredAt: D(-2), spentBy: "Mert Şahin", paymentMethod: "BANK_TRANSFER", status: "APPROVED", receiptNo: "FTR-1043", approvedBy: "Burak Demir" },
+        { editionId: edition1.id, code: "GSN-2026-005", category: "STAFF_TRAVEL", title: "Görevli havalimanı transferi (taksi)", description: "Yusuf B. — gece vardiyası dönüşü", amount: 1250, incurredAt: D(-1, 23, 30), spentBy: "Yusuf Bilgin", paymentMethod: "PERSONAL_REIMBURSE", status: "REIMBURSED", approvedBy: "Elif Kaya" },
+        { editionId: edition1.id, code: "GSN-2026-006", category: "MARKETING", title: "Canlı yayın kurgu ek paketi", description: "Sosyal medya canlı yayın destek paketi (teklif aşaması)", amount: 15000, vendor: "Medya Prodüksiyon", incurredAt: D(1), paymentMethod: "BANK_TRANSFER", status: "PLANNED" },
+        { editionId: edition1.id, code: "GSN-2026-007", category: "FIELD_EXPENSE", title: "Fuar alanı ek elektrik panosu bağlantısı", description: "Stand yoğunluğu — panosuz ek hat çekimi, sahada nakit ödeme", amount: 5400, vendor: "ICC Teknik Servis", incurredAt: D(0, 11), spentBy: "Kerem Aksoy", paymentMethod: "CASH", status: "APPROVED", receiptNo: "MAKBUZ-77", approvedBy: "Mert Şahin" },
+        { editionId: edition1.id, code: "GSN-2026-008", category: "OTHER", title: "Kayıt masası ek matbaa baskısı", description: "Beklenmedik yoğun kayıt — ek program kitabı baskısı", amount: 3100, vendor: "Anadolu Matbaa", incurredAt: D(-1, 9), spentBy: "Leyla Güneş", paymentMethod: "COMPANY_CARD", status: "PENDING_RECEIPT" },
+      ],
+    });
 
     // ── Katalog / ek hizmetler ──
     await db.catalogItem.createMany({
@@ -622,6 +808,9 @@ export async function POST() {
       submissions: await db.submission.count(),
       sessions: await db.programSession.count(),
       scanEvents: await db.scanEvent.count(),
+      forms: await db.formDefinition.count(),
+      formSubmissions: await db.formSubmission.count(),
+      expenses: await db.expense.count(),
     };
     return NextResponse.json({ ok: true, counts });
   } catch (e) {
@@ -632,7 +821,8 @@ export async function POST() {
 
 async function wipe() {
   const order = [
-    db.companion, db.delegationMember, db.delegation, db.formAnswer, db.formField, db.formDefinition,
+    db.companion, db.delegationMember, db.delegation, db.formAnswer, db.formSubmission, db.formField, db.formDefinition,
+    db.expense,
     db.invitation, db.scanEvent, db.credential, db.badgeInstance, db.badgeProfile,
     db.certificateIssue, db.certificateDefinition, db.floorPlanObject, db.boothAllocation, db.boothUnit,
     db.deliverable, db.sponsorAgreement, db.sponsorPackage, db.sponsorTierDefinition,

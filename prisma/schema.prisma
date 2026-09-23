@@ -190,6 +190,8 @@ model EventEdition {
   tasks            Task[]
   activityLogs     ActivityLog[]
   delegations      Delegation[]
+  expenses         Expense[]
+  formSubmissions  FormSubmission[]
 
   @@index([status])
   @@index([startDate])
@@ -295,6 +297,7 @@ model Registration {
   category     RegistrationCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   entitlementClaims EntitlementClaim[]
   orderLines   OrderLine[]
+  formSubmissions FormSubmission[]
 
   @@index([editionId])
   @@index([status])
@@ -363,14 +366,29 @@ model FormDefinition {
   id        String  @id @default(cuid())
   editionId String
   name      String
+  type      String  @default("CUSTOM") // REGISTRATION|SURVEY|FEEDBACK|QA_MOBILE|CUSTOM — Form Merkezi türleri
   audience  String  @default("PARTICIPANT") // PARTICIPANT|ORDER_BUYER|ORGANIZATION|SESSION|ACCESSIBILITY|ACCOMMODATION
-  status    String  @default("DRAFT") // DRAFT|PUBLISHED
+  status    String  @default("DRAFT") // DRAFT|PUBLISHED|CLOSED
   version   Int     @default(1)
+  description String?
+  isPublic  Boolean @default(false) // herkese açık bağlantı açık mı
+  // — Spam koruması (§44 genişletme) —
+  honeypotEnabled   Boolean @default(true)  // gizli alan tuzağı
+  minSubmitSeconds  Int     @default(4)     // zaman tuzağı: daha hızlı dolduran bot şüpheli
+  maxPerEmailPerDay Int     @default(5)     // e-posta başına günlük gönderi limiti
+  blockedDomains    String? // virgülle ayrılmış engelli e-posta alan adları
+  autoApprove       Boolean @default(false) // spam temizse otomatik onay
+  // — Kayıt formu ödeme entegrasyonu —
+  enableOnlinePayment Boolean @default(false) // online ödeme seçenekleri gösterilsin
+  defaultCategoryId   String? // kayıtta ön seçilecek kategori
+  successMessage  String?
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
   fields  FormField[]
   answers FormAnswer[]
+  submissions FormSubmission[]
 }
 
 model FormField {
@@ -378,12 +396,14 @@ model FormField {
   formId          String
   label           String
   helpText        String?
-  type            String  @default("TEXT") // TEXT|LONGTEXT|NUMBER|DATE|SINGLE_CHOICE|MULTI_CHOICE|CHECKBOX|FILE|COUNTRY|PHONE
+  type            String  @default("TEXT") // TEXT|LONGTEXT|NUMBER|EMAIL|PHONE|DATE|SINGLE_CHOICE|MULTI_CHOICE|CHECKBOX|FILE|COUNTRY|RATING|NPS|QA_QUIZ|SECTION — son 3'ü mobil interaktif
+  placeholder     String?
   options         String? // satır bazlı seçenekler
   required        String  @default("OPTIONAL") // ALWAYS|CONDITIONAL|OPTIONAL (§05)
   conditionField  String? // koşullu gösterim
   conditionValue  String?
   sensitivity     String  @default("STANDARD") // STANDARD|OPERATIONAL_SENSITIVE|TEAM_ONLY (§05 gizlilik)
+  mobileInteractive Boolean @default(false) // mobil uygulamada interaktif öge (anket QA, NPS, rating)
   order           Int     @default(0)
 
   form    FormDefinition @relation(fields: [formId], references: [id], onDelete: Cascade)
@@ -394,13 +414,74 @@ model FormAnswer {
   id        String   @id @default(cuid())
   formId    String
   fieldId   String
+  submissionId String?
   participationId String?
   answer    String?
   answeredAt DateTime @default(now())
 
   form          FormDefinition      @relation(fields: [formId], references: [id], onDelete: Cascade)
   field         FormField           @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  submission    FormSubmission?     @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+}
+
+// ─── FORM MERKEZİ: gönderiler + spam koruması (kullanıcı isteği) ────────────
+
+model FormSubmission {
+  id              String   @id @default(cuid())
+  formId          String
+  editionId       String
+  registrationId  String?  // REGISTRATION türünde onaylanınca oluşan kayıt
+  respondentName  String
+  respondentEmail String
+  phone           String?
+  organization    String?
+  status          String   @default("PENDING") // PENDING|APPROVED|REJECTED|SPAM
+  spamScore       Float    @default(0)          // 0-100 spam puanı
+  spamReasons     String?  // JSON dizi: tespit gerekçeleri
+  honeypotValue   String?  // gizli alan değeri (doluyorsa bot)
+  elapsedSeconds  Float?   // form açılma→gönderim süresi (zaman tuzağı)
+  submitIp        String?
+  source          String   @default("WEB_PUBLIC") // WEB_PUBLIC|KIOSK|MOBILE|ADMIN
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  form         FormDefinition @relation(fields: [formId], references: [id], onDelete: Cascade)
+  edition      EventEdition   @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  registration Registration?  @relation(fields: [registrationId], references: [id])
+  answers      FormAnswer[]
+
+  @@index([formId])
+  @@index([status])
+}
+
+// ─── FAZ 6-B: MUHASEBE — gider kalemleri (saha dahil) ──────────────────────
+
+model Expense {
+  id            String   @id @default(cuid())
+  editionId     String
+  code          String   @unique @default(cuid()) // okunabilir: GSN-2026-001 (seed/rota set eder)
+  category      String   @default("OTHER") // FIELD_EXPENSE|VENDOR|LOGISTICS|MARKETING|VENUE|TECH|CATERING|STAFF_TRAVEL|OTHER
+  title         String
+  description   String?
+  amount        Float    @default(0)
+  currency      String   @default("TRY")
+  vendor        String?
+  incurredAt    DateTime @default(now()) // harcama tarihi (sahada anlık)
+  spentBy       String?  // harcayan personel
+  paymentMethod String   @default("COMPANY_CARD") // COMPANY_CARD|CASH|BANK_TRANSFER|PERSONAL_REIMBURSE
+  status        String   @default("PENDING_RECEIPT") // PLANNED|PENDING_RECEIPT|APPROVED|REJECTED|PAID|REIMBURSED
+  receiptNo     String?
+  approvedBy    String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([editionId])
+  @@index([status])
+  @@index([category])
 }
 
 // ─── FAZ 4: CATALOG / PRICING ───────────────────────────────────────────────

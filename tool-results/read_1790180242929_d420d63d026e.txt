@@ -1,0 +1,1139 @@
+     1→// ============================================================================
+     2→// MAVEN EVENT MANAGEMENT — ORTAK ORGANİZASYONEL MİMARİ
+     3→// Master Domain Graph (§58) + 02 Organizasyonel Bilgi Modeli birebir uygulama
+     4→// Temel ilke (§2): Person ≠ Participation ≠ Registration ≠ Role ≠ Payment
+     5→// SQLite kısıtı: enum yerine String + src/lib/constants.ts sabitleri
+     6→// ============================================================================
+     7→
+     8→generator client {
+     9→  provider = "prisma-client-js"
+    10→}
+    11→
+    12→datasource db {
+    13→  provider = "sqlite"
+    14→  url      = env("DATABASE_URL")
+    15→}
+    16→
+    17→// ─── FAZ 1: FOUNDATION — Tenant, IAM, Organization, Person, Audit ──────────
+    18→
+    19→model Tenant {
+    20→  id        String   @id @default(cuid())
+    21→  name      String
+    22→  slug      String   @unique
+    23→  plan      String   @default("PRO") // FREE | PRO | ENTERPRISE
+    24→  status    String   @default("ACTIVE")
+    25→  country   String?
+    26→  timezone  String   @default("Europe/Istanbul")
+    27→  createdAt DateTime @default(now())
+    28→
+    29→  users          User[]
+    30→  organizations  Organization[]
+    31→  people         Person[]
+    32→  series         EventSeries[]
+    33→  editions       EventEdition[]
+    34→  activityLogs   ActivityLog[]
+    35→}
+    36→
+    37→model User {
+    38→  id        String   @id @default(cuid())
+    39→  tenantId  String
+    40→  email     String
+    41→  name      String
+    42→  role      String   @default("ORG_ADMIN") // §48: ORG_OWNER|ORG_ADMIN|EVENT_MANAGER|FINANCE_MANAGER|REGISTRATION_MANAGER|SPONSORSHIP_MANAGER|SCIENTIFIC_MANAGER|PROGRAM_MANAGER|ONSITE_MANAGER
+    43→  status    String   @default("ACTIVE")
+    44→  createdAt DateTime @default(now())
+    45→
+    46→  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+    47→}
+    48→
+    49→model Organization {
+    50→  id        String   @id @default(cuid())
+    51→  tenantId  String
+    52→  name      String
+    53→  code      String?
+    54→  type      String?  // COMPANY|ASSOCIATION|UNIVERSITY|AGENCY|PUBLIC_AUTHORITY|VENUE|HOTEL|MEDIA (sponsor TÜRÜ DEĞİL — §4)
+    55→  website   String?
+    56→  country   String?
+    57→  city      String?
+    58→  taxNo     String?
+    59→  logoUrl   String?
+    60→  notes     String?
+    61→  createdAt DateTime @default(now())
+    62→  updatedAt DateTime @updatedAt
+    63→
+    64→  tenant          Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+    65→  contacts        OrganizationContact[]
+    66→  eventAssignments EventOrganizationAssignment[]
+    67→  sponsorAgreements SponsorAgreement[]
+    68→  boothAllocations BoothAllocation[]
+    69→  entitlements    Entitlement[]
+    70→  orders          Order[]
+    71→  invitations     Invitation[]
+    72→  delegationBilling Delegation[]
+    73→}
+    74→
+    75→model OrganizationContact {
+    76→  id             String  @id @default(cuid())
+    77→  organizationId String
+    78→  personId       String?
+    79→  name           String
+    80→  title          String?
+    81→  email          String?
+    82→  phone          String?
+    83→  isPrimary      Boolean @default(false)
+    84→
+    85→  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+    86→  person       Person?      @relation(fields: [personId], references: [id], onDelete: SetNull)
+    87→}
+    88→
+    89→model Person {
+    90→  id          String   @id @default(cuid())
+    91→  tenantId    String
+    92→  firstName   String
+    93→  lastName    String
+    94→  email       String?  // güçlü eşleştirme işareti, kesin kimlik değil (Kimlik kuralı 1)
+    95→  phone       String?
+    96→  title       String?
+    97→  company     String?  // kalıcı profil; etkinlik anı görünümü snapshot'ta
+    98→  country     String?
+    99→  city        String?
+   100→  bio         String?
+   101→  photoUrl    String?
+   102→  linkedin    String?
+   103→  status      String   @default("ACTIVE") // ACTIVE|PASSIVE|MERGED
+   104→  mergedIntoId String? // kişi tekilleştirme: önerili + onaylı birleştirme
+   105→  createdAt   DateTime @default(now())
+   106→  updatedAt   DateTime @updatedAt
+   107→
+   108→  tenant           Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+   109→  participations   EventParticipation[]
+   110→  submissions      Submission[]           @relation("Submitter")
+   111→  authorships      Authorship[]
+   112→  reviewAssignments ReviewAssignment[]
+   113→  programAssignments ProgramAssignment[]
+   114→  contacts         OrganizationContact[]
+   115→  scanEvents       ScanEvent[]
+   116→  taskAssignments  Task[]
+   117→  delegationLeaders Delegation[]         @relation("DelegationLeader")
+   118→
+   119→  @@index([email])
+   120→  @@index([lastName])
+   121→}
+   122→
+   123→// ─── FAZ 2: EVENT CORE — Series, Edition, Capabilities, Org Assignment ─────
+   124→
+   125→model EventSeries {
+   126→  id          String   @id @default(cuid())
+   127→  tenantId    String
+   128→  name        String   // örn. "No-Dig Turkey"
+   129→  slug        String   @unique
+   130→  description String?
+   131→  template    String?  // SCIENTIFIC_CONGRESS|TRADE_FAIR|CORPORATE|CUSTOM
+   132→  logoUrl     String?
+   133→  createdAt   DateTime @default(now())
+   134→
+   135→  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+   136→  editions EventEdition[]
+   137→}
+   138→
+   139→model EventEdition {
+   140→  id          String    @id @default(cuid())
+   141→  tenantId    String
+   142→  seriesId    String?   // null → bağımsız tek seferlik etkinlik
+   143→  name        String
+   144→  slug        String    @unique
+   145→  editionLabel String?  // örn. "2026"
+   146→  status      String    @default("PLANNING") // §7 yaşam döngüsü: OPPORTUNITY|BID|AWARDED|PLANNING|CONFIGURATION|SALES|REGISTRATION|LOGISTICS|PRE_EVENT|ONSITE|POST_EVENT|RECONCILIATION|ARCHIVED
+   147→  isPublished Boolean   @default(false)
+   148→  template    String?   // başlangıç yetenek seti önerisi
+   149→  startDate   DateTime?
+   150→  endDate     DateTime?
+   151→  timezone    String    @default("Europe/Istanbul")
+   152→  venueName   String?
+   153→  city        String?
+   154→  country     String?
+   155→  format      String    @default("IN_PERSON") // IN_PERSON|VIRTUAL|HYBRID
+   156→  description String?
+   157→  coverColor  String?   // UI vurgu rengi
+   158→  languages   String?   // "tr,en"
+   159→  isFeatured  Boolean   @default(false)
+   160→  createdAt   DateTime  @default(now())
+   161→  updatedAt   DateTime  @updatedAt
+   162→
+   163→  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+   164→  series EventSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+   165→
+   166→  capabilities     EventCapability[]
+   167→  orgAssignments   EventOrganizationAssignment[]
+   168→  participations   EventParticipation[]
+   169→  categories       RegistrationCategory[]
+   170→  registrations    Registration[]
+   171→  invitations      Invitation[]
+   172→  forms            FormDefinition[]
+   173→  catalogItems     CatalogItem[]
+   174→  orders           Order[]
+   175→  entitlements     Entitlement[]
+   176→  sponsorTiers     SponsorTierDefinition[]
+   177→  sponsorPackages  SponsorPackage[]
+   178→  sponsorAgreements SponsorAgreement[]
+   179→  hotels           HotelProperty[]
+   180→  reservations     Reservation[]
+   181→  scientificSetup  ScientificSetup?
+   182→  tracks           Track[]
+   183→  submissions      Submission[]
+   184→  rooms            ProgramRoom[]
+   185→  sessions         ProgramSession[]
+   186→  badgeProfiles    BadgeProfile[]
+   187→  certificateDefs  CertificateDefinition[]
+   188→  boothUnits       BoothUnit[]
+   189→  campaigns        Campaign[]
+   190→  tasks            Task[]
+   191→  activityLogs     ActivityLog[]
+   192→  delegations      Delegation[]
+   193→
+   194→  @@index([status])
+   195→  @@index([startDate])
+   196→}
+   197→
+   198→model EventCapability {
+   199→  id        String  @id @default(cuid())
+   200→  editionId String
+   201→  key       String  // §6: REGISTRATION|SCIENTIFIC|PROGRAM|SPONSORSHIP|EXHIBITION|FLOOR_PLAN|ACCOMMODATION|TRAVEL|BADGING|ACCESS_CONTROL|CERTIFICATES|CME_CREDITS|TOURS|SOCIAL_EVENTS|OPERATIONS|COMMUNICATIONS|FLOOR_STUDIO
+   202→  enabled   Boolean @default(false)
+   203→  isRequired Boolean @default(false)
+   204→  setupNote String? // modül kartı notu (hazır/yapılacak/dikkat)
+   205→
+   206→  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   207→
+   208→  @@unique([editionId, key])
+   209→}
+   210→
+   211→model EventOrganizationAssignment {
+   212→  id             String    @id @default(cuid())
+   213→  editionId      String
+   214→  organizationId String
+   215→  role           String    // §4: HOST|EVENT_OWNER|CLIENT|PCO|CO_ORGANIZER|SCIENTIFIC_OWNER|PUBLIC_AUTHORITY|SUPPORTER|SPONSOR|EXHIBITOR|VENUE|HOTEL|SUPPLIER|MEDIA_PARTNER|ACADEMIC_PARTNER|ASSOCIATION|WORKSHOP_SPONSOR
+   216→  validFrom      DateTime?
+   217→  validTo        DateTime?
+   218→  notes          String?
+   219→  createdAt      DateTime  @default(now())
+   220→
+   221→  edition      EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   222→  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+   223→
+   224→  @@index([editionId])
+   225→}
+   226→
+   227→// ─── FAZ 3: PARTICIPATION — Sistemin Kalbi (§9) ────────────────────────────
+   228→
+   229→model EventParticipation {
+   230→  id        String   @id @default(cuid())
+   231→  editionId String
+   232→  personId  String
+   233→  source    String   @default("ADMIN_ENTRY") // §12: PUBLIC_FORM|INVITATION|SPONSOR_PORTAL|EXHIBITOR_PORTAL|SCIENTIFIC_PORTAL|ADMIN_ENTRY|IMPORT|API|ONSITE_WALK_IN|GROUP_REGISTRATION
+   234→  attendance String  @default("NOT_ARRIVED") // §10: NOT_ARRIVED|CHECKED_IN|CHECKED_OUT|NO_SHOW
+   235→  notes     String?
+   236→  createdAt DateTime @default(now())
+   237→
+   238→  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   239→  person  Person       @relation(fields: [personId], references: [id], onDelete: Cascade)
+   240→
+   241→  snapshots      EventProfileSnapshot[]
+   242→  registrations  Registration[]
+   243→  roleAssignments EventRoleAssignment[]
+   244→  entitlementClaims EntitlementClaim[]
+   245→  programAssignments ProgramAssignment[]
+   246→  formAnswers    FormAnswer[]
+   247→  reservations   Reservation[]         @relation("PrimaryGuest")
+   248→  occupancySlots OccupancySlot[]
+   249→  badgeInstances BadgeInstance[]
+   250→  credentials    Credential[]
+   251→  scanEvents     ScanEvent[]
+   252→  certIssues     CertificateIssue[]
+   253→  delegationMembers DelegationMember[]
+   254→  companions     Companion[]
+   255→  orderLines     OrderLine[]
+   256→
+   257→  @@unique([editionId, personId])
+   258→  @@index([attendance])
+   259→}
+   260→
+   261→model EventProfileSnapshot {
+   262→  id              String  @id @default(cuid())
+   263→  participationId String
+   264→  badgeName       String  // rozette yazacak isim — geçmiş geriye dönük değişmez (Kimlik kuralı 3)
+   265→  company         String? // etkinlik anındaki kurum
+   266→  title           String?
+   267→  country         String?
+   268→  specialNote     String?
+   269→  version         Int     @default(1)
+   270→  approved        Boolean @default(true)
+   271→  createdAt       DateTime @default(now())
+   272→
+   273→  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+   274→}
+   275→
+   276→model Registration {
+   277→  id             String    @id @default(cuid())
+   278→  editionId      String
+   279→  participationId String
+   280→  categoryId     String?
+   281→  confirmationNo String    @unique @default(cuid())
+   282→  source         String    @default("ADMIN_ENTRY")  // §12 Registration Source
+   283→  fundingSource  String    @default("SELF_PAID")    // §12 Funding Source: SELF_PAID|ORGANIZATION_PAID|SPONSOR_ENTITLEMENT|HOST_COMPLIMENTARY|SPEAKER_ENTITLEMENT|STAFF|SCHOLARSHIP|GRANT|PROMO
+   284→  status         String    @default("DRAFT")        // §10: DRAFT|SUBMITTED|PENDING_APPROVAL|CONFIRMED|REJECTED|CANCELLED
+   285→  submittedAt    DateTime?
+   286→  decidedAt      DateTime?
+   287→  decidedBy      String?
+   288→  cancelReason   String?
+   289→  notes          String?
+   290→  createdAt      DateTime  @default(now())
+   291→  updatedAt      DateTime  @updatedAt
+   292→
+   293→  edition      EventEdition         @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   294→  participation EventParticipation  @relation(fields: [participationId], references: [id], onDelete: Cascade)
+   295→  category     RegistrationCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+   296→  entitlementClaims EntitlementClaim[]
+   297→  orderLines   OrderLine[]
+   298→
+   299→  @@index([editionId])
+   300→  @@index([status])
+   301→}
+   302→
+   303→model RegistrationCategory {
+   304→  id               String  @id @default(cuid())
+   305→  editionId        String
+   306→  name             String  // Regular|Student|Member|Invited Speaker|Sponsor Guest|Press|VIP|Staff|Accompanying Person...
+   307→  code             String
+   308→  basePrice        Float   @default(0)
+   309→  currency         String  @default("TRY")
+   310→  requiresApproval Boolean @default(false)
+   311→  capacity         Int?    // null = sınırsız
+   312→  paymentInstruction String? // ücretli kategori için yayın engelleyici (05)
+   313→  isActive         Boolean @default(true)
+   314→  order            Int     @default(0)
+   315→
+   316→  edition       EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   317→  registrations Registration[]
+   318→
+   319→  @@index([editionId])
+   320→}
+   321→
+   322→model EventRoleAssignment {
+   323→  id              String  @id @default(cuid())
+   324→  participationId String
+   325→  role            String  // §11: ATTENDEE|AUTHOR|REVIEWER|SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST|COMMITTEE_MEMBER|VIP|PRESS|STAFF|EXHIBITOR_STAFF
+   326→  status          String  @default("ACTIVE") // INVITED|ACCEPTED|ACTIVE|CANCELLED
+   327→  notes           String?
+   328→  createdAt       DateTime @default(now())
+   329→
+   330→  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+   331→
+   332→  @@index([participationId])
+   333→}
+   334→
+   335→// ─── LCV (Davet / RSVP) ─────────────────────────────────────────────────────
+   336→
+   337→model Invitation {
+   338→  id             String    @id @default(cuid())
+   339→  editionId      String
+   340→  organizationId String?   // davet kaynağı kurum olabilir
+   341→  personId       String?
+   342→  email          String
+   343→  fullName       String
+   344→  suggestedCategoryId String?
+   345→  channel        String    @default("EMAIL") // EMAIL|SMS|PHONE|MANUAL
+   346→  status         String    @default("INVITED") // §10 LCV: INVITED|DELIVERED|RESPONSE_PENDING|COMING|NOT_COMING|NO_RESPONSE
+   347→  sentAt         DateTime?
+   348→  respondedAt    DateTime?
+   349→  convertedRegistrationId String?
+   350→  notes          String?
+   351→  createdAt      DateTime  @default(now())
+   352→
+   353→  edition      EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   354→  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+   355→
+   356→  @@index([editionId])
+   357→  @@index([status])
+   358→}
+   359→
+   360→// ─── FORM ENGINE (§44) ──────────────────────────────────────────────────────
+   361→
+   362→model FormDefinition {
+   363→  id        String  @id @default(cuid())
+   364→  editionId String
+   365→  name      String
+   366→  audience  String  @default("PARTICIPANT") // PARTICIPANT|ORDER_BUYER|ORGANIZATION|SESSION|ACCESSIBILITY|ACCOMMODATION
+   367→  status    String  @default("DRAFT") // DRAFT|PUBLISHED
+   368→  version   Int     @default(1)
+   369→  createdAt DateTime @default(now())
+   370→
+   371→  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   372→  fields  FormField[]
+   373→  answers FormAnswer[]
+   374→}
+   375→
+   376→model FormField {
+   377→  id              String  @id @default(cuid())
+   378→  formId          String
+   379→  label           String
+   380→  helpText        String?
+   381→  type            String  @default("TEXT") // TEXT|LONGTEXT|NUMBER|DATE|SINGLE_CHOICE|MULTI_CHOICE|CHECKBOX|FILE|COUNTRY|PHONE
+   382→  options         String? // satır bazlı seçenekler
+   383→  required        String  @default("OPTIONAL") // ALWAYS|CONDITIONAL|OPTIONAL (§05)
+   384→  conditionField  String? // koşullu gösterim
+   385→  conditionValue  String?
+   386→  sensitivity     String  @default("STANDARD") // STANDARD|OPERATIONAL_SENSITIVE|TEAM_ONLY (§05 gizlilik)
+   387→  order           Int     @default(0)
+   388→
+   389→  form    FormDefinition @relation(fields: [formId], references: [id], onDelete: Cascade)
+   390→  answers FormAnswer[]
+   391→}
+   392→
+   393→model FormAnswer {
+   394→  id        String   @id @default(cuid())
+   395→  formId    String
+   396→  fieldId   String
+   397→  participationId String?
+   398→  answer    String?
+   399→  answeredAt DateTime @default(now())
+   400→
+   401→  form          FormDefinition      @relation(fields: [formId], references: [id], onDelete: Cascade)
+   402→  field         FormField           @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+   403→  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+   404→}
+   405→
+   406→// ─── FAZ 4: CATALOG / PRICING ───────────────────────────────────────────────
+   407→
+   408→model CatalogItem {
+   409→  id          String  @id @default(cuid())
+   410→  editionId   String
+   411→  category    String  @default("TICKET") // TICKET|ADDON|SERVICE|TOUR|GALA|TRANSFER
+   412→  name        String
+   413→  description String?
+   414→  price       Float   @default(0)
+   415→  currency    String  @default("TRY")
+   416→  quantity    Int?    // null = sınırsız
+   417→  availableFor String @default("ALL") // ALL|SPONSOR|SPEAKER|VIP|STAFF
+   418→  isActive    Boolean @default(true)
+   419→
+   420→  edition    EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   421→  orderLines OrderLine[]
+   422→}
+   423→
+   424→// ─── FAZ 5: ENTITLEMENT ENGINE (§15-17) — Platformun temel motoru ──────────
+   425→
+   426→model Entitlement {
+   427→  id                 String    @id @default(cuid())
+   428→  editionId          String
+   429→  ownerOrganizationId String?  // ABC Pharma örneği
+   430→  ownerPersonId      String?   // konuşmacı hakkı
+   431→  source             String    @default("SPONSOR_PACKAGE") // SPONSOR_PACKAGE|SPEAKER|COMMITTEE|VIP|STAFF|PACKAGE|PROMO
+   432→  type               String    @default("COMPLIMENTARY_REGISTRATION") // COMPLIMENTARY_REGISTRATION|BOOTH|GALA_TICKET|BADGE|LOUNGE_ACCESS|DISCOUNT|SESSION_ACCESS|HOTEL|CUSTOM
+   433→  label              String    // "Gold Sponsor Ücretsiz Katılım Hakkı" (§45 custom ama kontrollü)
+   434→  quantityGranted    Int       @default(0)
+   435→  quantityConsumed   Int       @default(0)
+   436→  quantityReserved   Int       @default(0) // ayrılmış — davette ayır, onayda kullan
+   437→  restrictions       String?
+   438→  validFrom          DateTime?
+   439→  validUntil         DateTime?
+   440→
+   441→  edition          EventEdition      @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   442→  ownerOrganization Organization?     @relation(fields: [ownerOrganizationId], references: [id], onDelete: Cascade)
+   443→  claims           EntitlementClaim[]
+   444→
+   445→  @@index([editionId])
+   446→}
+   447→
+   448→model EntitlementClaim {
+   449→  id            String    @id @default(cuid())
+   450→  entitlementId String
+   451→  participationId String?
+   452→  registrationId String?
+   453→  guestName     String?
+   454→  status        String    @default("RESERVED") // RESERVED|CONSUMED|RELEASED|EXPIRED (§09-C: davette ayır, onayda kullan)
+   455→  reservedAt    DateTime  @default(now())
+   456→  consumedAt    DateTime?
+   457→  releasedAt    DateTime?
+   458→  notes         String?
+   459→
+   460→  entitlement   Entitlement          @relation(fields: [entitlementId], references: [id], onDelete: Cascade)
+   461→  participation EventParticipation?  @relation(fields: [participationId], references: [id], onDelete: SetNull)
+   462→  registration  Registration?        @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+   463→}
+   464→
+   465→// ─── FAZ 6: FINANCE (§36-39) — Order ≠ Payment ≠ Refund ────────────────────
+   466→
+   467→model Order {
+   468→  id            String   @id @default(cuid())
+   469→  editionId     String
+   470→  orderNo       String   @unique @default(cuid())
+   471→  buyerOrganizationId String? // kurumsal alıcı
+   472→  buyerPersonId String?
+   473→  payerName     String?  // siparişi ödeyen ≠ satırların katılımcıları (Kimlik kuralı 4)
+   474→  currency      String   @default("TRY")
+   475→  totalAmount   Float    @default(0)
+   476→  status        String   @default("OPEN") // OPEN|PARTIALLY_PAID|PAID|CANCELLED
+   477→  notes         String?
+   478→  createdAt     DateTime @default(now())
+   479→  updatedAt     DateTime @updatedAt
+   480→
+   481→  edition          EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   482→  buyerOrganization Organization? @relation(fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
+   483→  lines            OrderLine[]
+   484→  payments         Payment[]
+   485→  refunds          Refund[]
+   486→
+   487→  @@index([editionId])
+   488→}
+   489→
+   490→model OrderLine {
+   491→  id           String  @id @default(cuid())
+   492→  orderId      String
+   493→  participationId String? // satır kime ait
+   494→  registrationId  String?
+   495→  catalogItemId   String?
+   496→  description  String
+   497→  quantity     Int     @default(1)
+   498→  unitPrice    Float   @default(0)
+   499→  total        Float   @default(0)
+   500→
+   501→  order        Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+   502→  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
+   503→  registration Registration?        @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+   504→  catalogItem  CatalogItem?         @relation(fields: [catalogItemId], references: [id], onDelete: SetNull)
+   505→}
+   506→
+   507→model Payment {
+   508→  id         String    @id @default(cuid())
+   509→  orderId    String
+   510→  amount     Float
+   511→  currency   String    @default("TRY")
+   512→  source     String    @default("ONLINE_CARD") // §37: ONLINE_CARD|BANK_TRANSFER|POS|CASH|PAYMENT_LINK|MANUAL_EXTERNAL
+   513→  status     String    @default("PENDING") // PENDING|SUCCEEDED|FAILED
+   514→  reference  String?
+   515→  enteredBy  String?   // manuel teyit (§38): entered_by + reason zorunlu
+   516→  reason     String?
+   517→  approvedBy String?   // eşiği aşan manuel tahsilat ikinci onay
+   518→  paidAt     DateTime?
+   519→  createdAt  DateTime  @default(now())
+   520→
+   521→  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+   522→
+   523→  @@index([orderId])
+   524→}
+   525→
+   526→model Refund {
+   527→  id        String    @id @default(cuid())
+   528→  orderId   String
+   529→  paymentId String?
+   530→  amount    Float
+   531→  reason    String?
+   532→  status    String    @default("REQUESTED") // REQUESTED|APPROVED|REJECTED|PROCESSED
+   533→  requestedBy String?
+   534→  processedAt DateTime?
+   535→  createdAt DateTime  @default(now())
+   536→
+   537→  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+   538→}
+   539→
+   540→// ─── FAZ 7: SPONSORSHIP (§13-14, §49-51) — Tier hard-code YOK ──────────────
+   541→
+   542→model SponsorTierDefinition {
+   543→  id           String  @id @default(cuid())
+   544→  editionId    String
+   545→  name         String  // her etkinlikte özelleştirilebilir: Gold|Naming|Lunch Sponsor...
+   546→  displayOrder Int     @default(0)
+   547→  capacity     Int?    // maksimum sponsor sayısı
+   548→  price        Float   @default(0)
+   549→  currency     String  @default("TRY")
+   550→  brandingRules String?
+   551→
+   552→  edition   EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   553→  packages  SponsorPackage[]
+   554→  agreements SponsorAgreement[]
+   555→}
+   556→
+   557→model SponsorPackage {
+   558→  id          String  @id @default(cuid())
+   559→  editionId   String
+   560→  tierId      String?
+   561→  name        String  // "Gold Sponsorship 2027"
+   562→  price       Float   @default(0)
+   563→  currency    String  @default("TRY")
+   564→  description String?
+   565→  rightsSpec  String? // paket hak özeti: "20x Ücretsiz Kayıt, 1x 12m² Stant..."
+   566→
+   567→  edition   EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   568→  tier      SponsorTierDefinition? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+   569→  agreements SponsorAgreement[]
+   570→}
+   571→
+   572→model SponsorAgreement {
+   573→  id            String    @id @default(cuid())
+   574→  editionId     String
+   575→  organizationId String
+   576→  packageId     String?
+   577→  tierId        String?
+   578→  amount        Float     @default(0)
+   579→  currency      String    @default("TRY")
+   580→  status        String    @default("PROSPECT") // PROSPECT|NEGOTIATION|CONTRACTED|ACTIVE|COMPLETED|CANCELLED
+   581→  signedAt      DateTime?
+   582→  notes         String?
+   583→  createdAt     DateTime  @default(now())
+   584→
+   585→  edition      EventEdition          @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   586→  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+   587→  package      SponsorPackage?       @relation(fields: [packageId], references: [id], onDelete: SetNull)
+   588→  tier         SponsorTierDefinition? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+   589→  deliverables Deliverable[]
+   590→  boothAllocations BoothAllocation[]
+   591→
+   592→  @@index([editionId])
+   593→  @@index([status])
+   594→}
+   595→
+   596→model Deliverable {
+   597→  id            String    @id @default(cuid())
+   598→  agreementId   String
+   599→  name          String    // Logo|Contract|Banner|Guest List|Stand Design...
+   600→  type          String    @default("LOGO")
+   601→  status        String    @default("NOT_STARTED") // §51: NOT_STARTED|WAITING_SPONSOR|SUBMITTED|UNDER_REVIEW|APPROVED|REJECTED|COMPLETED
+   602→  dueDate       DateTime?
+   603→  responsible   String?
+   604→  notes         String?
+   605→
+   606→  agreement SponsorAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+   607→
+   608→  @@index([agreementId])
+   609→}
+   610→
+   611→// ─── FAZ 11: ACCOMMODATION (§31-35) — Gecelik stok ─────────────────────────
+   612→
+   613→model HotelProperty {
+   614→  id          String   @id @default(cuid())
+   615→  editionId   String
+   616→  name        String
+   617→  city        String?
+   618→  district    String?
+   619→  address     String?
+   620→  contactName String?
+   621→  contactPhone String?
+   622→  notes       String?
+   623→
+   624→  edition     EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   625→  roomTypes   RoomType[]
+   626→  blocks      RoomBlock[]
+   627→
+   628→  @@index([editionId])
+   629→}
+   630→
+   631→model RoomType {
+   632→  id            String  @id @default(cuid())
+   633→  hotelId       String
+   634→  name          String  // Single|Double|Suite
+   635→  capacity      Int     @default(2)
+   636→  pricePerNight Float   @default(0)
+   637→  currency      String  @default("TRY")
+   638→
+   639→  hotel        HotelProperty  @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+   640→  blocks       RoomBlock[]
+   641→  reservations Reservation[]
+   642→}
+   643→
+   644→model RoomBlock {
+   645→  id                  String    @id @default(cuid())
+   646→  hotelId             String
+   647→  roomTypeId          String
+   648→  name                String    // "Maven Ana Blok"
+   649→  releaseDate         DateTime? // rezervasyon son günü
+   650→  cancellationPolicy  String?
+   651→  payerPolicy         String?   // SELF|ORGANIZATION|SPONSOR|ORGANIZER
+   652→
+   653→  hotel          HotelProperty   @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+   654→  roomType       RoomType        @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+   655→  inventoryNights InventoryNight[]
+   656→  reservations   Reservation[]
+   657→
+   658→  @@index([hotelId])
+   659→}
+   660→
+   661→model InventoryNight {
+   662→  id            String   @id @default(cuid())
+   663→  blockId       String
+   664→  date          DateTime
+   665→  totalRooms    Int      @default(0)
+   666→  reservedRooms Int      @default(0)
+   667→
+   668→  block RoomBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+   669→
+   670→  @@unique([blockId, date])
+   671→}
+   672→
+   673→model Reservation {
+   674→  id             String    @id @default(cuid())
+   675→  editionId      String
+   676→  blockId        String?
+   677→  roomTypeId     String?
+   678→  primaryGuestParticipationId String?
+   679→  guestName      String
+   680→  checkIn        DateTime
+   681→  checkOut       DateTime
+   682→  payerType      String    @default("SELF") // §35: SELF|ORGANIZATION|SPONSOR|ORGANIZER|SPEAKER_HOSPITALITY
+   683→  payerName      String?
+   684→  status         String    @default("REQUESTED") // §10 Konaklama: NOT_REQUESTED|REQUESTED|WAITLIST|RESERVED|CONFIRMED|CHECKED_IN|CHECKED_OUT|CANCELLED
+   685→  notes          String?
+   686→  createdAt      DateTime  @default(now())
+   687→
+   688→  edition      EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   689→  block        RoomBlock?       @relation(fields: [blockId], references: [id], onDelete: SetNull)
+   690→  roomType     RoomType?        @relation(fields: [roomTypeId], references: [id], onDelete: SetNull)
+   691→  primaryGuest EventParticipation? @relation("PrimaryGuest", fields: [primaryGuestParticipationId], references: [id], onDelete: SetNull)
+   692→  occupancySlots OccupancySlot[]
+   693→
+   694→  @@index([editionId])
+   695→}
+   696→
+   697→model OccupancySlot {
+   698→  id             String  @id @default(cuid())
+   699→  reservationId  String
+   700→  participationId String?
+   701→  guestName      String?
+   702→  position       Int     @default(1)
+   703→
+   704→  reservation   Reservation         @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+   705→  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
+   706→}
+   707→
+   708→model RoommateRequest {
+   709→  id        String  @id @default(cuid())
+   710→  requesterParticipationId String
+   711→  targetParticipationId    String?
+   712→  targetName String
+   713→  status    String  @default("PENDING") // PENDING|ACCEPTED|DECLINED|EXPIRED
+   714→  createdAt DateTime @default(now())
+   715→}
+   716→
+   717→// ─── FAZ 9: SCIENTIFIC (§24-28, §30) ───────────────────────────────────────
+   718→
+   719→model ScientificSetup {
+   720→  id             String   @id @default(cuid())
+   721→  editionId      String   @unique
+   722→  callTitle      String?
+   723→  callDescription String?
+   724→  reviewMode     String   @default("SINGLE_BLIND") // OPEN|SINGLE_BLIND|DOUBLE_BLIND
+   725→  submissionDeadline DateTime?
+   726→  reviewDeadline DateTime?
+   727→  wordLimit      Int?
+   728→  isVisible      Boolean  @default(false)
+   729→
+   730→  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   731→}
+   732→
+   733→model Track {
+   734→  id          String  @id @default(cuid())
+   735→  editionId   String
+   736→  name        String
+   737→  description String?
+   738→
+   739→  edition     EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   740→  submissions Submission[]
+   741→  sessions    ProgramSession[]
+   742→}
+   743→
+   744→model Submission {
+   745→  id             String    @id @default(cuid())
+   746→  editionId      String
+   747→  trackId        String?
+   748→  submitterId    String?
+   749→  code           String    @unique @default(cuid())
+   750→  title          String
+   751→  abstract       String?
+   752→  type           String    @default("ORAL") // ORAL|POSTER|E_POSTER|PANEL|WORKSHOP
+   753→  keywords       String?
+   754→  presentingAuthorName String?
+   755→  status         String    @default("DRAFT") // §10 Bildiri: DRAFT|SUBMITTED|UNDER_REVIEW|REVISION_REQUIRED|ACCEPTED|REJECTED|WITHDRAWN|WAITLIST
+   756→  fileUrl        String?
+   757→  posterNo       String?
+   758→  fileStatus     String?   // SunumKontrol: MISSING|FORMAT_ISSUE|AV_PENDING|APPROVED
+   759→  submittedAt    DateTime?
+   760→  createdAt      DateTime  @default(now())
+   761→  updatedAt      DateTime  @updatedAt
+   762→
+   763→  edition   EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   764→  track     Track?       @relation(fields: [trackId], references: [id], onDelete: SetNull)
+   765→  submitter Person?      @relation("Submitter", fields: [submitterId], references: [id], onDelete: SetNull)
+   766→  authorships Authorship[]
+   767→  reviewAssignments ReviewAssignment[]
+   768→  decisions Decision[]
+   769→  sessions  ProgramSession[]
+   770→
+   771→  @@index([editionId])
+   772→  @@index([status])
+   773→}
+   774→
+   775→model Authorship {
+   776→  id               String  @id @default(cuid())
+   777→  submissionId     String
+   778→  personId         String? // harici ortak yazar hesapsız olabilir (§25)
+   779→  name             String
+   780→  organizationName String?
+   781→  position         Int     @default(0)
+   782→  isPresenting     Boolean @default(false)
+   783→  isCorresponding  Boolean @default(false)
+   784→
+   785→  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+   786→  person     Person?    @relation(fields: [personId], references: [id], onDelete: SetNull)
+   787→
+   788→  @@index([submissionId])
+   789→}
+   790→
+   791→model ReviewAssignment {
+   792→  id            String    @id @default(cuid())
+   793→  submissionId  String
+   794→  reviewerId    String?
+   795→  status        String    @default("INVITED") // §26: INVITED|ACCEPTED|DECLINED|CONFLICT|ASSIGNED|IN_PROGRESS|COMPLETED|OVERDUE
+   796→  dueDate       DateTime?
+   797→  invitedAt     DateTime  @default(now())
+   798→
+   799→  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+   800→  reviewer   Person?    @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
+   801→  reviews    Review[]
+   802→
+   803→  @@index([submissionId])
+   804→}
+   805→
+   806→model Review {
+   807→  id            String   @id @default(cuid())
+   808→  assignmentId  String
+   809→  score         Float?
+   810→  recommendation String? // ACCEPT_ORAL|ACCEPT_POSTER|REJECT|REVISION
+   811→  comment       String?
+   812→  submittedAt   DateTime @default(now())
+   813→
+   814→  assignment ReviewAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+   815→}
+   816→
+   817→model Decision {
+   818→  id           String   @id @default(cuid())
+   819→  submissionId String
+   820→  decision     String   // §27 canonical: ACCEPT_ORAL|ACCEPT_POSTER|ACCEPT_E_POSTER|ACCEPT_PANEL|REVISION_REQUIRED|WAITLIST|REJECT|WITHDRAWN
+   821→  rationale    String?
+   822→  decidedBy    String?
+   823→  version      Int      @default(1)
+   824→  decidedAt    DateTime @default(now())
+   825→
+   826→  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+   827→
+   828→  @@index([submissionId])
+   829→}
+   830→
+   831→// ─── FAZ 10: PROGRAM (§28-29) — Bilimsel karar ≠ Program slotu ─────────────
+   832→
+   833→model ProgramRoom {
+   834→  id        String  @id @default(cuid())
+   835→  editionId String
+   836→  name      String
+   837→  capacity  Int     @default(100)
+   838→  floor     String?
+   839→
+   840→  edition  EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   841→  sessions ProgramSession[]
+   842→}
+   843→
+   844→model ProgramSession {
+   845→  id          String   @id @default(cuid())
+   846→  editionId   String
+   847→  roomId      String?
+   848→  trackId     String?
+   849→  submissionId String? // kaynak bildiri — kabul otomatik slot oluşturmaz (Kimlik kuralı 6)
+   850→  title       String
+   851→  description String?
+   852→  type        String   @default("TALK") // KEYNOTE|TALK|PANEL|WORKSHOP|BREAK|NETWORKING|POSTER_SESSION
+   853→  startTime   DateTime
+   854→  endTime     DateTime
+   855→  capacity    Int?
+   856→  accessRule  String?  // OPEN|REGISTRATION_REQUIRED|SCAN
+   857→  status      String   @default("DRAFT") // §10 Program: DRAFT|ASSIGNED|APPROVED|PUBLISHED|CANCELLED
+   858→  isVisible   Boolean  @default(false)
+   859→
+   860→  edition   EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   861→  room      ProgramRoom?  @relation(fields: [roomId], references: [id], onDelete: SetNull)
+   862→  track     Track?        @relation(fields: [trackId], references: [id], onDelete: SetNull)
+   863→  submission Submission?  @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+   864→  assignments ProgramAssignment[]
+   865→  scanEvents ScanEvent[]
+   866→
+   867→  @@index([editionId])
+   868→}
+   869→
+   870→model ProgramAssignment {
+   871→  id              String  @id @default(cuid())
+   872→  sessionId       String
+   873→  participationId String?
+   874→  personId        String?
+   875→  role            String  @default("SPEAKER") // §29: SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST
+   876→  status          String  @default("INVITED") // INVITED|ACCEPTED|DECLINED|CONFIRMED|CANCELLED
+   877→  notes           String? // AV gereksinimi, honorarium...
+   878→
+   879→  session       ProgramSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+   880→  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+   881→  person        Person?             @relation(fields: [personId], references: [id], onDelete: SetNull)
+   882→
+   883→  @@index([sessionId])
+   884→}
+   885→
+   886→// ─── FAZ 12: ONSITE — Badge, Credential, Scan (§40-42) ─────────────────────
+   887→
+   888→model BadgeProfile {
+   889→  id          String  @id @default(cuid())
+   890→  editionId   String
+   891→  name        String  // Delegate|Speaker|Exhibitor|Sponsor|VIP|Staff|Press
+   892→  accessAreas String? // "Main Hall, VIP Lounge, Gala"
+   893→  color       String?
+   894→
+   895→  edition    EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   896→  badgeInstances BadgeInstance[]
+   897→}
+   898→
+   899→model BadgeInstance {
+   900→  id              String   @id @default(cuid())
+   901→  participationId String
+   902→  profileId       String?
+   903→  badgeNo         String   @unique @default(cuid())
+   904→  status          String   @default("NOT_ELIGIBLE") // §10: NOT_ELIGIBLE|READY|ISSUED|PRINTED|REPRINTED|VOID
+   905→  issuedAt        DateTime?
+   906→  printedAt       DateTime?
+   907→  voidReason      String?
+   908→
+   909→  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+   910→  profile       BadgeProfile?      @relation(fields: [profileId], references: [id], onDelete: SetNull)
+   911→  credentials   Credential[]
+   912→}
+   913→
+   914→model Credential {
+   915→  id              String   @id @default(cuid())
+   916→  participationId String
+   917→  badgeId         String?
+   918→  code            String   @unique @default(cuid())
+   919→  type            String   @default("QR") // QR|NFC
+   920→  accessProfile   String?  // §41: VIP→Main Hall+Lounge; Speaker→Main Hall+Backstage...
+   921→  validFrom       DateTime?
+   922→  validUntil      DateTime?
+   923→  status          String   @default("ACTIVE") // ACTIVE|SUSPENDED|REVOKED
+   924→
+   925→  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+   926→  badge         BadgeInstance?     @relation(fields: [badgeId], references: [id], onDelete: SetNull)
+   927→  scanEvents    ScanEvent[]
+   928→}
+   929→
+   930→model ScanEvent {
+   931→  id              String   @id @default(cuid())
+   932→  participationId String?  // walk-in ise null
+   933→  credentialId    String?
+   934→  personId        String?
+   935→  sessionId       String?  // oturum girişi ayrı tarama listesine ait (§07)
+   936→  location        String   @default("MAIN_DOOR") // MAIN_DOOR|SESSION|GALA|LOUNGE
+   937→  doorName        String?
+   938→  action          String   @default("ENTRY") // ENTRY|EXIT|SESSION_ENTRY|SESSION_EXIT|RESCAN|DENIED
+   939→  result          String   @default("ALLOWED") // ALLOWED|RESCAN_WARNING|DENIED|MANUAL_EXCEPTION
+   940→  reason          String?  // manuel istisna gerekçesi — tarama geçmişi silinmez (Kimlik kuralı 8)
+   941→  device          String?
+   942→  operator        String?
+   943→  scannedAt       DateTime @default(now())
+   944→
+   945→  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+   946→  credential    Credential?         @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+   947→  session       ProgramSession?     @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+   948→  person        Person?             @relation(fields: [personId], references: [id], onDelete: SetNull)
+   949→
+   950→  @@index([scannedAt])
+   951→  @@index([participationId])
+   952→}
+   953→
+   954→// ─── FAZ 13: CERTIFICATES (§43) ────────────────────────────────────────────
+   955→
+   956→model CertificateDefinition {
+   957→  id              String  @id @default(cuid())
+   958→  editionId       String
+   959→  name            String  // "Katılımcı Sertifikası", "Konuşmacı Sertifikası"
+   960→  type            String  @default("PARTICIPANT")
+   961→  eligibilityRule String? // "registration=CONFIRMED AND checked_in" iş tanımı
+   962→  minimumSessions Int?    // oturum katılım eşiği
+   963→  signerName      String?
+   964→  isActive        Boolean @default(true)
+   965→
+   966→  edition EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
+   967→  issues  CertificateIssue[]
+   968→}
+   969→
+   970→model CertificateIssue {
+   971→  id              String    @id @default(cuid())
+   972→  definitionId    String
+   973→  participationId String
+   974→  status          String    @default("NOT_ELIGIBLE") // §10: NOT_ELIGIBLE|ELIGIBLE|GENERATED|DELIVERED|REVOKED
+   975→  eligibilityNote String?   // katılımcı uygunluk nedenini görür (§07)
+   976→  generatedAt     DateTime?
+   977→  deliveredAt     DateTime?
+   978→  revokedReason   String?
+   979→
+   980→  definition    CertificateDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+   981→  participation EventParticipation    @relation(fields: [participationId], references: [id], onDelete: Cascade)
+   982→
+   983→  @@unique([definitionId, participationId])
+   984→}
+   985→
+   986→// ─── EXHIBITION (§19-23) — Ticari stant ≠ Geometri ─────────────────────────
+   987→
+   988→model BoothUnit {
+   989→  id            String    @id @default(cuid())
+   990→  editionId     String
+   991→  code          String    // A24
+   992→  sizeSqm       Float     @default(12)
+   993→  type          String    @default("SHELL_SCHEME") // SHELL_SCHEME|SPACE_ONLY|CUSTOM
+   994→  status        String    @default("AVAILABLE") // §21: AVAILABLE|HELD|OPTION|RESERVED|CONTRACTED|BLOCKED|OCCUPIED|RELEASED
+   995→  price         Float     @default(0)
+   996→  currency      String    @default("TRY")
+   997→  optionExpiresAt DateTime? // ABC Ltd. OPTION expires_at örneği
+   998→
+   999→  edition     EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  1000→  allocation  BoothAllocation?
+  1001→  floorObject FloorPlanObject?
+  1002→
+  1003→  @@index([editionId])
+  1004→}
+  1005→
+  1006→model BoothAllocation {
+  1007→  id             String    @id @default(cuid())
+  1008→  boothUnitId    String    @unique
+  1009→  agreementId    String?   // SponsorAgreement → Booth Entitlement → Allocation → A24 (§22)
+  1010→  organizationId String?
+  1011→  status         String    @default("HELD")
+  1012→  allocatedAt    DateTime  @default(now())
+  1013→  releasedAt     DateTime?
+  1014→
+  1015→  boothUnit    BoothUnit        @relation(fields: [boothUnitId], references: [id], onDelete: Cascade)
+  1016→  agreement    SponsorAgreement? @relation(fields: [agreementId], references: [id], onDelete: SetNull)
+  1017→  organization Organization?    @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  1018→}
+  1019→
+  1020→model FloorPlanObject {
+  1021→  id          String  @id @default(cuid())
+  1022→  boothUnitId String? @unique // Paylaşılan kimlik: booth_unit_id (§20)
+  1023→  label       String?
+  1024→  x           Float   @default(0)
+  1025→  y           Float   @default(0)
+  1026→  width       Float   @default(4)
+  1027→  height      Float   @default(3)
+  1028→  rotation    Float   @default(0)
+  1029→  layer       String  @default("BOOTH")
+  1030→
+  1031→  boothUnit BoothUnit? @relation(fields: [boothUnitId], references: [id], onDelete: Cascade)
+  1032→}
+  1033→
+  1034→// ─── COMMUNICATIONS (§06 kampanya) ─────────────────────────────────────────
+  1035→
+  1036→model Campaign {
+  1037→  id            String    @id @default(cuid())
+  1038→  editionId     String
+  1039→  name          String
+  1040→  segmentRule   String    // "kayıt onaylı ama ödeme bekliyor" gibi sabitlenmiş ölçüt
+  1041→  audienceCount Int       @default(0)
+  1042→  channel       String    @default("EMAIL")
+  1043→  status        String    @default("DRAFT") // DRAFT|TESTED|SCHEDULED|SENT|FAILED
+  1044→  isSegmentFixed Boolean  @default(true) // sabit mi gönderim anında güncel mi
+  1045→  subject       String?
+  1046→  body          String?
+  1047→  testSentTo    String?
+  1048→  scheduledAt   DateTime?
+  1049→  sentAt        DateTime?
+  1050→  sentCount     Int       @default(0)
+  1051→  deliveredCount Int      @default(0)
+  1052→  openCount     Int       @default(0)
+  1053→  clickCount    Int       @default(0)
+  1054→  failCount     Int       @default(0)
+  1055→
+  1056→  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  1057→
+  1058→  @@index([editionId])
+  1059→}
+  1060→
+  1061→// ─── OPERATIONS (§52) ──────────────────────────────────────────────────────
+  1062→
+  1063→model Task {
+  1064→  id          String    @id @default(cuid())
+  1065→  editionId   String?
+  1066→  title       String
+  1067→  description String?
+  1068→  module      String    @default("OPERATIONS") // REGISTRATION|SPONSORSHIP|SCIENTIFIC|PROGRAM|ACCOMMODATION|ONSITE|FINANCE|OPERATIONS|COMMUNICATIONS|CERTIFICATES
+  1069→  status      String    @default("TODO") // BACKLOG|TODO|IN_PROGRESS|REVIEW|DONE|BLOCKED
+  1070→  priority    String    @default("MEDIUM") // LOW|MEDIUM|HIGH|URGENT
+  1071→  assigneeId  String?
+  1072→  dueDate     DateTime?
+  1073→  completedAt DateTime?
+  1074→  createdAt   DateTime  @default(now())
+  1075→  updatedAt   DateTime  @updatedAt
+  1076→
+  1077→  edition  EventEdition? @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  1078→  assignee Person?       @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  1079→
+  1080→  @@index([editionId])
+  1081→}
+  1082→
+  1083→model Delegation {
+  1084→  id            String  @id @default(cuid())
+  1085→  editionId     String
+  1086→  name          String  // sponsor grubu|şirket delegasyonu|kamu heyeti...
+  1087→  type          String  @default("COMPANY") // SPONSOR_GROUP|COMPANY|GOVERNMENT|STUDENT|VIP|TOUR
+  1088→  leaderId      String?
+  1089→  billingOrganizationId String?
+  1090→  paymentAccount String?
+  1091→  rules         String?
+  1092→
+  1093→  edition         EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  1094→  leader          Person?            @relation("DelegationLeader", fields: [leaderId], references: [id], onDelete: SetNull)
+  1095→  billingOrganization Organization?  @relation(fields: [billingOrganizationId], references: [id], onDelete: SetNull)
+  1096→  members         DelegationMember[]
+  1097→}
+  1098→
+  1099→model DelegationMember {
+  1100→  id              String  @id @default(cuid())
+  1101→  delegationId    String
+  1102→  participationId String
+  1103→  role            String  @default("MEMBER") // LEADER|MEMBER
+  1104→
+  1105→  delegation    Delegation          @relation(fields: [delegationId], references: [id], onDelete: Cascade)
+  1106→  participation EventParticipation  @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  1107→
+  1108→  @@unique([delegationId, participationId])
+  1109→}
+  1110→
+  1111→model Companion {
+  1112→  id              String  @id @default(cuid())
+  1113→  participationId String
+  1114→  name            String
+  1115→  type            String  @default("ADULT") // §34: ADULT|CHILD|INFANT
+  1116→  notes           String? // hotel, breakfast, gala, tour hakları
+  1117→
+  1118→  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  1119→}
+  1120→
+  1121→// ─── AUDIT / ACTIVITY LOG ──────────────────────────────────────────────────
+  1122→
+  1123→model ActivityLog {
+  1124→  id         String   @id @default(cuid())
+  1125→  tenantId   String?
+  1126→  editionId  String?
+  1127→  type       String   // REGISTRATION_CONFIRMED, PAYMENT_RECEIVED, SPONSOR_AGREEMENT_ACTIVATED, SCAN_ALLOWED...
+  1128→  message    String
+  1129→  entityType String?
+  1130→  entityId   String?
+  1131→  actorName  String?
+  1132→  createdAt  DateTime @default(now())
+  1133→
+  1134→  tenant  Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  1135→  edition EventEdition? @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  1136→
+  1137→  @@index([createdAt])
+  1138→}
+  1139→

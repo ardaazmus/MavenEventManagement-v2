@@ -102,6 +102,98 @@ export const CLAIM_STATUS = {
   EXPIRED: "Süresi doldu",
 } as const;
 
+// ─── Form Merkezi (kullanıcı isteği: kayıt formu, anket, mobil interaktif) ──
+
+export const FORM_TYPES: Record<string, string> = {
+  REGISTRATION: "Kayıt Formu",
+  SURVEY: "Anket",
+  FEEDBACK: "Geri Bildirim",
+  QA_MOBILE: "Mobil İnteraktif / QA",
+  CUSTOM: "Özel Form",
+};
+
+export const FORM_TYPE_HINTS: Record<string, string> = {
+  REGISTRATION: "Onay akışı, kategori fiyatı ve online ödeme ile kayıt oluşturur",
+  SURVEY: "Anonim/üye anketleri — dağılım istatistikleri otomatik",
+  FEEDBACK: "Oturum ve edisyon sonu memnuniyet ölçümü",
+  QA_MOBILE: "Mobil uygulamada interaktif öge: NPS, rating, quiz soruları",
+  CUSTOM: "Organizasyon içi ihtiyaç formları (görevliler, tedarik, vb.)",
+};
+
+export const FORM_FIELD_TYPES: Record<string, string> = {
+  TEXT: "Kısa Metin",
+  LONGTEXT: "Uzun Metin",
+  NUMBER: "Sayı",
+  EMAIL: "E-posta",
+  PHONE: "Telefon",
+  DATE: "Tarih",
+  SINGLE_CHOICE: "Tek Seçim",
+  MULTI_CHOICE: "Çok Seçim",
+  CHECKBOX: "Onay Kutusu",
+  COUNTRY: "Ülke",
+  FILE: "Dosya",
+  RATING: "Puanlama (1-5)",
+  NPS: "NPS (0-10)",
+  QA_QUIZ: "Quiz / QA",
+  SECTION: "Bölüm Başlığı",
+};
+
+// istatistikte dağılım hesaplanan alanlar
+export const CHOICE_FIELD_TYPES = ["SINGLE_CHOICE", "MULTI_CHOICE", "CHECKBOX", "RATING", "NPS"];
+
+export const FORM_SUBMISSION_STATUS = {
+  PENDING: "İnceleniyor",
+  APPROVED: "Onaylandı",
+  REJECTED: "Reddedildi",
+  SPAM: "Spam",
+} as const;
+
+export const SUBMISSION_SOURCES: Record<string, string> = {
+  WEB_PUBLIC: "Web (Herkese Açık)",
+  KIOSK: "Kiosk / Sahada",
+  MOBILE: "Mobil Uygulama",
+  ADMIN: "Admin Girişi",
+};
+
+// ─── Muhasebe — gider kalemleri (kayıt muhasebesi ile entegre) ───────────────
+
+export const EXPENSE_STATUS = {
+  PLANNED: "Planlandı",
+  PENDING_RECEIPT: "Fiş Bekliyor",
+  APPROVED: "Onaylandı",
+  REJECTED: "Reddedildi",
+  PAID: "Ödendi",
+  REIMBURSED: "Personeline Ödendi",
+} as const;
+
+export const EXPENSE_CATEGORY: Record<string, string> = {
+  FIELD_EXPENSE: "Saha Harcaması",
+  VENDOR: "Tedarikçi",
+  LOGISTICS: "Lojistik / Kargo",
+  MARKETING: "Pazarlama",
+  VENUE: "Mekân",
+  TECH: "Teknoloji / AV",
+  CATERING: "İkram / Catering",
+  STAFF_TRAVEL: "Personel Seyahat",
+  OTHER: "Diğer",
+};
+
+export const EXPENSE_PAYMENT_METHOD: Record<string, string> = {
+  COMPANY_CARD: "Kurum Kartı",
+  CASH: "Nakit",
+  BANK_TRANSFER: "Havale / EFT",
+  PERSONAL_REIMBURSE: "Personel Karşıladı",
+};
+
+export const PAYMENT_METHODS: Record<string, string> = {
+  ONLINE_CARD: "Online Kart",
+  BANK_TRANSFER: "Havale / EFT",
+  POS: "Sahada POS",
+  CASH: "Nakit",
+  PAYMENT_LINK: "Ödeme Linki",
+  MANUAL_EXTERNAL: "Manuel / Dış", 
+};
+
 export const ORDER_STATUS = {
   OPEN: "Açık",
   PARTIALLY_PAID: "Kısmi ödendi",
@@ -235,6 +327,8 @@ export const MODULES = [
   { id: "people", label: "Kişiler", icon: "Users", capability: null, group: "people" },
   { id: "organizations", label: "Kurumlar", icon: "Building2", capability: null, group: "people" },
   { id: "registrations", label: "Kayıt & Katılımcılar", icon: "ClipboardList", capability: "REGISTRATION", group: "edition" },
+  { id: "forms", label: "Form Merkezi", icon: "FileInput", capability: null, group: "edition" },
+  { id: "accounting", label: "Muhasebe", icon: "Calculator", capability: "REGISTRATION", group: "edition" },
   { id: "scientific", label: "Bilimsel", icon: "GraduationCap", capability: "SCIENTIFIC", group: "edition" },
   { id: "program", label: "Program", icon: "Clock", capability: "PROGRAM", group: "edition" },
   { id: "sponsorship", label: "Sponsor & Fuar", icon: "Handshake", capability: "SPONSORSHIP", group: "edition" },
@@ -344,6 +438,13 @@ export const STATUS_TONE: Record<string, string> = {
   REVIEW: "bg-purple-50 text-purple-700 border-purple-200",
   DONE: "bg-emerald-50 text-emerald-700 border-emerald-200",
   BLOCKED: "bg-rose-50 text-rose-700 border-rose-200",
+  // form merkezi gönderi
+  SPAM: "bg-rose-50 text-rose-700 border-rose-200",
+  CLOSED: "bg-neutral-100 text-neutral-700 border-neutral-200",
+  // gider
+  PLANNED: "bg-sky-50 text-sky-700 border-sky-200",
+  PENDING_RECEIPT: "bg-amber-50 text-amber-700 border-amber-200",
+  REIMBURSED: "bg-purple-50 text-purple-700 border-purple-200",
 };
 
 // Yetenek kapağında modül ekranları: capability -> modül id (§3 menü ilkesi)

@@ -44,3 +44,132 @@ Unresolved / sonraki adımlar:
 - Form tasarımcısı (sürükle-bırak soru editörü) ve koşullu soru istatistikleri.
 - Floor Studio bağlantı sözleşmesi (shared ID sync endpoint'leri).
 - Person merge UI'ı (API hazır).
+
+---
+Task ID: F-prep (F1-F5)
+Agent: Z.ai Code (ana ajan)
+Task: Kullanıcının yeni isteği — Geniş kapsamlı Form Yönetimi & Tasarım Merkezi (kayıt formu, katılımcı formu, anketler, mobil interaktif QA öğeleri, spam koruması, kayıt muhasebesi, online ödeme, saha giderleri entegrasyonu)
+
+Work Log:
+- Prisma şeması genişletildi: `FormSubmission` (spam puanı/gerekçeleri, honeypot, elapsed, IP, kaynak), `Expense` (kategori/saha harcaması, fiş, onay, ödeme yöntemi) modelleri; `FormDefinition`'a type (REGISTRATION|SURVEY|FEEDBACK|QA_MOBILE|CUSTOM), isPublic, spam ayarları (honeypotEnabled, minSubmitSeconds, maxPerEmailPerDay, blockedDomains, autoApprove), enableOnlinePayment, defaultCategoryId, successMessage; `FormField`'a placeholder + mobileInteractive. `bunx prisma db push --force-reset` ✓ (seed yeniden doldurulacak)
+- `src/lib/spam-guard.ts`: 7 katmanlı spam motoru (honeypot +100, engelli domain +100, zaman tuzağı +60, geçersiz e-posta +50, IP hız limiti +40, e-posta günlük limit +80, mükerrer onaylı +30; eşik 50 → SPAM). Bellek içi günlük sayaçlar.
+- `src/lib/api/registration-chain.ts`: FormSubmission → Person → Participation → Registration → Order/Line/Payment zinciri (idempotent; §2 prensibi: her adım bağımsız kayıt). cancelRegistrationOfSubmission ile spam/ret durumunda bağlı kayıt iptali.
+- API rotaları:
+  - `POST /api/public-register` — spam korumalı herkese açık kayıt: {formId, respondentName, respondentEmail, phone, organization, answers{fieldId:değer}, honeypotValue, elapsedSeconds, paymentMethod} → SPAM ise bile submission kaydedilir (gerekçeleriyle), temizse kayıt zinciri + PENDING ödeme oluşur. Yanıt: {submissionId, status, spamScore, spamReasons, registration, order, payment}
+  - `GET/PATCH/DELETE /api/form-submissions/[id]` — PATCH action: approve (kayıt zinciri kurar/iptal edileni geri açar) | reject | spam | pending
+  - `GET /api/form-stats?formId=` — gönderi özeti + alan bazlı dağılım (SINGLE/MULTI/CHECKBOX/QA_QUIZ), NUMBER/RATING ort-min-max, NPS skoru (promoter-passive-detractor), son 14 gün günlük akış, spam oranı
+  - `GET /api/accounting?editionId=` — entegre defter: gelir (SUCCEEDED payments), bekleyen tahsilat, gider (APPROVED/PAID/REIMBURSED) + planlanan, net/marj, açık alacak (order bakiyesi), kaynak/kategori kırılımı, 30 günlük seri, son 60 birleşik hareket
+  - `POST /api/payments/[id]/process` — sanal POS simülasyonu: kart doğrulama, **0000 ile biten kart → FAILED; aksi SUCCEEDED + order bakiyesi yeniden hesap (OPEN/PARTIALLY_PAID/PAID)
+- Registry: `form-submissions` ve `expenses` varlıkları eklendi (generic CRUD + audit); `forms` entry'sine _count.submissions + orderBy + audit eklendi
+- constants.ts: FORM_TYPES, FORM_TYPE_HINTS, FORM_FIELD_TYPES (15 tür; RATING/NPS/QA_QUIZ mobil interaktif), CHOICE_FIELD_TYPES, FORM_SUBMISSION_STATUS, SUBMISSION_SOURCES, EXPENSE_STATUS/CATEGORY/PAYMENT_METHOD, PAYMENT_METHODS; MODULES'a `forms` (Form Merkezi, capability=null) ve `accounting` (Muhasebe, capability=REGISTRATION) eklendi; STATUS_TONE'a SPAM/PLANNED/PENDING_RECEIPT/REIMBURSED/CLOSED
+- Seed: Online Kayıt Formu (REGISTRATION, spam ayarlı, engelli domainler: spam.xyz/tempmail.xyz/guvensizmail.com, ödeme yöntemi alanı), Kongre Memnuniyet Anketi (8 yanıt, NPS/RATING/Quiz mobil interaktif), kapalı geri bildirim + taslak özel form; gönderiler: 3 SPAM (honeypot/engelli domain/zaman tuzağı gerekçeli), 2 PENDING, 1 APPROVED + kayıt zinciri + tahsil edilmiş ödeme, 1 ADMIN kayıtlı; 8 gider (saha harcamaları dahil, 4 farklı durum)
+- page.tsx: `forms` ve `accounting` modülleri render'a bağlandı; stub view'lar yazıldı
+
+Stage Summary:
+- Form Merkezi backend'i TAM: form CRUD (registry), spam korumalı public kayıt, gönderi inceleme, istatistik, sanal POS, entegre muhasebe
+- Sıradaki: F-a (form-center.tsx UI) + F-b (accounting.tsx UI) paralel agent görevleri, sonra E2E doğrulama
+
+---
+## UI AGENT SÖZLEŞMESİ (F-a / F-b ajanları için ortak kurallar)
+
+Konvansiyonlar (mevcut view'lardan birebir):
+- Dosya başı: `"use client";` + kısa TR yorum
+- `import { listEntity, apiSend } from "@/lib/client";` — TÜM istekler göreli yol (ZORUNLU)
+- `import { useApp } from "@/lib/store";` — `const { currentEditionId, bump, refreshKey } = useApp();`
+- `import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";`
+- Sabitler: `@/lib/constants` (label, fmtMoney, fmtDate, fmtDateTime, STATUS_TONE, FORM_TYPES, FORM_FIELD_TYPES, FORM_SUBMISSION_STATUS, SUBMISSION_SOURCES, EXPENSE_STATUS, EXPENSE_CATEGORY, EXPENSE_PAYMENT_METHOD, PAYMENT_METHODS, ORDER_STATUS, PAYMENT_STATUS)
+- shadcn: Button, Input, Label, Textarea, Select, Dialog*, Tabs, Badge, Switch, Checkbox, Separator, Card (src/components/ui/*)
+- Toast: `import { useToast } from "@/hooks/use-toast";`
+- İkonlar: `import * as Icons from "lucide-react";`
+- Named export: `export function FormCenterView()` / `export function AccountingView()`
+- useApi deseni: `const { data, error, reload, loading } = useApi<T>(() => listEntity<T>("entity", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);`
+- Toast sonrası `reload(); bump();`
+- Kart dolgusu p-4/p-6, listelerde max-h-96 overflow-y-auto + `maven-scroll` sınıfı, mobil uyumlu (grid sm:/md:/lg:)
+- Türkçe etiketler, emoji yok, küçük/orta boyutlu tipografi
+
+API SÖZLEŞMESİ (değiştirme — ana ajan yazdı, çalışıyor):
+- Form listesi: `listEntity("forms", { editionId })` → FormDefinition[] (fields + _count.submissions dahil)
+- Form kaydet: `apiSend("/api/forms", "POST", {...})` / `apiSend("/api/forms/<id>", "PUT", {...})` / DELETE
+- Alan CRUD: `/api/form-fields` (POST {formId, label, type, ...}) / `/api/form-fields/<id>` PUT-DELETE
+- PUBLIC kayıt: `apiSend("/api/public-register", "POST", { formId, respondentName, respondentEmail, phone, organization, answers: {fieldId: value}, honeypotValue, elapsedSeconds, paymentMethod, source: "WEB_PUBLIC" })` → { submissionId, status: "APPROVED"|"PENDING"|"SPAM", spamScore, spamReasons[], registration, order, payment }
+- Gönderi listesi: `listEntity("form-submissions", { formId | editionId | status | source })` → form{id,name,type} + registration{category} dahil
+- Gönderi aksiyon: `apiSend("/api/form-submissions/<id>", "PATCH", { action: "approve"|"reject"|"spam"|"pending", notes? })`
+- Gönderi detay: `apiGet("/api/form-submissions/<id>")` → form.fields + answers + registration
+- İstatistik: `apiGet("/api/form-stats?formId=<id>")` → { form, totals{submissions,valid,spam,spamRate,approved,pending,rejected,avgElapsedSeconds}, daily[{date,count}], fields[{fieldId,label,type,mobileInteractive,responseCount,responseRate,distribution[{value,count}],numeric,nps,samples}] }
+- Muhasebe: `apiGet("/api/accounting?editionId=<id>")` → { summary{incomeTotal,pendingIncome,pendingCount,expenseTotal,plannedExpense,net,margin,paymentCount,expenseCount}, receivable{amount,openOrders}, incomeBySource[], expenseByCategory[], expenseByStatus[], daily[{date,income,expense}], ledger[{id,kind:"INCOME"|"EXPENSE"|"RECEIVABLE",date,description,ref,method,status,amount,currency}] }
+- Gider CRUD: `listEntity("expenses", { editionId, status?, category? })`, POST/PUT `/api/expenses[...]` (code UI'da üretilir: `GSN-YYYY-XXX`)
+- Ödeme simülasyonu: `apiSend("/api/payments/<id>/process", "POST", { cardHolder, cardNumber, expiry: "AA/YY", cvc })` → { outcome: "SUCCEEDED"|"FAILED", message, payment, order }. KART TESTLERİ: başarılı için "4242 4242 4242 4242", reddi için sonu "0000" (örn. "5555 5555 5555 0000")
+- Bekleyen ödeme bulma: `listEntity("payments", { status: "PENDING" })` → order dahil; order.editionId == currentEditionId filtresi UI'da
+
+---
+Task ID: F-b
+Agent: full-stack-developer
+Task: Muhasebe view (accounting.tsx)
+
+Work Log:
+- Stub `/home/z/my-project/src/components/maven/views/accounting.tsx` üzerine yazıldı (681 satır, named export `AccountingView`); yalnızca bu dosya değiştirildi — page.tsx / constants.ts / registry.ts / API route'lara dokunulmadı, test kodu yazılmadı.
+- Sözleşmeye birebir uydı: "use client" + TR yorum, `listEntity/apiSend/apiGet` (göreli yol), `useApp` (currentEditionId/bump/refreshKey), `../bits` bileşenleri, constants importları (EXPENSE_STATUS, EXPENSE_CATEGORY, EXPENSE_PAYMENT_METHOD, PAYMENT_METHODS, STATUS_TONE, label, fmtDate, fmtDateTime, fmtMoney), shadcn (Button/Input/Label/Textarea/Select/Dialog/Tabs/Badge/Separator), useToast, `import * as Icons`, useApi deseni `apiGet("/api/accounting?editionId=")` + `listEntity("expenses", { editionId })`.
+- PageHeader: "Muhasebe" + §36 açıklaması; children: "Hızlı Saha Harcaması" (amber outline varyant) + "Yeni Gider".
+- 6 KPI (grid sm:2 / md:3 / xl:6): Tahsil Edilen (paymentCount tahsilat), Bekleyen Tahsilat (pendingCount ödeme + openOrders açık sipariş, Hourglass/amber), Gerçekleşen Gider (expenseCount kalem, ReceiptText), Planlanan Gider (onay/fiş bekleyen), Net Bakiye (net≥0 yeşil / <0 kırmızı, TrendingUp/Down, "%47 marj" alt notu — margin null ise "gelir − gerçekleşen gider"), Açık Alacak (openOrders sipariş bakiyesi).
+- TAB defter: kind Select filtresi (Tümü/INCOME/EXPENSE/RECEIVABLE, istemci tarafı), sticky başlıklı tablo (max-h-96 maven-scroll): fmtDateTime tarih, mono referans, yöntem (INCOME/RECEIVABLE → PAYMENT_METHODS, EXPENSE → EXPENSE_PAYMENT_METHOD), StatusBadge (ödemeler için SUCCEEDED/PENDING/FAILED + EXPENSE_STATUS birleşik harita; ton STATUS_TONE'dan), tutar renk kodlu (+yeşil / −kırmızımsı / "(bekliyor)" amber, satır para birimiyle); altında görünür filtrede gelir/gider alt toplam satırı; boşsa EmptyState.
+- TAB expenses: durum + kategori Select ve başlık/vendor/kod arama (üçü de istemci tarafı — kod üretimi tam listeden yapılır); gider kartları: mono kod, StatusBadge, kategori Chip (FIELD_EXPENSE amber, TECH teal — Chip'te sky tonu yok, CATERING violet, diğer neutral), tutar bold sağda, fmtDate tarih, "Sahada: {spentBy}", ödeme yöntemi, fiş no mono Badge; aksiyonlar: PLANNED/PENDING_RECEIPT → Onayla (PUT APPROVED + approvedBy:"Muhasebe") + Ödendi İşaretle (PUT PAID), APPROVED → Ödendi, PAID + PERSONAL_REIMBURSE → Personeline Ödendi (PUT REIMBURSED); REJECTED'a buton yok; satır bazlı busyId + disabled.
+- "Yeni Gider" dialogu: 12 alanlı tam form (başlık*, kategori*, tutar*, para birimi TRY/USD/EUR default TRY, ödeme yöntemi, tedarikçi, harcayan, harcama tarihi default bugün — TZ güvenli todayStr, durum default PENDING_RECEIPT, açıklama, fiş no, not); POST /api/expenses; code `GSN-YYYY-XXX` sayaç+1, Set ile çakışma denetimi (+1 döngü).
+- "Hızlı Saha Harcaması" dialogu: başlık/tutar/harcayan/ödeme yöntemi (CASH/COMPANY_CARD/PERSONAL_REIMBURSE); sabit category FIELD_EXPENSE, status APPROVED, approvedBy "Saha Onayı", açıklama "Sahada anlık harcama — fiş sonradan eklenebilir."; toast "Saha harcaması kaydedildi — deftere işlendi".
+- TAB breakdown: lg:2 sütun — Sol: Gelir Kaynakları barları (teal, PAYMENT_METHODS etiketi), Gider Kategorileri barları (FIELD_EXPENSE amber, diğer rose-400); Sağ: Gider Durumları Chip dizisi (ton STATUS_TONE'dan türetilen toneFromStatus ile), 30 Günlük Akış sütun grafiği (gün başına iki ince div: teal gelir / rose-500 gider, max'a normalize min 2px, zero barlar opak, hover title "GG.AA — gelir/gider", altta renkli kare legend + 30 gün toplamları); altta "Mutabakat Notu" SectionCard (net = gelir − gerçekleşen gider; planlanan gider onay/ödeme sonrası net'e etki eder; RECEIVABLE tahsil olunca INCOME'a döner) + Separator.
+- Doğrulama (agent-browser, No-Dig Turkey 2026 edisyonu): KPI'lar gerçek veriyle (₺43.000 tahsil / ₺23.000 gider / ₺20.000 net / %47 marj / ₺20.000 alacak) ✓; defter tablosu +/− tutarlar, yöntem etiketleri, durum rozetleri ✓; Hızlı Saha Harcaması POST uçtan uca (GSN-2026-009, 450 TRY, CASH, APPROVED/Saha Onayı) ✓; Onayla PUT uçtan uca (GSN-2026-006 → APPROVED, approvedBy "Muhasebe") ✓; Yeni Gider dialogu tüm alanlar + defaultlar ✓; 3 sekme + kırılım barları/chip/grafik ✓; page errors: 0.
+- `bun run lint`: 0 error 0 warning (temiz, exit 0).
+
+Stage Summary:
+- Muhasebe view TAM: entegre defter (gelir ≠ gider ≠ alacak), 6 KPI, gider CRUD akışı (tam form + hızlı saha harcaması + onay/ödeme/reimburse zinciri), kaynak/kategori/durum kırılımı ve 30 günlük akış grafiği — API sözleşmesi hiç değiştirilmeden UI katmanı tamamlandı.
+- Kod üretimi tam gider listesinden yapıldığı için status/category filtreleri istemci tarafında (liste küçük, anlık filtre; listEntity'nin status/category parametreleri kullanılmadı — davranış farkı yok).
+- Bilinen ufak esneklikler: TECH kategorisi Chip'te sky tonu olmadığından teal; "Ödendi İşaretle" basit PUT {status:"PAID"} (spec'e uygun — fiş no dialogu isteğe bağlı bırakıldı); RECEIVABLE defter satırları yalnız PENDING ödeme varken görünür (mevcut seed'de pendingIncome=0, kod hazır).
+- Kalan: F-a (form-center.tsx) paralel ajanı + ana ajan E2E turu.
+
+---
+Task ID: F-a
+Agent: full-stack-developer
+Task: Form Merkezi view (form-center.tsx)
+
+Work Log:
+- Stub üzerine 1.872 satırlık tam FormCenterView yazıldı (sadece bu dosya değiştirildi; page.tsx/constants/registry/API rotalarına dokunulmadı). Konvansiyonlar UI AGENT SÖZLEŞMESİ'nden birebir: "use client" + TR yorum, listEntity/apiSend/apiGet göreli yol, useApp (currentEditionId/bump/refreshKey), ../bits parçaları, shadcn bileşenleri, useToast, Icons namespace, useApi deseni, toast sonrası reload()+bump().
+- TAB 1 Formlar: kart grid (md:2/xl:3), tür rozeti (REGISTRATION=teal, SURVEY=violet, FEEDBACK=emerald, QA_MOBILE=amber, CUSTOM=neutral), StatusBadge (Taslak/Yayında/Kapalı), açıklama truncate, mini metrikler (_count.submissions, fields.length), spam koruması / online ödeme / herkese açık rozetleri. Aksiyonlar: Stüdyoda Düzenle (tab+seçim), Yayınla/Kapat (PUT status), Herkese Açık Switch (PUT isPublic). Yeni Form dialogu: ad/tür(+FORM_TYPE_HINTS)/açıklama + spam bölümü (honeypot default açık, zaman tuzağı 4sn, günlük limit 5, engelli domainler) + REGISTRATION ekstraları (enableOnlinePayment, defaultCategoryId "Kategori otomatik" sentinel=AUTO, autoApprove).
+- TAB 2 Tasarım Stüdyosu: form seçici; lg:grid-cols-5 (sol 3 alan listesi, sağ 2 ayar panelleri). Alan satırları: sıra no, etiket, tür, Zorunlu(amber)/Koşullu(sky) rozetleri, Mobil Chip, gizlilik Chip, SECTION sol vurgulu farklı görünüm, ok butonlarıyla order swap (iki alanın çift PUT'u) ve sil (DELETE + toast). Alan Ekle dialogu: 15 tür, placeholder/helpText, options textarea (SINGLE/MULTI/QA_QUIZ/COUNTRY), required (OPTIONAL/ALWAYS/CONDITIONAL + koşul alan/değer girişleri), gizlilik 3 seçenek, mobileInteractive (RATING/NPS/QA_QUIZ'de otomatik açık), order=fields.length+1. Sağ panel: Form Ayarları + Spam Koruması (ShieldCheck) + Ödeme (CreditCard, yalnız REGISTRATION) — hepsi PUT /api/forms/<id>, boş string→null.
+- TAB 3 Yanıtlar & İstatistik: form + durum + kaynak filtreleri; masaüstü tablo (sticky başlıklı, max-h-96 maven-scroll) + mobil kartlar; spam puanı pill (STATUS_TONE.SPAM doğrudan kullanım), süre "38 sn", kaynak/tarih; aksiyonlar Onayla/Ret/Spam, SPAM'da İncelemeye Al (apiPatch yardımcı — client.ts PATCH içermediği için dosya içinde fetch tabanlı PATCH eklendi, göreli yol). Detay dialogu apiGet: gönderen bilgileri + IP + spam gerekçeleri (kırmızı liste) + form.fields sırasıyla yanıtlar (CHECKBOX→Evet/Hayır, çoklu JSON→virgül) + bağlı kayıt (no, durum, kategori, kişi). İstatistik: 4 KpiCard (Toplam/Onaylı/Spam Oranı/Ort. Doldurma), 14 günlük mini sütun grafiği (normalize yükseklik), NPS büyük skor kartı (promoter yeşil/pasif amber/detractor kırmızı), alan kartları lg:grid-cols-3 (yanıt oranı, teal dağılım barları max'a normalize, Ort (min–max), son 5 örnek italik, Mobil Öge Badge).
+- TAB 4 Canlı Kayıt Masası: yalnız PUBLISHED && isPublic formlar; max-w-2xl ziyaretçi görünümü; 15 alan türü render (yatak/textarea/select/checkbox listesi/tek checkbox/yıldız 1-5 fill/NPS 0-10 grid-cols-11 teal/quiz=select/dosya disabled/tarih/sayı); koşullu alanlar conditionField etiketi eşleşmesiyle gizle/göster (conditionValue "true" özel durumu); honeypot görünmez name="website" alan (-left-[9999px], aria-hidden, tabIndex -1); Date.now tabanlı elapsedSeconds; REGISTRATION'da 4 bilgi alanı + ödeme yöntemi Select (ONLINE_CARD/BANK_TRANSFER/PAYMENT_LINK); POST /api/public-register → sonuç kartı (SPAM kırmızı skor+gerekçe, PENDING amber + successMessage + kayıt no/durum, APPROVED yeşil); PENDING ödemede sanal POS kart formu → /api/payments/<id>/process (SUCCEEDED yeşil referans / FAILED kırmızı tekrar dene) + test ipucu Chip'leri (4242→Başarılı, **0000→Red); Yeni Gönderim sıfırlama; submit sonrası bump().
+- Doğrulama: bun run lint 0 sorun; tsc --noEmit form-center.tsx temiz (listEntity generic tip düzeltmesi: T=eleman tipi). agent-browser E2E: 4 sekme render ✓, edisyon değişiminde eski form seçiminin otomatik temizlenmesi düzeltildi ✓, stüdyoda 7 alanlı kayıt formu + sıra değişimi (ileri/geri) ✓, Yanıtlar tablosu + spam pill + koşullu aksiyonlar + detay dialogu (bağlı kayıt NF-No + kategori) ✓, istatistik KPI + NPS + dağılım barları ✓, Canlı Masada UI üzerinden gerçek gönderim → PENDING + kayıt zinciri + sanal POS 4242 ile SUCCEEDED (TR referansı) + Yeni Gönderim sıfırlaması ✓, Yeni Form dialogu ✓. Test sırasında oluşan gönderiler (Canlı Test Kullanıcı, Bot Botson) demo verisi olarak bırakıldı.
+
+Stage Summary:
+- Form Merkezi UI tamamlandı: 4 sekme (liste/tasarım stüdyosu/yanıt incelemesi+istatistik/canlı kayıt masası) backend sözleşmesiyle birebir entegre; spam koruması, koşullu alanlar, mobil interaktif öğeler ve online ödeme akışı uçtan uca çalışıyor.
+- ESLint 0 hata, TypeScript strict temiz; tek dosya değişikliği (form-center.tsx, 1.872 satır).
+- Bilinen esneklikler: file alanı önizlemede kapalı (spec gereği), koşullu gösterim conditionField'i etiket eşleşmesiyle bulur (aynı etiketten iki soru varsa ilki), İncelemeye Al/PATCH için client.ts'e dokunulmadan dosya içi apiPatch kullanıldı, submission detayında notes alanı henüz UI'da düzenlenmiyor.
+
+---
+Task ID: F8
+Agent: Z.ai Code (ana ajan)
+Task: Final doğrulama — lint, temiz seed, agent-browser uçtan uca E2E testleri
+
+Work Log:
+- `bun run lint` → 0 hata / 0 uyarı (tüm proje)
+- Seed yeniden çalıştırıldı (agent E2E test artıklarını temizler): 4 form, 15 gönderi, 8 gider, 26 kayıt
+- agent-browser E2E (tümü GEÇTİ):
+  1. Menüde "Form Merkezi" ve "Muhasebe" modülleri görünüyor ✓
+  2. Canlı Kayıt Masası → ziyaretçi görünümü: 15 alan türü render, honeypot gizli alan, zaman tuzağı sayacı ✓
+  3. SPAM TESTİ: engelli domain e-posta (bot@tempmail.xyz) → gönderildi ama "Spam şüphesi — incelemeye alındı", Skor 100, gerekçe: "E-posta alan adı engelli listede: tempmail.xyz" ✓ (kayıt zinciri KURULMADI)
+  4. TEMİZ KAYIT: Ayla Deneme → "Başvurunuz alındı — incelemede" + Kayıt No NF-MUECUBH7406 + ₺5.000 sipariş + PENDING ödeme ✓
+  5. SANAL POS: 4242 4242 4242 4242 kart → "Ödeme başarılı — Referans TR-MUECUTD0, 5000 TRY tahsil edildi" ✓ (önceki curl testinde **0000 kartı → FAILED doğrulanmıştı)
+  6. Yanıtlar sekmesi: Ayla (İnceleniyor) + Bot Deneme (Spam, Skor 100) tabloda; "Onayla" aksiyonu → "Onaylandı" ✓
+  7. Form istatistikleri: yanıt oranları, dağılım barları ✓
+  8. Muhasebe: Tahsil ₺43.000 (7), Bekleyen ₺2.000, Gider ₺23.000, Net ₺20.000 (%47 marj), Açık Alacak ₺20.000; defterde Ayla +₺5.000 INCOME satırı ✓ (seed 38.000 + Ayla 5.000 = tutarlı)
+  9. Mobil viewport (390×844) render + sticky footer (contentinfo) ✓, sayfa hataları 0 ✓
+- dev.log temiz: 0 runtime error
+
+Stage Summary:
+- Kullanıcının yeni isteği TAMAMLANDI: geniş kapsamlı Form Yönetimi & Tasarım Merkezi (kayıt/katılımcı/anket/mobil QA/özel formlar), 7 katmanlı spam koruması, form özelliklerine göre kayıt girişi, kayıt muhasebesi (kişi bazlı ödeme durumu), online ödeme seçenekleri + sanal POS API'si, ek/saha harcamalarının muhasebeye entegrasyonu
+- API yolları: /api/public-register, /api/form-submissions/[id], /api/form-stats, /api/accounting, /api/payments/[id]/process, /api/forms, /api/form-fields, /api/form-submissions, /api/expenses (generic CRUD)
+- Proje durumu: 61+2 model, 17 modüllü SPA, lint temiz, E2E doğrulanmış
+
+Unresolved / sonraki adımlar:
+- Hız limitleri bellek içi (tek instance) — yatay ölçek için Redis'e taşınmalı
+- Mobil uygulamaya gerçek QA/quiz motoru bağlanacaksa QA_QUIZ için doğru cevap işaretleme (scoring) modeli eklenebilir
+- FILE alan türü UI'da bilinçli kapalı (gerçek dosya yükleme servisi gerekir)
+- Sponsor/katılımcı dış portalları ayrı faz

@@ -13,6 +13,8 @@ import { ScientificView, ProgramView } from "@/components/maven/views/scientific
 import { SponsorshipView } from "@/components/maven/views/sponsorship";
 import { AccommodationView } from "@/components/maven/views/accommodation";
 import { FinanceView } from "@/components/maven/views/finance";
+import { FormCenterView } from "@/components/maven/views/form-center";
+import { AccountingView } from "@/components/maven/views/accounting";
 import { OnsiteView, CertificatesView, CommunicationsView, OperationsView, SettingsView } from "@/components/maven/views/onsite";
 import { Lock } from "lucide-react";
 
@@ -74,6 +76,8 @@ function renderModule(module: string) {
     case "sponsorship": return <SponsorshipView />;
     case "accommodation": return <AccommodationView />;
     case "finance": return <FinanceView />;
+    case "forms": return <FormCenterView />;
+    case "accounting": return <AccountingView />;
     case "onsite": return <OnsiteView />;
     case "certificates": return <CertificatesView />;
     case "communications": return <CommunicationsView />;

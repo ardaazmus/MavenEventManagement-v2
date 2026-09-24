@@ -3,12 +3,14 @@
 // KPI kartı, durum yaka kartı, boş durum, bölüm kartı, yükleniyor.
 import { ReactNode, useEffect, useState } from "react";
 import { STATUS_TONE } from "@/lib/constants";
+import { tStatus } from "@/lib/i18n"; // TASK-A F8: StatusBadge dil-duyarlı (TR: map, EN: status.<value>)
 import { Skeleton } from "@/components/ui/skeleton";
 import { Inbox, RefreshCw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function StatusBadge({ map, value, className }: { map: Record<string, string>; value?: string | null; className?: string }) {
-  const label = value ? (map[value] ?? value) : "—";
+  // TASK-A F8: TR modunda donuk map etiketi, EN modunda status.<value> — TR birebir korunur
+  const label = value ? tStatus(map[value], value) : "—";
   const tone = (value && STATUS_TONE[value]) || "bg-neutral-100 text-neutral-700 border-neutral-200";
   return (
     <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.4)] ${tone} ${className ?? ""}`}>

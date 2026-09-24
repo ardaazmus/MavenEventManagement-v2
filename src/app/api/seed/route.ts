@@ -930,7 +930,7 @@ export async function POST(req: NextRequest) {
       data: { participationId: partDefne1.id, profileId: bpDelegate.id, badgeNo: `BDG-2026-${String(badgeNo).padStart(4, "0")}`, status: "PRINTED", issuedAt: D(-3), printedAt: D(-2) },
     });
     await db.credential.create({ data: { participationId: partDefne1.id, badgeId: badgeDefne1.id, code: `QR-${String(badgeNo).padStart(4, "0")}`, type: "QR", accessProfile: bpDelegate.accessAreas, validFrom: D(-1), validUntil: D(3) } });
-    await db.scanEvent.create({ data: { participationId: partDefne1.id, personId: defne1.id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(0, 9, 5) } });
+    await db.scanEvent.create({ data: { editionId: edition1.id, participationId: partDefne1.id, personId: defne1.id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(0, 9, 5) } });
     badgeNo++;
 
     const partDefne2 = await db.eventParticipation.create({
@@ -955,26 +955,27 @@ export async function POST(req: NextRequest) {
     for (const [i, name] of scanNames.entries()) {
       const rec = participationMap.get(name)!;
       const cred = await db.credential.findFirst({ where: { participationId: rec.participationId } });
-      await db.scanEvent.create({ data: { participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(0, 8 + Math.floor(i / 4), (i * 7) % 60) } });
+      await db.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(0, 8 + Math.floor(i / 4), (i * 7) % 60) } });
     }
     for (const name of ["Ahmet", "Mustafa", "Deniz"]) {
       const rec = participationMap.get(name)!;
       const cred = await db.credential.findFirst({ where: { participationId: rec.participationId } });
-      await db.scanEvent.create({ data: { participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "RESCAN", result: "RESCAN_WARNING", reason: "Bu yaka kartı bugün daha önce okutuldu", device: "kapi-b-2", operator: "Leyla Güneş", scannedAt: D(0, 12, 15) } });
+      await db.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "RESCAN", result: "RESCAN_WARNING", reason: "Bu yaka kartı bugün daha önce okutuldu", device: "kapi-b-2", operator: "Leyla Güneş", scannedAt: D(0, 12, 15) } });
     }
     // reddedilen: Murat (kayıt REJECTED, yaka kartı yok) — personId ile
+    // walk-in reddi: participation YOK — editionId atanmaz (sayım semantiği yalnız katılımlı taramalar, eski davranış korunur)
     await db.scanEvent.create({ data: { personId: P.Murat.id, location: "MAIN_DOOR", doorName: "Kapı B", action: "ENTRY", result: "DENIED", reason: "Kayıt durumu: REJECTED", device: "kapi-b-2", operator: "Leyla Güneş", scannedAt: D(0, 10, 5) } });
     // oturum girişleri (ayrı tarama listesi)
     for (const name of ["Mehmet", "Ahmet", "Ayşe", "Seda", "Fatma"]) {
       const rec = participationMap.get(name)!;
       const cred = await db.credential.findFirst({ where: { participationId: rec.participationId } });
-      await db.scanEvent.create({ data: { participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, sessionId: ses1.id, location: "SESSION", action: "SESSION_ENTRY", result: "ALLOWED", device: "salon-a", operator: "Oturum Görevlisi", scannedAt: D(0, 11, 2) } });
+      await db.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, sessionId: ses1.id, location: "SESSION", action: "SESSION_ENTRY", result: "ALLOWED", device: "salon-a", operator: "Oturum Görevlisi", scannedAt: D(0, 11, 2) } });
     }
     // dünkü girişler
     for (const name of ["Mehmet", "Ayşe", "Fatma", "Kerem"]) {
       const rec = participationMap.get(name)!;
       const cred = await db.credential.findFirst({ where: { participationId: rec.participationId } });
-      await db.scanEvent.create({ data: { participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(-1, 9, 0) } });
+      await db.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(-1, 9, 0) } });
     }
 
     // ── Sertifikalar (§43) ──
@@ -1286,13 +1287,11 @@ export async function POST(req: NextRequest) {
     // yetim claim temizliği (LATER ile oluşturulanları sil)
     await db.entitlementClaim.deleteMany({ where: { entitlementId: "LATER" } });
 
-    // G0-c: portal yetenek belirteçleri — tüm kurum/kişilere benzersiz belirteç provision edilir
-    // (idempotent: yalnız belirteci olmayan satırlar doldurulur)
-    const token = () => `pt_${crypto.randomUUID().replace(/-/g, "")}`; // 32 hex
-    const orgsNoToken = await db.organization.findMany({ where: { portalToken: null }, select: { id: true } });
-    for (const o of orgsNoToken) await db.organization.update({ where: { id: o.id }, data: { portalToken: token() } });
-    const peopleNoToken = await db.person.findMany({ where: { portalToken: null }, select: { id: true } });
-    for (const p of peopleNoToken) await db.person.update({ where: { id: p.id }, data: { portalToken: token() } });
+    // TASK-A F1: portal yetenek belirteçleri artık PortalToken tablosunda sha256-hash
+    // olarak yaşar — düzyazı provision YASAK. Kalıcı belirteçler onay kanalında
+    // (flows: registration.decide) ve sözleşme aktivasyonunda çıkarılır; önizleme
+    // belirteçleri /api/portal/preview-token ile kısa ömürlü üretilir. Seed'te
+    // belirteç provision adımı YOKTUR (düz metin depolama tamamen kaldırıldı).
 
     const counts = {
       people: await db.person.count(),
@@ -1317,7 +1316,7 @@ export async function POST(req: NextRequest) {
 
 async function wipe() {
   const order = [
-    db.companion, db.delegationMember, db.delegation, db.formAnswer, db.formSubmission, db.formField, db.formDefinition,
+    db.portalToken, db.companion, db.delegationMember, db.delegation, db.formAnswer, db.formSubmission, db.formField, db.formDefinition,
     db.expense,
     db.invitation, db.scanEvent, db.credential, db.badgeInstance, db.badgeProfile, db.badgeDesign,
     db.certificateIssue, db.certificateDefinition, db.floorPlanObject, db.boothAllocation, db.boothUnit,

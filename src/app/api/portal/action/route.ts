@@ -3,12 +3,16 @@
 // aksiyonlar Maven tarafındaki iş kurallarıyla çalışır ve aktiviteye düşer.
 // G0-c: bu uç public-by-design olduğundan blanket kiracı bağlamı uygulanMAZ —
 // her aksiyon, sahibine (teslim → sözleşme kurumu; sipariş → ödeyen) bağlı
-// YETENEK BELİRTECİNE (portalToken) doğrulanır. Bilinmeyen/sahte belirteç → 404.
+// YETENEK BELİRTECİNE doğrulanır. Bilinmeyen/sahte belirteç → 404.
+// TASK-A F1: belirteç artık PortalToken tablosunda sha256-hash ile doğrulanır —
+//   sahte/bilinmeyen/süresi-geçmiş/iptal → 404 (aksiyonda durum ifşa edilmez,
+//   fail-closed); kapsam + sahiplik (edisyon + kurum/kişi) belirteç satırından okunur.
 // TODO-auth: portallar gerçek oturuma geçtiğinde belirteç oturum kapsamına taşınır.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ActivityType } from "@/lib/api/activity";
-import { enforceRateLimit } from "@/lib/rate-limit";
+import { enforceRateLimit, enforceRateLimitById } from "@/lib/rate-limit";
+import { validatePortalToken } from "@/lib/api/portal-tokens";
 
 // Teslim gönderilebilir durumlar: sponsor henüz göndermedi veya düzeltme istendi
 const SUBMITTABLE = ["NOT_STARTED", "WAITING_SPONSOR", "REJECTED"];
@@ -29,6 +33,15 @@ export async function POST(req: NextRequest) {
     if (!plausibleToken(token)) {
       return NextResponse.json({ error: "Erişim belirteci geçersiz" }, { status: 404 }); // varlık ifşa edilmez
     }
+    // TASK-A F1: hash araması — bilinmeyen/süresi-geçmiş/iptal ayrımı AÇILMADAN düşürülür
+    const check = await validatePortalToken(token);
+    if (!check.ok) {
+      return NextResponse.json({ error: "Erişim belirteci geçersiz" }, { status: 404 });
+    }
+    // TASK-A F10: ÇİFT KOVA — belirteç başına AYRI kova (güçlü belirteç denemesi IP rotasyonuyla gelse de sınırlanır)
+    const deniedToken = enforceRateLimitById(req, { key: "portal-action", limit: 20, windowMs: 60_000, scopeId: check.token.tokenHash.slice(0, 16) });
+    if (deniedToken) return deniedToken;
+    const cap = check.token;
 
     // ── Sponsor portalı: teslim gönderimi ──────────────────────────────
     if (action === "deliverable-submit") {
@@ -36,7 +49,8 @@ export async function POST(req: NextRequest) {
       const d = await db.deliverable.findUnique({ where: { id: deliverableId }, include: { agreement: { include: { organization: true, edition: true } } } });
       if (!d) return NextResponse.json({ error: "Teslim bulunamadı" }, { status: 404 });
       // G0-c: belirteç, teslimin SAHİBİ olan sözleşme kurumunun belirteci olmalı
-      if (!d.agreement?.organization?.portalToken || d.agreement.organization.portalToken !== token) {
+      // (TASK-A F1: kapsam SPONSOR + aynı edisyon + aynı kurum — hash eşleşmesi zaten doğrulandı)
+      if (cap.scope !== "SPONSOR" || cap.editionId !== d.agreement.editionId || cap.organizationId !== d.agreement.organizationId) {
         return NextResponse.json({ error: "Teslim bulunamadı" }, { status: 404 });
       }
       if (!SUBMITTABLE.includes(d.status)) {
@@ -67,12 +81,12 @@ export async function POST(req: NextRequest) {
       });
       if (!order) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
       // G0-c: belirteç, siparişin ÖDEYENİNE (kurumsal alıcı ya da satır katılımcısı) bağlı olmalı
-      const payerTokens = [
-        order.buyerOrganization?.portalToken ?? null,
-        order.buyerPersonId ? (await db.person.findUnique({ where: { id: order.buyerPersonId }, select: { portalToken: true } }))?.portalToken ?? null : null,
-        order.lines[0]?.participation?.person?.portalToken ?? null,
-      ].filter((t): t is string => typeof t === "string" && t.length > 0);
-      if (!payerTokens.includes(token)) {
+      // TASK-A F1: kapsam + edisyon + ödeyen zinciri belirteç satırından doğrulanır
+      const payerMatch =
+        (cap.scope === "SPONSOR" && cap.editionId === order.editionId && cap.organizationId !== null && cap.organizationId === order.buyerOrganizationId) ||
+        (cap.scope === "PARTICIPANT" && cap.editionId === order.editionId && cap.personId !== null &&
+          (cap.personId === order.buyerPersonId || cap.personId === order.lines[0]?.participation?.personId));
+      if (!payerMatch) {
         return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
       }
       if (order.status === "CANCELLED") return NextResponse.json({ error: "İptal edilmiş siparişe ödeme bağlantısı üretilemez" }, { status: 409 });

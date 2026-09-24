@@ -1,0 +1,513 @@
+     1→     1→"use client";
+     2→     2→// B2B Planı modülü (kullanıcı isteği):
+     3→     3→// — Kişilere B2B planı ATANIR (rol ile)
+     4→     4→// — Gelecek olan Mobil Uygulamadan kişi planı KABUL eder, sonrasında GÖRÜŞ bildirir
+     5→     5→// — Plan kişilerin kendi özelinde kalır (isPrivate), KARŞILIKLI ONAY sonrası ACTIVE olur
+     6→     6→// — Giriş alanları: Saat (startsAt/endsAt), Etkinlik yeri (venue), Konum (location), Konu (subject)
+     7→     7→import { useMemo, useState } from "react";
+     8→     8→import { apiSend, listEntity } from "@/lib/client";
+     9→     9→import { useApp } from "@/lib/store";
+    10→    10→import { SectionCard, EmptyState, PageHeader, StatusBadge, Chip, useApi, KpiCard } from "../bits";
+    11→    11→import { B2B_PLAN_STATUS, B2B_ASSIGNMENT_STATUS, B2B_ROLES, label } from "@/lib/constants";
+    12→    12→import { Button } from "@/components/ui/button";
+    13→    13→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+    14→    14→import { Input } from "@/components/ui/input";
+    15→    15→import { Label } from "@/components/ui/label";
+    16→    16→import { Textarea } from "@/components/ui/textarea";
+    17→    17→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    18→    18→import { Switch } from "@/components/ui/switch";
+    19→    19→import { useToast } from "@/hooks/use-toast";
+    20→    20→import * as Icons from "lucide-react";
+    21→    21→import { cn } from "@/lib/utils";
+    22→    22→
+    23→    23→function toLocalInput(iso?: string | null): string {
+    24→    24→  if (!iso) return "";
+    25→    25→  const d = new Date(iso);
+    26→    26→  if (Number.isNaN(d.getTime())) return "";
+    27→    27→  const pad = (n: number) => String(n).padStart(2, "0");
+    28→    28→  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    29→    29→}
+    30→    30→
+    31→    31→interface B2bPerson { id: string; firstName: string; lastName: string; email?: string | null; company?: string | null; title?: string | null; photoUrl?: string | null }
+    32→    32→
+    33→    33→interface B2bAssignmentRow {
+    34→    34→  id: string; planId: string; personId: string; role: string;
+    35→    35→  status: string; organizerApproved: boolean; personApproved: boolean;
+    36→    36→  feedback?: string | null; feedbackAt?: string | null; respondedAt?: string | null;
+    37→    37→  person?: B2bPerson;
+    38→    38→}
+    39→    39→
+    40→    40→interface B2bPlanRow {
+    41→    41→  id: string; editionId: string; subject: string; description?: string | null;
+    42→    42→  startsAt?: string | null; endsAt?: string | null; venue?: string | null; location?: string | null;
+    43→    43→  isPrivate: boolean; status: string; notes?: string | null;
+    44→    44→  assignments?: B2bAssignmentRow[];
+    45→    45→  _count?: { assignments?: number };
+    46→    46→}
+    47→    47→
+    48→    48→const emptyForm = {
+    49→    49→  subject: "", description: "", startsAt: "", endsAt: "", venue: "", location: "",
+    50→    50→  isPrivate: true, status: "DRAFT", notes: "",
+    51→    51→};
+    52→    52→
+    53→    53→export function B2bView() {
+    54→    54→  const { currentEditionId, bump, refreshKey } = useApp();
+    55→    55→  const { toast } = useToast();
+    56→    56→
+    57→    57→  const { data: plans, reload } = useApi<B2bPlanRow[]>(
+    58→    58→    () => listEntity<B2bPlanRow>("b2b-plans", { editionId: currentEditionId ?? undefined, limit: 200 }),
+    59→    59→    [currentEditionId, refreshKey],
+    60→    60→  );
+    61→    61→
+    62→    62→  const { data: participations } = useApi<{ id: string; person: B2bPerson }[]>(
+    63→    63→    () => listEntity("participations", { editionId: currentEditionId ?? undefined, limit: 500 }),
+    64→    64→    [currentEditionId, refreshKey],
+    65→    65→  );
+    66→    66→
+    67→    67→  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+    68→    68→  const [expandedId, setExpandedId] = useState<string | null>(null);
+    69→    69→
+    70→    70→  // ── plan formu (create + edit — çift tık) ──
+    71→    71→  const [formOpen, setFormOpen] = useState(false);
+    72→    72→  const [editingId, setEditingId] = useState<string | null>(null);
+    73→    73→  const [form, setForm] = useState({ ...emptyForm });
+    74→    74→  const [busy, setBusy] = useState(false);
+    75→    75→
+    76→    76→  // ── kişi atama diyaloğu ──
+    77→    77→  const [assignPlan, setAssignPlan] = useState<B2bPlanRow | null>(null);
+    78→    78→  const [assignSelected, setAssignSelected] = useState<string[]>([]);
+    79→    79→  const [assignRole, setAssignRole] = useState("PARTICIPANT");
+    80→    80→  const [assignSearch, setAssignSearch] = useState("");
+    81→    81→  const [assignBusy, setAssignBusy] = useState(false);
+    82→    82→
+    83→    83→  // ── mobil önizleme (Mobil App simülasyonu) ──
+    84→    84→  const [mobileOpen, setMobileOpen] = useState(false);
+    85→    85→  const [mobilePersonId, setMobilePersonId] = useState<string>("");
+    86→    86→  const [mobileFeedback, setMobileFeedback] = useState<Record<string, string>>({});
+    87→    87→
+    88→    88→  const personOptions = useMemo(() => {
+    89→    89→    const map = new Map<string, B2bPerson>();
+    90→    90→    for (const p of participations ?? []) if (p.person && !map.has(p.person.id)) map.set(p.person.id, p.person);
+    91→    91→    return Array.from(map.values());
+    92→    92→  }, [participations]);
+    93→    93→
+    94→    94→  const filtered = useMemo(() => (plans ?? []).filter((p) => statusFilter === "ALL" || p.status === statusFilter), [plans, statusFilter]);
+    95→    95→
+    96→    96→  const stats = useMemo(() => {
+    97→    97→    const all = plans ?? [];
+    98→    98→    return {
+    99→    99→      total: all.length,
+   100→   100→      active: all.filter((p) => p.status === "ACTIVE").length,
+   101→   101→      pending: all.filter((p) => p.status === "PENDING_APPROVAL" || p.status === "DRAFT").length,
+   102→   102→      assignments: all.reduce((s, p) => s + (p.assignments?.length ?? 0), 0),
+   103→   103→      accepted: all.reduce((s, p) => s + (p.assignments ?? []).filter((a) => a.status === "ACCEPTED").length, 0),
+   104→   104→      feedbacks: all.reduce((s, p) => s + (p.assignments ?? []).filter((a) => Boolean(a.feedback)).length, 0),
+   105→   105→    };
+   106→   106→  }, [plans]);
+   107→   107→
+   108→   108→  const openCreate = () => { setEditingId(null); setForm({ ...emptyForm }); setFormOpen(true); };
+   109→   109→
+   110→   110→  const openEdit = (p: B2bPlanRow) => {
+   111→   111→    setEditingId(p.id);
+   112→   112→    setForm({
+   113→   113→      subject: p.subject, description: p.description ?? "",
+   114→   114→      startsAt: toLocalInput(p.startsAt), endsAt: toLocalInput(p.endsAt),
+   115→   115→      venue: p.venue ?? "", location: p.location ?? "",
+   116→   116→      isPrivate: p.isPrivate, status: p.status, notes: p.notes ?? "",
+   117→   117→    });
+   118→   118→    setFormOpen(true);
+   119→   119→  };
+   120→   120→
+   121→   121→  const saveForm = async () => {
+   122→   122→    if (!currentEditionId) return;
+   123→   123→    if (!form.subject.trim()) { toast({ title: "Konu zorunlu", variant: "destructive" }); return; }
+   124→   124→    setBusy(true);
+   125→   125→    try {
+   126→   126→      const body = {
+   127→   127→        subject: form.subject.trim(),
+   128→   128→        description: form.description || null,
+   129→   129→        startsAt: form.startsAt ? new Date(form.startsAt).toISOString() : null,
+   130→   130→        endsAt: form.endsAt ? new Date(form.endsAt).toISOString() : null,
+   131→   131→        venue: form.venue || null, location: form.location || null,
+   132→   132→        isPrivate: form.isPrivate, status: form.status, notes: form.notes || null,
+   133→   133→        editionId: currentEditionId,
+   134→   134→      };
+   135→   135→      if (editingId) await apiSend(`/api/b2b-plans/${editingId}`, "PUT", body);
+   136→   136→      else await apiSend("/api/b2b-plans", "POST", body);
+   137→   137→      toast({ title: editingId ? "B2B planı güncellendi" : "B2B planı oluşturuldu", description: form.subject });
+   138→   138→      setFormOpen(false);
+   139→   139→      reload(); bump();
+   140→   140→    } catch (e) {
+   141→   141→      toast({ title: "Kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   142→   142→    } finally { setBusy(false); }
+   143→   143→  };
+   144→   144→
+   145→   145→  const removePlan = async (p: B2bPlanRow) => {
+   146→   146→    if (!window.confirm(`"${p.subject}" B2B planı ve tüm atamaları silinsin mi?`)) return;
+   147→   147→    try {
+   148→   148→      await apiSend(`/api/b2b-plans/${p.id}`, "DELETE");
+   149→   149→      toast({ title: "Plan silindi" });
+   150→   150→      reload(); bump();
+   151→   151→    } catch (e) {
+   152→   152→      toast({ title: "Silinemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   153→   153→    }
+   154→   154→  };
+   155→   155→
+   156→   156→  const openAssign = (p: B2bPlanRow) => {
+   157→   157→    setAssignPlan(p);
+   158→   158→    setAssignSelected([]);
+   159→   159→    setAssignRole("PARTICIPANT");
+   160→   160→    setAssignSearch("");
+   161→   161→  };
+   162→   162→
+   163→   163→  const sendAssignments = async () => {
+   164→   164→    if (!assignPlan || assignSelected.length === 0) return;
+   165→   165→    setAssignBusy(true);
+   166→   166→    try {
+   167→   167→      let n = 0;
+   168→   168→      for (const personId of assignSelected) {
+   169→   169→        await apiSend("/api/b2b-assignments", "POST", { planId: assignPlan.id, personId, role: assignRole, status: "ASSIGNED" });
+   170→   170→        n++;
+   171→   171→      }
+   172→   172→      toast({ title: "Atama tamamlandı", description: `${n} kişiye B2B planı atandı — mobil uygulamadan yanıt bekleniyor.` });
+   173→   173→      setAssignPlan(null);
+   174→   174→      reload(); bump();
+   175→   175→    } catch (e) {
+   176→   176→      toast({ title: "Atanamadı", description: e instanceof Error ? e.message : "Hata (aynı kişiye çift atama olabilir)", variant: "destructive" });
+   177→   177→    } finally { setAssignBusy(false); }
+   178→   178→  };
+   179→   179→
+   180→   180→  const removeAssignment = async (a: B2bAssignmentRow) => {
+   181→   181→    try {
+   182→   182→      await apiSend(`/api/b2b-assignments/${a.id}`, "DELETE");
+   183→   183→      reload(); bump();
+   184→   184→    } catch (e) {
+   185→   185→      toast({ title: "Atama kaldırılamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   186→   186→    }
+   187→   187→  };
+   188→   188→
+   189→   189→  const organizerApprove = async (a: B2bAssignmentRow, approved: boolean) => {
+   190→   190→    try {
+   191→   191→      const r = await apiSend<{ planActivated?: boolean }>("/api/flows", "POST", { action: "b2b.approve", assignmentId: a.id, approved });
+   192→   192→      toast({ title: approved ? "Organizatör onayı verildi" : "Organizatör onayı geri alındı", description: r.planActivated ? "Karşılıklı onay tamam — plan ETKİN duruma geçti!" : undefined });
+   193→   193→      reload(); bump();
+   194→   194→    } catch (e) {
+   195→   195→      toast({ title: "Onay işlenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   196→   196→    }
+   197→   197→  };
+   198→   198→
+   199→   199→  const setPlanStatus = async (p: B2bPlanRow, status: string) => {
+   200→   200→    try {
+   201→   201→      await apiSend(`/api/b2b-plans/${p.id}`, "PUT", { status });
+   202→   202→      toast({ title: `Plan durumu: ${label(B2B_PLAN_STATUS, status)}` });
+   203→   203→      reload(); bump();
+   204→   204→    } catch (e) {
+   205→   205→      toast({ title: "Durum değiştirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   206→   206→    }
+   207→   207→  };
+   208→   208→
+   209→   209→  // ── mobil akış: kişi yanıtı (kabul/red + görüş) ──
+   210→   210→  const mobileAssignments = useMemo(() => {
+   211→   211→    const out: { plan: B2bPlanRow; a: B2bAssignmentRow }[] = [];
+   212→   212→    for (const p of plans ?? []) for (const a of p.assignments ?? []) if (a.personId === mobilePersonId) out.push({ plan: p, a });
+   213→   213→    return out;
+   214→   214→  }, [plans, mobilePersonId]);
+   215→   215→
+   216→   216→  const respondMobile = async (a: B2bAssignmentRow, accepted: boolean) => {
+   217→   217→    try {
+   218→   218→      const feedback = (mobileFeedback[a.id] ?? "").trim() || undefined;
+   219→   219→      const r = await apiSend<{ planActivated?: boolean }>("/api/flows", "POST", { action: "b2b.respond", assignmentId: a.id, accepted, feedback, respondedBy: "Mobil Uygulama" });
+   220→   220→      toast({ title: accepted ? "Plan kabul edildi ✓" : "Plan reddedildi", description: r.planActivated ? "Karşılıklı onay tamamlandı — plan etkin." : "Organizatör onayı bekleniyor." });
+   221→   221→      reload(); bump();
+   222→   222→    } catch (e) {
+   223→   223→      toast({ title: "Yanıt gönderilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   224→   224→    }
+   225→   225→  };
+   226→   226→
+   227→   227→  const saveFeedbackMobile = async (a: B2bAssignmentRow) => {
+   228→   228→    try {
+   229→   229→      const feedback = (mobileFeedback[a.id] ?? "").trim();
+   230→   230→      if (!feedback) { toast({ title: "Görüş yazın", variant: "destructive" }); return; }
+   231→   231→      await apiSend(`/api/b2b-assignments/${a.id}`, "PUT", { feedback, feedbackAt: new Date().toISOString() });
+   232→   232→      toast({ title: "Görüş kaydedildi", description: "Organizatör görüşü panoda görebilir." });
+   233→   233→      reload(); bump();
+   234→   234→    } catch (e) {
+   235→   235→      toast({ title: "Görüş kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   236→   236→    }
+   237→   237→  };
+   238→   238→
+   239→   239→  const mobilePersons = useMemo(() => {
+   240→   240→    const map = new Map<string, B2bPerson>();
+   241→   241→    for (const p of plans ?? []) for (const a of p.assignments ?? []) if (a.person && !map.has(a.person.id)) map.set(a.person.id, a.person);
+   242→   242→    return Array.from(map.values());
+   243→   243→  }, [plans]);
+   244→   244→
+   245→   245→  if (!currentEditionId) return <EmptyState title="Edisyon seçin" desc="B2B planları edisyona bağlıdır." />;
+   246→   246→
+   247→   247→  return (
+   248→   248→    <div className="space-y-5">
+   249→   249→      <PageHeader title="B2B Planı" desc="Konu · Saat · Etkinlik yeri · Konum girişli B2B planları — kişilere atanır, mobil uygulamadan kabul edilir, karşılıklı onayla etkinleşir">
+   250→   250→        <div className="flex gap-2">
+   251→   251→          <Button size="sm" variant="outline" onClick={() => { setMobilePersonId(""); setMobileOpen(true); }}>
+   252→   252→            <Icons.Smartphone className="size-4" /> Mobil Önizleme
+   253→   253→          </Button>
+   254→   254→          <Button size="sm" onClick={openCreate}><Icons.Plus className="size-4" /> Yeni B2B Planı</Button>
+   255→   255→        </div>
+   256→   256→      </PageHeader>
+   257→   257→
+   258→   258→      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+   259→   259→        <KpiCard label="Toplam Plan" value={stats.total} icon={<Icons.Briefcase className="size-4" />} />
+   260→   260→        <KpiCard label="Etkin" value={stats.active} tone="emerald" icon={<Icons.CheckCircle2 className="size-4" />} />
+   261→   261→        <KpiCard label="Onay Bekleyen" value={stats.pending} tone="amber" icon={<Icons.Hourglass className="size-4" />} />
+   262→   262→        <KpiCard label="Atama" value={stats.assignments} tone="violet" icon={<Icons.UserPlus className="size-4" />} />
+   263→   263→        <KpiCard label="Kabul" value={stats.accepted} tone="teal" icon={<Icons.ThumbsUp className="size-4" />} />
+   264→   264→        <KpiCard label="Görüş Bildiren" value={stats.feedbacks} tone="rose" icon={<Icons.MessageSquare className="size-4" />} />
+   265→   265→      </div>
+   266→   266→
+   267→   267→      <div className="flex flex-wrap items-center gap-2">
+   268→   268→        <Select value={statusFilter} onValueChange={setStatusFilter}>
+   269→   269→          <SelectTrigger className="h-8 w-[210px]" aria-label="Durum filtresi"><SelectValue /></SelectTrigger>
+   270→   270→          <SelectContent>
+   271→   271→            <SelectItem value="ALL">Tüm durumlar</SelectItem>
+   272→   272→            {Object.entries(B2B_PLAN_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   273→   273→          </SelectContent>
+   274→   274→        </Select>
+   275→   275→        <Chip tone="teal">{filtered.length} plan</Chip>
+   276→   276→        <p className="text-xs text-muted-foreground">Karşılıklı onay: kişinin mobil kabulü + organizatör onayı → plan ETKİN olur.</p>
+   277→   277→      </div>
+   278→   278→
+   279→   279→      {filtered.length === 0 ? (
+   280→   280→        <EmptyState
+   281→   281→          title="Henüz B2B planı yok"
+   282→   282→          desc="Konu, saat, etkinlik yeri ve konum bilgisi girip planı kişilere atayın; mobil uygulamadan gelen kabul ve görüşleri buradan izleyin."
+   283→   283→          action={<Button onClick={openCreate}><Icons.Plus className="size-4" /> İlk B2B planını oluştur</Button>}
+   284→   284→        />
+   285→   285→      ) : (
+   286→   286→        <div className="grid gap-4 lg:grid-cols-2">
+   287→   287→          {filtered.map((p) => {
+   288→   288→            const asg = p.assignments ?? [];
+   289→   289→            const allAccepted = asg.length > 0 && asg.every((a) => a.status === "ACCEPTED");
+   290→   290→            return (
+   291→   291→              <SectionCard
+   292→   292→                key={p.id}
+   293→   293→                title={p.subject}
+   294→   294→                desc={[p.venue, p.location].filter(Boolean).join(" · ") || "Yer/konum girilmedi"}
+   295→   295→                action={<StatusBadge map={B2B_PLAN_STATUS} value={p.status} />}
+   296→   296→                className="transition hover:shadow-md"
+   297→   297→              >
+   298→   298→                <div onDoubleClick={() => openEdit(p)} title="Çift tıkla → düzenle">
+   299→   299→                  <div className="flex flex-wrap items-center gap-1.5">
+   300→   300→                    {p.isPrivate ? <Chip tone="violet"><span className="inline-flex items-center gap-1"><Icons.Lock className="size-3" />Kişiye özel</span></Chip> : <Chip tone="teal">Genel</Chip>}
+   301→   301→                    {p.startsAt && <Chip><span className="inline-flex items-center gap-1"><Icons.Clock className="size-3" />{new Date(p.startsAt).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}</span></Chip>}
+   302→   302→                    {p.location && <Chip><span className="inline-flex items-center gap-1"><Icons.MapPin className="size-3" />{p.location}</span></Chip>}
+   303→   303→                    <Chip tone={allAccepted && asg.some((a) => a.organizerApproved) ? "emerald" : "amber"}><Icons.Users className="mr-1 inline size-3" />{asg.length} kişi</Chip>
+   304→   304→                  </div>
+   305→   305→                  {p.description && <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{p.description}</p>}
+   306→   306→                  {p.notes && <p className="mt-1 line-clamp-1 text-xs italic text-muted-foreground"><Icons.StickyNote className="mr-1 inline size-3" />{p.notes}</p>}
+   307→   307→                </div>
+   308→   308→
+   309→   309→                {/* atama satırları */}
+   310→   310→                {expandedId === p.id && asg.length > 0 && (
+   311→   311→                  <div className="mt-3 max-h-64 space-y-1.5 overflow-y-auto rounded-lg border bg-muted/30 p-2 maven-scroll">
+   312→   312→                    {asg.map((a) => (
+   313→   313→                      <div key={a.id} className="rounded border bg-background px-2 py-1.5 text-xs">
+   314→   314→                        <div className="flex items-center gap-2">
+   315→   315→                          <Icons.User className="size-3.5 shrink-0 text-muted-foreground" />
+   316→   316→                          <span className="min-w-0 flex-1 truncate font-medium">{a.person ? `${a.person.firstName} ${a.person.lastName}` : "Kişi"}{a.person?.company ? ` — ${a.person.company}` : ""}</span>
+   317→   317→                          <Chip>{label(B2B_ROLES, a.role)}</Chip>
+   318→   318→                          {a.status === "ACCEPTED" ? <Chip tone="emerald">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>
+   319→   319→                            : a.status === "DECLINED" ? <Chip tone="rose">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>
+   320→   320→                            : <Chip tone="amber">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>}
+   321→   321→                          {a.organizerApproved ? (
+   322→   322→                            <Button size="icon" variant="ghost" className="size-6" aria-label="Organizatör onayını geri al" onClick={() => organizerApprove(a, false)} title="Onaylı — geri almak için tıkla"><Icons.BadgeCheck className="size-3.5 text-emerald-600" /></Button>
+   323→   323→                          ) : (
+   324→   324→                            <Button size="icon" variant="ghost" className="size-6" aria-label="Organizatör onayı ver" onClick={() => organizerApprove(a, true)} title="Organizatör onayı ver"><Icons.Circle className="size-3.5 text-muted-foreground" /></Button>
+   325→   325→                          )}
+   326→   326→                          <Button size="icon" variant="ghost" className="size-6" aria-label="Atamayı kaldır" onClick={() => removeAssignment(a)}><Icons.Trash2 className="size-3 text-muted-foreground" /></Button>
+   327→   327→                        </div>
+   328→   328→                        {a.feedback && (
+   329→   329→                          <p className="mt-1 flex items-start gap-1 rounded bg-teal-500/10 px-1.5 py-1 text-[11px] text-teal-700">
+   330→   330→                            <Icons.MessageSquare className="mt-0.5 size-3 shrink-0" /> Görüş: {a.feedback}
+   331→   331→                          </p>
+   332→   332→                        )}
+   333→   333→                      </div>
+   334→   334→                    ))}
+   335→   335→                  </div>
+   336→   336→                )}
+   337→   337→
+   338→   338→                <div className="mt-3 flex flex-wrap gap-2">
+   339→   339→                  <Button size="sm" onClick={() => openAssign(p)}><Icons.UserPlus className="size-3.5" /> Kişi Ata</Button>
+   340→   340→                  {asg.length > 0 && (
+   341→   341→                    <Button size="sm" variant="outline" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}>
+   342→   342→                      <Icons.List className="size-3.5" /> Atamalar ({asg.length})
+   343→   343→                    </Button>
+   344→   344→                  )}
+   345→   345→                  <Button size="sm" variant="ghost" onClick={() => { setMobilePersonId(""); setMobileOpen(true); }} aria-label="Mobil önizleme"><Icons.Smartphone className="size-3.5" /></Button>
+   346→   346→                  <Button size="sm" variant="ghost" onClick={() => openEdit(p)} aria-label="Düzenle"><Icons.Pencil className="size-3.5" /> Düzenle</Button>
+   347→   347→                  {p.status === "ACTIVE" && <Button size="sm" variant="ghost" onClick={() => setPlanStatus(p, "COMPLETED")}>Tamamlandı</Button>}
+   348→   348→                  <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => removePlan(p)} aria-label={`${p.subject} sil`}><Icons.Trash2 className="size-3.5" /></Button>
+   349→   349→                </div>
+   350→   350→              </SectionCard>
+   351→   351→            );
+   352→   352→          })}
+   353→   353→        </div>
+   354→   354→      )}
+   355→   355→
+   356→   356→      {/* Plan formu — create + edit */}
+   357→   357→      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+   358→   358→        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl maven-scroll">
+   359→   359→          <DialogHeader>
+   360→   360→            <DialogTitle>{editingId ? "B2B Planını Düzenle" : "Yeni B2B Planı"}</DialogTitle>
+   361→   361→            <DialogDescription>Konu, saat, etkinlik yeri ve konum girilir; plan kişiye atanır, mobil uygulamadan karşılıklı onayla etkinleşir.</DialogDescription>
+   362→   362→          </DialogHeader>
+   363→   363→          <div className="grid gap-3">
+   364→   364→            <div><Label>Konu *</Label><Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="Ölçüm altyapıları iş birliği görüşmesi" className="mt-1" /></div>
+   365→   365→            <div className="grid gap-3 sm:grid-cols-2">
+   366→   366→              <div><Label>Başlangıç (Saat)</Label><Input type="datetime-local" value={form.startsAt} onChange={(e) => setForm({ ...form, startsAt: e.target.value })} className="mt-1" /></div>
+   367→   367→              <div><Label>Bitiş</Label><Input type="datetime-local" value={form.endsAt} onChange={(e) => setForm({ ...form, endsAt: e.target.value })} className="mt-1" /></div>
+   368→   368→              <div><Label>Etkinlik Yeri</Label><Input value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} placeholder="Lütfi Kırdar — B2B Salonu" className="mt-1" /></div>
+   369→   369→              <div><Label>Konum (masa / stand / oda)</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Masa 12 / Stand B-04" className="mt-1" /></div>
+   370→   370→              <div>
+   371→   371→                <Label>Durum</Label>
+   372→   372→                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+   373→   373→                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+   374→   374→                  <SelectContent>{Object.entries(B2B_PLAN_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+   375→   375→                </Select>
+   376→   376→              </div>
+   377→   377→              <div className="flex items-end">
+   378→   378→                <div className="flex w-full items-center justify-between rounded-lg border p-3">
+   379→   379→                  <div className="min-w-0">
+   380→   380→                    <p className="text-sm font-medium">Kişiye özel</p>
+   381→   381→                    <p className="text-xs text-muted-foreground">Plan yalnız atanan kişilerin özelinde kalır.</p>
+   382→   382→                  </div>
+   383→   383→                  <Switch checked={form.isPrivate} onCheckedChange={(v) => setForm({ ...form, isPrivate: v })} aria-label="Kişiye özel" />
+   384→   384→                </div>
+   385→   385→              </div>
+   386→   386→            </div>
+   387→   387→            <div><Label>Açıklama / Gündem</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Görüşme gündemi, hedefler…" className="mt-1" /></div>
+   388→   388→            <div><Label>Notlar (ekip içi)</Label><Textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="mt-1" /></div>
+   389→   389→          </div>
+   390→   390→          <DialogFooter>
+   391→   391→            <Button variant="ghost" onClick={() => setFormOpen(false)}>Vazgeç</Button>
+   392→   392→            <Button onClick={saveForm} disabled={busy}>{busy ? "Kaydediliyor…" : editingId ? "Değişiklikleri Kaydet" : "Planı Oluştur"}</Button>
+   393→   393→          </DialogFooter>
+   394→   394→        </DialogContent>
+   395→   395→      </Dialog>
+   396→   396→
+   397→   397→      {/* Kişi atama diyaloğu */}
+   398→   398→      <Dialog open={Boolean(assignPlan)} onOpenChange={(v) => !v && setAssignPlan(null)}>
+   399→   399→        <DialogContent className="sm:max-w-xl">
+   400→   400→          <DialogHeader>
+   401→   401→            <DialogTitle>Kişi Ata — {assignPlan?.subject}</DialogTitle>
+   402→   402→            <DialogDescription>Atanan kişiler mobil uygulamadan planı kabul eder veya reddeder; organizatör onayıyla birlikte plan etkinleşir.</DialogDescription>
+   403→   403→          </DialogHeader>
+   404→   404→          <div className="grid gap-3">
+   405→   405→            <div className="grid grid-cols-2 gap-3">
+   406→   406→              <div>
+   407→   407→                <Label>Rol (seçilenlere uygulanır)</Label>
+   408→   408→                <Select value={assignRole} onValueChange={setAssignRole}>
+   409→   409→                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+   410→   410→                  <SelectContent>{Object.entries(B2B_ROLES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+   411→   411→                </Select>
+   412→   412→              </div>
+   413→   413→              <div><Label>Seçim</Label>
+   414→   414→                <div className="mt-1 flex items-center gap-2">
+   415→   415→                  <Chip tone="teal">{assignSelected.length} / {personOptions.length}</Chip>
+   416→   416→                  {assignSelected.length > 0 && <Button size="sm" variant="ghost" onClick={() => setAssignSelected([])}>Temizle</Button>}
+   417→   417→                </div>
+   418→   418→              </div>
+   419→   419→            </div>
+   420→   420→            <Input placeholder="Kişi ara…" value={assignSearch} onChange={(e) => setAssignSearch(e.target.value)} />
+   421→   421→            <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border p-2 maven-scroll">
+   422→   422→              {personOptions.length === 0 && <p className="p-2 text-xs text-muted-foreground">Bu edisyonda katılım kaydı yok.</p>}
+   423→   423→              {personOptions.filter((p) => `${p.firstName} ${p.lastName}`.toLowerCase().includes(assignSearch.toLowerCase())).map((p) => {
+   424→   424→                const checked = assignSelected.includes(p.id);
+   425→   425→                const already = (assignPlan?.assignments ?? []).some((a) => a.personId === p.id);
+   426→   426→                return (
+   427→   427→                  <button key={p.id} type="button" disabled={already}
+   428→   428→                    onClick={() => setAssignSelected((prev) => checked ? prev.filter((id) => id !== p.id) : [...prev, p.id])}
+   429→   429→                    className={cn("flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-sm transition", checked ? "border-primary bg-primary/5" : "hover:bg-muted", already && "cursor-not-allowed opacity-40")}>
+   430→   430→                    <span className={cn("grid size-4 shrink-0 place-items-center rounded border", checked ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40")}>
+   431→   431→                      {checked && <Icons.Check className="size-3" />}
+   432→   432→                    </span>
+   433→   433→                    <span className="min-w-0 flex-1 truncate">{p.firstName} {p.lastName}</span>
+   434→   434→                    {p.company && <span className="max-w-[140px] truncate text-xs text-muted-foreground">{p.company}</span>}
+   435→   435→                    {already && <span className="text-[10px] text-muted-foreground">zaten atanmış</span>}
+   436→   436→                  </button>
+   437→   437→                );
+   438→   438→              })}
+   439→   439→            </div>
+   440→   440→          </div>
+   441→   441→          <DialogFooter>
+   442→   442→            <Button variant="ghost" onClick={() => setAssignPlan(null)}>Vazgeç</Button>
+   443→   443→            <Button onClick={sendAssignments} disabled={assignBusy || assignSelected.length === 0}>
+   444→   444→              <Icons.UserPlus className="size-4" /> {assignBusy ? "Atanıyor…" : `${assignSelected.length} kişiye ata`}
+   445→   445→            </Button>
+   446→   446→          </DialogFooter>
+   447→   447→        </DialogContent>
+   448→   448→      </Dialog>
+   449→   449→
+   450→   450→      {/* Mobil Uygulama Önizlemesi — kişinin B2B kabul & görüş akışı */}
+   451→   451→      <Dialog open={mobileOpen} onOpenChange={setMobileOpen}>
+   452→   452→        <DialogContent className="sm:max-w-md">
+   453→   453→          <DialogHeader>
+   454→   454→            <DialogTitle className="flex items-center gap-2"><Icons.Smartphone className="size-4" /> Mobil Uygulama Önizlemesi</DialogTitle>
+   455→   455→            <DialogDescription>Gelen mobil uygulamada kişi, kendisine atanan B2B planlarını görür; kabul eder ve görüş bildirir.</DialogDescription>
+   456→   456→          </DialogHeader>
+   457→   457→          <div className="mx-auto w-full max-w-[320px] rounded-[2rem] border-4 border-slate-800 bg-slate-950 p-2 shadow-xl">
+   458→   458→            <div className="mb-2 flex items-center justify-between px-2 pt-1 text-[10px] font-medium text-slate-400">
+   459→   459→              <span>MAVEN Mobil</span>
+   460→   460→              <span className="flex items-center gap-1"><span className="size-1.5 rounded-full bg-emerald-400" /> B2B Davetlerim</span>
+   461→   461→            </div>
+   462→   462→            <div className="rounded-2xl bg-background p-3">
+   463→   463→              {mobilePersons.length === 0 ? (
+   464→   464→                <p className="py-6 text-center text-xs text-muted-foreground">Henüz kimseye atama yapılmadı.<br />Bir plana “Kişi Ata” ile başlayın.</p>
+   465→   465→              ) : (
+   466→   466→                <>
+   467→   467→                  <Select value={mobilePersonId} onValueChange={setMobilePersonId}>
+   468→   468→                    <SelectTrigger className="h-9 w-full text-xs" aria-label="Mobil kullanıcı seçimi"><SelectValue placeholder="Kişi seçin (mobil kullanıcı)" /></SelectTrigger>
+   469→   469→                    <SelectContent>
+   470→   470→                      {mobilePersons.map((p) => <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}{p.company ? ` — ${p.company}` : ""}</SelectItem>)}
+   471→   471→                    </SelectContent>
+   472→   472→                  </Select>
+   473→   473→                  <div className="mt-3 max-h-[320px] space-y-2 overflow-y-auto maven-scroll">
+   474→   474→                    {mobilePersonId === "" && <p className="py-4 text-center text-xs text-muted-foreground">Davetlerini görmek için kişi seçin.</p>}
+   475→   475→                    {mobileAssignments.map(({ plan, a }) => (
+   476→   476→                      <div key={a.id} className="rounded-xl border p-2.5 text-xs shadow-sm">
+   477→   477→                        <p className="flex items-center gap-1 font-semibold"><Icons.Briefcase className="size-3.5 text-primary" /> {plan.subject}</p>
+   478→   478→                        <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+   479→   479→                          {plan.startsAt && <p className="flex items-center gap-1"><Icons.Clock className="size-3" /> {new Date(plan.startsAt).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}</p>}
+   480→   480→                          {plan.venue && <p className="flex items-center gap-1"><Icons.MapPin className="size-3" /> {plan.venue}{plan.location ? ` · ${plan.location}` : ""}</p>}
+   481→   481→                        </div>
+   482→   482→                        <div className="mt-1.5">
+   483→   483→                          {a.status === "ACCEPTED" ? <Chip tone="emerald">{label(B2B_ASSIGNMENT_STATUS, a.status)}{a.organizerApproved ? " · Onaylı" : " · Org. onayı bekleniyor"}</Chip>
+   484→   484→                            : a.status === "DECLINED" ? <Chip tone="rose">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>
+   485→   485→                            : <Chip tone="amber">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>}
+   486→   486→                        </div>
+   487→   487→                        {a.status !== "DECLINED" && (
+   488→   488→                          <div className="mt-2 flex gap-1.5">
+   489→   489→                            {a.status !== "ACCEPTED" && <Button size="sm" className="h-7 flex-1 text-xs" onClick={() => respondMobile(a, true)}><Icons.Check className="size-3.5" /> Kabul Et</Button>}
+   490→   490→                            {a.status !== "ACCEPTED" && <Button size="sm" variant="outline" className="h-7 flex-1 text-xs" onClick={() => respondMobile(a, false)}><Icons.X className="size-3.5" /> Reddet</Button>}
+   491→   491→                          </div>
+   492→   492→                        )}
+   493→   493→                        <Textarea rows={2} className="mt-2 text-[11px]" placeholder="Görüşünüzü yazın…" value={mobileFeedback[a.id] ?? a.feedback ?? ""} onChange={(e) => setMobileFeedback((prev) => ({ ...prev, [a.id]: e.target.value }))} />
+   494→   494→                        <Button size="sm" variant="secondary" className="mt-1.5 h-7 w-full text-xs" onClick={() => saveFeedbackMobile(a)}>
+   495→   495→                          <Icons.Send className="size-3" /> Görüşü Gönder
+   496→   496→                        </Button>
+   497→   497→                      </div>
+   498→   498→                    ))}
+   499→   499→                    {mobilePersonId !== "" && mobileAssignments.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">Bu kişiye atanmış B2B planı yok.</p>}
+   500→   500→                  </div>
+   501→   501→                </>
+   502→   502→              )}
+   503→   503→            </div>
+   504→   504→          </div>
+   505→   505→          <DialogFooter>
+   506→   506→            <Button variant="ghost" onClick={() => setMobileOpen(false)}>Kapat</Button>
+   507→   507→          </DialogFooter>
+   508→   508→        </DialogContent>
+   509→   509→      </Dialog>
+   510→   510→    </div>
+   511→   511→  );
+   512→   512→}
+   513→   513→

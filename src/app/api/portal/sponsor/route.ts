@@ -1,9 +1,14 @@
 // Sponsor dış portalı — kurumun sözleşme, hak, stant, teslim ve sipariş görünümü.
 // Mimari (§20, §60): dış portallar ayrı uygulama, ortak kimlik — Maven veri sahibi,
 // portal tüketici. SPONSOR_PORTAL / EXHIBITOR_PORTAL kaynaklı katılımlar buraya bağlanır.
+// TASK-A F1 (OWASP API1:2023 — BOLA): bu uç YETENEK BELİRTECİYLE kapılanır —
+//   belirteç yok → 410; sahte/bilinmeyen/yanlış kapsam/yabancı kurum-edisyon → 404;
+//   süresi geçmiş/iptal → 410. Kurum sözleşme/teslim/sipariş verisi YALNIZ geçerli
+//   belirteçle döner. Belirteç yanıtta ASLA yer almaz.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolvePublicEdition } from "@/lib/api/public-guard";
+import { extractToken, validatePortalToken, touchToken } from "@/lib/api/portal-tokens";
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,6 +18,25 @@ export async function GET(req: NextRequest) {
     if (!editionId || !organizationId) {
       return NextResponse.json({ error: "editionId ve organizationId zorunlu" }, { status: 400 });
     }
+
+    // TASK-A F1: belirteç kapısı — belirsizlik varlık ifşa etmez
+    const raw = extractToken(req);
+    if (!raw) {
+      return NextResponse.json({ error: "Portal erişim anahtarı gerekli — bağlantınızı onay e-postasından kullanın" }, { status: 410 });
+    }
+    const check = await validatePortalToken(raw);
+    if (!check.ok) {
+      return NextResponse.json(
+        { error: check.reason === "UNKNOWN" ? "Etkinlik bulunamadı" : "Erişim anahtarınız geçersiz veya süresi dolmuş" },
+        { status: check.reason === "UNKNOWN" ? 404 : 410 },
+      );
+    }
+    const token = check.token;
+    // kapsam + sahiplik: SPONSOR belirteci yalnız kendi kurumu + kendi edisyonu için geçerli
+    if (token.scope !== "SPONSOR" || token.organizationId !== organizationId || token.editionId !== editionId) {
+      return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
+    }
+    touchToken(token.id);
 
     // Faz A public allowlist: editionId → kiracı çözümlenemiyorsa 404
     const publicEdition = await resolvePublicEdition(editionId);
@@ -70,11 +94,10 @@ export async function GET(req: NextRequest) {
       edition: edition
         ? { id: edition.id, name: edition.name, startDate: edition.startDate, endDate: edition.endDate, venueName: edition.venueName, city: edition.city, seriesName: edition.series?.name ?? null }
         : null,
+      // TASK-A F1: portalToken alanı KALDIRILDI — belirteç yanıt gövdelerinde ASLA dolaşmaz
       organization: {
         id: organization.id, name: organization.name, type: organization.type,
         city: organization.city, country: organization.country, website: organization.website,
-        // G0-c: portal simülasyonu aksiyonlarda bu belirteci gönderir (TODO-auth: gerçek portal oturumunda sunucu oturumundan türetilir)
-        portalToken: organization.portalToken,
       },
       agreements: agreements.map((a) => ({
         id: a.id, status: a.status, amount: a.amount, currency: a.currency,

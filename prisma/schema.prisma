@@ -150,8 +150,8 @@ model Organization {
   address      String? // fiziksel adres
   description  String? // genel açıklama/bilgi
   locationNote String? // Salon/Fuar alanı/Otel konum + QR notu
-  // — Portal yetenek belirteci (G0-c): sponsor portalı aksiyonları bu belirtece bağlanır —
-  portalToken  String? @unique
+  // TASK-A F1: portalToken skaleri KALDIRILDI — düz metin saklama yasak; belirteçler
+  // PortalToken tablosunda sha256-hash ile yaşar (expiresAt + scope + revokedAt).
 
   tenant          Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contacts        OrganizationContact[]
@@ -162,6 +162,7 @@ model Organization {
   orders          Order[]
   invitations     Invitation[]
   delegationBilling Delegation[]
+  portalTokens    PortalToken[]
 }
 
 model OrganizationContact {
@@ -196,9 +197,8 @@ model Person {
   linkedin    String?
   status      String   @default("ACTIVE") // ACTIVE|PASSIVE|MERGED
   mergedIntoId String? // kişi tekilleştirme: önerili + onaylı birleştirme
-  // — Portal yetenek belirteci (G0-c): dış portal aksiyonları bu belirtece bağlanır —
-  // TODO-auth: gerçek portal oturumu geldiğinde belirteç oturum kapsamına taşınır
-  portalToken String?  @unique
+  // TASK-A F1: portalToken skaleri KALDIRILDI — düz metin saklama yasak; belirteçler
+  // PortalToken tablosunda sha256-hash ile yaşar (expiresAt + scope + revokedAt).
   // — Misafir/aile hiyerarşisi (Self-Referencing Parent_ID, kullanıcı isteği 8) —
   parentPersonId String? // bağlı olduğu ana katılımcı (aile/misafir profili)
   relationType   String? // SELF|SPOUSE|CHILD|GUEST|ASSISTANT|OTHER
@@ -222,6 +222,7 @@ model Person {
   waitlistEntries  WaitlistEntry[]
   socialAnnouncements SocialPlanAnnouncement[]
   b2bAssignments   B2bAssignment[]
+  portalTokens     PortalToken[]
 
   @@index([email])
   @@index([lastName])
@@ -303,6 +304,7 @@ model EventEdition {
   activityLogs     ActivityLog[]
   delegations      Delegation[]
   expenses         Expense[]
+  portalTokens     PortalToken[]
   formSubmissions  FormSubmission[]
   waitlistEntries  WaitlistEntry[]
   customRoles      CustomRole[]
@@ -428,6 +430,8 @@ model Registration {
 
   @@index([editionId])
   @@index([status])
+  @@index([editionId, status]) // TASK-A F6: liste durum filtresi + dashboard groupBy (hot combo)
+  @@index([editionId, categoryId]) // TASK-A F6: kategori doluluk/filtre (hot combo)
 }
 
 model RegistrationCategory {
@@ -1224,6 +1228,7 @@ model Credential {
 
 model ScanEvent {
   id              String   @id @default(cuid())
+  editionId       String? // TASK-A F6: edisyon-bağlı sayım hız yolu (participation join'i atlar); walk-in ise null
   participationId String?  // walk-in ise null
   credentialId    String?
   personId        String?
@@ -1245,6 +1250,7 @@ model ScanEvent {
   @@index([scannedAt])
   @@index([participationId])
   @@index([participationId, action, result]) // P2: kapı tekrar-tarama denetimi (hız-yol sorgusu)
+  @@index([editionId, scannedAt]) // TASK-A F6: edisyon tarama sayımları (hot combo)
 }
 
 // ─── FAZ 13: CERTIFICATES (§43) ────────────────────────────────────────────
@@ -1811,4 +1817,31 @@ model B2bAssignment {
   @@unique([planId, personId])
   @@index([planId])
   @@index([personId])
+}
+
+// ─── TASK-A F1: PORTAL TOKEN LIFECYCLE ──────────────────────────────────────
+// Dış portal yetenek belirteçleri — OWASP API1:2023 (BOLA) sertleştirmesi:
+// düz metin saklama YASAK (yalnız sha256 hash), yanıt alanlarında ASLA görünmez,
+// tek-görünlük çıkarım (registration-approval kanalı / yönetici çıkarımı),
+// kapsam (PARTICIPANT|SPONSOR), expiresAt ve revokedAt yaşam döngüsü.
+model PortalToken {
+  id             String    @id @default(cuid())
+  tokenHash      String    @unique // sha256 hex (64) — ham belirteç bir kez döner, sonra yok
+  scope          String    // PARTICIPANT | SPONSOR
+  editionId      String
+  personId       String? // scope=PARTICIPANT
+  organizationId String? // scope=SPONSOR
+  issuedAt       DateTime  @default(now())
+  issuedBy       String? // çıkarım kanalı: REGISTRATION_APPROVAL | ADMIN | PREVIEW
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+
+  person       Person?         @relation(fields: [personId], references: [id], onDelete: Cascade)
+  organization Organization?   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  edition      EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([personId])
+  @@index([organizationId])
+  @@index([editionId])
 }

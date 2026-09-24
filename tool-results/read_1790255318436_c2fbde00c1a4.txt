@@ -1,0 +1,495 @@
+     1→"use client";
+     2→// Sosyal Etkinlik & Tur Planı — BİRLEŞİK modül (kullanıcı isteği):
+     3→// Sosyal etkinlik planları ile tur planları tek ekranda; planların çeşidi (type)
+     4→// ve resmi/resmi olmayan ayrımı (isOfficial) olur; planlar kişilere DUYURULUR.
+     5→import { useMemo, useState } from "react";
+     6→import { apiSend, listEntity } from "@/lib/client";
+     7→import { useApp } from "@/lib/store";
+     8→import { SectionCard, EmptyState, PageHeader, StatusBadge, Chip, useApi, KpiCard } from "../bits";
+     9→import {
+    10→  SOCIAL_KINDS, SOCIAL_PLAN_TYPES, SOCIAL_PLAN_STATUS, SOCIAL_ANNOUNCE_CHANNELS, SOCIAL_RESPONSE,
+    11→  label,
+    12→} from "@/lib/constants";
+    13→import { Button } from "@/components/ui/button";
+    14→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+    15→import { Input } from "@/components/ui/input";
+    16→import { Label } from "@/components/ui/label";
+    17→import { Textarea } from "@/components/ui/textarea";
+    18→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    19→import { Switch } from "@/components/ui/switch";
+    20→import { useToast } from "@/hooks/use-toast";
+    21→import * as Icons from "lucide-react";
+    22→import { cn } from "@/lib/utils";
+    23→
+    24→// datetime-local ↔ ISO yardımcıları
+    25→function toLocalInput(iso?: string | null): string {
+    26→  if (!iso) return "";
+    27→  const d = new Date(iso);
+    28→  if (Number.isNaN(d.getTime())) return "";
+    29→  const pad = (n: number) => String(n).padStart(2, "0");
+    30→  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    31→}
+    32→
+    33→interface PlanAnnouncement {
+    34→  id: string;
+    35→  personId?: string | null;
+    36→  fullName?: string | null;
+    37→  channel: string;
+    38→  message?: string | null;
+    39→  response?: string | null;
+    40→  respondedAt?: string | null;
+    41→  sentAt: string;
+    42→}
+    43→
+    44→interface SocialPlanRow {
+    45→  id: string;
+    46→  editionId: string;
+    47→  kind: string; // SOCIAL | TOUR
+    48→  type: string;
+    49→  isOfficial: boolean;
+    50→  title: string;
+    51→  description?: string | null;
+    52→  startsAt?: string | null;
+    53→  endsAt?: string | null;
+    54→  venue?: string | null;
+    55→  meetingPoint?: string | null;
+    56→  capacity?: number | null;
+    57→  price?: number | null;
+    58→  currency: string;
+    59→  status: string;
+    60→  notes?: string | null;
+    61→  announcements?: PlanAnnouncement[];
+    62→  _count?: { announcements?: number };
+    63→}
+    64→
+    65→interface PersonLite { id: string; firstName: string; lastName: string; company?: string | null; email?: string | null }
+    66→
+    67→const emptyForm = {
+    68→  title: "", kind: "SOCIAL", type: "GALA", isOfficial: false,
+    69→  startsAt: "", endsAt: "", venue: "", meetingPoint: "",
+    70→  capacity: "", price: "", currency: "TRY", status: "DRAFT",
+    71→  description: "", notes: "",
+    72→};
+    73→
+    74→export function SocialView() {
+    75→  const { currentEditionId, bump, refreshKey } = useApp();
+    76→  const { toast } = useToast();
+    77→
+    78→  const { data: plans, reload } = useApi<SocialPlanRow[]>(
+    79→    () => listEntity<SocialPlanRow>("social-plans", { editionId: currentEditionId ?? undefined, limit: 200 }),
+    80→    [currentEditionId, refreshKey],
+    81→  );
+    82→
+    83→  // duyuru için kişi kaynağı: edisyon katılımları (person include)
+    84→  const { data: participations } = useApi<{ id: string; person: PersonLite }[]>(
+    85→    () => listEntity("participations", { editionId: currentEditionId ?? undefined, limit: 500 }),
+    86→    [currentEditionId, refreshKey],
+    87→  );
+    88→
+    89→  const [kindFilter, setKindFilter] = useState<"ALL" | "SOCIAL" | "TOUR">("ALL");
+    90→  const [typeFilter, setTypeFilter] = useState<string>("ALL");
+    91→  const [officialFilter, setOfficialFilter] = useState<"ALL" | "OFFICIAL" | "NORMAL">("ALL");
+    92→
+    93→  // ── plan formu (create + edit — çift tık ile açılır) ──
+    94→  const [formOpen, setFormOpen] = useState(false);
+    95→  const [editingId, setEditingId] = useState<string | null>(null);
+    96→  const [form, setForm] = useState({ ...emptyForm });
+    97→  const [busy, setBusy] = useState(false);
+    98→
+    99→  // ── duyuru diyaloğu ──
+   100→  const [announcePlan, setAnnouncePlan] = useState<SocialPlanRow | null>(null);
+   101→  const [announceChannel, setAnnounceChannel] = useState("IN_APP");
+   102→  const [announceMessage, setAnnounceMessage] = useState("");
+   103→  const [announceSelected, setAnnounceSelected] = useState<string[]>([]);
+   104→  const [announceBusy, setAnnounceBusy] = useState(false);
+   105→  const [announceSearch, setAnnounceSearch] = useState("");
+   106→
+   107→  // ── duyuru listesi görünümü ──
+   108→  const [expandedId, setExpandedId] = useState<string | null>(null);
+   109→
+   110→  const personOptions = useMemo(() => {
+   111→    const map = new Map<string, PersonLite>();
+   112→    for (const p of participations ?? []) if (p.person && !map.has(p.person.id)) map.set(p.person.id, p.person);
+   113→    return Array.from(map.values());
+   114→  }, [participations]);
+   115→
+   116→  const filtered = useMemo(() => (plans ?? []).filter((p) => {
+   117→    if (kindFilter !== "ALL" && p.kind !== kindFilter) return false;
+   118→    if (typeFilter !== "ALL" && p.type !== typeFilter) return false;
+   119→    if (officialFilter === "OFFICIAL" && !p.isOfficial) return false;
+   120→    if (officialFilter === "NORMAL" && p.isOfficial) return false;
+   121→    return true;
+   122→  }), [plans, kindFilter, typeFilter, officialFilter]);
+   123→
+   124→  const stats = useMemo(() => {
+   125→    const all = plans ?? [];
+   126→    const announcedPeople = new Set<string>();
+   127→    for (const p of all) for (const a of p.announcements ?? []) if (a.personId) announcedPeople.add(a.personId);
+   128→    return {
+   129→      total: all.length,
+   130→      social: all.filter((p) => p.kind === "SOCIAL").length,
+   131→      tour: all.filter((p) => p.kind === "TOUR").length,
+   132→      official: all.filter((p) => p.isOfficial).length,
+   133→      announcedPeople: announcedPeople.size,
+   134→      accepted: all.reduce((s, p) => s + (p.announcements ?? []).filter((a) => a.response === "ACCEPTED").length, 0),
+   135→    };
+   136→  }, [plans]);
+   137→
+   138→  const openCreate = () => { setEditingId(null); setForm({ ...emptyForm }); setFormOpen(true); };
+   139→
+   140→  const openEdit = (p: SocialPlanRow) => {
+   141→    setEditingId(p.id);
+   142→    setForm({
+   143→      title: p.title, kind: p.kind, type: p.type, isOfficial: p.isOfficial,
+   144→      startsAt: toLocalInput(p.startsAt), endsAt: toLocalInput(p.endsAt),
+   145→      venue: p.venue ?? "", meetingPoint: p.meetingPoint ?? "",
+   146→      capacity: p.capacity != null ? String(p.capacity) : "",
+   147→      price: p.price != null ? String(p.price) : "",
+   148→      currency: p.currency ?? "TRY", status: p.status,
+   149→      description: p.description ?? "", notes: p.notes ?? "",
+   150→    });
+   151→    setFormOpen(true);
+   152→  };
+   153→
+   154→  const saveForm = async () => {
+   155→    if (!currentEditionId) return;
+   156→    if (!form.title.trim()) { toast({ title: "Başlık zorunlu", variant: "destructive" }); return; }
+   157→    setBusy(true);
+   158→    try {
+   159→      const body = {
+   160→        title: form.title.trim(), kind: form.kind, type: form.type, isOfficial: form.isOfficial,
+   161→        startsAt: form.startsAt ? new Date(form.startsAt).toISOString() : null,
+   162→        endsAt: form.endsAt ? new Date(form.endsAt).toISOString() : null,
+   163→        venue: form.venue || null, meetingPoint: form.meetingPoint || null,
+   164→        capacity: form.capacity ? Number(form.capacity) : null,
+   165→        price: form.price ? Number(form.price) : null,
+   166→        currency: form.currency, status: form.status,
+   167→        description: form.description || null, notes: form.notes || null,
+   168→        editionId: currentEditionId,
+   169→      };
+   170→      if (editingId) await apiSend(`/api/social-plans/${editingId}`, "PUT", body);
+   171→      else await apiSend("/api/social-plans", "POST", body);
+   172→      toast({ title: editingId ? "Plan güncellendi" : "Plan oluşturuldu", description: `${form.title} — ${label(SOCIAL_KINDS, form.kind)}` });
+   173→      setFormOpen(false);
+   174→      reload(); bump();
+   175→    } catch (e) {
+   176→      toast({ title: "Kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   177→    } finally { setBusy(false); }
+   178→  };
+   179→
+   180→  const removePlan = async (p: SocialPlanRow) => {
+   181→    if (!window.confirm(`"${p.title}" planı ve tüm duyuruları silinsin mi?`)) return;
+   182→    try {
+   183→      await apiSend(`/api/social-plans/${p.id}`, "DELETE");
+   184→      toast({ title: "Plan silindi" });
+   185→      reload(); bump();
+   186→    } catch (e) {
+   187→      toast({ title: "Silinemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   188→    }
+   189→  };
+   190→
+   191→  const openAnnounce = (p: SocialPlanRow) => {
+   192→    setAnnouncePlan(p);
+   193→    setAnnounceChannel("IN_APP");
+   194→    setAnnounceMessage(`${p.title} — ${p.startsAt ? new Date(p.startsAt).toLocaleString("tr-TR") : "tarih açıklanacak"} tarihli ${label(SOCIAL_KINDS, p.kind).toLowerCase()} planına davetlisiniz.`);
+   195→    setAnnounceSelected([]);
+   196→    setAnnounceSearch("");
+   197→  };
+   198→
+   199→  const sendAnnouncements = async () => {
+   200→    if (!announcePlan || announceSelected.length === 0) {
+   201→      toast({ title: "Kişi seçin", variant: "destructive" }); return;
+   202→    }
+   203→    setAnnounceBusy(true);
+   204→    try {
+   205→      let n = 0;
+   206→      for (const personId of announceSelected) {
+   207→        const person = personOptions.find((p) => p.id === personId);
+   208→        await apiSend("/api/social-announcements", "POST", {
+   209→          planId: announcePlan.id, personId,
+   210→          fullName: person ? `${person.firstName} ${person.lastName}` : null,
+   211→          channel: announceChannel, message: announceMessage || null, response: "INVITED",
+   212→        });
+   213→        n++;
+   214→      }
+   215→      if (announcePlan.status === "DRAFT") {
+   216→        await apiSend(`/api/social-plans/${announcePlan.id}`, "PUT", { status: "ANNOUNCED" });
+   217→      }
+   218→      toast({ title: "Duyuru gönderildi", description: `${n} kişiye ${label(SOCIAL_ANNOUNCE_CHANNELS, announceChannel).toLowerCase()} ile duyuruldu.` });
+   219→      setAnnouncePlan(null);
+   220→      reload(); bump();
+   221→    } catch (e) {
+   222→      toast({ title: "Duyuru gönderilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   223→    } finally { setAnnounceBusy(false); }
+   224→  };
+   225→
+   226→  // duyuru yanıtı (mobil/portal simülasyonu — listeden yanıt değiştirilebilir)
+   227→  const setResponse = async (a: PlanAnnouncement, response: "ACCEPTED" | "DECLINED") => {
+   228→    try {
+   229→      await apiSend(`/api/social-announcements/${a.id}`, "PUT", { response, respondedAt: new Date().toISOString() });
+   230→      toast({ title: response === "ACCEPTED" ? "Katılıyor işaretlendi" : "Katılmıyor işaretlendi" });
+   231→      reload(); bump();
+   232→    } catch (e) {
+   233→      toast({ title: "Yanıt kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   234→    }
+   235→  };
+   236→
+   237→  const removeAnnouncement = async (a: PlanAnnouncement) => {
+   238→    try {
+   239→      await apiSend(`/api/social-announcements/${a.id}`, "DELETE");
+   240→      reload(); bump();
+   241→    } catch (e) {
+   242→      toast({ title: "Duyuru silinemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   243→    }
+   244→  };
+   245→
+   246→  if (!currentEditionId) return <EmptyState title="Edisyon seçin" desc="Sosyal & tur planları edisyona bağlıdır." />;
+   247→
+   248→  const typeOptions = Object.entries(SOCIAL_PLAN_TYPES).filter(([k]) =>
+   249→    kindFilter === "TOUR" ? ["CULTURAL_TOUR", "CITY_TOUR", "TECHNICAL_TOUR", "OTHER"].includes(k) : true);
+   250→
+   251→  return (
+   252→    <div className="space-y-5">
+   253→      <PageHeader title="Sosyal & Tur Planı" desc="Sosyal etkinlik planları ile tur planları tek modülde — çeşit seçilir, resmi plandır, kişilere duyurulur">
+   254→        <Button size="sm" onClick={openCreate}><Icons.Plus className="size-4" /> Yeni Plan</Button>
+   255→      </PageHeader>
+   256→
+   257→      {/* KPI şeridi */}
+   258→      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+   259→        <KpiCard label="Toplam Plan" value={stats.total} icon={<Icons.CalendarDays className="size-4" />} />
+   260→        <KpiCard label="Sosyal Etkinlik" value={stats.social} tone="amber" icon={<Icons.PartyPopper className="size-4" />} />
+   261→        <KpiCard label="Tur Planı" value={stats.tour} tone="teal" icon={<Icons.Bus className="size-4" />} />
+   262→        <KpiCard label="Resmi Plan" value={stats.official} tone="violet" icon={<Icons.Landmark className="size-4" />} />
+   263→        <KpiCard label="Duyurulan Kişi" value={stats.announcedPeople} tone="neutral" icon={<Icons.Megaphone className="size-4" />} />
+   264→        <KpiCard label="Katılıyor" value={stats.accepted} tone="emerald" icon={<Icons.CheckCircle2 className="size-4" />} />
+   265→      </div>
+   266→
+   267→      {/* filtreler */}
+   268→      <div className="flex flex-wrap items-center gap-2">
+   269→        <div className="flex gap-1 rounded-lg border p-1">
+   270→          {(["ALL", "SOCIAL", "TOUR"] as const).map((k) => (
+   271→            <button key={k} onClick={() => setKindFilter(k)}
+   272→              className={cn("rounded px-2.5 py-1 text-xs font-medium transition", kindFilter === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}>
+   273→              {k === "ALL" ? "Tümü" : label(SOCIAL_KINDS, k)}
+   274→            </button>
+   275→          ))}
+   276→        </div>
+   277→        <Select value={typeFilter} onValueChange={setTypeFilter}>
+   278→          <SelectTrigger className="h-8 w-[170px]" aria-label="Tür filtresi"><SelectValue /></SelectTrigger>
+   279→          <SelectContent>
+   280→            <SelectItem value="ALL">Tüm türler</SelectItem>
+   281→            {typeOptions.map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   282→          </SelectContent>
+   283→        </Select>
+   284→        <div className="flex gap-1 rounded-lg border p-1">
+   285→          {([["ALL", "Tümü"], ["OFFICIAL", "Resmi"], ["NORMAL", "Resmi Değil"]] as const).map(([k, v]) => (
+   286→            <button key={k} onClick={() => setOfficialFilter(k)}
+   287→              className={cn("rounded px-2.5 py-1 text-xs font-medium transition", officialFilter === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}>
+   288→              {v}
+   289→            </button>
+   290→          ))}
+   291→        </div>
+   292→        <Chip tone="teal">{filtered.length} plan</Chip>
+   293→      </div>
+   294→
+   295→      {/* plan kartları — çift tık ile düzenle (her öğe kuralı) */}
+   296→      {filtered.length === 0 ? (
+   297→        <EmptyState
+   298→          title="Henüz plan yok"
+   299→          desc="Gala, kokteyl, resmi yemek, kültür/teknik tur… Tüm sosyal planlar ve turlar bu ekranda toplanır."
+   300→          action={<Button onClick={openCreate}><Icons.Plus className="size-4" /> İlk planı oluştur</Button>}
+   301→        />
+   302→      ) : (
+   303→        <div className="grid gap-4 lg:grid-cols-2">
+   304→          {filtered.map((p) => {
+   305→            const isTour = p.kind === "TOUR";
+   306→            const anns = p.announcements ?? [];
+   307→            const accepted = anns.filter((a) => a.response === "ACCEPTED").length;
+   308→            return (
+   309→              <SectionCard
+   310→                key={p.id}
+   311→                title={p.title}
+   312→                desc={[label(SOCIAL_PLAN_TYPES, p.type), p.venue].filter(Boolean).join(" · ")}
+   313→                action={<StatusBadge map={SOCIAL_PLAN_STATUS} value={p.status} />}
+   314→                className="cursor-pointer transition hover:shadow-md"
+   315→              >
+   316→                <div onDoubleClick={() => openEdit(p)} title="Çift tıkla → düzenle">
+   317→                  <div className="flex flex-wrap items-center gap-1.5">
+   318→                    <Chip tone={isTour ? "teal" : "amber"}><span className="inline-flex items-center gap-1">{isTour ? <Icons.Bus className="size-3" /> : <Icons.PartyPopper className="size-3" />}{label(SOCIAL_KINDS, p.kind)}</span></Chip>
+   319→                    {p.isOfficial && <Chip tone="violet"><span className="inline-flex items-center gap-1"><Icons.Landmark className="size-3" />Resmi</span></Chip>}
+   320→                    {p.capacity != null && <Chip>{p.capacity} kişi kapasite</Chip>}
+   321→                    {p.price != null && /* F6: kuruş→₺ */ (<Chip tone="emerald">{(p.price / 100).toLocaleString("tr-TR")} {p.currency}</Chip>)}
+   322→                    {anns.length > 0 && <Chip>{anns.length} duyuru{accepted > 0 ? ` · ${accepted} katılıyor` : ""}</Chip>}
+   323→                  </div>
+   324→                  <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+   325→                    {p.startsAt && <p className="flex items-center gap-1.5"><Icons.CalendarDays className="size-3.5" /> {new Date(p.startsAt).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" })}{p.endsAt ? ` — ${new Date(p.endsAt).toLocaleTimeString("tr-TR", { timeStyle: "short" })}` : ""}</p>}
+   326→                    {p.venue && <p className="flex items-center gap-1.5"><Icons.MapPin className="size-3.5" /> {p.venue}</p>}
+   327→                    {p.meetingPoint && <p className="flex items-center gap-1.5"><Icons.Flag className="size-3.5" /> Buluşma: {p.meetingPoint}</p>}
+   328→                    {p.description && <p className="line-clamp-2 pt-0.5">{p.description}</p>}
+   329→                    {p.notes && <p className="line-clamp-1 italic"><Icons.StickyNote className="mr-1 inline size-3.5" />{p.notes}</p>}
+   330→                  </div>
+   331→                </div>
+   332→
+   333→                {/* duyurular */}
+   334→                {expandedId === p.id && (
+   335→                  <div className="mt-3 max-h-56 space-y-1.5 overflow-y-auto rounded-lg border bg-muted/30 p-2 maven-scroll">
+   336→                    {anns.length === 0 && <p className="p-2 text-xs text-muted-foreground">Henüz duyuru yok — “Duyur” ile kişi seçin.</p>}
+   337→                    {anns.map((a) => (
+   338→                      <div key={a.id} className="flex items-center gap-2 rounded border bg-background px-2 py-1.5 text-xs">
+   339→                        <Icons.User className="size-3.5 shrink-0 text-muted-foreground" />
+   340→                        <span className="min-w-0 flex-1 truncate font-medium">{a.fullName ?? "Kişi"}</span>
+   341→                        <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">{label(SOCIAL_ANNOUNCE_CHANNELS, a.channel)}</span>
+   342→                        {a.response === "ACCEPTED" ? <Chip tone="emerald">{label(SOCIAL_RESPONSE, a.response)}</Chip>
+   343→                          : a.response === "DECLINED" ? <Chip tone="rose">{label(SOCIAL_RESPONSE, a.response)}</Chip>
+   344→                          : <Chip tone="amber">{label(SOCIAL_RESPONSE, "INVITED")}</Chip>}
+   345→                        <Button size="icon" variant="ghost" className="size-6" aria-label="Katılıyor" onClick={() => setResponse(a, "ACCEPTED")}><Icons.Check className="size-3 text-emerald-600" /></Button>
+   346→                        <Button size="icon" variant="ghost" className="size-6" aria-label="Katılmıyor" onClick={() => setResponse(a, "DECLINED")}><Icons.X className="size-3 text-rose-500" /></Button>
+   347→                        <Button size="icon" variant="ghost" className="size-6" aria-label="Duyuruyu sil" onClick={() => removeAnnouncement(a)}><Icons.Trash2 className="size-3 text-muted-foreground" /></Button>
+   348→                      </div>
+   349→                    ))}
+   350→                  </div>
+   351→                )}
+   352→
+   353→                <div className="mt-3 flex flex-wrap gap-2">
+   354→                  <Button size="sm" onClick={() => openAnnounce(p)}><Icons.Megaphone className="size-3.5" /> Duyur</Button>
+   355→                  {anns.length > 0 && (
+   356→                    <Button size="sm" variant="outline" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}>
+   357→                      <Icons.BellRing className="size-3.5" /> Duyurular ({anns.length})
+   358→                    </Button>
+   359→                  )}
+   360→                  <Button size="sm" variant="ghost" onClick={() => openEdit(p)} aria-label={`${p.title} düzenle`}><Icons.Pencil className="size-3.5" /> Düzenle</Button>
+   361→                  <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => removePlan(p)} aria-label={`${p.title} sil`}><Icons.Trash2 className="size-3.5" /></Button>
+   362→                </div>
+   363→              </SectionCard>
+   364→            );
+   365→          })}
+   366→        </div>
+   367→      )}
+   368→
+   369→      {/* Plan formu — create + edit aynı diyalo */}
+   370→      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+   371→        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl maven-scroll">
+   372→          <DialogHeader>
+   373→            <DialogTitle>{editingId ? "Planı Düzenle" : "Yeni Sosyal / Tur Planı"} </DialogTitle>
+   374→            <DialogDescription>Sosyal etkinlik ve tur planları bu tek formdan yönetilir; tür ve resmi ayrımı seçilir.</DialogDescription>
+   375→          </DialogHeader>
+   376→          <div className="grid gap-3">
+   377→            <div className="grid grid-cols-2 gap-2">
+   378→              <button type="button" onClick={() => setForm({ ...form, kind: "SOCIAL" })}
+   379→                className={cn("flex items-center justify-center gap-2 rounded-lg border-2 p-2.5 text-sm font-medium transition", form.kind === "SOCIAL" ? "border-primary bg-primary/5 text-primary" : "text-muted-foreground hover:border-primary/30")}>
+   380→                <Icons.PartyPopper className="size-4" /> Sosyal Etkinlik
+   381→              </button>
+   382→              <button type="button" onClick={() => setForm({ ...form, kind: "TOUR", type: form.type.startsWith("GALA") || ["GALA", "COCKTAIL", "OFFICIAL_DINNER", "WELCOME_RECEPTION", "CLOSING", "NETWORKING"].includes(form.type) ? "CULTURAL_TOUR" : form.type })}
+   383→                className={cn("flex items-center justify-center gap-2 rounded-lg border-2 p-2.5 text-sm font-medium transition", form.kind === "TOUR" ? "border-primary bg-primary/5 text-primary" : "text-muted-foreground hover:border-primary/30")}>
+   384→                <Icons.Bus className="size-4" /> Tur Planı
+   385→              </button>
+   386→            </div>
+   387→            <div><Label>Başlık *</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Açılış Galası / Eski Şehir Turu" className="mt-1" /></div>
+   388→            <div className="grid grid-cols-2 gap-3">
+   389→              <div>
+   390→                <Label>Tür</Label>
+   391→                <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
+   392→                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+   393→                  <SelectContent>
+   394→                    {Object.entries(SOCIAL_PLAN_TYPES).filter(([k]) => form.kind === "TOUR" ? ["CULTURAL_TOUR", "CITY_TOUR", "TECHNICAL_TOUR", "OTHER"].includes(k) : !["CULTURAL_TOUR", "CITY_TOUR", "TECHNICAL_TOUR"].includes(k)).map(([k, v]) => (
+   395→                      <SelectItem key={k} value={k}>{v}</SelectItem>
+   396→                    ))}
+   397→                  </SelectContent>
+   398→                </Select>
+   399→              </div>
+   400→              <div>
+   401→                <Label>Durum</Label>
+   402→                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+   403→                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+   404→                  <SelectContent>{Object.entries(SOCIAL_PLAN_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+   405→                </Select>
+   406→              </div>
+   407→            </div>
+   408→            <div className="flex items-center justify-between rounded-lg border p-3">
+   409→              <div>
+   410→                <p className="text-sm font-medium">Resmi plan</p>
+   411→                <p className="text-xs text-muted-foreground">Kurum / konakçı adına düzenlenen resmi sosyal plan (protokol).</p>
+   412→              </div>
+   413→              <Switch checked={form.isOfficial} onCheckedChange={(v) => setForm({ ...form, isOfficial: v })} aria-label="Resmi plan" />
+   414→            </div>
+   415→            <div className="grid gap-3 sm:grid-cols-2">
+   416→              <div><Label>Başlangıç</Label><Input type="datetime-local" value={form.startsAt} onChange={(e) => setForm({ ...form, startsAt: e.target.value })} className="mt-1" /></div>
+   417→              <div><Label>Bitiş</Label><Input type="datetime-local" value={form.endsAt} onChange={(e) => setForm({ ...form, endsAt: e.target.value })} className="mt-1" /></div>
+   418→              <div><Label>{form.kind === "TOUR" ? "Tur Başlangıç Noktası" : "Mekân"}</Label><Input value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} placeholder={form.kind === "TOUR" ? "Kongre merkezi girişi" : "Haliç Kongre Merkezi"} className="mt-1" /></div>
+   419→              <div><Label>Buluşma Noktası / Notu</Label><Input value={form.meetingPoint} onChange={(e) => setForm({ ...form, meetingPoint: e.target.value })} placeholder="18:30'da lobby'de buluşma" className="mt-1" /></div>
+   420→              <div><Label>Kapasite</Label><Input type="number" min={0} value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} placeholder="200" className="mt-1" /></div>
+   421→              <div className="grid grid-cols-[1fr_90px] gap-2">
+   422→                <div><Label>Ücret</Label><Input type="number" min={0} step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0 = ücretsiz" className="mt-1" /></div>
+   423→                <div><Label>Dvz.</Label><Input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} className="mt-1" /></div>
+   424→              </div>
+   425→            </div>
+   426→            <div><Label>Açıklama</Label><Textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Kısa program akışı, dress code, ikram…" className="mt-1" /></div>
+   427→            <div><Label>Notlar (ekip içi)</Label><Textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="mt-1" /></div>
+   428→          </div>
+   429→          <DialogFooter>
+   430→            <Button variant="ghost" onClick={() => setFormOpen(false)}>Vazgeç</Button>
+   431→            <Button onClick={saveForm} disabled={busy}>{busy ? "Kaydediliyor…" : editingId ? "Değişiklikleri Kaydet" : "Planı Oluştur"}</Button>
+   432→          </DialogFooter>
+   433→        </DialogContent>
+   434→      </Dialog>
+   435→
+   436→      {/* Duyuru diyaloğu */}
+   437→      <Dialog open={Boolean(announcePlan)} onOpenChange={(v) => !v && setAnnouncePlan(null)}>
+   438→        <DialogContent className="sm:max-w-xl">
+   439→          <DialogHeader>
+   440→            <DialogTitle>Plana Duyur — {announcePlan?.title}</DialogTitle>
+   441→            <DialogDescription>Katılımcı listesinden kişi seçin; duyuru kaydı bu plana işlenir ve plan Duyuruldu durumuna geçer.</DialogDescription>
+   442→          </DialogHeader>
+   443→          <div className="grid gap-3">
+   444→            <div className="grid grid-cols-2 gap-3">
+   445→              <div>
+   446→                <Label>Kanal</Label>
+   447→                <Select value={announceChannel} onValueChange={setAnnounceChannel}>
+   448→                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+   449→                  <SelectContent>{Object.entries(SOCIAL_ANNOUNCE_CHANNELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+   450→                </Select>
+   451→              </div>
+   452→              <div><Label>Duyurulacak kişi sayısı</Label>
+   453→                <div className="mt-1 flex items-center gap-2">
+   454→                  <Chip tone="teal">{announceSelected.length} / {personOptions.length}</Chip>
+   455→                  {announceSelected.length > 0 && <Button size="sm" variant="ghost" onClick={() => setAnnounceSelected([])}>Temizle</Button>}
+   456→                </div>
+   457→              </div>
+   458→            </div>
+   459→            <div><Label>Mesaj</Label><Textarea rows={3} value={announceMessage} onChange={(e) => setAnnounceMessage(e.target.value)} className="mt-1" /></div>
+   460→            <div>
+   461→              <div className="mb-1 flex items-center justify-between">
+   462→                <Label>Kişiler (edisyon katılımcıları)</Label>
+   463→                <Button size="sm" variant="outline" onClick={() => setAnnounceSelected(personOptions.map((p) => p.id))}>Tümünü seç</Button>
+   464→              </div>
+   465→              <Input placeholder="Kişi ara…" value={announceSearch} onChange={(e) => setAnnounceSearch(e.target.value)} className="mb-2" />
+   466→              <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border p-2 maven-scroll">
+   467→                {personOptions.length === 0 && <p className="p-2 text-xs text-muted-foreground">Bu edisyonda katılım kaydı yok — önce Kayıt & Katılımcılar ekranından katılım ekleyin.</p>}
+   468→                {personOptions.filter((p) => `${p.firstName} ${p.lastName}`.toLowerCase().includes(announceSearch.toLowerCase())).map((p) => {
+   469→                  const checked = announceSelected.includes(p.id);
+   470→                  return (
+   471→                    <button key={p.id} type="button" onClick={() => setAnnounceSelected((prev) => checked ? prev.filter((id) => id !== p.id) : [...prev, p.id])}
+   472→                      className={cn("flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-sm transition", checked ? "border-primary bg-primary/5" : "hover:bg-muted")}>
+   473→                      <span className={cn("grid size-4 shrink-0 place-items-center rounded border", checked ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40")}>
+   474→                        {checked && <Icons.Check className="size-3" />}
+   475→                      </span>
+   476→                      <span className="min-w-0 flex-1 truncate">{p.firstName} {p.lastName}</span>
+   477→                      {p.company && <span className="max-w-[140px] truncate text-xs text-muted-foreground">{p.company}</span>}
+   478→                    </button>
+   479→                  );
+   480→                })}
+   481→              </div>
+   482→            </div>
+   483→          </div>
+   484→          <DialogFooter>
+   485→            <Button variant="ghost" onClick={() => setAnnouncePlan(null)}>Vazgeç</Button>
+   486→            <Button onClick={sendAnnouncements} disabled={announceBusy || announceSelected.length === 0}>
+   487→              <Icons.Send className="size-4" /> {announceBusy ? "Gönderiliyor…" : `${announceSelected.length} kişiye duyur`}
+   488→            </Button>
+   489→          </DialogFooter>
+   490→        </DialogContent>
+   491→      </Dialog>
+   492→    </div>
+   493→  );
+   494→}
+   495→

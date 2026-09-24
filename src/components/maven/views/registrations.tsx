@@ -1,7 +1,7 @@
 "use client";
 // Kayıt & Katılımcılar — çok eksenli durum (kayıt × ödeme × katılım ayrı), onay akışı, LCV, bekleme listesi
-import { useState } from "react";
-import { listEntity, apiSend, apiGet } from "@/lib/client";
+import { useMemo, useState } from "react";
+import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
 import { REGISTRATION_STATUS, WAITLIST_STATUS, REG_SOURCES, FUNDING_SOURCES, ATTENDANCE_STATUS, INVITATION_STATUS, fmtDateTime, fmtDate, label } from "@/lib/constants";
@@ -101,12 +101,17 @@ export function RegistrationsView() {
     }
   };
 
-  const regsLoader = async () => {
-    const items = await listEntity<RegRow>("registrations", { editionId: currentEditionId ?? undefined, status: statusFilter === "ALL" ? undefined : statusFilter, limit: 400 });
-    const needle = q.toLocaleLowerCase("tr-TR");
-    return needle ? items.filter((r) => `${r.participation.person.firstName} ${r.participation.person.lastName} ${r.participation.person.email ?? ""} ${r.confirmationNo}`.toLocaleLowerCase("tr-TR").includes(needle)) : items;
-  };
-  const { data: registrations, error, reload, loading } = useApi<RegRow[]>(regsLoader, [currentEditionId, statusFilter, q, refreshKey]);
+  // TASK-A F6: sunucu-taraflı relation-aware arama (teyit no + kategori + kişi ad/e-posta)
+  // + imleçli load-more — 400 satırlık sessiz kesme KALDIRILDI; tüm kayıtlar erişilebilir.
+  const regsLoader = (cursor?: string) =>
+    listEntityPaged<RegRow>("registrations", {
+      editionId: currentEditionId ?? undefined,
+      status: statusFilter === "ALL" ? undefined : statusFilter,
+      q: q.trim() || undefined,
+      limit: 200,
+    }, cursor);
+  const { data: regsPaged, error, reload, loading, more } = useApi<{ items: RegRow[]; nextCursor?: string | null }>(regsLoader, [currentEditionId, statusFilter, q, refreshKey], { append: true });
+  const registrations = useMemo(() => regsPaged?.items ?? [], [regsPaged]);
   const { data: categories } = useApi<CategoryRow[]>(() => listEntity<CategoryRow>("registration-categories", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
   const { data: invitations } = useApi<InvitationRow[]>(() => listEntity<InvitationRow>("invitations", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey, tab]);
 
@@ -140,7 +145,7 @@ export function RegistrationsView() {
     }
   };
 
-  const counts = (s: string) => (s === "ALL" ? (registrations ?? []).length : (registrations ?? []).filter((r) => r.status === s).length);
+  const counts = (s: string) => (s === "ALL" ? registrations.length : registrations.filter((r) => r.status === s).length);
 
   return (
     <div>
@@ -183,11 +188,11 @@ export function RegistrationsView() {
               <Chip tone="neutral">
                 <span className="inline-flex items-center gap-1"><Icons.MousePointerClick className="size-3" aria-hidden />Çift tıklama ile de açılır</span>
               </Chip>
-              <span className="text-xs text-muted-foreground">{(registrations ?? []).length} kayıt listelendi</span>
+              <span className="text-xs text-muted-foreground">{registrations.length} kayıt listelendi</span>
             </span>
           </div>
 
-          {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (registrations ?? []).length === 0 ? (
+          {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : registrations.length === 0 ? (
             <EmptyState title="Bu filtrelerle eşleşen kayıt yok" desc="Henüz kayıt yoksa kayıt bağlantısını paylaşın veya ilk kişiyi ekleyin." />
           ) : (
             <div className="overflow-hidden rounded-xl border bg-card">
@@ -206,7 +211,7 @@ export function RegistrationsView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(registrations ?? []).map((r) => (
+                    {registrations.map((r) => (
                       <tr
                         key={r.id}
                         className="cursor-pointer border-b transition hover:bg-muted/40 last:border-0"
@@ -260,6 +265,15 @@ export function RegistrationsView() {
                   </tbody>
                 </table>
               </div>
+              {/* TASK-A F6: kesintisiz yükleme — 200'er sayfalık imleç yürüyüşü, sessiz kesme yok */}
+              {more?.hasMore && (
+                <div className="flex items-center justify-center border-t bg-muted/20 p-3">
+                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={more.loading} onClick={more.next}>
+                    {more.loading ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ChevronsDown className="size-3.5" />}
+                    Daha fazla yükle
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </>

@@ -54,6 +54,7 @@ export async function POST(req: NextRequest) {
     if (blockers.length > 0 && !forceReason) {
       const scan = await db.scanEvent.create({
         data: {
+          editionId: participation.editionId, // TASK-A F6: denormalize — edisyon sayımları index ile
           participationId: participation.id,
           credentialId: credential?.id,
           personId: person.id,
@@ -96,6 +97,7 @@ export async function POST(req: NextRequest) {
 
     const scan = await db.scanEvent.create({
       data: {
+        editionId: participation.editionId, // TASK-A F6: denormalize — edisyon sayımları index ile
         participationId: participation.id,
         credentialId: credential?.id,
         personId: person.id,

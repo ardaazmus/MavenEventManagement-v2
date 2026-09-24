@@ -19,6 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useLang, t } from "@/lib/i18n";
 
 function toLocalInput(iso?: string | null): string {
   if (!iso) return "";
@@ -51,6 +52,7 @@ const emptyForm = {
 };
 
 export function B2bView() {
+  useLang();
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
 
@@ -120,7 +122,7 @@ export function B2bView() {
 
   const saveForm = async () => {
     if (!currentEditionId) return;
-    if (!form.subject.trim()) { toast({ title: "Konu zorunlu", variant: "destructive" }); return; }
+    if (!form.subject.trim()) { toast({ title: t("b2b.subjectRequired"), variant: "destructive" }); return; }
     setBusy(true);
     try {
       const body = {
@@ -134,22 +136,22 @@ export function B2bView() {
       };
       if (editingId) await apiSend(`/api/b2b-plans/${editingId}`, "PUT", body);
       else await apiSend("/api/b2b-plans", "POST", body);
-      toast({ title: editingId ? "B2B planı güncellendi" : "B2B planı oluşturuldu", description: form.subject });
+      toast({ title: editingId ? t("b2b.planUpdated") : t("b2b.planCreated"), description: form.subject });
       setFormOpen(false);
       reload(); bump();
     } catch (e) {
-      toast({ title: "Kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("b2b.saveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setBusy(false); }
   };
 
   const removePlan = async (p: B2bPlanRow) => {
-    if (!window.confirm(`"${p.subject}" B2B planı ve tüm atamaları silinsin mi?`)) return;
+    if (!window.confirm(t("b2b.deleteConfirm", { subject: p.subject }))) return;
     try {
       await apiSend(`/api/b2b-plans/${p.id}`, "DELETE");
-      toast({ title: "Plan silindi" });
+      toast({ title: t("b2b.planDeleted") });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Silinemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("b2b.deleteFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     }
   };
 
@@ -169,11 +171,11 @@ export function B2bView() {
         await apiSend("/api/b2b-assignments", "POST", { planId: assignPlan.id, personId, role: assignRole, status: "ASSIGNED" });
         n++;
       }
-      toast({ title: "Atama tamamlandı", description: `${n} kişiye B2B planı atandı — mobil uygulamadan yanıt bekleniyor.` });
+      toast({ title: t("b2b.assignDoneTitle"), description: t("b2b.assignDoneDesc", { count: n }) });
       setAssignPlan(null);
       reload(); bump();
     } catch (e) {
-      toast({ title: "Atanamadı", description: e instanceof Error ? e.message : "Hata (aynı kişiye çift atama olabilir)", variant: "destructive" });
+      toast({ title: t("b2b.assignFailed"), description: e instanceof Error ? e.message : t("b2b.assignErrorFallback"), variant: "destructive" });
     } finally { setAssignBusy(false); }
   };
 
@@ -182,27 +184,27 @@ export function B2bView() {
       await apiSend(`/api/b2b-assignments/${a.id}`, "DELETE");
       reload(); bump();
     } catch (e) {
-      toast({ title: "Atama kaldırılamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("b2b.unassignFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     }
   };
 
   const organizerApprove = async (a: B2bAssignmentRow, approved: boolean) => {
     try {
       const r = await apiSend<{ planActivated?: boolean }>("/api/flows", "POST", { action: "b2b.approve", assignmentId: a.id, approved });
-      toast({ title: approved ? "Organizatör onayı verildi" : "Organizatör onayı geri alındı", description: r.planActivated ? "Karşılıklı onay tamam — plan ETKİN duruma geçti!" : undefined });
+      toast({ title: approved ? t("b2b.orgApproved") : t("b2b.orgApprovalRevoked"), description: r.planActivated ? t("b2b.planActivatedToast") : undefined });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Onay işlenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("b2b.approveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     }
   };
 
   const setPlanStatus = async (p: B2bPlanRow, status: string) => {
     try {
       await apiSend(`/api/b2b-plans/${p.id}`, "PUT", { status });
-      toast({ title: `Plan durumu: ${label(B2B_PLAN_STATUS, status)}` });
+      toast({ title: t("b2b.planStatusToast", { status: label(B2B_PLAN_STATUS, status) }) });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Durum değiştirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("b2b.statusChangeFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     }
   };
 
@@ -217,22 +219,22 @@ export function B2bView() {
     try {
       const feedback = (mobileFeedback[a.id] ?? "").trim() || undefined;
       const r = await apiSend<{ planActivated?: boolean }>("/api/flows", "POST", { action: "b2b.respond", assignmentId: a.id, accepted, feedback, respondedBy: "Mobil Uygulama" });
-      toast({ title: accepted ? "Plan kabul edildi ✓" : "Plan reddedildi", description: r.planActivated ? "Karşılıklı onay tamamlandı — plan etkin." : "Organizatör onayı bekleniyor." });
+      toast({ title: accepted ? t("b2b.mobileAccepted") : t("b2b.mobileDeclined"), description: r.planActivated ? t("b2b.mobileActivatedDesc") : t("b2b.mobilePendingOrgDesc") });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Yanıt gönderilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("b2b.respondFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     }
   };
 
   const saveFeedbackMobile = async (a: B2bAssignmentRow) => {
     try {
       const feedback = (mobileFeedback[a.id] ?? "").trim();
-      if (!feedback) { toast({ title: "Görüş yazın", variant: "destructive" }); return; }
+      if (!feedback) { toast({ title: t("b2b.feedbackRequired"), variant: "destructive" }); return; }
       await apiSend(`/api/b2b-assignments/${a.id}`, "PUT", { feedback, feedbackAt: new Date().toISOString() });
-      toast({ title: "Görüş kaydedildi", description: "Organizatör görüşü panoda görebilir." });
+      toast({ title: t("b2b.feedbackSaved"), description: t("b2b.feedbackSavedDesc") });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Görüş kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("b2b.feedbackSaveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     }
   };
 
@@ -242,45 +244,45 @@ export function B2bView() {
     return Array.from(map.values());
   }, [plans]);
 
-  if (!currentEditionId) return <EmptyState title="Edisyon seçin" desc="B2B planları edisyona bağlıdır." />;
+  if (!currentEditionId) return <EmptyState title={t("b2b.selectEditionTitle")} desc={t("b2b.selectEditionDesc")} />;
 
   return (
     <div className="space-y-5">
-      <PageHeader title="B2B Planı" desc="Konu · Saat · Etkinlik yeri · Konum girişli B2B planları — kişilere atanır, mobil uygulamadan kabul edilir, karşılıklı onayla etkinleşir">
+      <PageHeader title={t("b2b.title")} desc={t("b2b.desc")}>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={() => { setMobilePersonId(""); setMobileOpen(true); }}>
-            <Icons.Smartphone className="size-4" /> Mobil Önizleme
+            <Icons.Smartphone className="size-4" /> {t("b2b.btnMobilePreview")}
           </Button>
-          <Button size="sm" onClick={openCreate}><Icons.Plus className="size-4" /> Yeni B2B Planı</Button>
+          <Button size="sm" onClick={openCreate}><Icons.Plus className="size-4" /> {t("b2b.btnNewPlan")}</Button>
         </div>
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <KpiCard label="Toplam Plan" value={stats.total} icon={<Icons.Briefcase className="size-4" />} />
-        <KpiCard label="Etkin" value={stats.active} tone="emerald" icon={<Icons.CheckCircle2 className="size-4" />} />
-        <KpiCard label="Onay Bekleyen" value={stats.pending} tone="amber" icon={<Icons.Hourglass className="size-4" />} />
-        <KpiCard label="Atama" value={stats.assignments} tone="violet" icon={<Icons.UserPlus className="size-4" />} />
-        <KpiCard label="Kabul" value={stats.accepted} tone="teal" icon={<Icons.ThumbsUp className="size-4" />} />
-        <KpiCard label="Görüş Bildiren" value={stats.feedbacks} tone="rose" icon={<Icons.MessageSquare className="size-4" />} />
+        <KpiCard label={t("b2b.kpiTotal")} value={stats.total} icon={<Icons.Briefcase className="size-4" />} />
+        <KpiCard label={t("b2b.kpiActive")} value={stats.active} tone="emerald" icon={<Icons.CheckCircle2 className="size-4" />} />
+        <KpiCard label={t("b2b.kpiPending")} value={stats.pending} tone="amber" icon={<Icons.Hourglass className="size-4" />} />
+        <KpiCard label={t("b2b.kpiAssignments")} value={stats.assignments} tone="violet" icon={<Icons.UserPlus className="size-4" />} />
+        <KpiCard label={t("b2b.kpiAccepted")} value={stats.accepted} tone="teal" icon={<Icons.ThumbsUp className="size-4" />} />
+        <KpiCard label={t("b2b.kpiFeedbacks")} value={stats.feedbacks} tone="rose" icon={<Icons.MessageSquare className="size-4" />} />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="h-8 w-[210px]" aria-label="Durum filtresi"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-8 w-[210px]" aria-label={t("b2b.statusFilterAria")}><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="ALL">Tüm durumlar</SelectItem>
+            <SelectItem value="ALL">{t("b2b.allStatuses")}</SelectItem>
             {Object.entries(B2B_PLAN_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Chip tone="teal">{filtered.length} plan</Chip>
-        <p className="text-xs text-muted-foreground">Karşılıklı onay: kişinin mobil kabulü + organizatör onayı → plan ETKİN olur.</p>
+        <Chip tone="teal">{t("b2b.planCount", { count: filtered.length })}</Chip>
+        <p className="text-xs text-muted-foreground">{t("b2b.mutualApprovalHint")}</p>
       </div>
 
       {filtered.length === 0 ? (
         <EmptyState
-          title="Henüz B2B planı yok"
-          desc="Konu, saat, etkinlik yeri ve konum bilgisi girip planı kişilere atayın; mobil uygulamadan gelen kabul ve görüşleri buradan izleyin."
-          action={<Button onClick={openCreate}><Icons.Plus className="size-4" /> İlk B2B planını oluştur</Button>}
+          title={t("b2b.emptyTitle")}
+          desc={t("b2b.emptyDesc")}
+          action={<Button onClick={openCreate}><Icons.Plus className="size-4" /> {t("b2b.btnCreateFirst")}</Button>}
         />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -291,16 +293,16 @@ export function B2bView() {
               <SectionCard
                 key={p.id}
                 title={p.subject}
-                desc={[p.venue, p.location].filter(Boolean).join(" · ") || "Yer/konum girilmedi"}
+                desc={[p.venue, p.location].filter(Boolean).join(" · ") || t("b2b.noVenue")}
                 action={<StatusBadge map={B2B_PLAN_STATUS} value={p.status} />}
                 className="transition hover:shadow-md"
               >
-                <div onDoubleClick={() => openEdit(p)} title="Çift tıkla → düzenle">
+                <div onDoubleClick={() => openEdit(p)} title={t("b2b.doubleClickEdit")}>
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {p.isPrivate ? <Chip tone="violet"><span className="inline-flex items-center gap-1"><Icons.Lock className="size-3" />Kişiye özel</span></Chip> : <Chip tone="teal">Genel</Chip>}
+                    {p.isPrivate ? <Chip tone="violet"><span className="inline-flex items-center gap-1"><Icons.Lock className="size-3" />{t("b2b.chipPrivate")}</span></Chip> : <Chip tone="teal">{t("b2b.chipPublic")}</Chip>}
                     {p.startsAt && <Chip><span className="inline-flex items-center gap-1"><Icons.Clock className="size-3" />{new Date(p.startsAt).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}</span></Chip>}
                     {p.location && <Chip><span className="inline-flex items-center gap-1"><Icons.MapPin className="size-3" />{p.location}</span></Chip>}
-                    <Chip tone={allAccepted && asg.some((a) => a.organizerApproved) ? "emerald" : "amber"}><Icons.Users className="mr-1 inline size-3" />{asg.length} kişi</Chip>
+                    <Chip tone={allAccepted && asg.some((a) => a.organizerApproved) ? "emerald" : "amber"}><Icons.Users className="mr-1 inline size-3" />{t("b2b.personCount", { count: asg.length })}</Chip>
                   </div>
                   {p.description && <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{p.description}</p>}
                   {p.notes && <p className="mt-1 line-clamp-1 text-xs italic text-muted-foreground"><Icons.StickyNote className="mr-1 inline size-3" />{p.notes}</p>}
@@ -313,21 +315,21 @@ export function B2bView() {
                       <div key={a.id} className="rounded border bg-background px-2 py-1.5 text-xs">
                         <div className="flex items-center gap-2">
                           <Icons.User className="size-3.5 shrink-0 text-muted-foreground" />
-                          <span className="min-w-0 flex-1 truncate font-medium">{a.person ? `${a.person.firstName} ${a.person.lastName}` : "Kişi"}{a.person?.company ? ` — ${a.person.company}` : ""}</span>
+                          <span className="min-w-0 flex-1 truncate font-medium">{a.person ? `${a.person.firstName} ${a.person.lastName}` : t("b2b.personFallback")}{a.person?.company ? ` — ${a.person.company}` : ""}</span>
                           <Chip>{label(B2B_ROLES, a.role)}</Chip>
                           {a.status === "ACCEPTED" ? <Chip tone="emerald">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>
                             : a.status === "DECLINED" ? <Chip tone="rose">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>
                             : <Chip tone="amber">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>}
                           {a.organizerApproved ? (
-                            <Button size="icon" variant="ghost" className="size-6" aria-label="Organizatör onayını geri al" onClick={() => organizerApprove(a, false)} title="Onaylı — geri almak için tıkla"><Icons.BadgeCheck className="size-3.5 text-emerald-600" /></Button>
+                            <Button size="icon" variant="ghost" className="size-6" aria-label={t("b2b.orgRevokeAria")} onClick={() => organizerApprove(a, false)} title={t("b2b.orgRevokeTitle")}><Icons.BadgeCheck className="size-3.5 text-emerald-600" /></Button>
                           ) : (
-                            <Button size="icon" variant="ghost" className="size-6" aria-label="Organizatör onayı ver" onClick={() => organizerApprove(a, true)} title="Organizatör onayı ver"><Icons.Circle className="size-3.5 text-muted-foreground" /></Button>
+                            <Button size="icon" variant="ghost" className="size-6" aria-label={t("b2b.orgApproveAria")} onClick={() => organizerApprove(a, true)} title={t("b2b.orgApproveTitle")}><Icons.Circle className="size-3.5 text-muted-foreground" /></Button>
                           )}
-                          <Button size="icon" variant="ghost" className="size-6" aria-label="Atamayı kaldır" onClick={() => removeAssignment(a)}><Icons.Trash2 className="size-3 text-muted-foreground" /></Button>
+                          <Button size="icon" variant="ghost" className="size-6" aria-label={t("b2b.removeAssignmentAria")} onClick={() => removeAssignment(a)}><Icons.Trash2 className="size-3 text-muted-foreground" /></Button>
                         </div>
                         {a.feedback && (
                           <p className="mt-1 flex items-start gap-1 rounded bg-teal-500/10 px-1.5 py-1 text-[11px] text-teal-700">
-                            <Icons.MessageSquare className="mt-0.5 size-3 shrink-0" /> Görüş: {a.feedback}
+                            <Icons.MessageSquare className="mt-0.5 size-3 shrink-0" /> {t("b2b.feedbackLabel", { feedback: a.feedback })}
                           </p>
                         )}
                       </div>
@@ -336,16 +338,16 @@ export function B2bView() {
                 )}
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => openAssign(p)}><Icons.UserPlus className="size-3.5" /> Kişi Ata</Button>
+                  <Button size="sm" onClick={() => openAssign(p)}><Icons.UserPlus className="size-3.5" /> {t("b2b.btnAssign")}</Button>
                   {asg.length > 0 && (
                     <Button size="sm" variant="outline" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}>
-                      <Icons.List className="size-3.5" /> Atamalar ({asg.length})
+                      <Icons.List className="size-3.5" /> {t("b2b.btnAssignments", { count: asg.length })}
                     </Button>
                   )}
-                  <Button size="sm" variant="ghost" onClick={() => { setMobilePersonId(""); setMobileOpen(true); }} aria-label="Mobil önizleme"><Icons.Smartphone className="size-3.5" /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => openEdit(p)} aria-label="Düzenle"><Icons.Pencil className="size-3.5" /> Düzenle</Button>
-                  {p.status === "ACTIVE" && <Button size="sm" variant="ghost" onClick={() => setPlanStatus(p, "COMPLETED")}>Tamamlandı</Button>}
-                  <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => removePlan(p)} aria-label={`${p.subject} sil`}><Icons.Trash2 className="size-3.5" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setMobilePersonId(""); setMobileOpen(true); }} aria-label={t("b2b.mobilePreviewAria")}><Icons.Smartphone className="size-3.5" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => openEdit(p)} aria-label={t("b2b.editAria")}><Icons.Pencil className="size-3.5" /> {t("b2b.btnEdit")}</Button>
+                  {p.status === "ACTIVE" && <Button size="sm" variant="ghost" onClick={() => setPlanStatus(p, "COMPLETED")}>{t("b2b.btnComplete")}</Button>}
+                  <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => removePlan(p)} aria-label={t("b2b.deleteAria", { subject: p.subject })}><Icons.Trash2 className="size-3.5" /></Button>
                 </div>
               </SectionCard>
             );
@@ -357,18 +359,18 @@ export function B2bView() {
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl maven-scroll">
           <DialogHeader>
-            <DialogTitle>{editingId ? "B2B Planını Düzenle" : "Yeni B2B Planı"}</DialogTitle>
-            <DialogDescription>Konu, saat, etkinlik yeri ve konum girilir; plan kişiye atanır, mobil uygulamadan karşılıklı onayla etkinleşir.</DialogDescription>
+            <DialogTitle>{editingId ? t("b2b.editPlanTitle") : t("b2b.newPlanTitle")}</DialogTitle>
+            <DialogDescription>{t("b2b.formDesc")}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">
-            <div><Label>Konu *</Label><Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="Ölçüm altyapıları iş birliği görüşmesi" className="mt-1" /></div>
+            <div><Label>{t("b2b.labelSubject")}</Label><Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder={t("b2b.placeholderSubject")} className="mt-1" /></div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div><Label>Başlangıç (Saat)</Label><Input type="datetime-local" value={form.startsAt} onChange={(e) => setForm({ ...form, startsAt: e.target.value })} className="mt-1" /></div>
-              <div><Label>Bitiş</Label><Input type="datetime-local" value={form.endsAt} onChange={(e) => setForm({ ...form, endsAt: e.target.value })} className="mt-1" /></div>
-              <div><Label>Etkinlik Yeri</Label><Input value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} placeholder="Lütfi Kırdar — B2B Salonu" className="mt-1" /></div>
-              <div><Label>Konum (masa / stand / oda)</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Masa 12 / Stand B-04" className="mt-1" /></div>
+              <div><Label>{t("b2b.labelStarts")}</Label><Input type="datetime-local" value={form.startsAt} onChange={(e) => setForm({ ...form, startsAt: e.target.value })} className="mt-1" /></div>
+              <div><Label>{t("b2b.labelEnds")}</Label><Input type="datetime-local" value={form.endsAt} onChange={(e) => setForm({ ...form, endsAt: e.target.value })} className="mt-1" /></div>
+              <div><Label>{t("b2b.labelVenue")}</Label><Input value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} placeholder={t("b2b.placeholderVenue")} className="mt-1" /></div>
+              <div><Label>{t("b2b.labelLocation")}</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder={t("b2b.placeholderLocation")} className="mt-1" /></div>
               <div>
-                <Label>Durum</Label>
+                <Label>{t("b2b.labelStatus")}</Label>
                 <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                   <SelectContent>{Object.entries(B2B_PLAN_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
@@ -377,19 +379,19 @@ export function B2bView() {
               <div className="flex items-end">
                 <div className="flex w-full items-center justify-between rounded-lg border p-3">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">Kişiye özel</p>
-                    <p className="text-xs text-muted-foreground">Plan yalnız atanan kişilerin özelinde kalır.</p>
+                    <p className="text-sm font-medium">{t("b2b.privateTitle")}</p>
+                    <p className="text-xs text-muted-foreground">{t("b2b.privateDesc")}</p>
                   </div>
-                  <Switch checked={form.isPrivate} onCheckedChange={(v) => setForm({ ...form, isPrivate: v })} aria-label="Kişiye özel" />
+                  <Switch checked={form.isPrivate} onCheckedChange={(v) => setForm({ ...form, isPrivate: v })} aria-label={t("b2b.privateAria")} />
                 </div>
               </div>
             </div>
-            <div><Label>Açıklama / Gündem</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Görüşme gündemi, hedefler…" className="mt-1" /></div>
-            <div><Label>Notlar (ekip içi)</Label><Textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="mt-1" /></div>
+            <div><Label>{t("b2b.labelDescription")}</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder={t("b2b.placeholderDescription")} className="mt-1" /></div>
+            <div><Label>{t("b2b.labelNotes")}</Label><Textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="mt-1" /></div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setFormOpen(false)}>Vazgeç</Button>
-            <Button onClick={saveForm} disabled={busy}>{busy ? "Kaydediliyor…" : editingId ? "Değişiklikleri Kaydet" : "Planı Oluştur"}</Button>
+            <Button variant="ghost" onClick={() => setFormOpen(false)}>{t("b2b.btnCancel")}</Button>
+            <Button onClick={saveForm} disabled={busy}>{busy ? t("b2b.saving") : editingId ? t("b2b.btnSaveChanges") : t("b2b.btnCreatePlan")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -398,28 +400,28 @@ export function B2bView() {
       <Dialog open={Boolean(assignPlan)} onOpenChange={(v) => !v && setAssignPlan(null)}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Kişi Ata — {assignPlan?.subject}</DialogTitle>
-            <DialogDescription>Atanan kişiler mobil uygulamadan planı kabul eder veya reddeder; organizatör onayıyla birlikte plan etkinleşir.</DialogDescription>
+            <DialogTitle>{t("b2b.assignTitle", { subject: assignPlan?.subject ?? "" })}</DialogTitle>
+            <DialogDescription>{t("b2b.assignDesc")}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Rol (seçilenlere uygulanır)</Label>
+                <Label>{t("b2b.labelRole")}</Label>
                 <Select value={assignRole} onValueChange={setAssignRole}>
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                   <SelectContent>{Object.entries(B2B_ROLES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div><Label>Seçim</Label>
+              <div><Label>{t("b2b.labelSelection")}</Label>
                 <div className="mt-1 flex items-center gap-2">
                   <Chip tone="teal">{assignSelected.length} / {personOptions.length}</Chip>
-                  {assignSelected.length > 0 && <Button size="sm" variant="ghost" onClick={() => setAssignSelected([])}>Temizle</Button>}
+                  {assignSelected.length > 0 && <Button size="sm" variant="ghost" onClick={() => setAssignSelected([])}>{t("b2b.btnClear")}</Button>}
                 </div>
               </div>
             </div>
-            <Input placeholder="Kişi ara…" value={assignSearch} onChange={(e) => setAssignSearch(e.target.value)} />
+            <Input placeholder={t("b2b.searchPerson")} value={assignSearch} onChange={(e) => setAssignSearch(e.target.value)} />
             <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border p-2 maven-scroll">
-              {personOptions.length === 0 && <p className="p-2 text-xs text-muted-foreground">Bu edisyonda katılım kaydı yok.</p>}
+              {personOptions.length === 0 && <p className="p-2 text-xs text-muted-foreground">{t("b2b.noParticipations")}</p>}
               {personOptions.filter((p) => `${p.firstName} ${p.lastName}`.toLowerCase().includes(assignSearch.toLowerCase())).map((p) => {
                 const checked = assignSelected.includes(p.id);
                 const already = (assignPlan?.assignments ?? []).some((a) => a.personId === p.id);
@@ -432,16 +434,16 @@ export function B2bView() {
                     </span>
                     <span className="min-w-0 flex-1 truncate">{p.firstName} {p.lastName}</span>
                     {p.company && <span className="max-w-[140px] truncate text-xs text-muted-foreground">{p.company}</span>}
-                    {already && <span className="text-[10px] text-muted-foreground">zaten atanmış</span>}
+                    {already && <span className="text-[10px] text-muted-foreground">{t("b2b.alreadyAssigned")}</span>}
                   </button>
                 );
               })}
             </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setAssignPlan(null)}>Vazgeç</Button>
+            <Button variant="ghost" onClick={() => setAssignPlan(null)}>{t("b2b.btnCancel")}</Button>
             <Button onClick={sendAssignments} disabled={assignBusy || assignSelected.length === 0}>
-              <Icons.UserPlus className="size-4" /> {assignBusy ? "Atanıyor…" : `${assignSelected.length} kişiye ata`}
+              <Icons.UserPlus className="size-4" /> {assignBusy ? t("b2b.assigning") : t("b2b.assignN", { count: assignSelected.length })}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -451,27 +453,27 @@ export function B2bView() {
       <Dialog open={mobileOpen} onOpenChange={setMobileOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Icons.Smartphone className="size-4" /> Mobil Uygulama Önizlemesi</DialogTitle>
-            <DialogDescription>Gelen mobil uygulamada kişi, kendisine atanan B2B planlarını görür; kabul eder ve görüş bildirir.</DialogDescription>
+            <DialogTitle className="flex items-center gap-2"><Icons.Smartphone className="size-4" /> {t("b2b.mobilePreviewTitle")}</DialogTitle>
+            <DialogDescription>{t("b2b.mobilePreviewDesc")}</DialogDescription>
           </DialogHeader>
           <div className="mx-auto w-full max-w-[320px] rounded-[2rem] border-4 border-slate-800 bg-slate-950 p-2 shadow-xl">
             <div className="mb-2 flex items-center justify-between px-2 pt-1 text-[10px] font-medium text-slate-400">
               <span>MAVEN Mobil</span>
-              <span className="flex items-center gap-1"><span className="size-1.5 rounded-full bg-emerald-400" /> B2B Davetlerim</span>
+              <span className="flex items-center gap-1"><span className="size-1.5 rounded-full bg-emerald-400" /> {t("b2b.mobileMyInvites")}</span>
             </div>
             <div className="rounded-2xl bg-background p-3">
               {mobilePersons.length === 0 ? (
-                <p className="py-6 text-center text-xs text-muted-foreground">Henüz kimseye atama yapılmadı.<br />Bir plana “Kişi Ata” ile başlayın.</p>
+                <p className="py-6 text-center text-xs text-muted-foreground">{t("b2b.mobileEmptyA")}<br />{t("b2b.mobileEmptyB")}</p>
               ) : (
                 <>
                   <Select value={mobilePersonId} onValueChange={setMobilePersonId}>
-                    <SelectTrigger className="h-9 w-full text-xs" aria-label="Mobil kullanıcı seçimi"><SelectValue placeholder="Kişi seçin (mobil kullanıcı)" /></SelectTrigger>
+                    <SelectTrigger className="h-9 w-full text-xs" aria-label={t("b2b.mobileUserSelectAria")}><SelectValue placeholder={t("b2b.mobileSelectPerson")} /></SelectTrigger>
                     <SelectContent>
                       {mobilePersons.map((p) => <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}{p.company ? ` — ${p.company}` : ""}</SelectItem>)}
                     </SelectContent>
                   </Select>
                   <div className="mt-3 max-h-[320px] space-y-2 overflow-y-auto maven-scroll">
-                    {mobilePersonId === "" && <p className="py-4 text-center text-xs text-muted-foreground">Davetlerini görmek için kişi seçin.</p>}
+                    {mobilePersonId === "" && <p className="py-4 text-center text-xs text-muted-foreground">{t("b2b.mobilePickPerson")}</p>}
                     {mobileAssignments.map(({ plan, a }) => (
                       <div key={a.id} className="rounded-xl border p-2.5 text-xs shadow-sm">
                         <p className="flex items-center gap-1 font-semibold"><Icons.Briefcase className="size-3.5 text-primary" /> {plan.subject}</p>
@@ -480,30 +482,30 @@ export function B2bView() {
                           {plan.venue && <p className="flex items-center gap-1"><Icons.MapPin className="size-3" /> {plan.venue}{plan.location ? ` · ${plan.location}` : ""}</p>}
                         </div>
                         <div className="mt-1.5">
-                          {a.status === "ACCEPTED" ? <Chip tone="emerald">{label(B2B_ASSIGNMENT_STATUS, a.status)}{a.organizerApproved ? " · Onaylı" : " · Org. onayı bekleniyor"}</Chip>
+                          {a.status === "ACCEPTED" ? <Chip tone="emerald">{label(B2B_ASSIGNMENT_STATUS, a.status)}{a.organizerApproved ? ` ${t("b2b.approvedShort")}` : ` ${t("b2b.pendingOrgShort")}`}</Chip>
                             : a.status === "DECLINED" ? <Chip tone="rose">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>
                             : <Chip tone="amber">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>}
                         </div>
                         {a.status !== "DECLINED" && (
                           <div className="mt-2 flex gap-1.5">
-                            {a.status !== "ACCEPTED" && <Button size="sm" className="h-7 flex-1 text-xs" onClick={() => respondMobile(a, true)}><Icons.Check className="size-3.5" /> Kabul Et</Button>}
-                            {a.status !== "ACCEPTED" && <Button size="sm" variant="outline" className="h-7 flex-1 text-xs" onClick={() => respondMobile(a, false)}><Icons.X className="size-3.5" /> Reddet</Button>}
+                            {a.status !== "ACCEPTED" && <Button size="sm" className="h-7 flex-1 text-xs" onClick={() => respondMobile(a, true)}><Icons.Check className="size-3.5" /> {t("b2b.btnAccept")}</Button>}
+                            {a.status !== "ACCEPTED" && <Button size="sm" variant="outline" className="h-7 flex-1 text-xs" onClick={() => respondMobile(a, false)}><Icons.X className="size-3.5" /> {t("b2b.btnDecline")}</Button>}
                           </div>
                         )}
-                        <Textarea rows={2} className="mt-2 text-[11px]" placeholder="Görüşünüzü yazın…" value={mobileFeedback[a.id] ?? a.feedback ?? ""} onChange={(e) => setMobileFeedback((prev) => ({ ...prev, [a.id]: e.target.value }))} />
+                        <Textarea rows={2} className="mt-2 text-[11px]" placeholder={t("b2b.placeholderFeedback")} value={mobileFeedback[a.id] ?? a.feedback ?? ""} onChange={(e) => setMobileFeedback((prev) => ({ ...prev, [a.id]: e.target.value }))} />
                         <Button size="sm" variant="secondary" className="mt-1.5 h-7 w-full text-xs" onClick={() => saveFeedbackMobile(a)}>
-                          <Icons.Send className="size-3" /> Görüşü Gönder
+                          <Icons.Send className="size-3" /> {t("b2b.btnSendFeedback")}
                         </Button>
                       </div>
                     ))}
-                    {mobilePersonId !== "" && mobileAssignments.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">Bu kişiye atanmış B2B planı yok.</p>}
+                    {mobilePersonId !== "" && mobileAssignments.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">{t("b2b.mobileNoPlans")}</p>}
                   </div>
                 </>
               )}
             </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setMobileOpen(false)}>Kapat</Button>
+            <Button variant="ghost" onClick={() => setMobileOpen(false)}>{t("b2b.close")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

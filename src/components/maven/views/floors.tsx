@@ -15,6 +15,7 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useLang, t } from "@/lib/i18n";
 
 // plan koordinat uzayı (metre)
 const PLAN_W = 46;
@@ -44,6 +45,7 @@ function dimsFor(sizeSqm: number): { w: number; h: number } {
 }
 
 export function FloorsView() {
+  useLang();
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -95,10 +97,10 @@ export function FloorsView() {
       const res = await apiSend<{ geometryUpdated: number; statusesChanged: number; syncedAt: string }>("/api/floor-studio/sync", "POST", { editionId: currentEditionId, source: "maven", ...body });
       localStorage.setItem("maven.floor.push", res.syncedAt);
       setLastPush(res.syncedAt);
-      toast({ title: okTitle, description: `${okDesc} (${res.geometryUpdated} geometri, ${res.statusesChanged} durum)` });
+      toast({ title: okTitle, description: `${okDesc} ${t("floors.syncResult", { geometry: res.geometryUpdated, statuses: res.statusesChanged })}` });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Senkronizasyon başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("floors.syncFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -108,8 +110,8 @@ export function FloorsView() {
     if (!selected) return;
     void sync(
       { changes: [{ boothUnitId: selected.id, ...draft, label: selected.allocation?.organization?.name ? `${selected.allocation.organization.name} — ${selected.code}` : selected.code }] },
-      selected.floorObject ? "Konum güncellendi" : "Stant yerleştirildi",
-      `${selected.code} plana işlendi`,
+      selected.floorObject ? t("floors.positionUpdated") : t("floors.boothPlaced"),
+      t("floors.appliedToPlan", { code: selected.code }),
     );
   };
 
@@ -118,10 +120,10 @@ export function FloorsView() {
     setBusy(true);
     try {
       await apiSend(`/api/floor-objects/${selected.floorObject.id}`, "DELETE");
-      toast({ title: "Geometri kaldırıldı", description: `${selected.code} plandan çıkarıldı (ticari kayıt korundu).` });
+      toast({ title: t("floors.geometryRemoved"), description: t("floors.geometryRemovedDesc", { code: selected.code }) });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Geometri kaldırılamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("floors.geometryRemoveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -133,16 +135,16 @@ export function FloorsView() {
     Promise.resolve()
       .then(() => apiSend(`/api/booth-units/${selected.id}`, "PUT", { status }))
       .then(() => {
-        toast({ title: "Durum güncellendi", description: `${selected.code} → ${BOOTH_STATUS[status] ?? status}` });
+        toast({ title: t("floors.statusUpdated"), description: `${selected.code} → ${BOOTH_STATUS[status] ?? status}` });
         reload(); bump();
       })
-      .catch((e) => toast({ title: "Durum değiştirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" }))
+      .catch((e) => toast({ title: t("floors.statusChangeFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" }))
       .finally(() => setBusy(false));
   };
 
   const autoArrange = () => {
     if (unplaced.length === 0) {
-      toast({ title: "Yerleşim bekleyen stant yok", description: "Tüm stantlar planda." });
+      toast({ title: t("floors.noUnplaced"), description: t("floors.allPlaced") });
       return;
     }
     // mevcut yerleşimin altına, satır satır sola hizalı yerleştir
@@ -158,19 +160,19 @@ export function FloorsView() {
       rowH = Math.max(rowH, h);
       return { boothUnitId: b.id, ...pos, label: b.allocation?.organization?.name ? `${b.allocation.organization.name} — ${b.code}` : b.code };
     });
-    void sync({ changes }, "Otomatik yerleşim tamamlandı", `${changes.length} stant plana dizildi`);
+    void sync({ changes }, t("floors.autoArrangeDone"), t("floors.autoArrangeDesc", { count: changes.length }));
   };
 
   const pushAll = () => {
     const placed = booths.filter((b) => b.floorObject);
     if (placed.length === 0) {
-      toast({ title: "Gönderilecek geometri yok", description: "Önce stantları yerleştirin." });
+      toast({ title: t("floors.nothingToPush"), description: t("floors.placeFirst") });
       return;
     }
     void sync(
       { changes: placed.map((b) => ({ boothUnitId: b.id, ...b.floorObject! })) },
-      "Floor Studio'ya gönderildi",
-      `${placed.length} stant geometrisi paylaşıldı`,
+      t("floors.pushedTitle"),
+      t("floors.pushedDesc", { count: placed.length }),
     );
   };
 
@@ -181,10 +183,10 @@ export function FloorsView() {
       const now = new Date().toISOString();
       localStorage.setItem("maven.floor.pull", now);
       setLastPull(now);
-      toast({ title: "Plan çekildi", description: `${snap.booths.length} stant, ${snap.decor.length} dekor objesi — anlık görünüm tazelendi.` });
+      toast({ title: t("floors.pulledTitle"), description: t("floors.pulledDesc", { booths: snap.booths.length, decor: snap.decor.length }) });
       reload();
     } catch (e) {
-      toast({ title: "Plan çekilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("floors.pullFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -198,39 +200,39 @@ export function FloorsView() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Floor Studio"
-        desc="Mekânsal stant planı — Maven ticari kaydı tutar, geometri ortak kimlikle (boothUnitId) paylaşılır (§20)"
+        title={t("floors.title")}
+        desc={t("floors.desc")}
       >
         <Button variant="outline" size="sm" onClick={pullFromFloorStudio} disabled={busy}>
-          <Icons.Download className="size-3.5" /> Floor Studio&apos;dan Çek
+          <Icons.Download className="size-3.5" /> {t("floors.btnPull")}
         </Button>
         <Button variant="outline" size="sm" onClick={pushAll} disabled={busy}>
-          <Icons.Send className="size-3.5" /> Plana Gönder
+          <Icons.Send className="size-3.5" /> {t("floors.btnPush")}
         </Button>
         <Button size="sm" onClick={autoArrange} disabled={busy}>
-          <Icons.Sparkles className="size-3.5" /> Otomatik Yerleşim{unplaced.length > 0 ? ` (${unplaced.length})` : ""}
+          <Icons.Sparkles className="size-3.5" /> {t("floors.btnAutoArrange")}{unplaced.length > 0 ? ` (${unplaced.length})` : ""}
         </Button>
       </PageHeader>
 
       {/* KPI şeridi */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        <KpiCard label="Toplam Stant" value={summary?.total ?? 0} sub={`${summary?.totalSqm ?? 0} m² planlanan alan`} icon={<Icons.MapPin className="size-4" />} tone="teal" />
-        <KpiCard label="Planda Yerleşik" value={summary?.placed ?? 0} sub={`${summary?.unplaced ?? 0} stant yerleşim bekliyor`} icon={<Icons.Grid3x3 className="size-4" />} tone="emerald" />
-        <KpiCard label="Müsait" value={summary?.byStatus?.AVAILABLE ?? 0} sub="hemen tahsis edilebilir" icon={<Icons.CircleCheck className="size-4" />} tone="neutral" />
-        <KpiCard label="Sözleşmeli Gelir" value={fmtMoney(summary?.contractedRevenue ?? 0)} sub="CONTRACTED + RESERVED + OCCUPIED" icon={<Icons.BadgeCheck className="size-4" />} tone="violet" />
-        <KpiCard label="Potansiyel Gelir" value={fmtMoney(summary?.potentialRevenue ?? 0)} sub="bloke dışı tüm stant listesi" icon={<Icons.Coins className="size-4" />} tone="amber" />
+        <KpiCard label={t("floors.kpiTotal")} value={summary?.total ?? 0} sub={t("floors.kpiTotalSub", { sqm: summary?.totalSqm ?? 0 })} icon={<Icons.MapPin className="size-4" />} tone="teal" />
+        <KpiCard label={t("floors.kpiPlaced")} value={summary?.placed ?? 0} sub={t("floors.kpiPlacedSub", { count: summary?.unplaced ?? 0 })} icon={<Icons.Grid3x3 className="size-4" />} tone="emerald" />
+        <KpiCard label={t("floors.kpiAvailable")} value={summary?.byStatus?.AVAILABLE ?? 0} sub={t("floors.kpiAvailableSub")} icon={<Icons.CircleCheck className="size-4" />} tone="neutral" />
+        <KpiCard label={t("floors.kpiContracted")} value={fmtMoney(summary?.contractedRevenue ?? 0)} sub="CONTRACTED + RESERVED + OCCUPIED" icon={<Icons.BadgeCheck className="size-4" />} tone="violet" />
+        <KpiCard label={t("floors.kpiPotential")} value={fmtMoney(summary?.potentialRevenue ?? 0)} sub={t("floors.kpiPotentialSub")} icon={<Icons.Coins className="size-4" />} tone="amber" />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
         {/* ── Salon planı ── */}
         <SectionCard
           className="xl:col-span-2"
-          title="Salon Planı"
-          desc={`${data?.edition?.name ?? ""} · ${data?.edition?.venueName ?? "mekân belirsiz"} · koordinatlar metre (46×26 sahne)`}
+          title={t("floors.planTitle")}
+          desc={`${data?.edition?.name ?? ""} · ${data?.edition?.venueName ?? t("floors.venueUnknown")} · ${t("floors.coordsHint")}`}
           action={
             <div className="flex items-center gap-2">
               <Icons.Search className="size-3.5 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Stant / kuruluş ara…" className="h-8 w-40 text-xs sm:w-52" aria-label="Planda ara" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("floors.phSearch")} className="h-8 w-40 text-xs sm:w-52" aria-label={t("floors.ariaSearch")} />
             </div>
           }
         >
@@ -240,7 +242,7 @@ export function FloorsView() {
               onClick={() => setStatusFilter(null)}
               className={cn("rounded-full border px-2.5 py-1 text-[11px] font-medium transition", !statusFilter ? "border-teal-500 bg-teal-500/15 text-teal-800" : "border-border bg-muted/40 text-muted-foreground hover:bg-muted")}
             >
-              Tümü ({summary?.total ?? 0})
+              {t("floors.all")} ({summary?.total ?? 0})
             </button>
             {Object.entries(BOOTH_STATUS).map(([k, v]) => {
               const n = summary?.byStatus?.[k] ?? 0;
@@ -263,11 +265,11 @@ export function FloorsView() {
           {/* plan sahnesi */}
           {booths.length === 0 ? (
             <EmptyState
-              title="Bu edisyon için stant tanımlı değil"
-              desc="Sponsor & Fuar modülünden stant ekleyin; burada plana otomatik yerleşir."
+              title={t("floors.emptyTitle")}
+              desc={t("floors.emptyDesc")}
             />
           ) : (
-            <div className="maven-plan-grid relative w-full overflow-hidden rounded-xl border-2 border-border/80 bg-[oklch(0.97_0.005_190)] shadow-inner" style={{ aspectRatio: `${PLAN_W} / ${PLAN_H}` }} role="application" aria-label="Salon planı">
+            <div className="maven-plan-grid relative w-full overflow-hidden rounded-xl border-2 border-border/80 bg-[oklch(0.97_0.005_190)] shadow-inner" style={{ aspectRatio: `${PLAN_W} / ${PLAN_H}` }} role="application" aria-label={t("floors.ariaPlan")}>
               {/* dekor / servis objeleri — Floor Studio sahipli */}
               {(data?.decor ?? []).map((d) => (
                 <div
@@ -280,7 +282,7 @@ export function FloorsView() {
                     height: `${(d.height / PLAN_H) * 100}%`,
                     transform: d.rotation ? `rotate(${d.rotation}deg)` : undefined,
                   }}
-                  title={`${d.label ?? "Dekor"} (Floor Studio sahipli)`}
+                  title={`${d.label ?? t("floors.decorFallback")} (${t("floors.ownedByFloorStudio")})`}
                 >
                   {d.width / PLAN_W > 0.1 ? d.label : null}
                 </div>
@@ -328,7 +330,7 @@ export function FloorsView() {
           {unplaced.length > 0 && (
             <div className="mt-3 rounded-lg border border-dashed border-amber-300 bg-amber-50/60 p-3">
               <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800">
-                <Icons.AlertCircle className="size-3.5" /> Yerleşim bekleyen {unplaced.length} stant — planda kesikli köşeli görünür
+                <Icons.AlertCircle className="size-3.5" /> {t("floors.unplacedHint", { count: unplaced.length })}
               </p>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {unplaced.map((b) => (
@@ -343,19 +345,19 @@ export function FloorsView() {
 
         {/* ── Sağ kolon: detay + senkron ── */}
         <div className="space-y-4">
-          <SectionCard title="Stant Detayı" desc={selected ? undefined : "Plandan bir stant seçin"}>
+          <SectionCard title={t("floors.detailTitle")} desc={selected ? undefined : t("floors.selectBooth")}>
             {!selected ? (
-              <EmptyState title="Stant seçilmedi" desc="Plan veya yerleşim bekleyenler listesinden seçim yapın." />
+              <EmptyState title={t("floors.noSelectionTitle")} desc={t("floors.noSelectionDesc")} />
             ) : (
               <div className="space-y-4">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="flex items-center gap-2 text-base font-semibold">
                       <span className={cn("grid size-8 place-items-center rounded-lg border-2 text-xs font-bold", BOOTH_PLAN_TONE[selected.status])}>{selected.code}</span>
-                      {selected.allocation?.organization?.name ?? "Tahsis yok"}
+                      {selected.allocation?.organization?.name ?? t("floors.noAllocation")}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {selected.sizeSqm} m² · {selected.type === "SHELL_SCHEME" ? "Panel stand" : selected.type === "SPACE_ONLY" ? "Açık alan" : selected.type} · {fmtMoney(selected.price, selected.currency)}
+                      {selected.sizeSqm} m² · {selected.type === "SHELL_SCHEME" ? t("floors.typeShellScheme") : selected.type === "SPACE_ONLY" ? t("floors.typeSpaceOnly") : selected.type} · {fmtMoney(selected.price, selected.currency)}
                     </p>
                   </div>
                   <StatusBadge map={BOOTH_STATUS} value={selected.status} />
@@ -363,7 +365,7 @@ export function FloorsView() {
 
                 {/* durum eylemleri */}
                 <div>
-                  <Label className="text-[11px] text-muted-foreground">Durum değiştir</Label>
+                  <Label className="text-[11px] text-muted-foreground">{t("floors.changeStatus")}</Label>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {["AVAILABLE", "HELD", "BLOCKED", "RELEASED"].map((s) => (
                       <Button key={s} size="sm" variant={selected.status === s ? "default" : "outline"} className="h-7 px-2.5 text-[11px]" disabled={busy || selected.status === s} onClick={() => setStatus(s)}>
@@ -376,12 +378,12 @@ export function FloorsView() {
                 {/* konum editörü */}
                 <div className="rounded-lg border bg-muted/30 p-3">
                   <p className="flex items-center gap-1.5 text-xs font-semibold">
-                    <Icons.Move className="size-3.5 text-teal-600" /> Konum & ölçü (metre)
+                    <Icons.Move className="size-3.5 text-teal-600" /> {t("floors.positionSize")}
                   </p>
                   <div className="mt-2 grid grid-cols-4 gap-2">
                     {(["x", "y", "width", "height"] as const).map((k) => (
                       <div key={k}>
-                        <Label className="text-[10px] uppercase text-muted-foreground">{k === "x" ? "X" : k === "y" ? "Y" : k === "width" ? "En" : "Boy"}</Label>
+                        <Label className="text-[10px] uppercase text-muted-foreground">{k === "x" ? "X" : k === "y" ? "Y" : k === "width" ? t("floors.axisWidth") : t("floors.axisHeight")}</Label>
                         <Input
                           type="number"
                           step="0.5"
@@ -396,22 +398,22 @@ export function FloorsView() {
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-2">
                     {/* ok takımı — 0.5 m adım */}
-                    <div className="grid grid-cols-3 gap-0.5" aria-label="İnce konum ayarı">
+                    <div className="grid grid-cols-3 gap-0.5" aria-label={t("floors.araNudge")}>
                       <span />
-                      <Button size="sm" variant="ghost" className="size-6 p-0" onClick={() => setDraft((d) => ({ ...d, y: Math.max(0, d.y - 0.5) }))} aria-label="Yukarı taşı"><Icons.ArrowUp className="size-3" /></Button>
+                      <Button size="sm" variant="ghost" className="size-6 p-0" onClick={() => setDraft((d) => ({ ...d, y: Math.max(0, d.y - 0.5) }))} aria-label={t("floors.ariaMoveUp")}><Icons.ArrowUp className="size-3" /></Button>
                       <span />
-                      <Button size="sm" variant="ghost" className="size-6 p-0" onClick={() => setDraft((d) => ({ ...d, x: Math.max(0, d.x - 0.5) }))} aria-label="Sola taşı"><Icons.ArrowLeft className="size-3" /></Button>
-                      <Button size="sm" variant="ghost" className="size-6 p-0" onClick={() => setDraft((d) => ({ ...d, y: Math.min(PLAN_H - d.height, d.y + 0.5) }))} aria-label="Aşağı taşı"><Icons.ArrowDown className="size-3" /></Button>
-                      <Button size="sm" variant="ghost" className="size-6 p-0" onClick={() => setDraft((d) => ({ ...d, x: Math.min(PLAN_W - d.width, d.x + 0.5) }))} aria-label="Sağa taşı"><Icons.ArrowRight className="size-3" /></Button>
+                      <Button size="sm" variant="ghost" className="size-6 p-0" onClick={() => setDraft((d) => ({ ...d, x: Math.max(0, d.x - 0.5) }))} aria-label={t("floors.ariaMoveLeft")}><Icons.ArrowLeft className="size-3" /></Button>
+                      <Button size="sm" variant="ghost" className="size-6 p-0" onClick={() => setDraft((d) => ({ ...d, y: Math.min(PLAN_H - d.height, d.y + 0.5) }))} aria-label={t("floors.ariaMoveDown")}><Icons.ArrowDown className="size-3" /></Button>
+                      <Button size="sm" variant="ghost" className="size-6 p-0" onClick={() => setDraft((d) => ({ ...d, x: Math.min(PLAN_W - d.width, d.x + 0.5) }))} aria-label={t("floors.ariaMoveRight")}><Icons.ArrowRight className="size-3" /></Button>
                     </div>
                     <div className="flex gap-1.5">
                       {selected.floorObject && (
                         <Button size="sm" variant="outline" className="h-8 text-[11px] text-rose-600 hover:bg-rose-50" onClick={removeGeometry} disabled={busy}>
-                          <Icons.Trash2 className="size-3.5" /> Kaldır
+                          <Icons.Trash2 className="size-3.5" /> {t("floors.btnRemove")}
                         </Button>
                       )}
                       <Button size="sm" className="h-8 text-[11px]" onClick={saveGeometry} disabled={busy}>
-                        <Icons.Save className="size-3.5" /> {selected.floorObject ? "Konumu Kaydet" : "Yerleştir"}
+                        <Icons.Save className="size-3.5" /> {selected.floorObject ? t("floors.btnSavePosition") : t("floors.btnPlace")}
                       </Button>
                     </div>
                   </div>
@@ -419,37 +421,37 @@ export function FloorsView() {
 
                 {selected.optionExpiresAt && (
                   <p className="flex items-center gap-1.5 rounded-md bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-800">
-                    <Icons.Hourglass className="size-3.5" /> Opsiyon bitişi: {new Date(selected.optionExpiresAt).toLocaleDateString("tr-TR")}
+                    <Icons.Hourglass className="size-3.5" /> {t("floors.optionExpires")} {new Date(selected.optionExpiresAt).toLocaleDateString("tr-TR")}
                   </p>
                 )}
               </div>
             )}
           </SectionCard>
 
-          <SectionCard title="Floor Studio Senkronu" desc="Ayrı uygulama · ortak kimlik: boothUnitId (§20, §60)">
+          <SectionCard title={t("floors.syncTitle")} desc={t("floors.syncDesc")}>
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Yerleşim tamamlanma</span>
+                <span className="text-muted-foreground">{t("floors.placedCompletion")}</span>
                 <span className="font-semibold tabular-nums">{summary?.placed ?? 0}/{summary?.total ?? 0} · %{placedPct}</span>
               </div>
               <Progress value={placedPct} className="h-2" />
               <div className="grid grid-cols-2 gap-2 text-[11px]">
                 <div className="rounded-lg border bg-muted/30 p-2">
-                  <p className="flex items-center gap-1 font-semibold"><Icons.Upload className="size-3 text-teal-600" /> Son gönderim</p>
-                  <p className="mt-0.5 text-muted-foreground">{lastPush ? new Date(lastPush).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "henüz yok"}</p>
+                  <p className="flex items-center gap-1 font-semibold"><Icons.Upload className="size-3 text-teal-600" /> {t("floors.lastPush")}</p>
+                  <p className="mt-0.5 text-muted-foreground">{lastPush ? new Date(lastPush).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : t("floors.never")}</p>
                 </div>
                 <div className="rounded-lg border bg-muted/30 p-2">
-                  <p className="flex items-center gap-1 font-semibold"><Icons.DownloadCloud className="size-3 text-sky-600" /> Son çekme</p>
-                  <p className="mt-0.5 text-muted-foreground">{lastPull ? new Date(lastPull).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "henüz yok"}</p>
+                  <p className="flex items-center gap-1 font-semibold"><Icons.DownloadCloud className="size-3 text-sky-600" /> {t("floors.lastPull")}</p>
+                  <p className="mt-0.5 text-muted-foreground">{lastPull ? new Date(lastPull).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : t("floors.never")}</p>
                 </div>
               </div>
               <ul className="space-y-1 text-[11px] text-muted-foreground">
-                <li className="flex gap-1.5"><Icons.Check className="size-3 shrink-0 text-emerald-600" /> Maven tahsis/kontrat kaydını tutar; Floor Studio geometriyi çizer.</li>
-                <li className="flex gap-1.5"><Icons.Check className="size-3 shrink-0 text-emerald-600" /> <code className="rounded bg-muted px-1">GET /api/floor-studio/plan</code> çek, <code className="rounded bg-muted px-1">POST /sync</code> it ucu.</li>
-                <li className="flex gap-1.5"><Icons.Check className="size-3 shrink-0 text-emerald-600" /> Dekor objeleri Floor Studio sahiplidir — Maven yalnızca görüntüler.</li>
+                <li className="flex gap-1.5"><Icons.Check className="size-3 shrink-0 text-emerald-600" /> {t("floors.hintMaven")}</li>
+                <li className="flex gap-1.5"><Icons.Check className="size-3 shrink-0 text-emerald-600" /> <code className="rounded bg-muted px-1">GET /api/floor-studio/plan</code> {t("floors.hintGet")} <code className="rounded bg-muted px-1">POST /sync</code> {t("floors.hintPost")}</li>
+                <li className="flex gap-1.5"><Icons.Check className="size-3 shrink-0 text-emerald-600" /> {t("floors.hintDecor")}</li>
               </ul>
               <Button size="sm" variant="outline" className="w-full" onClick={pushAll} disabled={busy}>
-                <Icons.Send className="size-3.5" /> Tüm planı senkronize et
+                <Icons.Send className="size-3.5" /> {t("floors.btnSyncAll")}
               </Button>
             </div>
           </SectionCard>

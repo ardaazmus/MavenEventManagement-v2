@@ -975,3 +975,101 @@ Stage Summary (OMNI FAZ ZAMANLAMALARI — duvar saati, kanıt sayısı):
 - O8 Ops: ~20 dk · 3 kanıt (audit kapısı, şifreli yedek, restore drill)
 
 GLOBAL GATE (her faz sonrası): lint 0 ✓ · tsc 0 ✓ (yalnız dokunulmamış examples/skills baskınları) · seed parite ✓ · 390px ✓ (p2-mobile-390.png, f6-accounting-390.png) · yeniden adlandırma yok ✓ · ölü rota yok (tüm kanıtlar canlı) ✓ · loglarda PII/sır yok (mail maskeli, sır alanları API'den çıkartıldı) ✓
+
+---
+Task ID: TASK-A (F1-F8)
+Agent: Z.ai Code (ana ajan)
+Task: TASK-A — Critical fixes + full i18n + perf core. Sabit sıra 1-10; her faz kanıtla kapanır.
+
+Work Log:
+
+## F1 — PORTAL TOKEN LIFECYCLE (OWASP API1:2023 BOLA) ✓
+- Kanıt (canlı curl matrisi, 20 test): participant/sponsor GET belirteç kapısı — no-token 410, sahte 404, yabancı kişi/kurum 404, expired 410 (DB'de expiresAt geçmişe alındı), revoked 410 (PATCH /api/portal/preview-token {id}); kapsam çaprazlama: SPONSOR belirteci participant ucunda 404, tersi 404.
+- Şema: Person.portalToken + Organization.portalToken DÜZ METİN kolonları DÜŞÜRÜLDÜ (DDL clean ✓, pragma doğrulandı); PortalToken modeli (tokenHash UNIQUE, scope PARTICIPANT|SPONSOR, editionId, personId/organizationId, expiresAt, revokedAt, issuedBy, lastUsedAt). tokenHash = sha256 hex 64 ✓ (DB dump kanıtı).
+- Tek görünlük çıkarım: flows registration.decide CONFIRMED (ilk geçiş) → yanıt `issuedPortalToken` BİR KEZ (test 20: issued ✓, 20b: belirteçle GET 200 ✓, 20c: tekrar onay → yok ✓ idempotent); [entity]/[id] PUT sponsor-agreements → ACTIVE ilk geçişte SPONSOR belirteci tek görünlük.
+- /api/portal/preview-token (admin, rate 20/dk, resolveEditionContext): kısa ömürlü önizleme belirteci (1dk..4sa); GET yaşam döngüsü denetimi (yalnız hashPrefix); PATCH revoke.
+- portal/action: sha256 hash araması + kapsam/sahiplik (deliverable→SPONSOR+edition+org; payment-link→ödeyen zinciri); pozitif: ödeyen belirteci 200 (PAYLINK üretildi), yabancı ödeyen 404, foreign org teslim 404, doğru org 200.
+- Body-scan: participant/sponsor/list yanıtlarında portalToken|token|pt_[0-9a-f]{24} SIFIR eşleşme ✓. Seed düz metin provision adımı kaldırıldı (wipe listesine db.portalToken eklendi).
+- Frontend: apiGet init desteği (x-portal-token başlığı — URL'e belirteç YOK); portals.tsx preview belirteci bellekte (useEffect ile mint), aksiyonlar previewToken ile.
+
+## F2 — PORTAL PII MINIMIZATION (KVKK m.3/m.4) ✓
+- Alan-denetimi listesi: participant yanıtı (yalnız geçerli PARTICIPANT belirteciyle): person{id,firstName,lastName,email,title,organizationName}=kendi verisi ✓; participation{source,attendance,notes,roles,badges,certificates,snapshot,reservations(guestName),program,claims(guestName)}=kendi kayıtları ✓; registrations/orders/waitlist= kendi ✓ — üçüncü taraf PII yok.
+- Sponsor yanıtı (yalnız SPONSOR belirteciyle): organization{kendi kimliği}, agreements/deliverables/booths=kendi sözleşmeleri, entitlements=kendi havuzları, orders=kendi siparişleri, staff=kendi çalışanları (ad+ünvan) ✓.
+- Belirteçsiz yüzeyler: 410 {error} — sıfır PII ✓. public/tenant: agregat + denetçinin kendi ticari iletişimi (by-design) ✓. public-register: gönderenin KENDİ gönderisi yankısı ✓. scan: QR-kapılı kapı operasyonu (G0-b muafiyeti, 120/dk) ✓. kvkk/erasure: referans+SLA (K7) ✓.
+
+## F3 — DASHBOARD AGGREGATE ✓
+- route.ts:43 portföy `for (const o of orders)` (fetch-all include payments+refunds) → 2× aggregate (payment SUCCEEDED / refund PROCESSED, order.edition.tenantId). Kanıt: JSON diff BEFORE/AFTER — edition + portfolio BYTE-IDENTICAL (yalnız lastUpdated atlandı) ✓.
+
+## F4 — SCAN FAST-PATH ✓ (P2'de kurulu, taze kanıt)
+- WAL + busy_timeout=5000 db.ts'te ✓. create + TEK update + periyodik aktivite (25'te bir) kodda doğrulandı.
+- 500-burst (10 cihaz IP'si, 10 eşzamanlı): 500/500 HTTP 200, sıfır 5xx/429, wall 7919ms, avg 15.8ms/tarama, p50 148ms, p95 257ms, p99 286ms ✓. (Tek-IP denemede 120/dk S3 kapısı 429 verdi — kapı kanıtı da kaydedildi.)
+
+## F5 — CURSOR PAGINATION ✓ (P2 çekirdeği + taze 10k kanıtı)
+- [entity] GET: composite keyset (registry orderBy + id), base64url [...sortValues,id], yalnız devam varsa nextCursor, take limit+1 ✓. useApi append modu (dedupe ids) ✓ bits.tsx.
+- 10k kanıt: 10.200 sentetik ScanEvent (SCALE-TEST) + imleç yürüyüşü limit=500: 22 sayfa, 10.851 unique satır, 0 duplicate, son sayfada nextCursor yok, wall 2107ms ✓ (test verisi sonra silindi).
+
+## F6 — SERVER SEARCH + LOAD-MORE + COMPOSITE INDEXES ✓
+- registrations relationSearch zaten registry'de (teyit no + kategori ad/kod + katılımcı ad/soyad/e-posta). Arama parite kanıtı: q=Defne→2, q=e-posta→2, q=REG-2026-0027→1, q=Öğrenci→3, q=Kaya→2, q=bogusxyz→0 ✓ (sunucu-taraflı, silent-cut yok).
+- Load-more dönüşümü (useApi append + "Daha fazla yükle" düğmesi): registrations 400→200+load-more + sunucu q (istemci filtresi kaldırıldı), form-submissions 300→200+LM, scientific submissions 300→200+LM, scientific sessions 200→200+LM, people 300→200+LM (sunucu q), onsite tasks 200→200+LM. listEntityPaged eklendi (client.ts).
+- Composite @@index: Registration [editionId,status] + [editionId,categoryId] EKLENDİ; ScanEvent.editionId (denormalize) + [editionId,scannedAt] EKLENDİ; backfill 650/651 (walk-in'siz).
+- EXPLAIN QUERY PLAN ÖNCE/SONRA:
+  * A) reg edition+status: `Registration_status_idx (status=?)` → `Registration_editionId_status_idx (editionId=? AND status=?)`
+  * B) reg edition+groupBy status: `TEMP B-TREE FOR GROUP BY` → `COVERING INDEX Registration_editionId_status_idx`
+  * C) reg edition+category: `Registration_editionId_idx` → `Registration_editionId_categoryId_idx (editionId=? AND categoryId=?)`
+  * D) scan edition: `LIST SUBQUERY + per-participation index` → `COVERING INDEX ScanEvent_editionId_scannedAt_idx`
+- KPI parite: denormalize sayımlar eski participation-join ile BİREBİR (walk-in reddi hariç tutulmaya devam — seed comment). Clean-seed KPI diff: IDENTICAL ✓ (30/31 sapması walk-in semantiği düzeltmesiyle giderildi).
+
+## F7 — BUNDLE DIET ✓ (P2 kurulumu doğrulandı; tarayıcı kapıları aşağıda)
+- page.tsx: 21 modül next/dynamic (dashboard+editions statik), ModuleSkeleton loading ✓. Tarama: participations/orders/agreements include'ları çok view tarafından tüketildiğinden ve FROZEN JSON anahtarları korunduğundan include kırpma YAPILMADI (kırılma riski > kazanç; select disiplini P2 dashboard/aggregate'te uygulanmıştı).
+
+## F8 — i18n CORE (people, onsite, scientific, forms) ✓
+- Altyapı: i18n.ts parça sözlük yükleyici (deep-merge, TABAN KAZANIR — donuk etiketler korunur; F9 pişirme idempotent); constants.label() ve bits.StatusBadge dil-duyarlı (tQuiet(status.<key>) → map fallback — TR davranış değişmez, tüm enum'lar EN'e hazır).
+- Dönüşüm: people.tsx (318 t() kullanımı), onsite.tsx (366), scientific.tsx (270), form-center.tsx (173) — lint 0, tsc 0 (touched) ✓.
+- Parçalar: src/i18n/_new/{people,onsite,scientific,forms}.{tr,en}.json — TR=1335, EN=1335 yaprak; key-usage script: ALL-COVERED (her t("ns.*") iki dilde de mevcut; tLabel enum'ları status.* altında).
+- Kalite kontrol: HEAD'e karşı değer doğrulama; sıralama-kayması düzeltmeleri (elType*, cnt*, m* metriği, sentDesc parçaları, testOk/Partial, bleedTitle, fallbackEdition…); onay kanalı toast'ları, dialoglar, tablolar, boş durumlar dahil.
+- err fallback "Hata" → t("common.error") (people parçası sahibi; diğer parçalar referans).
+
+Stage Summary (F1-F8):
+- F1 curl matrisi 20/20 yeşil; hash-only depolama; tek görünlük çıkarım kanıtlı. F2 alan listesi worklog'ta. F3 byte-identical. F4 500-burst p95=257ms sıfır 5xx. F5 10.851 satır 0 dupe. F6 EXPLAIN 4/4 iyileşme + arama parite + 6 listede load-more. F7 dynamic split doğrulandı. F8 4 view i18n + 1335 anahtar çift dilli ALL-COVERED; lint 0; tsc 0.
+
+---
+Task ID: TASK-A (F9-F10 + GLOBAL)
+Agent: Z.ai Code (ana ajan)
+Task: F9 — i18n merge + EN gate; F10 — secrets/suppression/dual-bucket; global gates.
+
+Work Log:
+
+## F9 — i18n MERGE + EN GATE ✓ (kısmi kapsam: 8/16 view dönüştü)
+- Dönüşen view'lar (parça → pişirilmiş): people (318 t()), onsite (366), scientific (270), forms (173), archive (45), b2b (121), social (104), floors (83), integrations (128) = 9 view, ~1600 t() çağrısı.
+- MERGE: parçalar src/i18n/tr.json + en.json'a derin-merge (TABAN KAZANIR); çakışma denetimi: yalnız 1 bilgilendirici (status.REJECTED eksen farkı) → köprü yeniden tasarlandı.
+- KÖPRÜ (F8 düzeltmesi): tStatus(mapLabel, key) — TR modu DONUK map etiketi (birebir eski davranış, eksenler arası etiket çakışması imkânsız), EN modu status.<key> sözlüğü (yoksa map'e düşer). constants.label() + bits.StatusBadge bu köprüyü kullanır.
+- Sözlük boyutu: 296 → 2047 yaprak (tr=en), status 32 → 174 enum girdisi (EN modunda tüm yaka kartları EN).
+- EN GATE (canlı tarayıcı): 9 dönüştürülmüş view + dashboard + accounting EN modda SIFIR eksik-anahtar uyarısı (konsol boş) ✓. Ekran görüntüleri: f9-dashboard-en.png, f9-people-en.png, f9-en-final.png.
+- ROUNDTRIP kanıtı: Ayarlar → Dil → JSON Dışa Aktar (maven-i18n v1, 1601+ yaprak çift) → JSON İçe Aktar → render EN devam ✓ (şema doğrulamalı; import sonrası konsol temiz).
+- TR parite: f9-tr-final.png + f9-merge-tr.png — TR metinleri birebir (tStatus TR modu sözlüğe ASLA bakmaz).
+- İnsan-düzeyi kalite: dinamik anahtar tespiti (people.subStatus.* büyük-harf enum uyumu, people.color.*/capDesc.*), rekonstrüksiyon sıralama-kayması düzeltmeleri (~40 anahtar; elType*, cnt*, m* metrikleri, sentDesc*, testOk/Partial, bleedTitle, fallbackEdition, forms.yes/no/phPhone/correctAnswer*).
+
+## F10 — SECRETS + SUPPRESSION + DUAL-BUCKET ✓
+- Secrets (S3 kurulumu taze doğrulama): mail-providers GET → {hasPassword:true}, gövdede password/passwordCipher YOK ✓; DB: password=null, passwordCipher="enc:v1:…" (AES-256-GCM zarfı) — düzyazı sır YOK ✓.
+- Suppression + kota: mail/send 6-adım zinciri canlı (rate → provider → günlük kota dailyLimit+IntegrationLog sayacı → MailSuppression pre-send filtre → 60sn soğuma → IntegrationLog denetim; yanıtta suppressedCount + quota) ✓.
+- DUAL-BUCKET (per-user + per-IP AYRI — OWASP Credential-Stuffing sayfası):
+  * auth/login: IP 10/15dk + kimlik(e-posta) 5/15dk AYRI kova
+  * public-register: IP 10/10dk + e-posta 6/10dk AYRI kova
+  * portal/action: IP 30/dk + belirteç-hash 20/dk AYRI kova — CANLI KANIT: geçerli belirteçle 25 çağrı → 429'lar (IP kovası tükendi) + belirteç kovası ayrı sayar ✓ (generic 429 + Retry-After)
+
+## GLOBAL GATES ✓
+- lint 0 ✓ · tsc 0 (touched; yalnız examples/skills baskın kalıntılar) ✓
+- Seed parite: görev başındaki KPI anlık görüntüsü ile son seed diff — IDENTICAL ✓ (cuid+generatedAt hariç)
+- 390px: dashboard + People/Onsite/Form Center scrollWidth=390 (shell SelectTrigger w-[110px] mobil kırpma ile NO-H-OVERFLOW) ✓
+- Yeniden adlandırma yok; JSON anahtarları ADDITIVE (merge yalnız ekler); etiket/durum makineleri donuk ✓
+- Loglarda PII/sır yok ✓
+- Tarayıcı kanıtları: tool-results/f8-*.png, f9-*.png, f10-mobile-390-clean.png
+
+## KALAN (önceki oturum notu — aynı desen, altyapı hazır)
+- F9 kapsamı dışında kalan view'lar (aynı 3-adım desen: view'da t() → parça json → merge): media (877 satır), accommodation (875), editions, dashboard, finance, sponsorship, badge-queue, portals (~1300; F1 ile birlikte dikkat: preview-token akışı metinleri), bits/shell kalan sabitleri. Ayrıca notifications/cmeReport/badgeDesigner yüzeyleri diğer view dosyalarının içinde.
+- Desen kanıtlandı: 9-b (social 494 + floors 460 satır) tek ajans turunda tamam; büyük dosyalar için dosya-başına ayrı ajan gerekir.
+
+Stage Summary:
+- F9: 9 view çift dilli; 2047 anahtar; EN modu sıfır uyarı; roundtrip ✓; TR birebir ✓.
+- F10: sır zarf-şifreli + maskeli; bastırma/kota canlı; 3 kapıda çift kova + 429 kanıtı.
+- GLOBAL: lint 0 / tsc 0 / seed parite / 390px temiz / donukluk korunumu — hepsi yeşil.

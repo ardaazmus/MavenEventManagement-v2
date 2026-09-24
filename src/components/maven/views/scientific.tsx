@@ -1,11 +1,11 @@
 "use client";
 // Bilimsel — çağrı, bildiri, hakem, karar (kabul ≠ otomatik program slotu, Kimlik kuralı 6)
 // Program — oturum, salon, görevler, yayın durumu + CME kredi defteri (§08, CME_CREDITS yeteneği)
-import { useEffect, useRef, useState } from "react";
-import { listEntity, apiSend, apiGet } from "@/lib/client";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp, hasCapability } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
-import { SUBMISSION_STATUS, SESSION_STATUS, fmtDateTime, fmtDate, EVENT_ROLES, MATERIAL_TYPE, label } from "@/lib/constants";
+import { SUBMISSION_STATUS, SESSION_STATUS, fmtDateTime, fmtDate, EVENT_ROLES, MATERIAL_TYPE } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { useLang, t, tLabel } from "@/lib/i18n";
 import { CmeReportOverlay } from "../cme-report";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -119,6 +120,11 @@ const cmeTime = (iso: string) => new Date(iso).toLocaleTimeString("tr-TR", { hou
 const cmeTypeTone = (t: string): "violet" | "neutral" | "teal" => (t === "KEYNOTE" ? "violet" : t === "BREAK" ? "neutral" : "teal");
 
 export function ScientificView() {
+  useLang(); // dil değişiminde yeniden render
+  // Faz E: sabit enum map'lerini tLabel ile çevir (status sözlüğü köprüsü)
+  const subStatusMap = Object.fromEntries(Object.entries(SUBMISSION_STATUS).map(([k]) => [k, tLabel(SUBMISSION_STATUS, k)]));
+  const subTypeMap = Object.fromEntries(Object.entries(SUBMISSION_TYPES).map(([k]) => [k, tLabel(SUBMISSION_TYPES, k)]));
+  const fileStatusMap = Object.fromEntries(Object.entries(FILE_STATUS_OPTIONS).map(([k]) => [k, tLabel(FILE_STATUS_OPTIONS, k)]));
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
   const [decideTarget, setDecideTarget] = useState<SubmissionRow | null>(null);
@@ -134,11 +140,17 @@ export function ScientificView() {
   const emptySub = { title: "", abstract: "", type: "ORAL", keywords: "", presentingAuthorName: "", status: "SUBMITTED", trackId: "none", fileUrl: "", posterNo: "", fileStatus: "MISSING", submittedAt: "" };
   const [subForm, setSubForm] = useState(emptySub);
 
-  const { data: subs, error, reload, loading } = useApi<SubmissionRow[]>(() => listEntity<SubmissionRow>("submissions", { editionId: currentEditionId ?? undefined, limit: 300 }), [currentEditionId, refreshKey]);
+  // TASK-A F6: bildiriler imleçli load-more — 300 satırlık sessiz kesme kaldırıldı
+  const { data: subsPaged, error, reload, loading, more: subMore } = useApi<{ items: SubmissionRow[]; nextCursor?: string | null }>(
+    (cursor?: string) => listEntityPaged<SubmissionRow>("submissions", { editionId: currentEditionId ?? undefined, limit: 200 }, cursor),
+    [currentEditionId, refreshKey],
+    { append: true },
+  );
+  const subs = useMemo(() => subsPaged?.items ?? [], [subsPaged]);
   const { data: tracks } = useApi<{ id: string; name: string }[]>(() => listEntity("tracks", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
 
-  const byStatus = (s: string) => (subs ?? []).filter((x) => x.status === s).length;
-  const overdue = (subs ?? []).flatMap((s) => s.reviewAssignments).filter((r) => r.status === "OVERDUE").length;
+  const byStatus = (s: string) => subs.filter((x) => x.status === s).length;
+  const overdue = subs.flatMap((s) => s.reviewAssignments).filter((r) => r.status === "OVERDUE").length;
 
   const submitDecision = async () => {
     if (!decideTarget) return;
@@ -147,10 +159,10 @@ export function ScientificView() {
       await apiSend("/api/decisions", "POST", { submissionId: decideTarget.id, decision, rationale, decidedBy: "Bilimsel Komite" });
       const statusMap: Record<string, string> = { ACCEPT_ORAL: "ACCEPTED", ACCEPT_POSTER: "ACCEPTED", ACCEPT_E_POSTER: "ACCEPTED", ACCEPT_PANEL: "ACCEPTED", REJECT: "REJECTED", REVISION_REQUIRED: "REVISION_REQUIRED", WAITLIST: "WAITLIST", WITHDRAWN: "WITHDRAWN" };
       await apiSend(`/api/submissions/${decideTarget.id}`, "PUT", { status: statusMap[decision] ?? decideTarget.status });
-      toast({ title: "Karar kaydedildi", description: `${decideTarget.code} → ${decision}. Sunum havuzu adayı oluştu; otomatik program slotu OLUŞTURULMAZ.` });
+      toast({ title: t("scientific.decisionSaved"), description: t("scientific.decisionSavedDesc", { code: decideTarget.code, decision }) });
       setDecideTarget(null); setRationale(""); reload(); bump();
     } catch (e) {
-      toast({ title: "Karar kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("scientific.decisionSaveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setBusy(false); }
   };
 
@@ -171,10 +183,10 @@ export function ScientificView() {
     setStatusBusyId(s.id);
     try {
       await apiSend(`/api/submissions/${s.id}`, "PUT", { status });
-      toast({ title: "Bildiri durumu güncellendi", description: `${s.code} → ${label(SUBMISSION_STATUS, status)}` });
+      toast({ title: t("scientific.submissionStatusUpdated"), description: t("scientific.submissionStatusUpdatedDesc", { code: s.code, status: tLabel(SUBMISSION_STATUS, status) }) });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Durum güncellenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("scientific.statusUpdateFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setStatusBusyId(null); }
   };
   const saveSub = async () => {
@@ -193,61 +205,61 @@ export function ScientificView() {
       };
       if (editingSub) await apiSend(`/api/submissions/${editingSub.id}`, "PUT", payload);
       else await apiSend("/api/submissions", "POST", { editionId: currentEditionId, ...payload, code: `SUB-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 9)}` });
-      toast({ title: editingSub ? "Bildiri güncellendi" : "Bildiri kaydedildi", description: subForm.title.trim() });
+      toast({ title: editingSub ? t("scientific.submissionUpdated") : t("scientific.submissionSaved"), description: subForm.title.trim() });
       setSubOpen(false); reload(); bump();
     } catch (e) {
-      toast({ title: "Bildiri kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("scientific.submissionSaveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setSubBusy(false); }
   };
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Bilimsel Süreç" desc="Çağrı → bildiri → hakem → komite kararı; bilimsel karar ile programlama ayrı modüllerdedir (§28)">
-        <Button size="sm" onClick={openSubNew} disabled={!currentEditionId} aria-label="Yeni bildiri ekle">
-          <Icons.FilePlus2 className="size-4" /> Bildiri Ekle
+      <PageHeader title={t("scientific.title")} desc={t("scientific.desc")}>
+        <Button size="sm" onClick={openSubNew} disabled={!currentEditionId} aria-label={t("scientific.addSubmissionAria")}>
+          <Icons.FilePlus2 className="size-4" /> {t("scientific.addSubmission")}
         </Button>
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <KpiCard label="Gönderilen" value={(subs ?? []).filter((s) => s.status !== "DRAFT").length} sub="taslak hariç" icon={<Icons.FileText className="size-4" />} />
-        <KpiCard label="İncelemede" value={byStatus("UNDER_REVIEW")} sub={`geciken hakem: ${overdue}`} tone="amber" icon={<Icons.Hourglass className="size-4" />} />
-        <KpiCard label="Kabul" value={byStatus("ACCEPTED")} sub="sunum havuzunda" tone="emerald" icon={<Icons.CircleCheck className="size-4" />} />
-        <KpiCard label="Revizyon" value={byStatus("REVISION_REQUIRED")} sub="yazara geri döndü" tone="amber" />
-        <KpiCard label="Ret/Çekilme" value={byStatus("REJECTED") + byStatus("WITHDRAWN")} tone="rose" />
+        <KpiCard label={t("scientific.kpiSubmitted")} value={subs.filter((s) => s.status !== "DRAFT").length} sub={t("scientific.kpiSubmittedSub")} icon={<Icons.FileText className="size-4" />} />
+        <KpiCard label={t("scientific.kpiInReview")} value={byStatus("UNDER_REVIEW")} sub={t("scientific.kpiInReviewSub", { n: overdue })} tone="amber" icon={<Icons.Hourglass className="size-4" />} />
+        <KpiCard label={t("scientific.kpiAccepted")} value={byStatus("ACCEPTED")} sub={t("scientific.kpiAcceptedSub")} tone="emerald" icon={<Icons.CircleCheck className="size-4" />} />
+        <KpiCard label={t("scientific.kpiRevision")} value={byStatus("REVISION_REQUIRED")} sub={t("scientific.kpiRevisionSub")} tone="amber" />
+        <KpiCard label={t("scientific.kpiRejected")} value={byStatus("REJECTED") + byStatus("WITHDRAWN")} tone="rose" />
       </div>
 
       {tracks && tracks.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {tracks.map((t) => <Chip key={t.id} tone="teal">{t.name}: {(subs ?? []).filter((s) => s.track?.name === t.name).length} bildiri</Chip>)}
+          {tracks.map((trk) => <Chip key={trk.id} tone="teal">{t("scientific.trackChip", { name: trk.name, n: subs.filter((s) => s.track?.name === trk.name).length })}</Chip>)}
         </div>
       )}
 
-      {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (subs ?? []).length === 0 ? (
-        <EmptyState title="Henüz bildiri gönderilmedi" desc="Çağrıyı ve son tarihi kontrol edin." />
+      {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : subs.length === 0 ? (
+        <EmptyState title={t("scientific.emptyTitle")} desc={t("scientific.emptyDesc")} />
       ) : (
         <div className="space-y-2">
-          {(subs ?? []).map((s) => (
+          {subs.map((s) => (
             <details key={s.id} className="rounded-xl border bg-card">
               <summary
                 className="flex cursor-pointer flex-wrap items-center gap-2 p-3.5 text-sm"
                 onDoubleClick={() => openSubEdit(s)}
-                title="Çift tıkla: düzenle"
+                title={t("scientific.doubleClickEdit")}
               >
                 <span className="font-mono text-xs text-muted-foreground">{s.code}</span>
                 <span className="min-w-0 flex-1 truncate font-medium">{s.title}</span>
                 <Chip tone={s.type === "POSTER" ? "violet" : "teal"}>{s.type}</Chip>
                 {s.track && <span className="hidden text-xs text-muted-foreground md:inline">{s.track.name}</span>}
-                <StatusBadge map={SUBMISSION_STATUS} value={s.status} />
-                {s.fileStatus && <Chip tone={s.fileStatus === "APPROVED" ? "emerald" : "amber"}>dosya: {s.fileStatus}</Chip>}
+                <StatusBadge map={subStatusMap} value={s.status} />
+                {s.fileStatus && <Chip tone={s.fileStatus === "APPROVED" ? "emerald" : "amber"}>{t("scientific.fileChip", { status: s.fileStatus })}</Chip>}
               </summary>
               {/* R10-b: hızlı durum değişimi — yalnız status alanına PUT */}
               <div className="flex flex-wrap items-center gap-1.5 border-t px-4 py-2.5">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Durumu hızlı değiştir</span>
-                {Object.entries(SUBMISSION_STATUS).map(([k, v]) => (
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("scientific.quickStatus")}</span>
+                {Object.entries(subStatusMap).map(([k, v]) => (
                   <button
                     key={k} type="button" disabled={statusBusyId === s.id}
                     onClick={() => void changeStatus(s, k)}
-                    aria-label={`${s.code} durumunu ${v} yap`}
+                    aria-label={t("scientific.quickStatusAria", { code: s.code, status: v })}
                     className={cn(
                       "rounded-full border px-2 py-0.5 text-[11px] transition",
                       s.status === k ? "border-primary bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:border-primary/40 hover:text-foreground",
@@ -261,7 +273,7 @@ export function ScientificView() {
               <div className="grid gap-4 border-t p-4 lg:grid-cols-3">
                 <div className="min-w-0 lg:col-span-2 space-y-3">
                   <div>
-                    <p className="mb-1 text-xs font-semibold text-muted-foreground">Yazarlar (sıra önemli)</p>
+                    <p className="mb-1 text-xs font-semibold text-muted-foreground">{t("scientific.authorsLabel")}</p>
                     <div className="flex flex-wrap gap-1.5">
                       {s.authorships.map((a) => (
                         <Chip key={a.id} tone={a.isPresenting ? "emerald" : "neutral"}>
@@ -272,26 +284,26 @@ export function ScientificView() {
                   </div>
                   {s.abstract && <p className="text-xs leading-relaxed text-muted-foreground">{s.abstract}</p>}
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                    {s.presentingAuthorName && <span>Sunan: <span className="font-medium text-foreground">{s.presentingAuthorName}</span></span>}
-                    {s.keywords && <span className="min-w-0">Anahtar: <span className="break-words">{s.keywords}</span></span>}
-                    {s.posterNo && <span>Poster no: {s.posterNo}</span>}
-                    {s.submittedAt && <span>Gönderim: {fmtDateTime(s.submittedAt)}</span>}
+                    {s.presentingAuthorName && <span>{t("scientific.presenting")} <span className="font-medium text-foreground">{s.presentingAuthorName}</span></span>}
+                    {s.keywords && <span className="min-w-0">{t("scientific.keywordsPrefix")} <span className="break-words">{s.keywords}</span></span>}
+                    {s.posterNo && <span>{t("scientific.posterNo", { no: s.posterNo })}</span>}
+                    {s.submittedAt && <span>{t("scientific.submittedAt", { date: fmtDateTime(s.submittedAt) })}</span>}
                     {s.fileUrl && (
-                      <a href={s.fileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-teal-600 transition hover:text-teal-800" aria-label="Bildiri dosyasını yeni sekmede aç">
-                        <Icons.FileDown className="size-3" /> dosya bağlantısı
+                      <a href={s.fileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-teal-600 transition hover:text-teal-800" aria-label={t("scientific.openFileAria")}>
+                        <Icons.FileDown className="size-3" /> {t("scientific.fileLink")}
                       </a>
                     )}
                   </div>
                   <div>
-                    <p className="mb-1 text-xs font-semibold text-muted-foreground">Hakem atamaları</p>
-                    {s.reviewAssignments.length === 0 ? <p className="text-xs text-muted-foreground">atanmadı</p> : (
+                    <p className="mb-1 text-xs font-semibold text-muted-foreground">{t("scientific.reviewAssignments")}</p>
+                    {s.reviewAssignments.length === 0 ? <p className="text-xs text-muted-foreground">{t("scientific.notAssigned")}</p> : (
                       <div className="space-y-1">
                         {s.reviewAssignments.map((r) => (
                           <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
-                            <span>{r.reviewer ? `${r.reviewer.firstName} ${r.reviewer.lastName}` : "—"} {r.dueDate && <span className="text-muted-foreground">· son {fmtDate(r.dueDate)}</span>}</span>
+                            <span>{r.reviewer ? `${r.reviewer.firstName} ${r.reviewer.lastName}` : "—"} {r.dueDate && <span className="text-muted-foreground">{t("scientific.reviewDue", { date: fmtDate(r.dueDate) })}</span>}</span>
                             <span className="flex items-center gap-1">
                               <Chip tone={r.status === "COMPLETED" ? "emerald" : r.status === "OVERDUE" ? "rose" : "amber"}>{r.status}</Chip>
-                              {r.reviews[0]?.score != null && <Chip tone="teal">skor {r.reviews[0].score}/5</Chip>}
+                              {r.reviews[0]?.score != null && <Chip tone="teal">{t("scientific.score", { score: r.reviews[0].score })}</Chip>}
                             </span>
                           </div>
                         ))}
@@ -300,62 +312,71 @@ export function ScientificView() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold text-muted-foreground">Karar geçmişi (sürümlü)</p>
-                  {s.decisions.length === 0 ? <p className="text-xs text-muted-foreground">karar bekleniyor</p> : s.decisions.map((d) => (
+                  <p className="text-xs font-semibold text-muted-foreground">{t("scientific.decisionHistory")}</p>
+                  {s.decisions.length === 0 ? <p className="text-xs text-muted-foreground">{t("scientific.awaitingDecision")}</p> : s.decisions.map((d) => (
                     <div key={d.id} className="rounded-lg border p-2.5 text-xs">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-semibold">{d.decision}</span>
-                        <span className="text-muted-foreground">v{d.version} · {fmtDate(d.decidedAt)}</span>
+                        <span className="text-muted-foreground">{t("scientific.decisionVersion", { version: d.version, date: fmtDate(d.decidedAt) })}</span>
                       </div>
                       {d.rationale && <p className="mt-1 text-muted-foreground">{d.rationale}</p>}
                     </div>
                   ))}
-                  <Button size="sm" variant="outline" className="w-full" onClick={() => openSubEdit(s)} aria-label={`${s.title} bildirisini düzenle`}>
-                    <Icons.Pencil className="size-4" /> Bildiriyi Düzenle
+                  <Button size="sm" variant="outline" className="w-full" onClick={() => openSubEdit(s)} aria-label={t("scientific.editSubmissionAria", { title: s.title })}>
+                    <Icons.Pencil className="size-4" /> {t("scientific.editSubmission")}
                   </Button>
                   {["SUBMITTED", "UNDER_REVIEW", "REVISION_REQUIRED"].includes(s.status) && (
                     <Button size="sm" className="w-full" onClick={() => setDecideTarget(s)}>
-                      <Icons.Gavel className="size-4" /> Komite Kararı Ver
+                      <Icons.Gavel className="size-4" /> {t("scientific.makeDecision")}
                     </Button>
                   )}
                 </div>
               </div>
             </details>
           ))}
+          {/* TASK-A F6: kesintisiz yükleme */}
+          {subMore?.hasMore && (
+            <div className="flex items-center justify-center pt-1">
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={subMore.loading} onClick={subMore.next}>
+                {subMore.loading ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ChevronsDown className="size-3.5" />}
+                {t("scientific.loadMore")}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
       <Dialog open={Boolean(decideTarget)} onOpenChange={(o) => !o && setDecideTarget(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Komite Kararı — {decideTarget?.code}</DialogTitle>
+            <DialogTitle>{t("scientific.decisionDialogTitle", { code: decideTarget?.code ?? "" })}</DialogTitle>
             <DialogDescription>{decideTarget?.title}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label>Karar (canonical semantik kontrollü, etiket özgür)</Label>
+              <Label>{t("scientific.decisionLabel")}</Label>
               <Select value={decision} onValueChange={setDecision}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ACCEPT_ORAL">Kabul — Sözlü</SelectItem>
-                  <SelectItem value="ACCEPT_POSTER">Kabul — Poster</SelectItem>
-                  <SelectItem value="ACCEPT_E_POSTER">Kabul — E-Poster</SelectItem>
-                  <SelectItem value="ACCEPT_PANEL">Kabul — Panel</SelectItem>
-                  <SelectItem value="REVISION_REQUIRED">Revizyon Gerekli</SelectItem>
-                  <SelectItem value="WAITLIST">Yedek</SelectItem>
-                  <SelectItem value="REJECT">Ret</SelectItem>
+                  <SelectItem value="ACCEPT_ORAL">{t("scientific.decisionAcceptOral")}</SelectItem>
+                  <SelectItem value="ACCEPT_POSTER">{t("scientific.decisionAcceptPoster")}</SelectItem>
+                  <SelectItem value="ACCEPT_E_POSTER">{t("scientific.decisionAcceptEPoster")}</SelectItem>
+                  <SelectItem value="ACCEPT_PANEL">{t("scientific.decisionAcceptPanel")}</SelectItem>
+                  <SelectItem value="REVISION_REQUIRED">{t("scientific.decisionRevisionRequired")}</SelectItem>
+                  <SelectItem value="WAITLIST">{t("scientific.decisionWaitlist")}</SelectItem>
+                  <SelectItem value="REJECT">{t("scientific.decisionReject")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label>Gerekçe (yazara gidecek metin önizlemesi)</Label>
-              <Textarea value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Karar gerekçesi…" className="mt-1" />
+              <Label>{t("scientific.rationaleLabel")}</Label>
+              <Textarea value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder={t("scientific.rationalePlaceholder")} className="mt-1" />
             </div>
-            <p className="rounded-lg bg-sky-50 p-2.5 text-xs text-sky-800">Kabul kararı otomatik program slotu oluşturmaz — program ekibi ayrıca yerleştirir.</p>
+            <p className="rounded-lg bg-sky-50 p-2.5 text-xs text-sky-800">{t("scientific.acceptNoSlotNote")}</p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDecideTarget(null)}>Vazgeç</Button>
-            <Button onClick={submitDecision} disabled={busy || !rationale}>{busy ? "Kaydediliyor…" : "Kararı Kaydet"}</Button>
+            <Button variant="outline" onClick={() => setDecideTarget(null)}>{t("common.cancel")}</Button>
+            <Button onClick={submitDecision} disabled={busy || !rationale}>{busy ? t("common.saving") : t("scientific.decisionSave")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -364,74 +385,74 @@ export function ScientificView() {
       <Dialog open={subOpen} onOpenChange={setSubOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingSub ? "Bildiriyi Düzenle" : "Yeni Bildiri"}</DialogTitle>
-            <DialogDescription>{editingSub ? `${editingSub.code} — tüm alanlar düzenlenebilir` : "Bildiriyi ayrıntılarıyla kaydedin; kod otomatik üretilir"}</DialogDescription>
+            <DialogTitle>{editingSub ? t("scientific.editSubmission") : t("scientific.newSubmission")}</DialogTitle>
+            <DialogDescription>{editingSub ? t("scientific.editSubmissionDesc", { code: editingSub.code }) : t("scientific.newSubmissionDesc")}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <Label>Başlık *</Label>
-              <Input className="mt-1" value={subForm.title} onChange={(e) => setSubForm({ ...subForm, title: e.target.value })} placeholder="Örn. Deprem Sonrası Yapısal Güçlendirme" />
+              <Label>{t("scientific.titleLabel")}</Label>
+              <Input className="mt-1" value={subForm.title} onChange={(e) => setSubForm({ ...subForm, title: e.target.value })} placeholder={t("scientific.titlePlaceholder")} />
             </div>
             <div className="sm:col-span-2">
-              <Label>Özet (abstract)</Label>
-              <Textarea className="mt-1" rows={5} value={subForm.abstract} onChange={(e) => setSubForm({ ...subForm, abstract: e.target.value })} placeholder="250 kelimeye kadar özet metni…" />
+              <Label>{t("scientific.abstractLabel")}</Label>
+              <Textarea className="mt-1" rows={5} value={subForm.abstract} onChange={(e) => setSubForm({ ...subForm, abstract: e.target.value })} placeholder={t("scientific.abstractPlaceholder")} />
             </div>
             <div>
-              <Label>Tür</Label>
+              <Label>{t("scientific.typeLabel")}</Label>
               <Select value={subForm.type} onValueChange={(v) => setSubForm({ ...subForm, type: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{Object.entries(SUBMISSION_TYPES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                <SelectContent>{Object.entries(subTypeMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>
-              <Label>Durum</Label>
+              <Label>{t("scientific.statusLabel")}</Label>
               <Select value={subForm.status} onValueChange={(v) => setSubForm({ ...subForm, status: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{Object.entries(SUBMISSION_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                <SelectContent>{Object.entries(subStatusMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>
-              <Label>İz (track)</Label>
+              <Label>{t("scientific.trackLabel")}</Label>
               <Select value={subForm.trackId} onValueChange={(v) => setSubForm({ ...subForm, trackId: v })}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                <SelectTrigger className="mt-1"><SelectValue placeholder={t("scientific.none")} /></SelectTrigger>
                 <SelectContent className="maven-scroll max-h-64">
-                  <SelectItem value="none">— İz atanmadı —</SelectItem>
-                  {(tracks ?? []).map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                  <SelectItem value="none">{t("scientific.noTrack")}</SelectItem>
+                  {(tracks ?? []).map((tk) => <SelectItem key={tk.id} value={tk.id}>{tk.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label>Sunan Yazar</Label>
-              <Input className="mt-1" value={subForm.presentingAuthorName} onChange={(e) => setSubForm({ ...subForm, presentingAuthorName: e.target.value })} placeholder="Örn. Prof. Dr. Ayşe Yılmaz" />
+              <Label>{t("scientific.presentingAuthorLabel")}</Label>
+              <Input className="mt-1" value={subForm.presentingAuthorName} onChange={(e) => setSubForm({ ...subForm, presentingAuthorName: e.target.value })} placeholder={t("scientific.presentingAuthorPlaceholder")} />
             </div>
             <div>
-              <Label>Anahtar Kelimeler</Label>
-              <Input className="mt-1" value={subForm.keywords} onChange={(e) => setSubForm({ ...subForm, keywords: e.target.value })} placeholder="virgülle ayırın: sismik, beton…" />
+              <Label>{t("scientific.keywordsLabel")}</Label>
+              <Input className="mt-1" value={subForm.keywords} onChange={(e) => setSubForm({ ...subForm, keywords: e.target.value })} placeholder={t("scientific.keywordsPlaceholder")} />
             </div>
             <div>
-              <Label>Dosya Durumu</Label>
+              <Label>{t("scientific.fileStatusLabel")}</Label>
               <Select value={subForm.fileStatus} onValueChange={(v) => setSubForm({ ...subForm, fileStatus: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{Object.entries(FILE_STATUS_OPTIONS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                <SelectContent>{Object.entries(fileStatusMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>
-              <Label>Poster No</Label>
-              <Input className="mt-1 tabular-nums" value={subForm.posterNo} onChange={(e) => setSubForm({ ...subForm, posterNo: e.target.value })} placeholder="Örn. P-042" />
+              <Label>{t("scientific.posterNoLabel")}</Label>
+              <Input className="mt-1 tabular-nums" value={subForm.posterNo} onChange={(e) => setSubForm({ ...subForm, posterNo: e.target.value })} placeholder={t("scientific.posterNoPlaceholder")} />
             </div>
             <div className="sm:col-span-2">
-              <Label>Dosya Bağlantısı (URL)</Label>
-              <Input className="mt-1" type="url" value={subForm.fileUrl} onChange={(e) => setSubForm({ ...subForm, fileUrl: e.target.value })} placeholder="https://…" />
+              <Label>{t("scientific.fileUrlLabel")}</Label>
+              <Input className="mt-1" type="url" value={subForm.fileUrl} onChange={(e) => setSubForm({ ...subForm, fileUrl: e.target.value })} placeholder={t("scientific.urlPlaceholder")} />
             </div>
             <div className="sm:col-span-2">
-              <Label>Gönderim Zamanı (opsiyonel)</Label>
+              <Label>{t("scientific.submittedAtLabel")}</Label>
               <Input className="mt-1 tabular-nums" type="datetime-local" value={subForm.submittedAt} onChange={(e) => setSubForm({ ...subForm, submittedAt: e.target.value })} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSubOpen(false)}>Vazgeç</Button>
+            <Button variant="outline" onClick={() => setSubOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={saveSub} disabled={subBusy || !subForm.title.trim()}>
-              {subBusy ? "Kaydediliyor…" : editingSub ? "Güncelle" : "Bildiriyi Kaydet"}
+              {subBusy ? t("common.saving") : editingSub ? t("scientific.update") : t("scientific.saveSubmission")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -441,6 +462,13 @@ export function ScientificView() {
 }
 
 export function ProgramView() {
+  useLang(); // dil değişiminde yeniden render
+  // Faz E: sabit enum map'lerini tLabel ile çevir (status sözlüğü köprüsü)
+  const sessionTypeMap = Object.fromEntries(Object.entries(SESSION_TYPES).map(([k]) => [k, tLabel(SESSION_TYPES, k)]));
+  const sessionAccessMap = Object.fromEntries(Object.entries(SESSION_ACCESS).map(([k]) => [k, tLabel(SESSION_ACCESS, k)]));
+  const sessionStatusMap = Object.fromEntries(Object.entries(SESSION_STATUS).map(([k]) => [k, tLabel(SESSION_STATUS, k)]));
+  const materialTypeMap = Object.fromEntries(Object.entries(MATERIAL_TYPE).map(([k]) => [k, tLabel(MATERIAL_TYPE, k)]));
+  const matStatusMap = Object.fromEntries(Object.entries(MATERIAL_STATUS_LABEL).map(([k]) => [k, tLabel(MATERIAL_STATUS_LABEL, k)]));
   const { currentEditionId, tenant, bump, refreshKey, editions } = useApp();
   const { toast } = useToast();
   const [dayFilter, setDayFilter] = useState("ALL");
@@ -487,7 +515,13 @@ export function ProgramView() {
   const [asgRole, setAsgRole] = useState("SPEAKER");
   const [asgBusy, setAsgBusy] = useState(false);
 
-  const { data: sessions, error, reload, loading } = useApi<SessionRow[]>(() => listEntity<SessionRow>("sessions", { editionId: currentEditionId ?? undefined, limit: 200 }), [currentEditionId, refreshKey]);
+  // TASK-A F6: oturumlar imleçli load-more — 200 satırlık sessiz kesme kaldırıldı
+  const { data: sessionsPaged, error, reload, loading, more: sesMore } = useApi<{ items: SessionRow[]; nextCursor?: string | null }>(
+    (cursor?: string) => listEntityPaged<SessionRow>("sessions", { editionId: currentEditionId ?? undefined, limit: 200 }, cursor),
+    [currentEditionId, refreshKey],
+    { append: true },
+  );
+  const sessions = useMemo(() => sessionsPaged?.items ?? [], [sessionsPaged]);
   const { data: rooms } = useApi<{ id: string; name: string; capacity: number }[]>(() => listEntity("rooms", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
   // ── R10-b: görev atama için kişiler + kaynak bildiri seçenekleri ──
   const { data: people } = useApi<PersonRow[]>(() =>
@@ -519,8 +553,8 @@ export function ProgramView() {
     setCreditInputs(next);
   }, [cme]);
 
-  const days = Array.from(new Set((sessions ?? []).map((s) => s.startTime.slice(0, 10)))).sort();
-  const filtered = (sessions ?? []).filter((s) => dayFilter === "ALL" || s.startTime.slice(0, 10) === dayFilter);
+  const days = Array.from(new Set(sessions.map((s) => s.startTime.slice(0, 10)))).sort();
+  const filtered = sessions.filter((s) => dayFilter === "ALL" || s.startTime.slice(0, 10) === dayFilter);
   // çakışma denetimi: aynı salonda zaman üstüste
   const clashes = new Set<string>();
   for (let i = 0; i < filtered.length; i++) {
@@ -540,16 +574,16 @@ export function ProgramView() {
     if (raw === "") return;
     const credits = Number(raw);
     if (Number.isNaN(credits) || credits < 0 || credits > 99) {
-      toast({ title: "Geçersiz kredi", description: "Kredi 0–99 arasında olmalı.", variant: "destructive" });
+      toast({ title: t("cme.invalidCredits"), description: t("cme.invalidCreditsDesc"), variant: "destructive" });
       return;
     }
     setSavingId(s.id);
     try {
       await apiSend("/api/cme", "POST", { action: "set-credits", sessionId: s.id, credits });
-      toast({ title: `${credits} kredi atandı: ${s.title}` });
+      toast({ title: t("cme.creditsAssigned", { credits, title: s.title }) });
       reloadCme(); bump();
     } catch (e) {
-      toast({ title: "Kredi atanamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("cme.creditsAssignFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setSavingId(null); }
   };
 
@@ -566,11 +600,11 @@ export function ProgramView() {
     setBulkBusy(true);
     try {
       const res = await apiSend<{ ok: boolean; updated: number }>("/api/cme", "POST", { action: "bulk-apply", editionId: currentEditionId, defaults });
-      if (res.updated > 0) toast({ title: `${res.updated} oturuma kredi atandı`, description: "Yalnız kredisi olmayan oturumlar güncellendi." });
-      else toast({ title: "Atanacak kredisiz oturum yok", description: "Seçilen türlere ait tüm oturumlar zaten kredili." });
+      if (res.updated > 0) toast({ title: t("cme.bulkApplied", { n: res.updated }), description: t("cme.bulkAppliedDesc") });
+      else toast({ title: t("cme.nothingToApply"), description: t("cme.nothingToApplyDesc") });
       reloadCme(); bump();
     } catch (e) {
-      toast({ title: "Toplu atama başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("cme.bulkApplyFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setBulkBusy(false); }
   };
 
@@ -579,10 +613,10 @@ export function ProgramView() {
     setBusy(true);
     try {
       await apiSend(`/api/sessions/${publishTarget.id}`, "PUT", { status: "PUBLISHED", isVisible: true });
-      toast({ title: "Oturum yayınlandı", description: "Kişisel programlarda görünür; etkilenen konuşmacılar bilgilendirilir." });
+      toast({ title: t("scientific.sessionPublished"), description: t("scientific.sessionPublishedDesc") });
       setPublishTarget(null); reload(); bump();
     } catch (e) {
-      toast({ title: "Yayınlanamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("scientific.publishFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setBusy(false); }
   };
 
@@ -598,11 +632,11 @@ export function ProgramView() {
       });
       setImportReport(res);
       if (!dry) {
-        toast({ title: "İçe aktarım kaydedildi", description: importKind === "SESSIONS" ? `${res.sessionsCreated} yeni · ${res.sessionsUpdated} güncellenen oturum` : `${res.personsMatched} eşleşen · ${res.personsCreated} yeni kişi` });
+        toast({ title: t("scientific.importSaved"), description: importKind === "SESSIONS" ? t("scientific.importSavedSessions", { created: res.sessionsCreated, updated: res.sessionsUpdated }) : t("scientific.importSavedPersons", { matched: res.personsMatched, created: res.personsCreated }) });
         reload(); reloadMaterials(); bump();
       }
     } catch (e) {
-      toast({ title: "İçe aktarım başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("scientific.importFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setImportBusy(false); }
   };
 
@@ -644,19 +678,19 @@ export function ProgramView() {
         const merged = [created.notes ?? matForm.notes ?? "", mediaNote].filter(Boolean).join("\n");
         await apiSend(`/api/session-materials/${created.id}`, "PUT", { notes: merged });
       }
-      toast({ title: editingMat ? "Materyal güncellendi" : "Materyal eklendi", description: mediaNote ? `${matForm.title.trim()} — Medya Arşivi'ne kopyalandı` : matForm.title.trim() });
+      toast({ title: editingMat ? t("scientific.materialUpdated") : t("scientific.materialAdded"), description: mediaNote ? t("scientific.materialArchived", { title: matForm.title.trim() }) : matForm.title.trim() });
       setMatOpen(false); reloadMaterials(); bump();
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "Materyal kaydedilemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("scientific.materialSaveFailed"), variant: "destructive" });
     } finally { setMatBusy(false); }
   };
   const removeMat = async (m: MaterialRow) => {
     try {
       await apiSend(`/api/session-materials/${m.id}`, "DELETE");
-      toast({ title: "Materyal silindi", description: m.title });
+      toast({ title: t("scientific.materialDeleted"), description: m.title });
       reloadMaterials();
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "Silinemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("scientific.deleteFailed"), variant: "destructive" });
     }
   };
 
@@ -676,11 +710,11 @@ export function ProgramView() {
   };
   const saveSes = async () => {
     if (!sesForm.title.trim() || !currentEditionId) return;
-    if (!sesForm.startTime || !sesForm.endTime) { setSesError("Başlangıç ve bitiş zamanı zorunludur."); return; }
+    if (!sesForm.startTime || !sesForm.endTime) { setSesError(t("scientific.errTimeRequired")); return; }
     const start = new Date(sesForm.startTime);
     const end = new Date(sesForm.endTime);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) { setSesError("Tarih/saat değeri okunamadı."); return; }
-    if (end <= start) { setSesError("Bitiş zamanı başlangıçtan sonra olmalıdır."); return; }
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) { setSesError(t("scientific.errTimeInvalid")); return; }
+    if (end <= start) { setSesError(t("scientific.errEndBeforeStart")); return; }
     setSesError("");
     setSesBusy(true);
     try {
@@ -698,34 +732,34 @@ export function ProgramView() {
       };
       if (editingSes) await apiSend(`/api/sessions/${editingSes.id}`, "PUT", payload);
       else await apiSend("/api/sessions", "POST", { editionId: currentEditionId, ...payload });
-      toast({ title: editingSes ? "Oturum güncellendi" : "Oturum eklendi", description: sesForm.title.trim() });
+      toast({ title: editingSes ? t("scientific.sessionUpdated") : t("scientific.sessionAdded"), description: sesForm.title.trim() });
       setSesOpen(false); reload(); bump();
     } catch (e) {
-      toast({ title: "Oturum kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("scientific.sessionSaveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setSesBusy(false); }
   };
   // diyaloğun açık olduğu oturumun taze verisi (reload sonrası atamalar güncel kalsın)
-  const sesDraft = editingSes ? ((sessions ?? []).find((x) => x.id === editingSes.id) ?? editingSes) : null;
+  const sesDraft = editingSes ? (sessions.find((x) => x.id === editingSes.id) ?? editingSes) : null;
   const addAssignment = async () => {
     if (!editingSes || asgPerson === "none") return;
     setAsgBusy(true);
     try {
       await apiSend("/api/program-assignments", "POST", { sessionId: editingSes.id, personId: asgPerson, role: asgRole });
       const pname = (people ?? []).find((p) => p.id === asgPerson);
-      toast({ title: "Görev atandı", description: `${pname ? `${pname.firstName} ${pname.lastName}` : "Kişi"} — ${label(EVENT_ROLES, asgRole)}` });
+      toast({ title: t("scientific.assignmentAdded"), description: t("scientific.assignmentAddedDesc", { name: pname ? `${pname.firstName} ${pname.lastName}` : t("scientific.personFallback"), role: tLabel(EVENT_ROLES, asgRole) }) });
       setAsgPerson("none");
       reload();
     } catch (e) {
-      toast({ title: "Görev atanamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("scientific.assignmentAddFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setAsgBusy(false); }
   };
   const removeAssignment = async (a: { id: string; role: string }) => {
     try {
       await apiSend(`/api/program-assignments/${a.id}`, "DELETE");
-      toast({ title: "Görev kaldırıldı", description: label(EVENT_ROLES, a.role) });
+      toast({ title: t("scientific.assignmentRemoved"), description: tLabel(EVENT_ROLES, a.role) });
       reload();
     } catch (e) {
-      toast({ title: "Görev kaldırılamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("scientific.assignmentRemoveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     }
   };
 
@@ -744,27 +778,27 @@ export function ProgramView() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Program" desc="Salon, zaman, görevli — çakışmalı yayın engellenir; bilimsel kararı program modülü değiştirmez">
-        <Button size="sm" onClick={openSesNew} disabled={!currentEditionId} aria-label="Yeni oturum ekle">
-          <Icons.CalendarPlus className="size-4" /> Oturum Ekle
+      <PageHeader title={t("scientific.programTitle")} desc={t("scientific.programDesc")}>
+        <Button size="sm" onClick={openSesNew} disabled={!currentEditionId} aria-label={t("scientific.addSessionAria")}>
+          <Icons.CalendarPlus className="size-4" /> {t("scientific.addSession")}
         </Button>
-        <Button size="sm" variant="outline" onClick={openImport} disabled={!currentEditionId} aria-label="Program veya katılımcı listesi içe aktar">
-          <Icons.FileUp className="size-4" /> İçe Aktar
+        <Button size="sm" variant="outline" onClick={openImport} disabled={!currentEditionId} aria-label={t("scientific.importAria")}>
+          <Icons.FileUp className="size-4" /> {t("scientific.import")}
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => { reload(); reloadCme(); }} aria-label="Yenile"><Icons.RefreshCw className="size-4" /></Button>
+        <Button variant="ghost" size="sm" onClick={() => { reload(); reloadCme(); }} aria-label={t("scientific.refreshAria")}><Icons.RefreshCw className="size-4" /></Button>
       </PageHeader>
 
       <Tabs defaultValue="sessions">
         <TabsList className="h-auto flex-wrap">
-          <TabsTrigger value="sessions">Oturumlar</TabsTrigger>
-          {cmeEnabled && <TabsTrigger value="cme"><Icons.GraduationCap className="size-4" /> CME Kredi</TabsTrigger>}
+          <TabsTrigger value="sessions">{t("scientific.tabSessions")}</TabsTrigger>
+          {cmeEnabled && <TabsTrigger value="cme"><Icons.GraduationCap className="size-4" /> {t("cme.tabCredits")}</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="sessions" className="mt-4 space-y-4">
           <Select value={dayFilter} onValueChange={setDayFilter}>
             <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="ALL">Tüm günler</SelectItem>
+              <SelectItem value="ALL">{t("scientific.allDays")}</SelectItem>
               {days.map((d) => <SelectItem key={d} value={d}>{fmtDate(d)}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -772,16 +806,16 @@ export function ProgramView() {
           {clashes.size > 0 && (
             <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50/60 p-3 text-sm text-rose-800">
               <Icons.OctagonAlert className="mt-0.5 size-4 shrink-0" />
-              Aynı salonda çakışan oturumlar var ({clashes.size}) — çakışmalı yayın engellenir veya yetkili gerekçeyle işaretler.
+              {t("scientific.clashWarning", { n: clashes.size })}
             </div>
           )}
 
           {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : filtered.length === 0 ? (
-            <EmptyState title="Bu gün için oturum yok" desc="Oturum oluşturun veya başka gün seçin." />
+            <EmptyState title={t("scientific.noSessionsTitle")} desc={t("scientific.noSessionsDesc")} />
           ) : (
             <div className="space-y-2.5">
               {filtered.map((s) => (
-                <div key={s.id} className={cn("rounded-xl border bg-card p-4", clashes.has(s.id) && "border-rose-300")} onDoubleClick={() => openSesEdit(s)} title="Çift tıkla: düzenle">
+                <div key={s.id} className={cn("rounded-xl border bg-card p-4", clashes.has(s.id) && "border-rose-300")} onDoubleClick={() => openSesEdit(s)} title={t("scientific.doubleClickEdit")}>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold tabular-nums text-primary">
                       {new Date(s.startTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}–{new Date(s.endTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
@@ -789,45 +823,45 @@ export function ProgramView() {
                     <p className="min-w-0 flex-1 truncate font-semibold">{s.title}</p>
                     <Chip tone={s.type === "KEYNOTE" ? "violet" : s.type === "BREAK" ? "neutral" : "teal"}>{s.type}</Chip>
                     {s.room && <Chip>{s.room.name}</Chip>}
-                    <StatusBadge map={SESSION_STATUS} value={s.status} />
-                    {clashes.has(s.id) && <Chip tone="rose">çakışma</Chip>}
-                    {!s.isVisible && s.status === "PUBLISHED" && <Chip tone="amber">gizli</Chip>}
+                    <StatusBadge map={sessionStatusMap} value={s.status} />
+                    {clashes.has(s.id) && <Chip tone="rose">{t("scientific.clashChip")}</Chip>}
+                    {!s.isVisible && s.status === "PUBLISHED" && <Chip tone="amber">{t("scientific.hiddenChip")}</Chip>}
                   </div>
-                  {s.submission && <p className="mt-1 text-xs text-muted-foreground">kaynak bildiri: {s.submission.code} — {s.submission.title}</p>}
+                  {s.submission && <p className="mt-1 text-xs text-muted-foreground">{t("scientific.sourceSubmission", { code: s.submission.code, title: s.submission.title })}</p>}
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {s.assignments.map((a) => {
                       const name = a.person ? `${a.person.firstName} ${a.person.lastName}` : a.participation ? `${a.participation.person.firstName} ${a.participation.person.lastName}` : "—";
-                      return <Chip key={a.id} tone={a.status === "CONFIRMED" ? "emerald" : "amber"}>{label2(EVENT_ROLES, a.role)}: {name}</Chip>;
+                      return <Chip key={a.id} tone={a.status === "CONFIRMED" ? "emerald" : "amber"}>{tLabel(EVENT_ROLES, a.role)}: {name}</Chip>;
                     })}
                   </div>
                   {/* ── R9-c: oturum materyalleri alt listesi ── */}
                   {(materialsBySession.get(s.id)?.length ?? 0) > 0 && (
                     <div className="mt-3 rounded-lg border bg-muted/20 p-2.5">
                       <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                        <Icons.Paperclip className="size-3.5" aria-hidden /> Materyaller
+                        <Icons.Paperclip className="size-3.5" aria-hidden /> {t("scientific.materials")}
                         <span className="font-normal tabular-nums">({materialsBySession.get(s.id)!.length})</span>
                       </p>
                       <div className="space-y-1">
                         {materialsBySession.get(s.id)!.map((m) => (
                           <div key={m.id} className="group flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-card px-2 py-1.5 text-xs transition-colors hover:bg-teal-500/5">
-                            <Chip tone="teal">{label(MATERIAL_TYPE, m.type)}</Chip>
+                            <Chip tone="teal">{tLabel(MATERIAL_TYPE, m.type)}</Chip>
                             {m.notes?.includes("Medya:") && (
-                              <Chip tone="violet"><Icons.FolderOpen className="size-3" aria-hidden /> Medya</Chip>
+                              <Chip tone="violet"><Icons.FolderOpen className="size-3" aria-hidden /> {t("scientific.mediaChip")}</Chip>
                             )}
                             <span className="min-w-0 flex-1 truncate font-medium">{m.title}</span>
-                            {m.type === "VIDEO" && m.durationMin != null && <span className="tabular-nums text-muted-foreground">{m.durationMin} dk</span>}
+                            {m.type === "VIDEO" && m.durationMin != null && <span className="tabular-nums text-muted-foreground">{t("scientific.minutes", { n: m.durationMin })}</span>}
                             {m.personId && personOptions.get(m.personId) && <span className="hidden text-muted-foreground sm:inline">{personOptions.get(m.personId)}</span>}
-                            <StatusBadge map={MATERIAL_STATUS_LABEL} value={m.status} />
+                            <StatusBadge map={matStatusMap} value={m.status} />
                             {m.url && (
-                              <a href={m.url} target="_blank" rel="noreferrer" className="rounded p-0.5 text-teal-600 transition hover:text-teal-800" aria-label={`${m.title} bağlantısını aç`}>
+                              <a href={m.url} target="_blank" rel="noreferrer" className="rounded p-0.5 text-teal-600 transition hover:text-teal-800" aria-label={t("scientific.openLinkAria", { title: m.title })}>
                                 <Icons.ExternalLink className="size-3.5" />
                               </a>
                             )}
                             <span className="flex items-center gap-0.5 opacity-60 transition group-hover:opacity-100">
-                              <button onClick={() => openMatEdit(m)} className="rounded p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={`${m.title} materyalini düzenle`}>
+                              <button onClick={() => openMatEdit(m)} className="rounded p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={t("scientific.editMaterialAria", { title: m.title })}>
                                 <Icons.Pencil className="size-3" />
                               </button>
-                              <button onClick={() => removeMat(m)} className="rounded p-1 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600" aria-label={`${m.title} materyalini sil`}>
+                              <button onClick={() => removeMat(m)} className="rounded p-1 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600" aria-label={t("scientific.deleteMaterialAria", { title: m.title })}>
                                 <Icons.Trash2 className="size-3" />
                               </button>
                             </span>
@@ -837,20 +871,29 @@ export function ProgramView() {
                     </div>
                   )}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button size="sm" variant="ghost" className="h-7" onClick={() => openMatNew(s)} aria-label={`${s.title} oturumuna materyal ekle`}>
-                      <Icons.Paperclip className="size-3.5" /> Materyal Ekle
+                    <Button size="sm" variant="ghost" className="h-7" onClick={() => openMatNew(s)} aria-label={t("scientific.addMaterialAria", { title: s.title })}>
+                      <Icons.Paperclip className="size-3.5" /> {t("scientific.addMaterial")}
                     </Button>
-                    <Button size="sm" variant="ghost" className="h-7" onClick={() => openSesEdit(s)} aria-label={`${s.title} oturumunu düzenle`}>
-                      <Icons.Pencil className="size-3.5" /> Düzenle
+                    <Button size="sm" variant="ghost" className="h-7" onClick={() => openSesEdit(s)} aria-label={t("scientific.editSessionAria", { title: s.title })}>
+                      <Icons.Pencil className="size-3.5" /> {t("scientific.edit")}
                     </Button>
                   </div>
                   {s.status !== "PUBLISHED" && (
                     <Button size="sm" variant="outline" className="mt-2" onClick={() => setPublishTarget(s)} disabled={clashes.has(s.id)}>
-                      <Icons.Upload className="size-4" /> Yayınla
+                      <Icons.Upload className="size-4" /> {t("scientific.publish")}
                     </Button>
                   )}
                 </div>
               ))}
+              {/* TASK-A F6: kesintisiz yükleme */}
+              {sesMore?.hasMore && (
+                <div className="flex items-center justify-center pt-1">
+                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={sesMore.loading} onClick={sesMore.next}>
+                    {sesMore.loading ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ChevronsDown className="size-3.5" />}
+                    {t("scientific.loadMore")}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </TabsContent>
@@ -858,42 +901,42 @@ export function ProgramView() {
         {cmeEnabled && (
           <TabsContent value="cme" className="mt-4 space-y-4">
             {cmeLoading ? <Loading rows={5} /> : cmeError ? <ErrorState message={cmeError} onRetry={reloadCme} /> : !cme ? (
-              <EmptyState title="CME verisi yok" desc="Veri yüklenemedi — yenile düğmesiyle tekrar deneyin." />
+              <EmptyState title={t("cme.noDataTitle")} desc={t("cme.noDataDesc")} />
             ) : (
               <>
                 {/* Üst KPI satırı */}
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <KpiCard label="Kredili Oturum" value={cme.summary.sessionsWithCredits} sub={`${cme.summary.sessionsTotal} oturum`} icon={<Icons.GraduationCap className="size-4" />} />
-                  <KpiCard label="Kredi Potansiyeli" value={cme.summary.creditsPotential} sub="kredili oturumların toplamı" tone="violet" icon={<Icons.Sigma className="size-4" />} />
-                  <KpiCard label="Kredi Kazanan" value={cme.summary.attendees} sub="katılımcı" tone="emerald" icon={<Icons.UserCheck className="size-4" />} />
-                  <KpiCard label="Dağıtılan Kredi" value={cme.summary.creditsIssued} sub={`ort. ${cme.summary.avgCredits} kredi/kişi`} tone="amber" icon={<Icons.Award className="size-4" />} />
+                  <KpiCard label={t("cme.kpiSessionsWithCredits")} value={cme.summary.sessionsWithCredits} sub={t("cme.kpiSessionsSub", { n: cme.summary.sessionsTotal })} icon={<Icons.GraduationCap className="size-4" />} />
+                  <KpiCard label={t("cme.kpiPotential")} value={cme.summary.creditsPotential} sub={t("cme.kpiPotentialSub")} tone="violet" icon={<Icons.Sigma className="size-4" />} />
+                  <KpiCard label={t("cme.kpiAttendees")} value={cme.summary.attendees} sub={t("cme.kpiAttendeesSub")} tone="emerald" icon={<Icons.UserCheck className="size-4" />} />
+                  <KpiCard label={t("cme.kpiIssued")} value={cme.summary.creditsIssued} sub={t("cme.kpiIssuedSub", { avg: cme.summary.avgCredits })} tone="amber" icon={<Icons.Award className="size-4" />} />
                 </div>
 
                 {/* Kapsam satırı + resmî rapor aksiyonları */}
                 <div className="flex flex-wrap items-center gap-2 gap-y-2 rounded-xl border bg-card px-4 py-3 shadow-sm sm:gap-3">
-                  <span className="text-xs font-medium text-muted-foreground">Kapsam</span>
+                  <span className="text-xs font-medium text-muted-foreground">{t("cme.coverage")}</span>
                   <div className="h-1.5 min-w-24 flex-1 overflow-hidden rounded bg-muted">
                     <div className="h-full rounded bg-teal-500 transition-all duration-300" style={{ width: `${cme.summary.coveragePercent}%` }} />
                   </div>
-                  <span className="whitespace-nowrap text-xs text-muted-foreground">{`Oturumların %${cme.summary.coveragePercent}'i kredili`}</span>
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">{t("cme.coveragePercent", { p: cme.summary.coveragePercent })}</span>
                   <Button size="sm" variant="outline" className="ml-auto h-8 shrink-0" onClick={() => setReportOpen(true)} disabled={!currentEditionId}>
-                    <Icons.FileBadge className="size-3.5" /> Resmî Rapor
+                    <Icons.FileBadge className="size-3.5" /> {t("cme.officialReport")}
                   </Button>
                   <Button size="sm" variant="ghost" className="h-8 shrink-0" onClick={() => window.open(`/api/cme/report?editionId=${encodeURIComponent(currentEditionId ?? "")}&format=csv`, "_blank")}>
-                    <Icons.Download className="size-3.5" /> CSV
+                    <Icons.Download className="size-3.5" /> {t("cme.csv")}
                   </Button>
                 </div>
 
                 {/* Oturum kredi editörü */}
-                <SectionCard title="Oturum Kredileri" desc="Oturuma atanacak CME kredisini girin — oturum taraması gerçekleştiğinde kişiye işlenir">
+                <SectionCard title={t("cme.sessionCredits")} desc={t("cme.sessionCreditsDesc")}>
                   <div className="maven-scroll max-h-96 overflow-auto">
                     <table className="w-full min-w-[560px] text-sm">
                       <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
                         <tr className="border-b">
-                          <th className="px-3 py-2 text-xs font-medium">Oturum</th>
-                          <th className="px-3 py-2 text-xs font-medium">Saat</th>
-                          <th className="px-3 py-2 text-xs font-medium">Katılım</th>
-                          <th className="px-3 py-2 text-right text-xs font-medium">Kredi</th>
+                          <th className="px-3 py-2 text-xs font-medium">{t("cme.thSession")}</th>
+                          <th className="px-3 py-2 text-xs font-medium">{t("cme.thTime")}</th>
+                          <th className="px-3 py-2 text-xs font-medium">{t("cme.thAttendance")}</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium">{t("cme.thCredits")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -904,14 +947,14 @@ export function ProgramView() {
                               <div className="mt-1"><Chip tone={cmeTypeTone(s.type)}>{s.type}</Chip></div>
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-muted-foreground">{cmeTime(s.startTime)}</td>
-                            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{s.attendanceCount} kişi</td>
+                            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{t("cme.personCount", { n: s.attendanceCount })}</td>
                             <td className="px-3 py-2.5">
                               <div className="flex items-center justify-end gap-1.5">
                                 <Input
                                   type="number" inputMode="decimal" min={0} max={99} step={0.5}
                                   value={creditInputs[s.id] ?? ""} placeholder="—"
                                   onChange={(e) => setCreditInputs((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                                  className="h-8 w-20" aria-label={`${s.title} — CME kredisi`}
+                                  className="h-8 w-20" aria-label={t("cme.creditInputAria", { title: s.title })}
                                 />
                                 <Button
                                   size="sm" variant="outline" className="h-8"
@@ -919,7 +962,7 @@ export function ProgramView() {
                                   onClick={() => saveCredits(s)}
                                 >
                                   {savingId === s.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Check className="size-3.5" />}
-                                  Kaydet
+                                  {t("common.save")}
                                 </Button>
                               </div>
                             </td>
@@ -931,44 +974,44 @@ export function ProgramView() {
                 </SectionCard>
 
                 {/* Tür bazlı toplu atama */}
-                <SectionCard title="Tür Bazlı Toplu Ata" desc="Tür şablonunu oturumlara uygula">
+                <SectionCard title={t("cme.bulkTitle")} desc={t("cme.bulkDesc")}>
                   <div className="flex flex-wrap items-end gap-3">
-                    {CME_SESSION_TYPES.map((t) => (
-                      <div key={t} className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">{t}</Label>
+                    {CME_SESSION_TYPES.map((ty) => (
+                      <div key={ty} className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">{ty}</Label>
                         <Input
                           type="number" min={0} max={99} step={0.5} placeholder="0"
-                          value={bulkDefaults[t] ?? ""}
-                          onChange={(e) => setBulkDefaults((prev) => ({ ...prev, [t]: e.target.value }))}
-                          className="h-8 w-20" aria-label={`${t} oturumları için varsayılan kredi`}
+                          value={bulkDefaults[ty] ?? ""}
+                          onChange={(e) => setBulkDefaults((prev) => ({ ...prev, [ty]: e.target.value }))}
+                          className="h-8 w-20" aria-label={t("cme.bulkInputAria", { type: ty })}
                         />
                       </div>
                     ))}
                     <div className="ml-auto flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-muted-foreground">Yalnız kredisiz oturumlara uygulanır</span>
+                      <span className="text-xs text-muted-foreground">{t("cme.bulkOnlyEmpty")}</span>
                       <Button size="sm" onClick={applyBulk} disabled={bulkBusy || !bulkFilled}>
                         {bulkBusy && <Icons.Loader2 className="size-4 animate-spin" />}
-                        Boş Kredilere Uygula
+                        {t("cme.bulkApply")}
                       </Button>
                     </div>
                   </div>
                 </SectionCard>
 
                 {/* Kişi bazlı kredi defteri */}
-                <SectionCard title="Kredi Defteri" desc="Kişi bazlı CME birikimi — krediye göre sıralı">
+                <SectionCard title={t("cme.ledgerTitle")} desc={t("cme.ledgerDesc")}>
                   {cme.ledger.length === 0 ? (
-                    <EmptyState title="Defter boş" desc="Oturum taraması ve kredi bekleniyor" />
+                    <EmptyState title={t("cme.ledgerEmptyTitle")} desc={t("cme.ledgerEmptyDesc")} />
                   ) : (
                     <div className="maven-scroll max-h-96 overflow-auto">
                       <table className="w-full min-w-[640px] text-sm">
                         <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
                           <tr className="border-b">
-                            <th className="px-3 py-2 text-xs font-medium">Kişi</th>
-                            <th className="px-3 py-2 text-xs font-medium">Roller</th>
-                            <th className="px-3 py-2 text-xs font-medium">Katılım</th>
-                            <th className="px-3 py-2 text-right text-xs font-medium">Kredi</th>
-                            <th className="px-3 py-2 text-xs font-medium">İlerleme</th>
-                            <th className="px-3 py-2 text-xs font-medium">Son Etkinlik</th>
+                            <th className="px-3 py-2 text-xs font-medium">{t("cme.thPerson")}</th>
+                            <th className="px-3 py-2 text-xs font-medium">{t("cme.thRoles")}</th>
+                            <th className="px-3 py-2 text-xs font-medium">{t("cme.thAttendance")}</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium">{t("cme.thCredits")}</th>
+                            <th className="px-3 py-2 text-xs font-medium">{t("cme.thProgress")}</th>
+                            <th className="px-3 py-2 text-xs font-medium">{t("cme.thLastActivity")}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -982,12 +1025,12 @@ export function ProgramView() {
                               </td>
                               <td className="px-3 py-2.5">
                                 <div className="flex flex-wrap gap-1">
-                                  {l.roles.slice(0, 2).map((r) => <Chip key={r} tone="teal">{label(EVENT_ROLES, r)}</Chip>)}
+                                  {l.roles.slice(0, 2).map((r) => <Chip key={r} tone="teal">{tLabel(EVENT_ROLES, r)}</Chip>)}
                                   {l.roles.length > 2 && <Chip tone="neutral">+{l.roles.length - 2}</Chip>}
                                   {l.roles.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
                                 </div>
                               </td>
-                              <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{l.attendedCount}/{l.eligibleCount} oturum</td>
+                              <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{t("cme.attendedOf", { attended: l.attendedCount, eligible: l.eligibleCount })}</td>
                               <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{l.credits}</td>
                               <td className="px-3 py-2.5">
                                 <div className="flex items-center gap-2">
@@ -1013,11 +1056,11 @@ export function ProgramView() {
 
       <Dialog open={Boolean(publishTarget)} onOpenChange={(o) => !o && setPublishTarget(null)}>
         <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>Oturumu Yayınla</DialogTitle><DialogDescription>{publishTarget?.title}</DialogDescription></DialogHeader>
-          <p className="text-xs text-muted-foreground">Yayın düğmesi etkilenen konuşmacı ve katılımcı sayısını gösterir; kişisel programlarda görünür olur.</p>
+          <DialogHeader><DialogTitle>{t("scientific.publishDialogTitle")}</DialogTitle><DialogDescription>{publishTarget?.title}</DialogDescription></DialogHeader>
+          <p className="text-xs text-muted-foreground">{t("scientific.publishDialogDesc")}</p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPublishTarget(null)}>Vazgeç</Button>
-            <Button onClick={publish} disabled={busy}>{busy ? "Yayınlanıyor…" : "Yayınla"}</Button>
+            <Button variant="outline" onClick={() => setPublishTarget(null)}>{t("common.cancel")}</Button>
+            <Button onClick={publish} disabled={busy}>{busy ? t("scientific.publishing") : t("scientific.publish")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1030,8 +1073,8 @@ export function ProgramView() {
       <Dialog open={importOpen} onOpenChange={(o) => { if (!o) { setImportOpen(false); setImportReport(null); } }}>
         <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>İçe Aktar — Oturum Programı / Katılımcı Listesi</DialogTitle>
-            <DialogDescription>Excel&apos;den kopyala-yapıştır (TSV) veya noktalı virgül ayraçlı CSV — başlıklar Türkçe veya İngilizce olabilir.</DialogDescription>
+            <DialogTitle>{t("scientific.importDialogTitle")}</DialogTitle>
+            <DialogDescription>{t("scientific.importDialogDesc")}</DialogDescription>
           </DialogHeader>
 
           <RadioGroup
@@ -1042,91 +1085,91 @@ export function ProgramView() {
             <Label htmlFor="imp-sessions" className={cn("flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition", importKind === "SESSIONS" ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:border-primary/40")}>
               <RadioGroupItem value="SESSIONS" id="imp-sessions" className="mt-0.5" />
               <span>
-                <span className="block text-sm font-semibold">Oturum Programı</span>
-                <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">Oturum adı, saat, salon, konuşmacı eşleştirme — salon yoksa oluşturulur</span>
+                <span className="block text-sm font-semibold">{t("scientific.importKindSessions")}</span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{t("scientific.importKindSessionsDesc")}</span>
               </span>
             </Label>
             <Label htmlFor="imp-parts" className={cn("flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition", importKind === "PARTICIPANTS" ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:border-primary/40")}>
               <RadioGroupItem value="PARTICIPANTS" id="imp-parts" className="mt-0.5" />
               <span>
-                <span className="block text-sm font-semibold">Katılımcı Listesi</span>
-                <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">Ad soyad + e-posta eşleştirme — katılım ve kaynak: İçe Aktarma</span>
+                <span className="block text-sm font-semibold">{t("scientific.importKindParticipants")}</span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{t("scientific.importKindParticipantsDesc")}</span>
               </span>
             </Label>
           </RadioGroup>
 
           <div>
-            <Label>Veri (başlık + en az bir satır)</Label>
+            <Label>{t("scientific.importDataLabel")}</Label>
             <Textarea
               className="mt-1 min-h-40 font-mono text-xs"
               rows={8}
               value={importText}
               onChange={(e) => { setImportText(e.target.value); setImportReport(null); }}
               placeholder={importKind === "SESSIONS"
-                ? "Oturum Adı;Başlangıç;Bitiş;Salon;Konuşmacı;E-posta;Rol\nAçılış Konuşması;14.05.2026 09:00;14.05.2026 09:45;Ana Salon;Prof. Dr. Ayşe Yılmaz;ayse@universite.edu.tr;SPEAKER\nPanel: Şehirleşme;14.05.2026 10:00;14.05.2026 11:30;Salon B;..."
-                : "Ad Soyad;E-posta;Kurum;Unvan\nAyşe Yılmaz;ayse@ornek.com;Yılmaz A.Ş.;Direktör\nMehmet Demir;mehmet@ornek.com;Demir Ltd;Müdür"}
+                ? t("scientific.importPlaceholderSessions")
+                : t("scientific.importPlaceholderParticipants")}
             />
             <p className="mt-1 text-[11px] text-muted-foreground">
               {importKind === "SESSIONS"
-                ? "Beklenen başlıklar: Oturum Adı | Başlangıç | Bitiş | Salon | Konuşmacı | E-posta | Rol"
-                : "Beklenen başlıklar: Ad Soyad | E-posta | Kurum | Unvan"}
-              {" "}— saat biçimi: 14.05.2026 09:00 veya ISO.
+                ? t("scientific.importHeadersSessions")
+                : t("scientific.importHeadersParticipants")}
+              {" "}{t("scientific.importTimeFormatNote")}
             </p>
           </div>
 
           <div className="flex flex-wrap gap-x-5 gap-y-2">
             <div className="flex items-center gap-2">
               <Checkbox id="imp-cmp" checked={createMissingPersons} onCheckedChange={(v) => setCreateMissingPersons(v === true)} />
-              <Label htmlFor="imp-cmp" className="cursor-pointer text-sm font-normal">Eşleşmeyen için yeni kişi oluştur</Label>
+              <Label htmlFor="imp-cmp" className="cursor-pointer text-sm font-normal">{t("scientific.importCreatePersons")}</Label>
             </div>
             {importKind === "SESSIONS" && (
               <div className="flex items-center gap-2">
                 <Checkbox id="imp-cmr" checked={createMissingRooms} onCheckedChange={(v) => setCreateMissingRooms(v === true)} />
-                <Label htmlFor="imp-cmr" className="cursor-pointer text-sm font-normal">Eksik salonu oluştur</Label>
+                <Label htmlFor="imp-cmr" className="cursor-pointer text-sm font-normal">{t("scientific.importCreateRooms")}</Label>
               </div>
             )}
             <div className="flex items-center gap-2">
               <Checkbox id="imp-dry" checked={dryRun} onCheckedChange={(v) => { setDryRun(v === true); setImportReport(null); }} />
-              <Label htmlFor="imp-dry" className="cursor-pointer text-sm font-normal">Önce sına — kaydetmez</Label>
+              <Label htmlFor="imp-dry" className="cursor-pointer text-sm font-normal">{t("scientific.importDryRun")}</Label>
             </div>
           </div>
 
           {/* ── sonuç raporu ── */}
           {importBusy && (
-            <p className="flex items-center gap-2 text-xs text-muted-foreground"><Icons.Loader2 className="size-3.5 animate-spin" /> Satırlar işleniyor, kişiler eşleştiriliyor…</p>
+            <p className="flex items-center gap-2 text-xs text-muted-foreground"><Icons.Loader2 className="size-3.5 animate-spin" /> {t("scientific.importProcessing")}</p>
           )}
           {importReport && !importBusy && (
             <div className="maven-stagger-item space-y-3 rounded-xl border bg-muted/20 p-3">
               <div className="flex flex-wrap items-center gap-1.5">
                 {importKind === "SESSIONS" ? (
                   <>
-                    <Chip tone="emerald">{importReport.sessionsCreated} oturum oluşturuldu</Chip>
-                    {importReport.sessionsUpdated > 0 && <Chip tone="teal">{importReport.sessionsUpdated} güncellendi</Chip>}
-                    {importReport.roomsCreated > 0 && <Chip tone="violet">{importReport.roomsCreated} salon oluşturuldu</Chip>}
-                    <Chip tone="teal">{importReport.personsMatched} kişi eşleşti</Chip>
-                    {importReport.personsCreated > 0 && <Chip tone="emerald">{importReport.personsCreated} yeni kişi</Chip>}
-                    {importReport.assignmentsCreated > 0 && <Chip tone="neutral">{importReport.assignmentsCreated} atama</Chip>}
-                    {importReport.personsUnmatched > 0 && <Chip tone="rose">{importReport.personsUnmatched} eşleşmeyen</Chip>}
+                    <Chip tone="emerald">{t("scientific.importSessionsCreated", { n: importReport.sessionsCreated })}</Chip>
+                    {importReport.sessionsUpdated > 0 && <Chip tone="teal">{t("scientific.importUpdated", { n: importReport.sessionsUpdated })}</Chip>}
+                    {importReport.roomsCreated > 0 && <Chip tone="violet">{t("scientific.importRoomsCreated", { n: importReport.roomsCreated })}</Chip>}
+                    <Chip tone="teal">{t("scientific.importPersonsMatched", { n: importReport.personsMatched })}</Chip>
+                    {importReport.personsCreated > 0 && <Chip tone="emerald">{t("scientific.importPersonsCreated", { n: importReport.personsCreated })}</Chip>}
+                    {importReport.assignmentsCreated > 0 && <Chip tone="neutral">{t("scientific.importAssignments", { n: importReport.assignmentsCreated })}</Chip>}
+                    {importReport.personsUnmatched > 0 && <Chip tone="rose">{t("scientific.importPersonsUnmatched", { n: importReport.personsUnmatched })}</Chip>}
                   </>
                 ) : (
                   <>
-                    <Chip tone="teal">{importReport.personsMatched} kişi eşleşti</Chip>
-                    <Chip tone="emerald">{importReport.personsCreated} yeni kişi</Chip>
-                    <Chip tone="rose">{importReport.personsUnmatched} eşleşmeyen</Chip>
-                    {importReport.participationsCreated > 0 && <Chip tone="violet">{importReport.participationsCreated} katılım oluşturuldu</Chip>}
+                    <Chip tone="teal">{t("scientific.importPersonsMatched", { n: importReport.personsMatched })}</Chip>
+                    <Chip tone="emerald">{t("scientific.importPersonsCreated", { n: importReport.personsCreated })}</Chip>
+                    <Chip tone="rose">{t("scientific.importPersonsUnmatched", { n: importReport.personsUnmatched })}</Chip>
+                    {importReport.participationsCreated > 0 && <Chip tone="violet">{t("scientific.importParticipationsCreated", { n: importReport.participationsCreated })}</Chip>}
                   </>
                 )}
-                {importReport.dryRun && <Chip tone="amber">deneme — kaydedilmedi</Chip>}
-                <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{importReport.totalRows} satır</span>
+                {importReport.dryRun && <Chip tone="amber">{t("scientific.importDryRunChip")}</Chip>}
+                <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{t("scientific.importRows", { n: importReport.totalRows })}</span>
               </div>
 
               {importReport.errors.length > 0 && (
                 <div className="space-y-1">
-                  <p className="text-xs font-semibold text-rose-700">Hatalar</p>
+                  <p className="text-xs font-semibold text-rose-700">{t("scientific.importErrors")}</p>
                   {importReport.errors.map((e) => (
                     <p key={`${e.row}-${e.message}`} className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
                       <Icons.TriangleAlert className="mt-0.5 size-3 shrink-0" aria-hidden />
-                      <span>Satır <span className="tabular-nums font-semibold">{e.row}</span> — {e.message}</span>
+                      <span>{t("scientific.row")} <span className="tabular-nums font-semibold">{e.row}</span> — {e.message}</span>
                     </p>
                   ))}
                 </div>
@@ -1134,16 +1177,16 @@ export function ProgramView() {
 
               {importReport.matchDetails.length > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-muted-foreground">Kişi eşleştirme dökümü</p>
+                  <p className="mb-1 text-xs font-semibold text-muted-foreground">{t("scientific.importMatchDetails")}</p>
                   {/* mobilde kart, sm+ üstünde tablo */}
                   <div className="maven-scroll hidden max-h-52 overflow-y-auto rounded-lg border bg-card sm:block">
                     <table className="w-full text-xs">
                       <thead className="sticky top-0 bg-card text-left text-muted-foreground">
                         <tr className="border-b">
-                          <th className="px-2.5 py-1.5 font-medium">Satır</th>
-                          <th className="px-2.5 py-1.5 font-medium">Ad Soyad</th>
-                          <th className="px-2.5 py-1.5 font-medium">E-posta</th>
-                          <th className="px-2.5 py-1.5 font-medium">Sonuç</th>
+                          <th className="px-2.5 py-1.5 font-medium">{t("scientific.row")}</th>
+                          <th className="px-2.5 py-1.5 font-medium">{t("scientific.thFullName")}</th>
+                          <th className="px-2.5 py-1.5 font-medium">{t("scientific.thEmail")}</th>
+                          <th className="px-2.5 py-1.5 font-medium">{t("scientific.thResult")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1163,7 +1206,7 @@ export function ProgramView() {
                       <div key={`${d.row}-${d.name ?? d.email ?? ""}`} className="rounded-lg border bg-card p-2">
                         <div className="flex items-center justify-between gap-2">
                           <span className="truncate text-xs font-semibold">{d.name ?? "—"}</span>
-                          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">sr. {d.row}</span>
+                          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{t("scientific.rowShort")} {d.row}</span>
                         </div>
                         {d.email && <p className="truncate text-[10px] text-muted-foreground">{d.email}</p>}
                         <div className="mt-1"><Chip tone={importTone(d.result)}>{d.result}</Chip></div>
@@ -1176,9 +1219,9 @@ export function ProgramView() {
               {/* dryRun temizse kaydetme onayı */}
               {importReport.dryRun && (importReport.errors ?? []).length === 0 && importReport.totalRows > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2">
-                  <p className="text-xs text-teal-800">Sınama temiz görünüyor — kaydedilmeye hazır.</p>
+                  <p className="text-xs text-teal-800">{t("scientific.importClean")}</p>
                   <Button size="sm" onClick={() => void runImport(false)} disabled={importBusy}>
-                    <Icons.Check className="size-4" /> Şimdi kaydet
+                    <Icons.Check className="size-4" /> {t("scientific.importSaveNow")}
                   </Button>
                 </div>
               )}
@@ -1186,10 +1229,10 @@ export function ProgramView() {
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setImportOpen(false); setImportReport(null); }}>Kapat</Button>
+            <Button variant="outline" onClick={() => { setImportOpen(false); setImportReport(null); }}>{t("common.close")}</Button>
             <Button onClick={() => void runImport(dryRun)} disabled={importBusy || !importText.trim() || !currentEditionId}>
               {importBusy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.FileUp className="size-4" />}
-              {dryRun ? "Sına (kaydetmez)" : "İçe Aktar"}
+              {dryRun ? t("scientific.importDryRunButton") : t("scientific.import")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1199,36 +1242,36 @@ export function ProgramView() {
       <Dialog open={matOpen} onOpenChange={setMatOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{editingMat ? "Materyali Düzenle" : "Yeni Materyal"}</DialogTitle>
+            <DialogTitle>{editingMat ? t("scientific.editMaterial") : t("scientific.newMaterial")}</DialogTitle>
             <DialogDescription>{editingMat ? editingMat.title : matTarget?.title}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <Label>Tür</Label>
+              <Label>{t("scientific.typeLabel")}</Label>
               <Select value={matForm.type} onValueChange={(v) => setMatForm({ ...matForm, type: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(MATERIAL_TYPE).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  {Object.entries(materialTypeMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label>Durum</Label>
+              <Label>{t("scientific.statusLabel")}</Label>
               <Select value={matForm.status} onValueChange={(v) => setMatForm({ ...matForm, status: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PENDING">Bekliyor</SelectItem>
-                  <SelectItem value="READY">Hazır</SelectItem>
-                  <SelectItem value="MISSING">Eksik</SelectItem>
+                  <SelectItem value="PENDING">{t("status.PENDING")}</SelectItem>
+                  <SelectItem value="READY">{t("status.READY")}</SelectItem>
+                  <SelectItem value="MISSING">{t("status.MISSING")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="sm:col-span-2"><Label>Başlık *</Label><Input className="mt-1" value={matForm.title} onChange={(e) => setMatForm({ ...matForm, title: e.target.value })} placeholder="Örn. Açılış sunumu v2" /></div>
-            <div className="sm:col-span-2"><Label>Bağlantı (URL)</Label><Input className="mt-1" type="url" value={matForm.url} onChange={(e) => setMatForm({ ...matForm, url: e.target.value })} placeholder="https://…" /></div>
+            <div className="sm:col-span-2"><Label>{t("scientific.titleLabel")}</Label><Input className="mt-1" value={matForm.title} onChange={(e) => setMatForm({ ...matForm, title: e.target.value })} placeholder={t("scientific.materialTitlePlaceholder")} /></div>
+            <div className="sm:col-span-2"><Label>{t("scientific.materialUrlLabel")}</Label><Input className="mt-1" type="url" value={matForm.url} onChange={(e) => setMatForm({ ...matForm, url: e.target.value })} placeholder={t("scientific.urlPlaceholder")} /></div>
             {/* R10-b: dosya modu — Medya Arşivi'ne benzersiz adla kopyalanır */}
             <div className="sm:col-span-2 rounded-lg border border-dashed bg-muted/20 p-3">
-              <p className="flex items-center gap-1.5 text-xs font-medium"><Icons.FolderUp className="size-3.5 text-teal-600" /> Dosya (≤ 600 KB)</p>
-              <p className="mt-0.5 text-[10px] text-muted-foreground">Dosya Medya Arşivi → Materyaller klasörüne benzersiz adla kopyalanır.</p>
+              <p className="flex items-center gap-1.5 text-xs font-medium"><Icons.FolderUp className="size-3.5 text-teal-600" /> {t("scientific.fileUploadLabel")}</p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">{t("scientific.fileUploadDesc")}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <input
                   ref={matFileRef} type="file" className="hidden"
@@ -1236,7 +1279,7 @@ export function ProgramView() {
                     const f = e.target.files?.[0];
                     if (f) {
                       if (f.size > MAX_FILE_BYTES) {
-                        toast({ title: "Dosya çok büyük", description: `En fazla 600 KB yüklenebilir — seçilen dosya ${(f.size / 1024).toFixed(0)} KB.`, variant: "destructive" });
+                        toast({ title: t("scientific.fileTooBig"), description: t("scientific.fileTooBigDesc", { size: (f.size / 1024).toFixed(0) }), variant: "destructive" });
                       } else {
                         void fileToDataUrl(f, MAX_FILE_BYTES).then((d) => { if (d) setMatForm((p) => ({ ...p, dataUrl: d })); });
                       }
@@ -1244,38 +1287,38 @@ export function ProgramView() {
                     e.target.value = "";
                   }}
                 />
-                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => matFileRef.current?.click()} aria-label="Materyal dosyası seç">
-                  <Icons.Upload className="size-3" /> Dosya seç
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => matFileRef.current?.click()} aria-label={t("scientific.chooseFileAria")}>
+                  <Icons.Upload className="size-3" /> {t("scientific.chooseFile")}
                 </Button>
-                {matForm.dataUrl && <Chip tone="teal">dosya hazır</Chip>}
+                {matForm.dataUrl && <Chip tone="teal">{t("scientific.fileReady")}</Chip>}
                 {matForm.dataUrl && (
-                  <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-rose-600 hover:text-rose-700" onClick={() => setMatForm((p) => ({ ...p, dataUrl: "" }))} aria-label="Seçilen dosyayı kaldır">
-                    <Icons.Trash2 className="size-3" /> Kaldır
+                  <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-rose-600 hover:text-rose-700" onClick={() => setMatForm((p) => ({ ...p, dataUrl: "" }))} aria-label={t("scientific.removeFileAria")}>
+                    <Icons.Trash2 className="size-3" /> {t("scientific.remove")}
                   </Button>
                 )}
               </div>
             </div>
             <div>
-              <Label>Kişisi (opsiyonel)</Label>
+              <Label>{t("scientific.materialPersonLabel")}</Label>
               <Select value={matForm.personId} onValueChange={(v) => setMatForm({ ...matForm, personId: v })}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                <SelectTrigger className="mt-1"><SelectValue placeholder={t("scientific.none")} /></SelectTrigger>
                 <SelectContent className="maven-scroll max-h-64">
-                  <SelectItem value="none">— Sahip yok —</SelectItem>
+                  <SelectItem value="none">{t("scientific.noOwner")}</SelectItem>
                   {Array.from(personOptions.entries()).map(([id, name]) => <SelectItem key={id} value={id}>{name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             {matForm.type === "VIDEO" && (
               <div>
-                <Label>Süre (dk)</Label>
-                <Input className="mt-1 tabular-nums" type="number" min={0} max={999} value={matForm.durationMin} onChange={(e) => setMatForm({ ...matForm, durationMin: e.target.value })} placeholder="Örn. 24" />
+                <Label>{t("scientific.durationLabel")}</Label>
+                <Input className="mt-1 tabular-nums" type="number" min={0} max={999} value={matForm.durationMin} onChange={(e) => setMatForm({ ...matForm, durationMin: e.target.value })} placeholder={t("scientific.durationPlaceholder")} />
               </div>
             )}
-            <div className="sm:col-span-2"><Label>Notlar</Label><Textarea className="mt-1" rows={2} value={matForm.notes} onChange={(e) => setMatForm({ ...matForm, notes: e.target.value })} /></div>
+            <div className="sm:col-span-2"><Label>{t("scientific.notesLabel")}</Label><Textarea className="mt-1" rows={2} value={matForm.notes} onChange={(e) => setMatForm({ ...matForm, notes: e.target.value })} /></div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setMatOpen(false)}>Vazgeç</Button>
-            <Button onClick={saveMat} disabled={matBusy || !matForm.title.trim()}>{matBusy ? "Kaydediliyor…" : "Kaydet"}</Button>
+            <Button variant="outline" onClick={() => setMatOpen(false)}>{t("common.cancel")}</Button>
+            <Button onClick={saveMat} disabled={matBusy || !matForm.title.trim()}>{matBusy ? t("common.saving") : t("common.save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1284,91 +1327,91 @@ export function ProgramView() {
       <Dialog open={sesOpen} onOpenChange={(o) => { if (!o) { setSesOpen(false); setSesError(""); } }}>
         <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingSes ? "Oturumu Düzenle" : "Yeni Oturum"}</DialogTitle>
-            <DialogDescription>{editingSes ? editingSes.title : "Program penceresinden manuel giriş — salon, iz, kaynak bildiri ve görevli atanabilir"}</DialogDescription>
+            <DialogTitle>{editingSes ? t("scientific.editSession") : t("scientific.newSession")}</DialogTitle>
+            <DialogDescription>{editingSes ? editingSes.title : t("scientific.newSessionDesc")}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <Label>Başlık *</Label>
-              <Input className="mt-1" value={sesForm.title} onChange={(e) => setSesForm({ ...sesForm, title: e.target.value })} placeholder="Örn. Panel: Şehirleşmede Yeni Yaklaşımlar" />
+              <Label>{t("scientific.titleLabel")}</Label>
+              <Input className="mt-1" value={sesForm.title} onChange={(e) => setSesForm({ ...sesForm, title: e.target.value })} placeholder={t("scientific.sessionTitlePlaceholder")} />
             </div>
             <div className="sm:col-span-2">
-              <Label>Açıklama</Label>
-              <Textarea className="mt-1" rows={2} value={sesForm.description} onChange={(e) => setSesForm({ ...sesForm, description: e.target.value })} placeholder="Oturum özeti…" />
+              <Label>{t("scientific.descriptionLabel")}</Label>
+              <Textarea className="mt-1" rows={2} value={sesForm.description} onChange={(e) => setSesForm({ ...sesForm, description: e.target.value })} placeholder={t("scientific.sessionDescPlaceholder")} />
             </div>
             <div>
-              <Label>Tür</Label>
+              <Label>{t("scientific.typeLabel")}</Label>
               <Select value={sesForm.type} onValueChange={(v) => setSesForm({ ...sesForm, type: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{Object.entries(SESSION_TYPES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                <SelectContent>{Object.entries(sessionTypeMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>
-              <Label>Salon</Label>
+              <Label>{t("scientific.roomLabel")}</Label>
               <Select value={sesForm.roomId} onValueChange={(v) => setSesForm({ ...sesForm, roomId: v })}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                <SelectTrigger className="mt-1"><SelectValue placeholder={t("scientific.none")} /></SelectTrigger>
                 <SelectContent className="maven-scroll max-h-64">
-                  <SelectItem value="none">— Salon atanmadı —</SelectItem>
+                  <SelectItem value="none">{t("scientific.noRoom")}</SelectItem>
                   {(rooms ?? []).map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label>İz (track)</Label>
+              <Label>{t("scientific.trackLabel")}</Label>
               <Select value={sesForm.trackId} onValueChange={(v) => setSesForm({ ...sesForm, trackId: v })}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                <SelectTrigger className="mt-1"><SelectValue placeholder={t("scientific.none")} /></SelectTrigger>
                 <SelectContent className="maven-scroll max-h-64">
-                  <SelectItem value="none">— İz atanmadı —</SelectItem>
-                  {(tracks ?? []).map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                  <SelectItem value="none">{t("scientific.noTrack")}</SelectItem>
+                  {(tracks ?? []).map((tk) => <SelectItem key={tk.id} value={tk.id}>{tk.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label>Kaynak Bildiri (opsiyonel)</Label>
+              <Label>{t("scientific.sourceSubmissionLabel")}</Label>
               <Select value={sesForm.submissionId} onValueChange={(v) => setSesForm({ ...sesForm, submissionId: v })}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                <SelectTrigger className="mt-1"><SelectValue placeholder={t("scientific.none")} /></SelectTrigger>
                 <SelectContent className="maven-scroll max-h-64">
-                  <SelectItem value="none">— Bildiri bağlanmadı —</SelectItem>
+                  <SelectItem value="none">{t("scientific.noSubmissionLink")}</SelectItem>
                   {(subOptions ?? []).map((s) => <SelectItem key={s.id} value={s.id}>{s.code} — {s.title}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label>Başlangıç *</Label>
+              <Label>{t("scientific.startLabel")}</Label>
               <Input className="mt-1 tabular-nums" type="datetime-local" value={sesForm.startTime} onChange={(e) => setSesForm({ ...sesForm, startTime: e.target.value })} />
             </div>
             <div>
-              <Label>Bitiş *</Label>
+              <Label>{t("scientific.endLabel")}</Label>
               <Input className="mt-1 tabular-nums" type="datetime-local" value={sesForm.endTime} onChange={(e) => setSesForm({ ...sesForm, endTime: e.target.value })} />
             </div>
             <div>
-              <Label>Kapasite</Label>
-              <Input className="mt-1 tabular-nums" type="number" min={0} max={100000} value={sesForm.capacity} onChange={(e) => setSesForm({ ...sesForm, capacity: e.target.value })} placeholder="örn. 150" />
+              <Label>{t("scientific.capacityLabel")}</Label>
+              <Input className="mt-1 tabular-nums" type="number" min={0} max={100000} value={sesForm.capacity} onChange={(e) => setSesForm({ ...sesForm, capacity: e.target.value })} placeholder={t("scientific.capacityPlaceholder")} />
             </div>
             <div>
-              <Label>CME Kredi</Label>
-              <Input className="mt-1 tabular-nums" type="number" min={0} max={99} step={0.5} value={sesForm.cmeCredits} onChange={(e) => setSesForm({ ...sesForm, cmeCredits: e.target.value })} placeholder="örn. 1.5" />
+              <Label>{t("scientific.cmeCreditsLabel")}</Label>
+              <Input className="mt-1 tabular-nums" type="number" min={0} max={99} step={0.5} value={sesForm.cmeCredits} onChange={(e) => setSesForm({ ...sesForm, cmeCredits: e.target.value })} placeholder={t("scientific.creditsPlaceholder")} />
             </div>
             <div>
-              <Label>Giriş Kuralı</Label>
+              <Label>{t("scientific.accessRuleLabel")}</Label>
               <Select value={sesForm.accessRule} onValueChange={(v) => setSesForm({ ...sesForm, accessRule: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{Object.entries(SESSION_ACCESS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                <SelectContent>{Object.entries(sessionAccessMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>
-              <Label>Durum</Label>
+              <Label>{t("scientific.statusLabel")}</Label>
               <Select value={sesForm.status} onValueChange={(v) => setSesForm({ ...sesForm, status: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{Object.entries(SESSION_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                <SelectContent>{Object.entries(sessionStatusMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="flex items-center justify-between rounded-lg border px-3 py-2 sm:col-span-2">
               <div>
-                <p className="text-xs font-medium">Kişisel programlarda görünür</p>
-                <p className="text-[11px] text-muted-foreground">Yayınlandıktan sonra katılımcı takvimlerine düşer</p>
+                <p className="text-xs font-medium">{t("scientific.visibleInPersonal")}</p>
+                <p className="text-[11px] text-muted-foreground">{t("scientific.visibleDesc")}</p>
               </div>
-              <Switch checked={sesForm.isVisible} onCheckedChange={(v) => setSesForm({ ...sesForm, isVisible: v })} aria-label="Oturum görünür" />
+              <Switch checked={sesForm.isVisible} onCheckedChange={(v) => setSesForm({ ...sesForm, isVisible: v })} aria-label={t("scientific.visibleAria")} />
             </div>
             {sesError && (
               <p className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 sm:col-span-2">
@@ -1380,17 +1423,17 @@ export function ProgramView() {
           {/* görevler — kayıtlı oturumda ekle/kaldır */}
           {editingSes ? (
             <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
-              <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"><Icons.Users className="size-3.5" /> Oturum Görevlileri</p>
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"><Icons.Users className="size-3.5" /> {t("scientific.assignmentsTitle")}</p>
               {(sesDraft?.assignments ?? []).length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">Henüz görev ataması yok — aşağıdan ekleyin.</p>
+                <p className="text-[11px] text-muted-foreground">{t("scientific.noAssignments")}</p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
                   {(sesDraft?.assignments ?? []).map((a) => {
                     const name = a.person ? `${a.person.firstName} ${a.person.lastName}` : a.participation ? `${a.participation.person.firstName} ${a.participation.person.lastName}` : "—";
                     return (
                       <span key={a.id} className="inline-flex items-center gap-1 rounded-md border bg-card px-1.5 py-0.5">
-                        <Chip tone={a.status === "CONFIRMED" ? "emerald" : "amber"}>{label(EVENT_ROLES, a.role)}: {name}</Chip>
-                        <button type="button" onClick={() => void removeAssignment(a)} className="rounded p-0.5 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600" aria-label={`${name} görevini kaldır`}>
+                        <Chip tone={a.status === "CONFIRMED" ? "emerald" : "amber"}>{tLabel(EVENT_ROLES, a.role)}: {name}</Chip>
+                        <button type="button" onClick={() => void removeAssignment(a)} className="rounded p-0.5 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600" aria-label={t("scientific.removeAssignmentAria", { name })}>
                           <Icons.X className="size-3" />
                         </button>
                       </span>
@@ -1400,37 +1443,33 @@ export function ProgramView() {
               )}
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Select value={asgPerson} onValueChange={setAsgPerson}>
-                  <SelectTrigger className="h-8 flex-1 text-xs" aria-label="Görevli kişi seç"><SelectValue placeholder="Kişi seçin" /></SelectTrigger>
+                  <SelectTrigger className="h-8 flex-1 text-xs" aria-label={t("scientific.selectPersonAria")}><SelectValue placeholder={t("scientific.selectPerson")} /></SelectTrigger>
                   <SelectContent className="maven-scroll max-h-64">
-                    <SelectItem value="none">— Kişi seçin —</SelectItem>
+                    <SelectItem value="none">{t("scientific.selectPersonItem")}</SelectItem>
                     {(people ?? []).map((p) => <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}{p.company ? ` — ${p.company}` : ""}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Select value={asgRole} onValueChange={setAsgRole}>
-                  <SelectTrigger className="h-8 w-full text-xs sm:w-40" aria-label="Görev rolü seç"><SelectValue /></SelectTrigger>
-                  <SelectContent>{ASSIGN_ROLES.map((r) => <SelectItem key={r} value={r}>{label(EVENT_ROLES, r)}</SelectItem>)}</SelectContent>
+                  <SelectTrigger className="h-8 w-full text-xs sm:w-40" aria-label={t("scientific.selectRoleAria")}><SelectValue /></SelectTrigger>
+                  <SelectContent>{ASSIGN_ROLES.map((r) => <SelectItem key={r} value={r}>{tLabel(EVENT_ROLES, r)}</SelectItem>)}</SelectContent>
                 </Select>
-                <Button size="sm" className="h-8 shrink-0" disabled={asgBusy || asgPerson === "none"} onClick={() => void addAssignment()} aria-label="Görev ekle">
-                  {asgBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Plus className="size-3.5" />} Ekle
+                <Button size="sm" className="h-8 shrink-0" disabled={asgBusy || asgPerson === "none"} onClick={() => void addAssignment()} aria-label={t("scientific.addAssignmentAria")}>
+                  {asgBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Plus className="size-3.5" />} {t("scientific.add")}
                 </Button>
               </div>
             </div>
           ) : (
-            <p className="rounded-lg bg-sky-50 p-2.5 text-[11px] text-sky-800">Oturumu kaydettikten sonra konuşmacı/moderatör görev ataması yapabilirsiniz.</p>
+            <p className="rounded-lg bg-sky-50 p-2.5 text-[11px] text-sky-800">{t("scientific.assignAfterSave")}</p>
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSesOpen(false)}>Vazgeç</Button>
+            <Button variant="outline" onClick={() => setSesOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={saveSes} disabled={sesBusy || !sesForm.title.trim()}>
-              {sesBusy ? "Kaydediliyor…" : editingSes ? "Güncelle" : "Oturumu Kaydet"}
+              {sesBusy ? t("common.saving") : editingSes ? t("scientific.update") : t("scientific.saveSession")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
   );
-}
-
-function label2(map: Record<string, string>, key: string) {
-  return map[key] ?? key;
 }

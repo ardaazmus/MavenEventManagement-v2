@@ -1,0 +1,695 @@
+     1→"use client";
+     2→// API Geçidi — çift yönlü veri akışı merkezi (düşünce bulutu 4)
+     3→// Entegrasyon kartları + çalıştırma (dry-run destekli) + webhook adresi/testi + canlı log akışı.
+     4→import { useEffect, useMemo, useState } from "react";
+     5→import { listEntity, apiSend } from "@/lib/client";
+     6→import { useApp } from "@/lib/store";
+     7→import { PageHeader, SectionCard, EmptyState, Loading, ErrorState, useApi, StatusBadge, Chip, KpiCard } from "../bits";
+     8→import { INTEGRATION_KIND, INTEGRATION_DIRECTION, INTEGRATION_STATUS, label, fmtDate } from "@/lib/constants";
+     9→import { Button } from "@/components/ui/button";
+    10→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+    11→import {
+    12→  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+    13→  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+    14→} from "@/components/ui/alert-dialog";
+    15→import { Input } from "@/components/ui/input";
+    16→import { Label } from "@/components/ui/label";
+    17→import { Textarea } from "@/components/ui/textarea";
+    18→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    19→import { Switch } from "@/components/ui/switch";
+    20→import { useToast } from "@/hooks/use-toast";
+    21→import { cn } from "@/lib/utils";
+    22→import * as Icons from "lucide-react";
+    23→
+    24→interface ApiIntegrationRow {
+    25→  id: string; tenantId: string; editionId?: string | null; name: string; direction: string; kind: string;
+    26→  provider?: string | null; baseUrl?: string | null; authType: string; authConfig?: string | null; inboundToken?: string | null;
+    27→  status: string; lastRunAt?: string | null; lastStatus?: string | null; successCount: number; failCount: number;
+    28→  notes?: string | null; createdAt: string;
+    29→}
+    30→interface IntegrationLogRow {
+    31→  id: string; integrationId?: string | null; editionId?: string | null; direction: string; method?: string | null;
+    32→  endpoint?: string | null; statusCode?: number | null; ok: boolean; durationMs?: number | null; summary?: string | null;
+    33→  payload?: string | null; createdAt: string;
+    34→}
+    35→
+    36→const KIND_ICON: Record<string, keyof typeof Icons> = {
+    37→  REST: "Braces", WEBHOOK: "Webhook", PAYMENT: "CreditCard", MAIL: "Mail", SMS: "MessageSquare", CRM: "Database", TICKETING: "Ticket",
+    38→};
+    39→const AUTH_LABEL: Record<string, string> = {
+    40→  NONE: "Kimliksiz", API_KEY: "API Key", BEARER: "Bearer Token", BASIC: "Basic Auth", OAUTH2: "OAuth 2.0", SIGNATURE: "İmzalı",
+    41→};
+    42→const INT_TONE: Record<string, string> = {
+    43→  ERROR: "bg-rose-50 text-rose-700 border-rose-200",
+    44→  PAUSED: "bg-amber-50 text-amber-700 border-amber-200",
+    45→  DRAFT: "bg-neutral-100 text-neutral-600 border-neutral-200",
+    46→};
+    47→
+    48→// hızlı şablonlar — yeni entegrasyon diyalogu
+    49→const PRESETS: { label: string; icon: keyof typeof Icons; values: { kind: string; provider: string; authType: string; direction: string } }[] = [
+    50→  { label: "Ödeme (Iyzico/PayTR)", icon: "CreditCard", values: { kind: "PAYMENT", provider: "IYZICO", authType: "BASIC", direction: "OUTBOUND" } },
+    51→  { label: "REST API", icon: "Braces", values: { kind: "REST", provider: "", authType: "API_KEY", direction: "OUTBOUND" } },
+    52→  { label: "Webhook", icon: "Webhook", values: { kind: "WEBHOOK", provider: "", authType: "NONE", direction: "INBOUND" } },
+    53→  { label: "Mail", icon: "Mail", values: { kind: "MAIL", provider: "MAILJET", authType: "API_KEY", direction: "OUTBOUND" } },
+    54→];
+    55→
+    56→const EMPTY_FORM = {
+    57→  name: "", direction: "OUTBOUND", kind: "REST", provider: "", baseUrl: "", authType: "API_KEY",
+    58→  key: "", token: "", user: "", pass: "", notes: "", tenantLevel: false,
+    59→};
+    60→
+    61→function relTime(d?: string | null): string {
+    62→  if (!d) return "—";
+    63→  const diff = Date.now() - new Date(d).getTime();
+    64→  if (diff < 0) return "az önce";
+    65→  if (diff < 60_000) return "az önce";
+    66→  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} dk önce`;
+    67→  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} sa önce`;
+    68→  return `${Math.floor(diff / 86_400_000)} g önce`;
+    69→}
+    70→
+    71→// authConfig JSON'u → { key, maskeli değer } — UI'da değerler asla düz gösterilmez
+    72→function maskAuthConfig(configJson?: string | null): { key: string; masked: string }[] {
+    73→  if (!configJson) return [];
+    74→  try {
+    75→    const obj = JSON.parse(configJson) as Record<string, unknown>;
+    76→    return Object.entries(obj).map(([key, v]) => ({
+    77→      key,
+    78→      masked: typeof v === "string" && v.length > 0 ? "•".repeat(Math.max(6, Math.min(v.length, 16))) : String(v),
+    79→    }));
+    80→  } catch {
+    81→    return [{ key: "authConfig", masked: "••••••" }];
+    82→  }
+    83→}
+    84→
+    85→export function ApiGatewayView() {
+    86→  const { currentEditionId, editions, tenant, bump, refreshKey } = useApp();
+    87→  const { toast } = useToast();
+    88→  const [origin, setOrigin] = useState("");
+    89→  useEffect(() => setOrigin(window.location.origin), []);
+    90→
+    91→  const [dryRun, setDryRun] = useState(true);
+    92→  const [runningId, setRunningId] = useState<string | null>(null);
+    93→  const [testingId, setTestingId] = useState<string | null>(null);
+    94→  const [detail, setDetail] = useState<ApiIntegrationRow | null>(null);
+    95→  const [editing, setEditing] = useState<ApiIntegrationRow | null>(null);
+    96→  const [deleteTarget, setDeleteTarget] = useState<ApiIntegrationRow | null>(null);
+    97→  const [form, setForm] = useState(EMPTY_FORM);
+    98→  const [formOpen, setFormOpen] = useState(false);
+    99→  const [busy, setBusy] = useState(false);
+   100→  const [logFilter, setLogFilter] = useState("__all__");
+   101→  const [logTick, setLogTick] = useState(0);
+   102→
+   103→  const { data: integrations, error, reload: reloadIntegrations, loading } = useApi<ApiIntegrationRow[]>(
+   104→    () => listEntity<ApiIntegrationRow>("api-integrations", { tenantId: tenant?.id ?? undefined, limit: 200 }),
+   105→    [tenant?.id, refreshKey],
+   106→  );
+   107→  const { data: logs, reload: reloadLogs, loading: logsLoading } = useApi<IntegrationLogRow[]>(
+   108→    () => listEntity<IntegrationLogRow>("integration-logs", { limit: 60 }),
+   109→    [refreshKey, logTick],
+   110→  );
+   111→
+   112→  // log akışı 20 sn'de bir kendini tazeler (canlı hissi)
+   113→  useEffect(() => {
+   114→    const t = setInterval(() => setLogTick((x) => x + 1), 20_000);
+   115→    return () => clearInterval(t);
+   116→  }, []);
+   117→
+   118→  const activeCount = (integrations ?? []).filter((i) => i.status === "ACTIVE").length;
+   119→  const totalOk = (integrations ?? []).reduce((s, i) => s + i.successCount, 0);
+   120→  const totalFail = (integrations ?? []).reduce((s, i) => s + i.failCount, 0);
+   121→  const successRate = totalOk + totalFail > 0 ? Math.round((totalOk / (totalOk + totalFail)) * 100) : null;
+   122→  const logs24h = (logs ?? []).filter((l) => Date.now() - new Date(l.createdAt).getTime() < 86_400_000).length;
+   123→
+   124→  const visibleLogs = useMemo(
+   125→    () => (logs ?? []).filter((l) => logFilter === "__all__" || l.integrationId === logFilter).slice(0, 30),
+   126→    [logs, logFilter],
+   127→  );
+   128→
+   129→  const editionName = (id?: string | null) => editions.find((e) => e.id === id)?.name ?? null;
+   130→  const hookUrl = (token: string) => `${origin || ""}/api/integrations/hook/${token}`;
+   131→
+   132→  const copyText = async (text: string, what: string) => {
+   133→    try {
+   134→      await navigator.clipboard.writeText(text);
+   135→      toast({ title: `${what} kopyalandı`, description: "Panoya alındı — dış sistem ekibine iletin." });
+   136→    } catch {
+   137→      toast({ title: "Kopyalanamadı", description: "Tarayıcı izni gerekli.", variant: "destructive" });
+   138→    }
+   139→  };
+   140→
+   141→  const runIntegration = async (i: ApiIntegrationRow) => {
+   142→    setRunningId(i.id);
+   143→    try {
+   144→      const r = await apiSend<{ ok: boolean; statusCode: number | null; durationMs: number; summary: string; errorText: string | null }>(
+   145→        "/api/integrations/run", "POST", { id: i.id, dryRun },
+   146→      );
+   147→      toast({
+   148→        title: r.ok ? (dryRun ? "Deneme koşusu tamam" : "Çalıştırma tamamlandı") : "Çalıştırma hata ile bitti",
+   149→        description: `${r.summary} · ${r.durationMs}ms`,
+   150→        variant: r.ok ? "default" : "destructive",
+   151→      });
+   152→      reloadIntegrations(); reloadLogs(); bump();
+   153→    } catch (e) {
+   154→      toast({ title: "Çalıştırılamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   155→    } finally { setRunningId(null); }
+   156→  };
+   157→
+   158→  const toggleStatus = async (i: ApiIntegrationRow) => {
+   159→    setBusy(true);
+   160→    try {
+   161→      const next = i.status === "ACTIVE" ? "PAUSED" : "ACTIVE";
+   162→      await apiSend(`/api/api-integrations/${i.id}`, "PUT", { status: next });
+   163→      toast({ title: next === "ACTIVE" ? "Entegrasyon aktifleştirildi" : "Entegrasyon duraklatıldı", description: i.name });
+   164→      reloadIntegrations(); bump();
+   165→    } catch (e) {
+   166→      toast({ title: "Durum değiştirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   167→    } finally { setBusy(false); }
+   168→  };
+   169→
+   170→  const testWebhook = async (i: ApiIntegrationRow) => {
+   171→    if (!i.inboundToken) return;
+   172→    setTestingId(i.id);
+   173→    try {
+   174→      const res = await fetch(`/api/integrations/hook/${i.inboundToken}`, {
+   175→        method: "POST",
+   176→        headers: { "Content-Type": "application/json" },
+   177→        body: JSON.stringify({ type: "PARTICIPANT", fullName: "Test Webhook Kullanıcısı", email: `webhook-${Date.now()}@example.com` }),
+   178→      });
+   179→      const data = (await res.json()) as { processed?: string | null; error?: string };
+   180→      if (res.ok) {
+   181→        toast({ title: "Webhook işlendi", description: `Sonuç: ${data.processed ?? "kabul edildi"} — yeni kişi + katılım zinciri çalıştı.` });
+   182→        reloadIntegrations(); reloadLogs(); bump();
+   183→      } else {
+   184→        toast({ title: "Webhook reddedildi", description: data.error ?? `HTTP ${res.status}`, variant: "destructive" });
+   185→      }
+   186→    } catch (e) {
+   187→      toast({ title: "Webhook çağrısı başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   188→    } finally { setTestingId(null); }
+   189→  };
+   190→
+   191→  const openEdit = (i: ApiIntegrationRow) => {
+   192→    const auth = (() => {
+   193→      try { return JSON.parse(i.authConfig ?? "{}") as Record<string, string>; } catch { return {}; }
+   194→    })();
+   195→    setForm({
+   196→      name: i.name, direction: i.direction, kind: i.kind, provider: i.provider ?? "", baseUrl: i.baseUrl ?? "",
+   197→      authType: i.authType, key: auth.key ?? "", token: auth.token ?? "", user: auth.user ?? "", pass: auth.pass ?? "",
+   198→      notes: i.notes ?? "", tenantLevel: !i.editionId,
+   199→    });
+   200→    setEditing(i);
+   201→    setFormOpen(true);
+   202→  };
+   203→
+   204→  const openCreate = () => {
+   205→    setForm({ ...EMPTY_FORM, tenantLevel: false });
+   206→    setEditing(null);
+   207→    setFormOpen(true);
+   208→  };
+   209→
+   210→  const buildAuthConfig = (): string | null => {
+   211→    if (form.authType === "API_KEY") return form.key ? JSON.stringify({ key: form.key }) : null;
+   212→    if (form.authType === "BEARER") return form.token ? JSON.stringify({ token: form.token }) : null;
+   213→    if (form.authType === "BASIC") return (form.user || form.pass) ? JSON.stringify({ user: form.user, pass: form.pass }) : null;
+   214→    return null;
+   215→  };
+   216→
+   217→  const saveForm = async () => {
+   218→    if (!form.name.trim()) return;
+   219→    setBusy(true);
+   220→    const base = {
+   221→      name: form.name.trim(), direction: form.direction, kind: form.kind,
+   222→      provider: form.provider.trim() || null, baseUrl: form.baseUrl.trim() || null, authType: form.authType,
+   223→      authConfig: buildAuthConfig(), notes: form.notes.trim() || null,
+   224→    };
+   225→    try {
+   226→      if (editing) {
+   227→        await apiSend(`/api/api-integrations/${editing.id}`, "PUT", {
+   228→          ...base,
+   229→          editionId: form.tenantLevel ? null : editing.editionId ?? currentEditionId,
+   230→        });
+   231→        toast({ title: "Entegrasyon güncellendi", description: form.name.trim() });
+   232→      } else {
+   233→        if (!tenant?.id) throw new Error("Tenant bilgisi yüklenmedi");
+   234→        const isInbound = form.direction === "INBOUND";
+   235→        await apiSend("/api/api-integrations", "POST", {
+   236→          ...base,
+   237→          tenantId: tenant.id,
+   238→          editionId: form.tenantLevel ? null : currentEditionId,
+   239→          status: "DRAFT",
+   240→          inboundToken: isInbound ? `maven-hook-${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 6)}` : null,
+   241→        });
+   242→        toast({
+   243→          title: "Entegrasyon taslak olarak eklendi",
+   244→          description: isInbound ? "Webhook adresi hazır — karttan kopyalayıp dış sisteme verin, hazır olunca Aktifleştirin." : "Hazır olunca Aktifleştirin.",
+   245→        });
+   246→      }
+   247→      setFormOpen(false);
+   248→      reloadIntegrations(); bump();
+   249→    } catch (e) {
+   250→      toast({ title: "Kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   251→    } finally { setBusy(false); }
+   252→  };
+   253→
+   254→  const removeIntegration = async () => {
+   255→    if (!deleteTarget) return;
+   256→    setBusy(true);
+   257→    try {
+   258→      await apiSend(`/api/api-integrations/${deleteTarget.id}`, "DELETE");
+   259→      toast({ title: "Entegrasyon silindi", description: "Log geçmişi de temizlendi (cascade)." });
+   260→      setDeleteTarget(null);
+   261→      reloadIntegrations(); reloadLogs(); bump();
+   262→    } catch (e) {
+   263→      toast({ title: "Silinemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   264→    } finally { setBusy(false); }
+   265→  };
+   266→
+   267→  if (loading && !integrations) return <Loading rows={6} />;
+   268→  if (error) return <ErrorState message={error} onRetry={reloadIntegrations} />;
+   269→
+   270→  return (
+   271→    <div className="space-y-5">
+   272→      <PageHeader title="API Geçidi" desc="Çift yönlü veri akışı merkezi — dışa aktarım, içe webhook ve ödeme entegrasyonları.">
+   273→        <Button size="sm" onClick={openCreate}>
+   274→          <Icons.Plus className="size-4" /> Yeni Entegrasyon
+   275→        </Button>
+   276→      </PageHeader>
+   277→
+   278→      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+   279→        <KpiCard label="Aktif Entegrasyon" value={activeCount} sub={`${(integrations ?? []).length} tanımlı`} tone="teal" icon={<Icons.PlugZap className="size-4" />} />
+   280→        <KpiCard
+   281→          label="Başarı Oranı"
+   282→          value={successRate === null ? "—" : `%${successRate}`}
+   283→          sub={`${totalOk} ✓ / ${totalFail} ✗`}
+   284→          tone={successRate !== null && successRate < 60 ? "rose" : "emerald"}
+   285→          icon={<Icons.Gauge className="size-4" />}
+   286→        />
+   287→        <KpiCard label="24 saatlik log" value={logs24h} sub="son 1 günde akış" tone="amber" icon={<Icons.ScrollText className="size-4" />} />
+   288→        <KpiCard
+   289→          label="Sına Modu (dry-run)"
+   290→          value={dryRun ? "AÇIK" : "KAPALI"}
+   291→          sub={dryRun ? "ağ çağrısı yapılmaz" : "gerçek istek gönderilir"}
+   292→          tone={dryRun ? "neutral" : "rose"}
+   293→          icon={<Icons.FlaskConical className="size-4" />}
+   294→          onClick={() => setDryRun((v) => !v)}
+   295→          detailHref="tıkla — ağ çağrısı yapmadan dene"
+   296→        />
+   297→      </div>
+   298→
+   299→      {/* Entegrasyon kartları */}
+   300→      <SectionCard
+   301→        title="Entegrasyonlar"
+   302→        desc="karta tıkla → uç nokta ve maskeli kimlik detayı"
+   303→        action={
+   304→          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+   305→            <Switch checked={dryRun} onCheckedChange={setDryRun} aria-label="Dry-run modu" id="dryrun-switch" />
+   306→            <label htmlFor="dryrun-switch" className="cursor-pointer select-none">Sına (ağ çağrısı yapma)</label>
+   307→          </div>
+   308→        }
+   309→      >
+   310→        {(integrations ?? []).length === 0 ? (
+   311→          <EmptyState
+   312→            title="Henüz entegrasyon yok"
+   313→            desc="'Yeni Entegrasyon' ile ödeme, REST, webhook veya mail kanalı açın — şablonlar alanları hazır doldurur."
+   314→          />
+   315→        ) : (
+   316→          <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+   317→            {(integrations ?? []).map((i, idx) => {
+   318→              const KIcon = (Icons[KIND_ICON[i.kind] ?? "Plug"] as typeof Icons.Plug);
+   319→              const total = i.successCount + i.failCount;
+   320→              const okPct = total ? Math.round((i.successCount / total) * 100) : 0;
+   321→              const isInbound = i.direction === "INBOUND";
+   322→              return (
+   323→                <div
+   324→                  key={i.id}
+   325→                  className="animate-in flex flex-col rounded-xl border bg-card p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md fade-in slide-in-from-bottom-1 fill-mode-backwards"
+   326→                  style={{ animationDelay: `${Math.min(idx, 8) * 45}ms` }}
+   327→                >
+   328→                  <button type="button" onClick={() => setDetail(i)} className="w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg" aria-label={`${i.name} detayını aç`}>
+   329→                    <div className="flex items-start justify-between gap-2">
+   330→                      <div className="flex min-w-0 items-center gap-2.5">
+   331→                        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-teal-500/10 text-teal-600 transition-transform duration-200 hover:scale-110">
+   332→                          <KIcon className="size-4" />
+   333→                        </span>
+   334→                        <div className="min-w-0">
+   335→                          <p className="truncate text-sm font-semibold">{i.name}</p>
+   336→                          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+   337→                            <Chip tone={isInbound ? "amber" : "teal"}>
+   338→                              {isInbound ? <Icons.ArrowDownLeft className="mr-0.5 inline size-3" /> : <Icons.ArrowUpRight className="mr-0.5 inline size-3" />}
+   339→                              {isInbound ? "İçe Veri" : "Dışa Aktarım"}
+   340→                            </Chip>
+   341→                            <Chip>{label(INTEGRATION_KIND, i.kind)}</Chip>
+   342→                            {i.provider && <Chip tone="violet">{i.provider}</Chip>}
+   343→                          </div>
+   344→                        </div>
+   345→                      </div>
+   346→                      <StatusBadge map={INTEGRATION_STATUS} value={i.status} className={INT_TONE[i.status]} />
+   347→                    </div>
+   348→
+   349→                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+   350→                      <span className="inline-flex items-center gap-1"><Icons.KeyRound className="size-3" />{AUTH_LABEL[i.authType] ?? i.authType}</span>
+   351→                      <span className="inline-flex items-center gap-1">
+   352→                        <Icons.Clock className="size-3" />
+   353→                        {i.lastRunAt ? `son koşu ${relTime(i.lastRunAt)}` : "hiç koşmadı"}
+   354→                      </span>
+   355→                      {i.lastStatus && (
+   356→                        <span className={cn("inline-flex items-center gap-1 font-medium", i.lastStatus === "OK" ? "text-emerald-600" : "text-rose-600")}>
+   357→                          {i.lastStatus === "OK" ? "✓ OK" : "✗ hata"}
+   358→                        </span>
+   359→                      )}
+   360→                    </div>
+   361→
+   362→                    {/* başarı/başarısızlık mini çubuğu */}
+   363→                    <div className="mt-2.5">
+   364→                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label={`Başarı ${i.successCount}, hata ${i.failCount}`}>
+   365→                        <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${okPct}%` }} />
+   366→                      </div>
+   367→                      <p className="mt-1 text-[10px] tabular-nums text-muted-foreground">✓ {i.successCount} başarılı · ✗ {i.failCount} hatalı</p>
+   368→                    </div>
+   369→                  </button>
+   370→
+   371→                  {isInbound && i.inboundToken && (
+   372→                    <div className="mt-3 rounded-lg border bg-muted/40 p-2">
+   373→                      <div className="flex items-center gap-1.5">
+   374→                        <code className="maven-scroll min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded bg-card px-2 py-1 font-mono text-[10.5px] text-muted-foreground" title={hookUrl(i.inboundToken)}>
+   375→                          POST /api/integrations/hook/{i.inboundToken}
+   376→                        </code>
+   377→                        <button
+   378→                          type="button"
+   379→                          aria-label="Webhook adresini kopyala"
+   380→                          onClick={() => copyText(hookUrl(i.inboundToken ?? ""), "Webhook adresi")}
+   381→                          className="grid size-6 shrink-0 place-items-center rounded border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+   382→                        >
+   383→                          <Icons.Copy className="size-3" />
+   384→                        </button>
+   385→                      </div>
+   386→                      <Button
+   387→                        size="sm"
+   388→                        variant="outline"
+   389→                        className="mt-1.5 h-7 w-full text-[11px]"
+   390→                        onClick={() => testWebhook(i)}
+   391→                        disabled={testingId === i.id || i.status !== "ACTIVE"}
+   392→                      >
+   393→                        {testingId === i.id ? "Gönderiliyor…" : <><Icons.SendHorizontal className="size-3" /> Test webhook gönder</>}
+   394→                      </Button>
+   395→                    </div>
+   396→                  )}
+   397→
+   398→                  <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-2.5">
+   399→                    <Button size="sm" className="h-7 text-[11px]" onClick={() => runIntegration(i)} disabled={runningId === i.id || i.status === "PAUSED"}>
+   400→                      {runningId === i.id ? <><Icons.Loader2 className="size-3 animate-spin" /> Koşuyor…</> : <><Icons.Play className="size-3" /> Çalıştır</>}
+   401→                    </Button>
+   402→                    <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => toggleStatus(i)} disabled={busy}>
+   403→                      {i.status === "ACTIVE" ? <><Icons.Pause className="size-3" /> Duraklat</> : <><Icons.PlayCircle className="size-3" /> Aktifleştir</>}
+   404→                    </Button>
+   405→                    <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => openEdit(i)}>
+   406→                      <Icons.Pencil className="size-3" /> Düzenle
+   407→                    </Button>
+   408→                    <Button size="sm" variant="ghost" className="ml-auto h-7 text-[11px] text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => setDeleteTarget(i)}>
+   409→                      <Icons.Trash2 className="size-3" />
+   410→                    </Button>
+   411→                  </div>
+   412→                </div>
+   413→              );
+   414→            })}
+   415→          </div>
+   416→        )}
+   417→      </SectionCard>
+   418→
+   419→      {/* Ödeme sağlayıcı notu */}
+   420→      <SectionCard title="Ödeme Sağlayıcıları" desc="Form Merkezi online ödemeleri PAYMENT kind entegrasyonlarından akar">
+   421→        <div className="flex flex-wrap items-center gap-3">
+   422→          <Icons.CreditCard className="size-5 shrink-0 text-teal-600" aria-hidden />
+   423→          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+   424→            Ödeme sağlayıcıları buraya bağlanır — Form Merkezi online ödemeleri <b className="text-foreground">PAYMENT</b> kind entegrasyonlarından akar. Sanal POS kimlikleri maskeli saklanır, koşular loglanır.
+   425→          </p>
+   426→          <div className="flex flex-wrap gap-1.5">
+   427→            {["IYZICO", "PAYTR", "STRIPE"].map((p) => <Chip key={p} tone="violet">{p}</Chip>)}
+   428→          </div>
+   429→        </div>
+   430→      </SectionCard>
+   431→
+   432→      {/* Log akışı */}
+   433→      <SectionCard
+   434→        title="Entegrasyon Log Akışı"
+   435→        desc="son 30 kayıt — 20 saniyede bir otomatik tazelenir"
+   436→        action={
+   437→          <Select value={logFilter} onValueChange={setLogFilter}>
+   438→            <SelectTrigger className="h-8 w-44 text-xs" aria-label="Entegrasyona göre filtrele"><SelectValue /></SelectTrigger>
+   439→            <SelectContent>
+   440→              <SelectItem value="__all__">Tüm entegrasyonlar</SelectItem>
+   441→              {(integrations ?? []).map((i) => <SelectItem key={i.id} value={i.id}>{i.name}</SelectItem>)}
+   442→            </SelectContent>
+   443→          </Select>
+   444→        }
+   445→      >
+   446→        {logsLoading && !logs ? <Loading rows={3} /> : visibleLogs.length === 0 ? (
+   447→          <EmptyState title="Log yok" desc="Entegrasyon koşturun ya da webhook testi gönderin — akış burada belirir." />
+   448→        ) : (
+   449→          <div className="maven-scroll max-h-96 space-y-1.5 overflow-y-auto pr-1">
+   450→            {visibleLogs.map((l, idx) => (
+   451→              <div
+   452→                key={l.id}
+   453→                className="animate-in flex items-start gap-2.5 rounded-lg border px-3 py-2 transition-colors hover:bg-muted/40 fade-in slide-in-from-left-1 fill-mode-backwards"
+   454→                style={{ animationDelay: `${Math.min(idx, 10) * 25}ms` }}
+   455→              >
+   456→                <span className={cn(
+   457→                  "mt-0.5 grid size-6 shrink-0 place-items-center rounded-md",
+   458→                  l.direction === "INBOUND" ? "bg-amber-500/10 text-amber-600" : "bg-teal-500/10 text-teal-600",
+   459→                )}>
+   460→                  {l.direction === "INBOUND" ? <Icons.ArrowDownLeft className="size-3" /> : <Icons.ArrowUpRight className="size-3" />}
+   461→                </span>
+   462→                <div className="min-w-0 flex-1">
+   463→                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+   464→                    <span className="font-mono text-[11px] font-semibold text-foreground">{l.method ?? "—"}</span>
+   465→                    <span className="maven-scroll min-w-0 max-w-full flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-muted-foreground" title={l.endpoint ?? ""}>{l.endpoint ?? "—"}</span>
+   466→                  </div>
+   467→                  <p className="mt-0.5 truncate text-xs text-muted-foreground" title={l.summary ?? ""}>{l.summary ?? "—"}</p>
+   468→                </div>
+   469→                <div className="flex shrink-0 flex-col items-end gap-0.5">
+   470→                  <span
+   471→                    className={cn(
+   472→                      "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+   473→                      l.statusCode == null
+   474→                        ? "border-neutral-200 bg-neutral-100 text-neutral-500"
+   475→                        : l.ok
+   476→                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+   477→                          : "border-rose-200 bg-rose-50 text-rose-700",
+   478→                    )}
+   479→                  >
+   480→                    {l.statusCode ?? "N/A"}
+   481→                  </span>
+   482→                  <span className="text-[10px] tabular-nums text-muted-foreground">{l.durationMs != null ? `${l.durationMs}ms` : "—"} · {relTime(l.createdAt)}</span>
+   483→                </div>
+   484→              </div>
+   485→            ))}
+   486→          </div>
+   487→        )}
+   488→      </SectionCard>
+   489→
+   490→      {/* Detay diyaloğu — uç nokta + maskeli kimlik */}
+   491→      <Dialog open={Boolean(detail)} onOpenChange={(o) => !o && setDetail(null)}>
+   492→        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-md">
+   493→          <DialogHeader>
+   494→            <DialogTitle className="pr-6">{detail?.name}</DialogTitle>
+   495→            <DialogDescription>
+   496→              {label(INTEGRATION_DIRECTION, detail?.direction)} · {label(INTEGRATION_KIND, detail?.kind)}{detail?.provider ? ` · ${detail.provider}` : ""}
+   497→            </DialogDescription>
+   498→          </DialogHeader>
+   499→          {detail && (
+   500→            <div className="space-y-3">
+   501→              <div className="grid grid-cols-3 gap-2 text-center">
+   502→                <div className="rounded-lg bg-emerald-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{detail.successCount}</p><p className="text-[10px] text-emerald-600/80">başarılı</p></div>
+   503→                <div className="rounded-lg bg-rose-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-rose-700">{detail.failCount}</p><p className="text-[10px] text-rose-600/80">hatalı</p></div>
+   504→                <div className="rounded-lg bg-muted p-2"><p className="text-sm font-semibold tabular-nums">{fmtDate(detail.lastRunAt, true)}</p><p className="text-[10px] text-muted-foreground">son koşu · {detail.lastStatus ?? "—"}</p></div>
+   505→              </div>
+   506→
+   507→              <div>
+   508→                <p className="mb-1 text-xs font-medium">Uç nokta (baseUrl)</p>
+   509→                <code className="maven-scroll block overflow-x-auto whitespace-nowrap rounded-md border bg-muted/40 px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground">
+   510→                  {detail.baseUrl ?? "— tanımlı değil"}
+   511→                </code>
+   512→              </div>
+   513→
+   514→              <div>
+   515→                <p className="mb-1 text-xs font-medium">Kimlik doğrulama — {AUTH_LABEL[detail.authType] ?? detail.authType} <span className="font-normal text-muted-foreground">(değerler maskeli)</span></p>
+   516→                {maskAuthConfig(detail.authConfig).length > 0 ? (
+   517→                  <div className="space-y-1">
+   518→                    {maskAuthConfig(detail.authConfig).map((a) => (
+   519→                      <div key={a.key} className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5 font-mono text-[11px]">
+   520→                        <span className="font-semibold text-foreground">{a.key}</span>
+   521→                        <span className="text-muted-foreground">{a.masked}</span>
+   522→                      </div>
+   523→                    ))}
+   524→                  </div>
+   525→                ) : (
+   526→                  <p className="rounded-md border border-dashed px-2.5 py-1.5 text-[11px] text-muted-foreground">Kimlik alanı yok (NONE)</p>
+   527→                )}
+   528→              </div>
+   529→
+   530→              <div className="flex flex-wrap items-center gap-2 text-xs">
+   531→                <span className="text-muted-foreground">Kapsam:</span>
+   532→                {detail.editionId
+   533→                  ? <Chip tone="teal"><Icons.CalendarRange className="mr-1 inline size-3" />{editionName(detail.editionId) ?? "Edisyon"}</Chip>
+   534→                  : <Chip tone="violet">Tenant düzeyi (edisyonsuz)</Chip>}
+   535→                <Chip>{AUTH_LABEL[detail.authType] ?? detail.authType}</Chip>
+   536→              </div>
+   537→
+   538→              {detail.notes && <p className="rounded-lg border bg-muted/30 p-2.5 text-xs text-muted-foreground">{detail.notes}</p>}
+   539→
+   540→              {detail.direction === "INBOUND" && detail.inboundToken && (
+   541→                <div className="rounded-lg border bg-muted/40 p-2.5">
+   542→                  <p className="mb-1.5 text-xs font-medium">Webhook alım adresi</p>
+   543→                  <div className="flex items-center gap-1.5">
+   544→                    <code className="maven-scroll min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded bg-card px-2 py-1 font-mono text-[10.5px] text-muted-foreground">
+   545→                      {hookUrl(detail.inboundToken)}
+   546→                    </code>
+   547→                    <Button size="sm" variant="outline" className="h-7 shrink-0 text-[11px]" onClick={() => copyText(hookUrl(detail.inboundToken ?? ""), "Webhook adresi")}>
+   548→                      <Icons.Copy className="size-3" /> Kopyala
+   549→                    </Button>
+   550→                  </div>
+   551→                </div>
+   552→              )}
+   553→            </div>
+   554→          )}
+   555→          <DialogFooter>
+   556→            <Button variant="outline" onClick={() => setDetail(null)}>Kapat</Button>
+   557→            {detail && <Button onClick={() => { setDetail(null); openEdit(detail); }}><Icons.Pencil className="size-3.5" /> Düzenle</Button>}
+   558→          </DialogFooter>
+   559→        </DialogContent>
+   560→      </Dialog>
+   561→
+   562→      {/* Yeni / düzenle diyaloğu */}
+   563→      <Dialog open={formOpen} onOpenChange={(o) => !o && setFormOpen(false)}>
+   564→        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-lg">
+   565→          <DialogHeader>
+   566→            <DialogTitle>{editing ? "Entegrasyonu Düzenle" : "Yeni Entegrasyon"}</DialogTitle>
+   567→            <DialogDescription>
+   568→              {editing ? editing.name : "Şablondan başlayın — alanlar otomatik dolar."}
+   569→            </DialogDescription>
+   570→          </DialogHeader>
+   571→          <div className="space-y-4">
+   572→            {!editing && (
+   573→              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4" role="group" aria-label="Hızlı şablonlar">
+   574→                {PRESETS.map((p) => {
+   575→                  const PIcon = (Icons[p.icon] as typeof Icons.Braces);
+   576→                  return (
+   577→                    <button
+   578→                      key={p.label}
+   579→                      type="button"
+   580→                      onClick={() => setForm((f) => ({ ...f, ...p.values }))}
+   581→                      className="flex flex-col items-center gap-1 rounded-lg border bg-card px-2 py-2.5 text-center text-[10.5px] font-medium leading-tight transition-all hover:border-primary/40 hover:bg-muted/50 hover:shadow-sm"
+   582→                    >
+   583→                      <PIcon className="size-4 text-teal-600" />
+   584→                      {p.label}
+   585→                    </button>
+   586→                  );
+   587→                })}
+   588→              </div>
+   589→            )}
+   590→
+   591→            <div className="grid gap-3 sm:grid-cols-2">
+   592→              <div className="space-y-1.5 sm:col-span-2">
+   593→                <Label htmlFor="int-name">Ad</Label>
+   594→                <Input id="int-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="örn. PayTR Sanal POS" />
+   595→              </div>
+   596→              <div className="space-y-1.5">
+   597→                <Label>Yön</Label>
+   598→                <Select value={form.direction} onValueChange={(v) => setForm({ ...form, direction: v })}>
+   599→                  <SelectTrigger aria-label="Yön"><SelectValue /></SelectTrigger>
+   600→                  <SelectContent>
+   601→                    {Object.entries(INTEGRATION_DIRECTION).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   602→                  </SelectContent>
+   603→                </Select>
+   604→              </div>
+   605→              <div className="space-y-1.5">
+   606→                <Label>Tür</Label>
+   607→                <Select value={form.kind} onValueChange={(v) => setForm({ ...form, kind: v })}>
+   608→                  <SelectTrigger aria-label="Tür"><SelectValue /></SelectTrigger>
+   609→                  <SelectContent>
+   610→                    {Object.entries(INTEGRATION_KIND).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   611→                  </SelectContent>
+   612→                </Select>
+   613→              </div>
+   614→              <div className="space-y-1.5">
+   615→                <Label htmlFor="int-provider">Sağlayıcı</Label>
+   616→                <Input id="int-provider" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} placeholder="IYZICO / PAYTR / MAILJET…" />
+   617→              </div>
+   618→              <div className="space-y-1.5">
+   619→                <Label htmlFor="int-baseurl">Base URL</Label>
+   620→                <Input id="int-baseurl" value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} placeholder="https://api.ornek.com/v1" />
+   621→              </div>
+   622→              <div className="space-y-1.5 sm:col-span-2">
+   623→                <Label>Kimlik doğrulama tipi</Label>
+   624→                <Select value={form.authType} onValueChange={(v) => setForm({ ...form, authType: v })}>
+   625→                  <SelectTrigger aria-label="Kimlik tipi"><SelectValue /></SelectTrigger>
+   626→                  <SelectContent>
+   627→                    {Object.entries(AUTH_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   628→                  </SelectContent>
+   629→                </Select>
+   630→                {form.authType === "API_KEY" && (
+   631→                  <Input value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} placeholder="API anahtarı (key)" className="mt-1.5 font-mono text-xs" />
+   632→                )}
+   633→                {form.authType === "BEARER" && (
+   634→                  <Input value={form.token} onChange={(e) => setForm({ ...form, token: e.target.value })} placeholder="Bearer token" className="mt-1.5 font-mono text-xs" />
+   635→                )}
+   636→                {form.authType === "BASIC" && (
+   637→                  <div className="mt-1.5 grid grid-cols-2 gap-2">
+   638→                    <Input value={form.user} onChange={(e) => setForm({ ...form, user: e.target.value })} placeholder="kullanıcı" className="font-mono text-xs" />
+   639→                    <Input type="password" value={form.pass} onChange={(e) => setForm({ ...form, pass: e.target.value })} placeholder="şifre" className="font-mono text-xs" />
+   640→                  </div>
+   641→                )}
+   642→                {(form.authType === "OAUTH2" || form.authType === "SIGNATURE" || form.authType === "NONE") && (
+   643→                  <p className="mt-1 text-[11px] text-muted-foreground">Bu tip için alan tanımı yok — el sıkışma detaylarını notlara yazın.</p>
+   644→                )}
+   645→              </div>
+   646→
+   647→              {form.direction === "INBOUND" && !editing && (
+   648→                <div className="rounded-lg border border-dashed bg-muted/30 p-2.5 text-[11px] text-muted-foreground sm:col-span-2">
+   649→                  <Icons.Webhook className="mr-1 inline size-3" />
+   650→                  Kayıtta webhook adresi otomatik üretilir: <code className="font-mono">/api/integrations/hook/&lt;token&gt;</code> — adres kart üzerinden kopyalanır.
+   651→                </div>
+   652→              )}
+   653→
+   654→              {!editing && (
+   655→                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 sm:col-span-2">
+   656→                  <div>
+   657→                    <p className="text-xs font-medium">Tenant düzeyi</p>
+   658→                    <p className="text-[11px] text-muted-foreground">Ödeme sağlayıcıları gibi edisyondan bağımsız kanallar için açın.</p>
+   659→                  </div>
+   660→                  <Switch checked={form.tenantLevel} onCheckedChange={(v) => setForm({ ...form, tenantLevel: v })} aria-label="Tenant düzeyi" />
+   661→                </div>
+   662→              )}
+   663→
+   664→              <div className="space-y-1.5 sm:col-span-2">
+   665→                <Label htmlFor="int-notes">Notlar</Label>
+   666→                <Textarea id="int-notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} placeholder="akış kuralı, zamanlama, sorumlu kişi…" />
+   667→              </div>
+   668→            </div>
+   669→          </div>
+   670→          <DialogFooter>
+   671→            <Button variant="outline" onClick={() => setFormOpen(false)}>Vazgeç</Button>
+   672→            <Button onClick={saveForm} disabled={busy || !form.name.trim()}>{busy ? "Kaydediliyor…" : editing ? "Kaydet" : "Oluştur"}</Button>
+   673→          </DialogFooter>
+   674→        </DialogContent>
+   675→      </Dialog>
+   676→
+   677→      {/* Silme onayı */}
+   678→      <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+   679→        <AlertDialogContent>
+   680→          <AlertDialogHeader>
+   681→            <AlertDialogTitle>"{deleteTarget?.name}" silinsin mi?</AlertDialogTitle>
+   682→            <AlertDialogDescription>
+   683→              Entegrasyon ve tüm koşu logları kalıcı olarak silinir. Dış sistemde yapılan çağrılar geri alınamaz — duraklatmak isterseniz &quot;Duraklat&quot; kullanın.
+   684→            </AlertDialogDescription>
+   685→          </AlertDialogHeader>
+   686→          <AlertDialogFooter>
+   687→            <AlertDialogCancel>Vazgeç</AlertDialogCancel>
+   688→            <AlertDialogAction onClick={removeIntegration} className="bg-rose-600 text-white hover:bg-rose-700">{busy ? "Siliniyor…" : "Sil"}</AlertDialogAction>
+   689→          </AlertDialogFooter>
+   690→        </AlertDialogContent>
+   691→      </AlertDialog>
+   692→    </div>
+   693→  );
+   694→}
+   695→

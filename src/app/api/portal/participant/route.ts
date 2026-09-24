@@ -1,10 +1,15 @@
 // Katılımcı dış portalı — kişinin kendi verilerinin dış kullanıcıdan görünen hali.
 // Mimari (§12 kayıt kaynakları): PUBLIC_FORM/SPONSOR_PORTAL gibi kaynaklarla gelen
 // katılımcı; kendi kayıt, ödeme, program, konaklama ve bekleme teklifini görür.
+// TASK-A F1 (OWASP API1:2023 — BOLA): bu uç YETENEK BELİRTECİYLE kapılanır —
+//   belirteç yok → 410; sahte/bilinmeyen/yanlış kapsam/yabancı kişi-edisyon → 404;
+//   süresi geçmiş/iptal → 410. PII (e-posta, ad, rezervasyon, ödeme…) YALNIZ geçerli
+//   belirteçle döner (KVKK m.4 veri minimizasyonu). Belirteç yanıtta ASLA yer almaz.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { expireStaleOffers } from "@/lib/api/waitlist-engine";
 import { resolvePublicEdition } from "@/lib/api/public-guard";
+import { extractToken, validatePortalToken, touchToken } from "@/lib/api/portal-tokens";
 
 export async function GET(req: NextRequest) {
   try {
@@ -14,6 +19,26 @@ export async function GET(req: NextRequest) {
     if (!editionId || !personId) {
       return NextResponse.json({ error: "editionId ve personId zorunlu" }, { status: 400 });
     }
+
+    // TASK-A F1: belirteç kapısı — belirsizlik varlık ifşa etmez
+    const raw = extractToken(req);
+    if (!raw) {
+      return NextResponse.json({ error: "Portal erişim anahtarı gerekli — bağlantınızı onay e-postasından kullanın" }, { status: 410 });
+    }
+    const check = await validatePortalToken(raw);
+    if (!check.ok) {
+      // EXPIRED/REVOKED → 410 (kaynak artık bu anahtarla erişilemez); UNKNOWN → 404 (varlık ifşa edilmez)
+      return NextResponse.json(
+        { error: check.reason === "UNKNOWN" ? "Etkinlik bulunamadı" : "Erişim anahtarınız geçersiz veya süresi dolmuş" },
+        { status: check.reason === "UNKNOWN" ? 404 : 410 },
+      );
+    }
+    const token = check.token;
+    // kapsam + sahiplik: PARTICIPANT belirteci yalnız kendi kişisi + kendi edisyonu için geçerli
+    if (token.scope !== "PARTICIPANT" || token.personId !== personId || token.editionId !== editionId) {
+      return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
+    }
+    touchToken(token.id);
 
     // Faz A public allowlist: editionId → kiracı çözümlenemiyorsa 404
     const publicEdition = await resolvePublicEdition(editionId);
@@ -75,11 +100,10 @@ export async function GET(req: NextRequest) {
       edition: edition
         ? { id: edition.id, name: edition.name, startDate: edition.startDate, endDate: edition.endDate, venueName: edition.venueName, city: edition.city, isPublished: edition.isPublished, seriesName: edition.series?.name ?? null }
         : null,
+      // TASK-A F1: portalToken alanı KALDIRILDI — belirteç yanıt gövdelerinde ASLA dolaşmaz
       person: {
         id: person.id, firstName: person.firstName, lastName: person.lastName,
         email: person.email, title: person.title, organizationName: person.company,
-        // G0-c: portal simülasyonu aksiyonlarda bu belirteci gönderir (TODO-auth: gerçek portal oturumunda sunucu oturumundan türetilir)
-        portalToken: person.portalToken,
       },
       participation: participation
         ? {

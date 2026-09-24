@@ -1,0 +1,2002 @@
+     1→"use client";
+     2→// Form Merkezi — kayıt formları, anketler ve mobil interaktif QA öğeleri tek merkezde.
+     3→// 4 sekme: Formlar (liste) · Tasarım Stüdyosu (alan editörü + spam/ödeme ayarları) ·
+     4→// Yanıtlar & İstatistik (inceleme kuyruğu + dağılım analizi) · Canlı Kayıt Masası (halka açık önizleme).
+     5→import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+     6→import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
+     7→import { useApp } from "@/lib/store";
+     8→import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
+     9→import {
+    10→  FORM_TYPES, FORM_TYPE_HINTS, FORM_FIELD_TYPES, FORM_SUBMISSION_STATUS, SUBMISSION_SOURCES,
+    11→  STATUS_TONE, label, fmtDate, fmtDateTime, fmtMoney, CHOICE_FIELD_TYPES,
+    12→} from "@/lib/constants";
+    13→import { Button } from "@/components/ui/button";
+    14→import { Input } from "@/components/ui/input";
+    15→import { Label } from "@/components/ui/label";
+    16→import { Textarea } from "@/components/ui/textarea";
+    17→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    18→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+    19→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    20→import { Badge } from "@/components/ui/badge";
+    21→import { Switch } from "@/components/ui/switch";
+    22→import { Checkbox } from "@/components/ui/checkbox";
+    23→import { Separator } from "@/components/ui/separator";
+    24→import { useToast } from "@/hooks/use-toast";
+    25→import * as Icons from "lucide-react";
+    26→
+    27→// ─── API tipleri (sözleşme: UI AGENT SÖZLEŞMESİ / registry) ─────────────────
+    28→
+    29→interface FormFieldDef {
+    30→  id: string; formId: string; order: number; label: string; type: string;
+    31→  required: string; options?: string | null; placeholder?: string | null; helpText?: string | null;
+    32→  sensitivity: string; mobileInteractive: boolean; conditionField?: string | null; conditionValue?: string | null;
+    33→  correctAnswer?: string | null;
+    34→}
+    35→interface FormDef {
+    36→  id: string; editionId: string; name: string; type: string; status: string;
+    37→  description?: string | null; successMessage?: string | null; isPublic: boolean; autoApprove: boolean;
+    38→  honeypotEnabled: boolean; minSubmitSeconds: number | null; maxPerEmailPerDay: number | null;
+    39→  blockedDomains?: string | null; enableOnlinePayment: boolean; defaultCategoryId?: string | null;
+    40→  fields: FormFieldDef[]; _count?: { submissions: number };
+    41→}
+    42→interface SubmissionRow {
+    43→  id: string; respondentName: string; respondentEmail: string; phone?: string | null; organization?: string | null;
+    44→  status: string; spamScore: number; spamReasons?: string | null; elapsedSeconds?: number | null;
+    45→  source: string; createdAt: string; submitIp?: string | null;
+    46→  quizScore?: number | null; quizCorrect?: number | null; quizTotal?: number | null;
+    47→  form?: { id: string; name: string; type: string; status: string } | null;
+    48→  registration?: { confirmationNo: string; status: string; category?: { name: string } | null } | null;
+    49→}
+    50→interface SubmissionDetail extends SubmissionRow {
+    51→  form: FormDef;
+    52→  answers: { id: string; fieldId: string; answer?: string | null }[];
+    53→  registration?: {
+    54→    confirmationNo: string; status: string; category?: { name: string } | null;
+    55→    participation?: { person: { firstName: string; lastName: string } } | null;
+    56→  } | null;
+    57→}
+    58→interface FieldStat {
+    59→  fieldId: string; label: string; type: string; mobileInteractive: boolean;
+    60→  responseCount: number; responseRate: number;
+    61→  distribution?: { value: string; count: number }[];
+    62→  numeric?: { avg: number; min: number; max: number } | null;
+    63→  nps?: { score: number; promoters: number; passives: number; detractors: number } | null;
+    64→  samples?: string[];
+    65→}
+    66→interface QuizFieldStat { fieldId: string; label: string; correctAnswer?: string | null; answered: number; correctCount: number; wrongCount: number; correctRate: number }
+    67→interface QuizStats { questionCount: number; scoredCount: number; avgScore: number | null; passRate: number; buckets: { label: string; count: number }[]; fields: QuizFieldStat[] }
+    68→interface FormStats {
+    69→  form: { id: string; name: string; type: string; status: string };
+    70→  totals: { submissions: number; valid: number; spam: number; spamRate: number; approved: number; pending: number; rejected: number; avgElapsedSeconds: number | null };
+    71→  daily: { date: string; count: number }[];
+    72→  fields: FieldStat[];
+    73→  quiz?: QuizStats | null;
+    74→}
+    75→interface RegisterResult {
+    76→  submissionId: string; status: string; spamScore: number; spamReasons: string[]; chainError?: string | null;
+    77→  quizScore?: number | null; quizCorrect?: number | null; quizTotal?: number | null;
+    78→  registration?: { id: string; confirmationNo: string; status: string } | null;
+    79→  order?: { id: string; orderNo: string; totalAmount: number; currency: string } | null;
+    80→  payment?: { id: string; amount: number; currency: string; status: string } | null;
+    81→}
+    82→interface PayProcessResult { outcome: string; message: string; payment?: { id: string; status: string; reference?: string | null } }
+    83→interface CategoryRow { id: string; name: string }
+    84→
+    85→// ─── Yerel sabitler & yardımcılar ───────────────────────────────────────────
+    86→
+    87→type TabKey = "list" | "studio" | "inbox" | "live";
+    88→type ChipTone = "neutral" | "teal" | "amber" | "rose" | "violet" | "emerald";
+    89→
+    90→const FORM_STATUS_MAP: Record<string, string> = { DRAFT: "Taslak", PUBLISHED: "Yayında", CLOSED: "Kapalı" };
+    91→const REG_STATUS_MAP: Record<string, string> = {
+    92→  DRAFT: "Taslak", SUBMITTED: "Gönderildi", PENDING_APPROVAL: "Onay bekliyor",
+    93→  CONFIRMED: "Onaylandı", REJECTED: "Reddedildi", CANCELLED: "İptal",
+    94→};
+    95→const SENSITIVITY_MAP: Record<string, string> = {
+    96→  STANDARD: "Standart", OPERATIONAL_SENSITIVE: "Operasyonel Duyarlı", TEAM_ONLY: "Sadece Ekip",
+    97→};
+    98→const TYPE_TONE: Record<string, ChipTone> = {
+    99→  REGISTRATION: "teal", SURVEY: "violet", FEEDBACK: "emerald", QA_MOBILE: "amber", CUSTOM: "neutral",
+   100→};
+   101→// options (satır bazlı seçenekler) giren alan türleri
+   102→const OPTION_FIELD_TYPES = ["SINGLE_CHOICE", "MULTI_CHOICE", "QA_QUIZ", "COUNTRY"];
+   103→// mobil interaktif öge olarak otomatik açılan türler
+   104→const MOBILE_TYPES = ["RATING", "NPS", "QA_QUIZ"];
+   105→const PAY_METHOD_OPTS = [
+   106→  { value: "ONLINE_CARD", label: "Online Kart" },
+   107→  { value: "BANK_TRANSFER", label: "Havale / EFT" },
+   108→  { value: "PAYMENT_LINK", label: "Ödeme Linki" },
+   109→];
+   110→
+   111→// JSON dizi alanını güvenle çöz (spamReasons, çoklu seçim yanıtları)
+   112→function parseJsonArray(v?: string | null): string[] {
+   113→  if (!v) return [];
+   114→  try {
+   115→    const p: unknown = JSON.parse(v);
+   116→    if (Array.isArray(p)) return p.map(String);
+   117→  } catch {
+   118→    /* JSON değilse virgülle ayrılmış */
+   119→  }
+   120→  return v.split(",").map((s) => s.trim()).filter(Boolean);
+   121→}
+   122→// apiSend PATCH metotunu kapsamıyor → gönderi inceleme aksiyonları için yerel yardımcı (göreli yol)
+   123→async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+   124→  const res = await fetch(path, {
+   125→    method: "PATCH",
+   126→    headers: { "Content-Type": "application/json" },
+   127→    body: JSON.stringify(body),
+   128→  });
+   129→  const data = await res.json().catch(() => ({}));
+   130→  if (!res.ok) throw new Error((data as { error?: string }).error ?? "İşlem başarısız");
+   131→  return data as T;
+   132→}
+   133→const numOr = (v: string, dflt: number) => (Number.isFinite(Number(v)) ? Number(v) : dflt);
+   134→const barLabel = (v: string) => (v === "true" ? "Evet" : v === "false" ? "Hayır" : v);
+   135→
+   136→// ─── Ana bileşen ────────────────────────────────────────────────────────────
+   137→
+   138→export function FormCenterView() {
+   139→  const { currentEditionId, bump, refreshKey } = useApp();
+   140→  const { toast } = useToast();
+   141→
+   142→  // Veri — formlar + kayıt kategorileri (ödeme paneli için)
+   143→  const { data: forms, error, reload, loading } = useApi<FormDef[]>(
+   144→    () => listEntity<FormDef>("forms", { editionId: currentEditionId ?? undefined }),
+   145→    [currentEditionId, refreshKey],
+   146→  );
+   147→  const { data: categories } = useApi<CategoryRow[]>(
+   148→    () => listEntity<CategoryRow>("registration-categories", { editionId: currentEditionId ?? undefined }),
+   149→    [currentEditionId, refreshKey],
+   150→  );
+   151→
+   152→  const formList = useMemo(() => forms ?? [], [forms]);
+   153→  const categoryList = useMemo(() => categories ?? [], [categories]);
+   154→
+   155→  // Sekme + seçili form (liste→stüdyo geçişinde de kullanılır)
+   156→  const [tab, setTab] = useState<TabKey>("list");
+   157→  const [selectedFormId, setSelectedFormId] = useState("");
+   158→  const selectedForm = formList.find((f) => f.id === selectedFormId) ?? null;
+   159→
+   160→  const [busy, setBusy] = useState<string | null>(null);
+   161→
+   162→  // Yeni form dialogu
+   163→  const [createOpen, setCreateOpen] = useState(false);
+   164→  const emptyNewForm = {
+   165→    name: "", type: "REGISTRATION", description: "",
+   166→    honeypotEnabled: true, minSubmitSeconds: "4", maxPerEmailPerDay: "5", blockedDomains: "",
+   167→    enableOnlinePayment: false, defaultCategoryId: "AUTO", autoApprove: false,
+   168→  };
+   169→  const [newForm, setNewForm] = useState(emptyNewForm);
+   170→
+   171→  // Alan ekleme dialogu
+   172→  const [fieldOpen, setFieldOpen] = useState(false);
+   173→  const emptyNewField = {
+   174→    label: "", type: "TEXT", placeholder: "", helpText: "", options: "",
+   175→    required: "OPTIONAL", conditionField: "", conditionValue: "",
+   176→    sensitivity: "STANDARD", mobileInteractive: false, correctAnswer: "",
+   177→  };
+   178→  const [newField, setNewField] = useState(emptyNewField);
+   179→
+   180→  // Stüdyo — form ayarları yerel kopyası (seçim değişince sunucudan doldurulur)
+   181→  const [settings, setSettings] = useState({
+   182→    name: "", description: "", successMessage: "",
+   183→    honeypotEnabled: true, minSubmitSeconds: "4", maxPerEmailPerDay: "5",
+   184→    blockedDomains: "", autoApprove: false,
+   185→    enableOnlinePayment: false, defaultCategoryId: "AUTO",
+   186→  });
+   187→
+   188→  // Yanıtlar sekmesi filtreleri + detay dialogu
+   189→  const [statusFilter, setStatusFilter] = useState("ALL");
+   190→  const [sourceFilter, setSourceFilter] = useState("ALL");
+   191→  const [detailId, setDetailId] = useState<string | null>(null);
+   192→  const [detail, setDetail] = useState<SubmissionDetail | null>(null);
+   193→  const [detailLoading, setDetailLoading] = useState(false);
+   194→
+   195→  // Canlı kayıt masası durumu
+   196→  const [liveFormId, setLiveFormId] = useState("");
+   197→  const [ans, setAns] = useState<Record<string, string>>({});
+   198→  const [multi, setMulti] = useState<Record<string, string[]>>({});
+   199→  const [visitor, setVisitor] = useState({ name: "", email: "", phone: "", organization: "" });
+   200→  const [honeypot, setHoneypot] = useState("");
+   201→  const [payMethod, setPayMethod] = useState("ONLINE_CARD");
+   202→  const [liveResult, setLiveResult] = useState<RegisterResult | null>(null);
+   203→  const [pay, setPay] = useState({ cardHolder: "", cardNumber: "", expiry: "", cvc: "" });
+   204→  const [payOutcome, setPayOutcome] = useState<PayProcessResult | null>(null);
+   205→  const [resetTick, setResetTick] = useState(0);
+   206→  const startRef = useRef<number>(Date.now());
+   207→
+   208→  const liveForms = useMemo(
+   209→    () => formList.filter((f) => f.status === "PUBLISHED" && f.isPublic),
+   210→    [formList],
+   211→  );
+   212→  const liveForm = liveForms.find((f) => f.id === liveFormId) ?? null;
+   213→
+   214→  // Gönderiler + istatistik (seçili form + filtreler)
+   215→  // TASK-A F6: gönderiler imleçli load-more — 300 satırlık sessiz kesme kaldırıldı
+   216→  const {
+   217→    data: subsPaged, error: subError, reload: reloadSubs, loading: subLoading, more: subMore,
+   218→  } = useApi<{ items: SubmissionRow[]; nextCursor?: string | null }>(
+   219→    (cursor?: string) =>
+   220→      selectedFormId
+   221→        ? listEntityPaged<SubmissionRow>("form-submissions", {
+   222→            formId: selectedFormId,
+   223→            status: statusFilter === "ALL" ? undefined : statusFilter,
+   224→            source: sourceFilter === "ALL" ? undefined : sourceFilter,
+   225→            limit: 200,
+   226→          }, cursor)
+   227→        : Promise.resolve({ items: [] }),
+   228→    [selectedFormId, statusFilter, sourceFilter, refreshKey],
+   229→    { append: true },
+   230→  );
+   231→  const subList = useMemo(() => subsPaged?.items ?? [], [subsPaged]);
+   232→
+   233→  const {
+   234→    data: stats, error: statsError, reload: reloadStats, loading: statsLoading,
+   235→  } = useApi<FormStats | null>(
+   236→    async () => (selectedFormId ? apiGet<FormStats>(`/api/form-stats?formId=${selectedFormId}`) : null),
+   237→    [selectedFormId, refreshKey],
+   238→  );
+   239→
+   240→  // İlk formu otomatik seç; edisyon değişince geçersiz seçimi temizle (stüdyo/yanıtlar ortak)
+   241→  useEffect(() => {
+   242→    if (selectedFormId && !formList.some((f) => f.id === selectedFormId)) setSelectedFormId("");
+   243→    else if (!selectedFormId && formList.length > 0) setSelectedFormId(formList[0].id);
+   244→  }, [selectedFormId, formList]);
+   245→
+   246→  // Canlı masada yayında + herkese açık ilk formu seç; geçersiz seçimi temizle
+   247→  useEffect(() => {
+   248→    if (liveFormId && !liveForms.some((f) => f.id === liveFormId)) setLiveFormId("");
+   249→    else if (!liveFormId && liveForms.length > 0) setLiveFormId(liveForms[0].id);
+   250→  }, [liveFormId, liveForms]);
+   251→
+   252→  // Seçili form değişince (veya kaydedilince) ayar panelini sunucu değerleriyle tazele
+   253→  useEffect(() => {
+   254→    const f = formList.find((x) => x.id === selectedFormId);
+   255→    if (!f) return;
+   256→    setSettings({
+   257→      name: f.name,
+   258→      description: f.description ?? "",
+   259→      successMessage: f.successMessage ?? "",
+   260→      honeypotEnabled: f.honeypotEnabled,
+   261→      minSubmitSeconds: String(f.minSubmitSeconds ?? 4),
+   262→      maxPerEmailPerDay: String(f.maxPerEmailPerDay ?? 5),
+   263→      blockedDomains: f.blockedDomains ?? "",
+   264→      autoApprove: f.autoApprove,
+   265→      enableOnlinePayment: f.enableOnlinePayment,
+   266→      defaultCategoryId: f.defaultCategoryId ?? "AUTO",
+   267→    });
+   268→  }, [selectedFormId, formList]);
+   269→
+   270→  // Zaman tuzağı: form göründüğünde sayaç başlat
+   271→  useEffect(() => {
+   272→    startRef.current = Date.now();
+   273→  }, [liveFormId, resetTick]);
+   274→
+   275→  // ── Aksiyonlar ────────────────────────────────────────────────────────────
+   276→
+   277→  const createForm = async () => {
+   278→    setBusy("create");
+   279→    try {
+   280→      const created = await apiSend<{ id: string }>("/api/forms", "POST", {
+   281→        editionId: currentEditionId,
+   282→        name: newForm.name,
+   283→        type: newForm.type,
+   284→        description: newForm.description,
+   285→        honeypotEnabled: newForm.honeypotEnabled,
+   286→        minSubmitSeconds: numOr(newForm.minSubmitSeconds, 4),
+   287→        maxPerEmailPerDay: numOr(newForm.maxPerEmailPerDay, 5),
+   288→        blockedDomains: newForm.blockedDomains,
+   289→        enableOnlinePayment: newForm.type === "REGISTRATION" ? newForm.enableOnlinePayment : false,
+   290→        defaultCategoryId: newForm.defaultCategoryId === "AUTO" ? null : newForm.defaultCategoryId,
+   291→        autoApprove: newForm.autoApprove,
+   292→      });
+   293→      toast({ title: "Form oluşturuldu", description: "Tasarım stüdyosundan alanları ekleyebilirsiniz." });
+   294→      setCreateOpen(false);
+   295→      setNewForm(emptyNewForm);
+   296→      setSelectedFormId(created.id);
+   297→      setTab("studio");
+   298→      reload();
+   299→      bump();
+   300→    } catch (e) {
+   301→      toast({ title: "Form oluşturulamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   302→    } finally {
+   303→      setBusy(null);
+   304→    }
+   305→  };
+   306→
+   307→  const togglePublish = async (f: FormDef) => {
+   308→    setBusy(`pub-${f.id}`);
+   309→    try {
+   310→      await apiSend(`/api/forms/${f.id}`, "PUT", { status: f.status === "PUBLISHED" ? "CLOSED" : "PUBLISHED" });
+   311→      toast({ title: f.status === "PUBLISHED" ? "Form kapatıldı" : "Form yayına alındı", description: f.name });
+   312→      reload();
+   313→      bump();
+   314→    } catch (e) {
+   315→      toast({ title: "Durum değiştirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   316→    } finally {
+   317→      setBusy(null);
+   318→    }
+   319→  };
+   320→
+   321→  const togglePublic = async (f: FormDef, v: boolean) => {
+   322→    setBusy(`public-${f.id}`);
+   323→    try {
+   324→      await apiSend(`/api/forms/${f.id}`, "PUT", { isPublic: v });
+   325→      toast({ title: v ? "Form herkese açık bağlantıya açıldı" : "Herkese açık erişim kapatıldı", description: f.name });
+   326→      reload();
+   327→      bump();
+   328→    } catch (e) {
+   329→      toast({ title: "Erişim ayarı güncellenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   330→    } finally {
+   331→      setBusy(null);
+   332→    }
+   333→  };
+   334→
+   335→  // Stüdyo kaydet — boş metin alanları null gider (registry sanitize ile uyumlu)
+   336→  const saveFormSettings = async () => {
+   337→    if (!selectedForm) return;
+   338→    setBusy("settings");
+   339→    try {
+   340→      await apiSend(`/api/forms/${selectedForm.id}`, "PUT", {
+   341→        name: settings.name,
+   342→        description: settings.description,
+   343→        successMessage: settings.successMessage,
+   344→        honeypotEnabled: settings.honeypotEnabled,
+   345→        minSubmitSeconds: numOr(settings.minSubmitSeconds, 4),
+   346→        maxPerEmailPerDay: numOr(settings.maxPerEmailPerDay, 5),
+   347→        blockedDomains: settings.blockedDomains,
+   348→        autoApprove: settings.autoApprove,
+   349→        enableOnlinePayment: settings.enableOnlinePayment,
+   350→        defaultCategoryId: settings.defaultCategoryId === "AUTO" ? null : settings.defaultCategoryId,
+   351→      });
+   352→      toast({ title: "Form ayarları kaydedildi", description: selectedForm.name });
+   353→      reload();
+   354→      bump();
+   355→    } catch (e) {
+   356→      toast({ title: "Ayarlar kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   357→    } finally {
+   358→      setBusy(null);
+   359→    }
+   360→  };
+   361→
+   362→  const addField = async () => {
+   363→    if (!selectedForm) return;
+   364→    setBusy("field");
+   365→    try {
+   366→      await apiSend("/api/form-fields", "POST", {
+   367→        formId: selectedForm.id,
+   368→        label: newField.label,
+   369→        type: newField.type,
+   370→        placeholder: newField.placeholder,
+   371→        helpText: newField.helpText,
+   372→        options: newField.options,
+   373→        required: newField.required,
+   374→        conditionField: newField.conditionField,
+   375→        conditionValue: newField.conditionValue,
+   376→        sensitivity: newField.sensitivity,
+   377→        mobileInteractive: newField.mobileInteractive,
+   378→        correctAnswer: newField.type === "QA_QUIZ" ? (newField.correctAnswer || null) : null,
+   379→        order: selectedForm.fields.length + 1,
+   380→      });
+   381→      toast({ title: "Alan eklendi", description: `${newField.label} — sıra ${selectedForm.fields.length + 1}` });
+   382→      setFieldOpen(false);
+   383→      setNewField(emptyNewField);
+   384→      reload();
+   385→      bump();
+   386→    } catch (e) {
+   387→      toast({ title: "Alan eklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   388→    } finally {
+   389→      setBusy(null);
+   390→    }
+   391→  };
+   392→
+   393→  // Sıra değişimi: iki alanın order değerini karşılıklı güncelle
+   394→  const moveField = async (fieldId: string, dir: -1 | 1) => {
+   395→    if (!selectedForm) return;
+   396→    const list = [...selectedForm.fields].sort((a, b) => a.order - b.order);
+   397→    const idx = list.findIndex((f) => f.id === fieldId);
+   398→    const j = idx + dir;
+   399→    if (idx < 0 || j < 0 || j >= list.length) return;
+   400→    const a = list[idx];
+   401→    const b = list[j];
+   402→    setBusy(`move-${fieldId}`);
+   403→    try {
+   404→      await apiSend(`/api/form-fields/${a.id}`, "PUT", { order: b.order });
+   405→      await apiSend(`/api/form-fields/${b.id}`, "PUT", { order: a.order });
+   406→      reload();
+   407→      bump();
+   408→    } catch (e) {
+   409→      toast({ title: "Sıra değiştirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   410→    } finally {
+   411→      setBusy(null);
+   412→    }
+   413→  };
+   414→
+   415→  const deleteField = async (fieldId: string, fieldLabel: string) => {
+   416→    setBusy(`del-${fieldId}`);
+   417→    try {
+   418→      await apiSend(`/api/form-fields/${fieldId}`, "DELETE");
+   419→      toast({ title: "Alan silindi", description: fieldLabel });
+   420→      reload();
+   421→      bump();
+   422→    } catch (e) {
+   423→      toast({ title: "Alan silinemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   424→    } finally {
+   425→      setBusy(null);
+   426→    }
+   427→  };
+   428→
+   429→  // QA_QUIZ doğru cevabı — stüdyoda satır içi seçim, anında puanlamaya etki eder
+   430→  const setCorrectAnswer = async (fieldId: string, value: string) => {
+   431→    setBusy(`ca-${fieldId}`);
+   432→    try {
+   433→      await apiSend(`/api/form-fields/${fieldId}`, "PUT", { correctAnswer: value || null });
+   434→      toast({
+   435→        title: value ? `Doğru cevap: ${value}` : "Doğru cevap kaldırıldı",
+   436→        description: value ? "Yeni gönderiler quiz puanıyla kaydedilir." : "Bu soru artık puanlanmaz.",
+   437→      });
+   438→      reload();
+   439→      bump();
+   440→    } catch (e) {
+   441→      toast({ title: "Doğru cevap kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   442→    } finally {
+   443→      setBusy(null);
+   444→    }
+   445→  };
+   446→
+   447→  const submissionAction = async (id: string, action: "approve" | "reject" | "spam" | "pending") => {
+   448→    setBusy(`sub-${id}`);
+   449→    try {
+   450→      await apiPatch(`/api/form-submissions/${id}`, { action });
+   451→      const titles: Record<string, string> = {
+   452→        approve: "Gönderi onaylandı", reject: "Gönderi reddedildi",
+   453→        spam: "Spam olarak işaretlendi", pending: "İncelemeye alındı",
+   454→      };
+   455→      toast({
+   456→        title: titles[action],
+   457→        description: action === "approve" ? "Kayıt formu ise kayıt zinciri kurulur." : undefined,
+   458→      });
+   459→      reloadSubs();
+   460→      reloadStats();
+   461→      bump();
+   462→    } catch (e) {
+   463→      toast({ title: "Aksiyon başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   464→    } finally {
+   465→      setBusy(null);
+   466→    }
+   467→  };
+   468→
+   469→  const openDetail = async (id: string) => {
+   470→    setDetailId(id);
+   471→    setDetail(null);
+   472→    setDetailLoading(true);
+   473→    try {
+   474→      setDetail(await apiGet<SubmissionDetail>(`/api/form-submissions/${id}`));
+   475→    } catch (e) {
+   476→      toast({ title: "Detay yüklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   477→      setDetailId(null);
+   478→    } finally {
+   479→      setDetailLoading(false);
+   480→    }
+   481→  };
+   482→
+   483→  // Çoklu seçim yanıtları JSON dizi olarak saklanır
+   484→  const toggleMulti = (fieldId: string, opt: string, on: boolean) => {
+   485→    setMulti((m) => {
+   486→      const cur = m[fieldId] ?? [];
+   487→      return { ...m, [fieldId]: on ? [...cur, opt] : cur.filter((x) => x !== opt) };
+   488→    });
+   489→  };
+   490→
+   491→  // Koşullu alan görünürlüğü: conditionField etiketine uyan önceki sorunun yanıtına bakılır
+   492→  const isLiveVisible = (f: FormFieldDef): boolean => {
+   493→    if (!liveForm || !f.conditionField) return true;
+   494→    const src = liveForm.fields.find((x) => x.label === f.conditionField);
+   495→    if (!src) return true;
+   496→    const val = ans[src.id] ?? "";
+   497→    if (f.conditionValue === "true") return val === "true";
+   498→    return val !== "" && val === (f.conditionValue ?? "");
+   499→  };
+   500→
+   501→  const submitLive = async () => {
+   502→    if (!liveForm) return;
+   503→    setBusy("live");
+   504→    try {
+   505→      const answers: Record<string, string> = {};
+   506→      for (const f of liveForm.fields) {
+   507→        if (f.type === "SECTION") continue;
+   508→        if (f.type === "MULTI_CHOICE") {
+   509→          answers[f.id] = JSON.stringify(multi[f.id] ?? []);
+   510→          continue;
+   511→        }
+   512→        const v = ans[f.id];
+   513→        if (v !== undefined && v !== "") answers[f.id] = v;
+   514→      }
+   515→      const res = await apiSend<RegisterResult>("/api/public-register", "POST", {
+   516→        formId: liveForm.id,
+   517→        respondentName: visitor.name,
+   518→        respondentEmail: visitor.email,
+   519→        phone: visitor.phone,
+   520→        organization: visitor.organization,
+   521→        answers,
+   522→        honeypotValue: honeypot,
+   523→        elapsedSeconds: Math.round((Date.now() - startRef.current) / 1000),
+   524→        paymentMethod: payMethod,
+   525→        source: "WEB_PUBLIC",
+   526→      });
+   527→      setLiveResult(res);
+   528→      setPayOutcome(null);
+   529→      bump();
+   530→      if (res.status === "SPAM") {
+   531→        toast({ title: "Gönderi spam şüphesiyle işaretlendi", description: `Skor ${Math.round(res.spamScore)}`, variant: "destructive" });
+   532→      } else {
+   533→        toast({
+   534→          title: res.status === "APPROVED" ? "Kaydınız onaylandı" : "Başvurunuz alındı",
+   535→          description: res.status === "PENDING" ? "Form Merkezi yanıt sekmesinden inceleyebilirsiniz." : undefined,
+   536→        });
+   537→      }
+   538→    } catch (e) {
+   539→      toast({ title: "Gönderim başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   540→    } finally {
+   541→      setBusy(null);
+   542→    }
+   543→  };
+   544→
+   545→  const processPayment = async () => {
+   546→    if (!liveResult?.payment) return;
+   547→    setBusy("pay");
+   548→    try {
+   549→      const res = await apiSend<PayProcessResult>(`/api/payments/${liveResult.payment.id}/process`, "POST", {
+   550→        cardHolder: pay.cardHolder,
+   551→        cardNumber: pay.cardNumber,
+   552→        expiry: pay.expiry,
+   553→        cvc: pay.cvc,
+   554→      });
+   555→      setPayOutcome(res);
+   556→      bump();
+   557→      if (res.outcome === "SUCCEEDED") {
+   558→        toast({ title: "Ödeme başarılı", description: res.message });
+   559→      } else {
+   560→        toast({ title: "Ödeme başarısız", description: res.message, variant: "destructive" });
+   561→      }
+   562→    } catch (e) {
+   563→      toast({ title: "Ödeme işlemi başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   564→    } finally {
+   565→      setBusy(null);
+   566→    }
+   567→  };
+   568→
+   569→  const resetLive = () => {
+   570→    setAns({});
+   571→    setMulti({});
+   572→    setVisitor({ name: "", email: "", phone: "", organization: "" });
+   573→    setHoneypot("");
+   574→    setPayMethod("ONLINE_CARD");
+   575→    setLiveResult(null);
+   576→    setPayOutcome(null);
+   577→    setPay({ cardHolder: "", cardNumber: "", expiry: "", cvc: "" });
+   578→    setResetTick((t) => t + 1);
+   579→  };
+   580→
+   581→  // ── Canlı masada alan render'ı (tip bazlı) ────────────────────────────────
+   582→
+   583→  const renderLiveField = (f: FormFieldDef) => {
+   584→    const opts = (f.options ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
+   585→    const value = ans[f.id] ?? "";
+   586→    const reqStar = f.required === "ALWAYS" ? <span className="text-rose-500"> *</span> : null;
+   587→
+   588→    const wrap = (children: ReactNode) => (
+   589→      <div key={f.id} className="grid gap-1.5">
+   590→        <div className="flex items-center justify-between gap-2">
+   591→          <Label className="text-xs font-medium">
+   592→            {f.label}
+   593→            {reqStar}
+   594→          </Label>
+   595→          {f.mobileInteractive && <Badge variant="outline" className="text-[10px]">Mobil Öge</Badge>}
+   596→        </div>
+   597→        {children}
+   598→        {f.helpText && <p className="text-xs text-muted-foreground">{f.helpText}</p>}
+   599→      </div>
+   600→    );
+   601→
+   602→    switch (f.type) {
+   603→      case "SECTION":
+   604→        return (
+   605→          <div key={f.id} className="border-b pb-1.5">
+   606→            <p className="text-sm font-semibold">{f.label}</p>
+   607→            {f.helpText && <p className="text-xs text-muted-foreground">{f.helpText}</p>}
+   608→          </div>
+   609→        );
+   610→      case "LONGTEXT":
+   611→        return wrap(
+   612→          <Textarea rows={3} value={value} placeholder={f.placeholder ?? ""} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
+   613→        );
+   614→      case "NUMBER":
+   615→        return wrap(
+   616→          <Input type="number" value={value} placeholder={f.placeholder ?? ""} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
+   617→        );
+   618→      case "EMAIL":
+   619→        return wrap(
+   620→          <Input type="email" value={value} placeholder={f.placeholder ?? "ornek@eposta.com"} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
+   621→        );
+   622→      case "PHONE":
+   623→        return wrap(
+   624→          <Input type="tel" value={value} placeholder={f.placeholder ?? "+90"} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
+   625→        );
+   626→      case "DATE":
+   627→        return wrap(<Input type="date" value={value} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />);
+   628→      case "SINGLE_CHOICE":
+   629→      case "QA_QUIZ":
+   630→        return wrap(
+   631→          <Select value={value} onValueChange={(v) => setAns({ ...ans, [f.id]: v })}>
+   632→            <SelectTrigger><SelectValue placeholder="Seçin" /></SelectTrigger>
+   633→            <SelectContent>
+   634→              {opts.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+   635→            </SelectContent>
+   636→          </Select>,
+   637→        );
+   638→      case "MULTI_CHOICE":
+   639→        return wrap(
+   640→          <div className="grid gap-1.5 rounded-lg border p-2.5">
+   641→            {opts.map((o) => (
+   642→              <label key={o} className="flex cursor-pointer items-center gap-2 text-sm">
+   643→                <Checkbox
+   644→                  checked={multi[f.id]?.includes(o) ?? false}
+   645→                  onCheckedChange={(c) => toggleMulti(f.id, o, c === true)}
+   646→                />
+   647→                {o}
+   648→              </label>
+   649→            ))}
+   650→            {opts.length === 0 && <p className="text-xs text-muted-foreground">Seçenek tanımlanmamış</p>}
+   651→          </div>,
+   652→        );
+   653→      case "CHECKBOX":
+   654→        return wrap(
+   655→          <label className="flex cursor-pointer items-center gap-2 text-sm">
+   656→            <Checkbox checked={value === "true"} onCheckedChange={(c) => setAns({ ...ans, [f.id]: c ? "true" : "false" })} />
+   657→            {f.helpText ? f.label : f.label}
+   658→          </label>,
+   659→        );
+   660→      case "COUNTRY":
+   661→        return wrap(
+   662→          <Input value={value} placeholder="Ülke" onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
+   663→        );
+   664→      case "FILE":
+   665→        return wrap(<Input disabled placeholder="Dosya seç (önizlemede kapalı)" />);
+   666→      case "RATING":
+   667→        return wrap(
+   668→          <div className="flex items-center gap-1">
+   669→            {[1, 2, 3, 4, 5].map((n) => (
+   670→              <button
+   671→                key={n}
+   672→                type="button"
+   673→                aria-label={`${n} yıldız`}
+   674→                onClick={() => setAns({ ...ans, [f.id]: String(n) })}
+   675→                className="rounded-md p-1 transition hover:bg-amber-50"
+   676→              >
+   677→                <Icons.Star className={`size-5 ${Number(value) >= n ? "fill-amber-400 text-amber-500" : "text-muted-foreground/40"}`} />
+   678→              </button>
+   679→            ))}
+   680→            {value && <span className="ml-1 text-xs text-muted-foreground">{value}/5</span>}
+   681→          </div>,
+   682→        );
+   683→      case "NPS":
+   684→        return wrap(
+   685→          <div className="grid gap-1">
+   686→            <div className="grid grid-cols-11 gap-1">
+   687→              {Array.from({ length: 11 }, (_, n) => (
+   688→                <button
+   689→                  key={n}
+   690→                  type="button"
+   691→                  aria-pressed={Number(value) === n}
+   692→                  onClick={() => setAns({ ...ans, [f.id]: String(n) })}
+   693→                  className={`h-8 min-w-0 rounded-md border text-xs font-medium tabular-nums transition ${
+   694→                    Number(value) === n ? "border-teal-600 bg-teal-600 text-white" : "hover:border-teal-400"
+   695→                  }`}
+   696→                >
+   697→                  {n}
+   698→                </button>
+   699→              ))}
+   700→            </div>
+   701→            <div className="flex justify-between text-[10px] text-muted-foreground">
+   702→              <span>Hiç olmaz</span>
+   703→              <span>Kesinlikle öneririm</span>
+   704→            </div>
+   705→          </div>,
+   706→        );
+   707→      default:
+   708→        return wrap(
+   709→          <Input value={value} placeholder={f.placeholder ?? ""} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
+   710→        );
+   711→    }
+   712→  };
+   713→
+   714→  // ── Gönderi tablosundaki spam puanı hücresi (STATUS_TONE doğrudan kullanım) ─
+   715→  const spamPill = (score: number) =>
+   716→    score > 0 ? (
+   717→      <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_TONE.SPAM}`}>
+   718→        Skor {Math.round(score)}
+   719→      </span>
+   720→    ) : (
+   721→      <span className="text-xs text-muted-foreground">—</span>
+   722→    );
+   723→
+   724→  // ── QA_QUIZ skoru hücresi — bant bazlı renk (≥75 emerald, ≥50 amber, <50 rose) ─
+   725→  const quizPill = (sub: { quizScore?: number | null; quizCorrect?: number | null; quizTotal?: number | null }) => {
+   726→    if (sub.quizScore == null) return <span className="text-xs text-muted-foreground">—</span>;
+   727→    const tone = sub.quizScore >= 75 ? STATUS_TONE.CONVERTED : sub.quizScore >= 50 ? STATUS_TONE.WAITING : STATUS_TONE.SPAM;
+   728→    return (
+   729→      <span
+   730→        className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${tone}`}
+   731→        title={`Quiz başarısı %${Math.round(sub.quizScore)} — 75+ yeşil, 50+ amber, altı kırmızı`}
+   732→      >
+   733→        <Icons.Sigma className="size-3" />
+   734→        Quiz %{Math.round(sub.quizScore)}
+   735→        {sub.quizCorrect != null && sub.quizTotal ? ` · ${sub.quizCorrect}/${sub.quizTotal}` : ""}
+   736→      </span>
+   737→    );
+   738→  };
+   739→
+   740→  const npsStat = stats?.fields.find((st) => st.type === "NPS" && st.nps) ?? null;
+   741→
+   742→  // ───────────────────────────────────────────────────────────── RENDER ─────
+   743→
+   744→  return (
+   745→    <div className="space-y-5">
+   746→      <PageHeader title="Form Merkezi" desc="Kayıt formları, anketler ve mobil interaktif QA öğeleri tek merkezde tasarlanır — spam korumalı, online ödemeli">
+   747→        <Button onClick={() => { setNewForm(emptyNewForm); setCreateOpen(true); }}>
+   748→          <Icons.Plus className="size-4" /> Yeni Form
+   749→        </Button>
+   750→      </PageHeader>
+   751→
+   752→      <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)} className="space-y-4">
+   753→        <TabsList className="h-auto flex-wrap">
+   754→          <TabsTrigger value="list"><Icons.FileInput className="size-4" /> Formlar</TabsTrigger>
+   755→          <TabsTrigger value="studio"><Icons.PenTool className="size-4" /> Tasarım Stüdyosu</TabsTrigger>
+   756→          <TabsTrigger value="inbox"><Icons.Inbox className="size-4" /> Yanıtlar &amp; İstatistik</TabsTrigger>
+   757→          <TabsTrigger value="live"><Icons.MonitorSmartphone className="size-4" /> Canlı Kayıt Masası</TabsTrigger>
+   758→        </TabsList>
+   759→
+   760→        {/* ══ TAB 1 — FORMLAR ══════════════════════════════════════════════ */}
+   761→        <TabsContent value="list" className="mt-4 space-y-4">
+   762→          {loading ? (
+   763→            <Loading rows={4} />
+   764→          ) : error ? (
+   765→            <ErrorState message={error} onRetry={reload} />
+   766→          ) : formList.length === 0 ? (
+   767→            <EmptyState
+   768→              title="Henüz form yok"
+   769→              desc="Sağ üstteki Yeni Form butonuyla kayıt formu, anket veya mobil QA ögesi oluşturun."
+   770→            />
+   771→          ) : (
+   772→            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+   773→              {formList.map((f) => (
+   774→                <div key={f.id} className="flex flex-col rounded-xl border bg-card p-4 shadow-sm">
+   775→                  <div className="flex items-start justify-between gap-2">
+   776→                    <div className="min-w-0">
+   777→                      <p className="truncate text-sm font-semibold">{f.name}</p>
+   778→                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{f.description ?? "Açıklama yok"}</p>
+   779→                    </div>
+   780→                    <StatusBadge map={FORM_STATUS_MAP} value={f.status} />
+   781→                  </div>
+   782→                  <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+   783→                    <Chip tone={TYPE_TONE[f.type] ?? "neutral"}>{label(FORM_TYPES, f.type)}</Chip>
+   784→                    {f.honeypotEnabled && (
+   785→                      <Chip tone="neutral"><Icons.ShieldCheck className="size-3" /> Spam koruması</Chip>
+   786→                    )}
+   787→                    {f.type === "REGISTRATION" && f.enableOnlinePayment && (
+   788→                      <Chip tone="emerald"><Icons.CreditCard className="size-3" /> Online ödeme</Chip>
+   789→                    )}
+   790→                    {f.isPublic && (
+   791→                      <Chip tone="violet"><Icons.Globe className="size-3" /> Herkese açık</Chip>
+   792→                    )}
+   793→                  </div>
+   794→                  <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+   795→                    <span className="inline-flex items-center gap-1">
+   796→                      <Icons.Inbox className="size-3.5" /> {f._count?.submissions ?? 0} gönderi
+   797→                    </span>
+   798→                    <span className="inline-flex items-center gap-1">
+   799→                      <Icons.List className="size-3.5" /> {f.fields.length} alan
+   800→                    </span>
+   801→                  </div>
+   802→                  <Separator className="my-3" />
+   803→                  <div className="mt-auto flex flex-wrap items-center gap-2">
+   804→                    <Button
+   805→                      size="sm"
+   806→                      variant="outline"
+   807→                      onClick={() => { setSelectedFormId(f.id); setTab("studio"); }}
+   808→                    >
+   809→                      <Icons.PenTool className="size-3.5" /> Stüdyoda Düzenle
+   810→                    </Button>
+   811→                    <Button
+   812→                      size="sm"
+   813→                      variant={f.status === "PUBLISHED" ? "ghost" : "default"}
+   814→                      disabled={busy !== null}
+   815→                      onClick={() => togglePublish(f)}
+   816→                    >
+   817→                      {f.status === "PUBLISHED"
+   818→                        ? <><Icons.Lock className="size-3.5" /> Kapat</>
+   819→                        : <><Icons.Upload className="size-3.5" /> Yayınla</>}
+   820→                    </Button>
+   821→                    <div className="ml-auto flex items-center gap-1.5">
+   822→                      <Switch
+   823→                        checked={f.isPublic}
+   824→                        disabled={busy !== null}
+   825→                        aria-label="Herkese açık erişim"
+   826→                        onCheckedChange={(v) => togglePublic(f, v)}
+   827→                      />
+   828→                      <span className="text-xs text-muted-foreground">Herkese açık</span>
+   829→                    </div>
+   830→                  </div>
+   831→                </div>
+   832→              ))}
+   833→            </div>
+   834→          )}
+   835→        </TabsContent>
+   836→
+   837→        {/* ══ TAB 2 — TASARIM STÜDYOSU ═════════════════════════════════════ */}
+   838→        <TabsContent value="studio" className="mt-4 space-y-4">
+   839→          {formList.length === 0 ? (
+   840→            <EmptyState
+   841→              title="Düzenlenecek form yok"
+   842→              desc="Önce Yeni Form ile bir form oluşturun; ardından alanları burada tasarlayın."
+   843→            />
+   844→          ) : (
+   845→            <>
+   846→              <div className="flex flex-wrap items-end gap-2">
+   847→                <div className="grid gap-1">
+   848→                  <Label className="text-xs">Düzenlenecek form</Label>
+   849→                  <Select value={selectedFormId} onValueChange={setSelectedFormId}>
+   850→                    <SelectTrigger className="w-64"><SelectValue placeholder="Form seçin" /></SelectTrigger>
+   851→                    <SelectContent>
+   852→                      {formList.map((f) => (
+   853→                        <SelectItem key={f.id} value={f.id}>
+   854→                          {f.name} · {label(FORM_TYPES, f.type)}
+   855→                        </SelectItem>
+   856→                      ))}
+   857→                    </SelectContent>
+   858→                  </Select>
+   859→                </div>
+   860→                {selectedForm && (
+   861→                  <div className="flex items-center gap-1.5 pb-1">
+   862→                    <StatusBadge map={FORM_STATUS_MAP} value={selectedForm.status} />
+   863→                    <Chip tone={TYPE_TONE[selectedForm.type] ?? "neutral"}>{label(FORM_TYPES, selectedForm.type)}</Chip>
+   864→                  </div>
+   865→                )}
+   866→              </div>
+   867→
+   868→              {selectedForm && (
+   869→                <div className="grid gap-4 lg:grid-cols-5">
+   870→                  {/* SOL — Alan listesi */}
+   871→                  <div className="min-w-0 lg:col-span-3">
+   872→                    <SectionCard
+   873→                      title="Alanlar"
+   874→                      desc={`${selectedForm.fields.length} alan — sıra numarasına göre gösterilir`}
+   875→                      action={
+   876→                        <Button size="sm" onClick={() => { setNewField(emptyNewField); setFieldOpen(true); }}>
+   877→                          <Icons.Plus className="size-3.5" /> Alan Ekle
+   878→                        </Button>
+   879→                      }
+   880→                    >
+   881→                      {selectedForm.fields.length === 0 ? (
+   882→                        <EmptyState title="Bu formda henüz alan yok" desc="Alan Ekle ile ilk soruyu ekleyin." />
+   883→                      ) : (
+   884→                        <div className="max-h-96 space-y-2 overflow-y-auto maven-scroll pr-1">
+   885→                          {[...selectedForm.fields]
+   886→                            .sort((a, b) => a.order - b.order)
+   887→                            .map((f, i) => (
+   888→                              <div
+   889→                                key={f.id}
+   890→                                className={`flex items-center gap-2 rounded-lg border p-2.5 ${
+   891→                                  f.type === "SECTION" ? "bg-muted/40 border-l-4 border-l-teal-500" : ""
+   892→                                }`}
+   893→                              >
+   894→                                <span className="w-6 shrink-0 text-center text-xs font-medium tabular-nums text-muted-foreground">
+   895→                                  {i + 1}
+   896→                                </span>
+   897→                                <div className="min-w-0 flex-1">
+   898→                                  <div className="flex flex-wrap items-center gap-1.5">
+   899→                                    <span className={`truncate text-sm font-medium ${f.type === "SECTION" ? "font-semibold" : ""}`}>
+   900→                                      {f.label}
+   901→                                    </span>
+   902→                                    <span className="text-[11px] text-muted-foreground">{label(FORM_FIELD_TYPES, f.type)}</span>
+   903→                                    {f.required === "ALWAYS" && <Chip tone="amber">Zorunlu</Chip>}
+   904→                                    {f.required === "CONDITIONAL" && (
+   905→                                      <span className="inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700">
+   906→                                        Koşullu
+   907→                                      </span>
+   908→                                    )}
+   909→                                    {f.mobileInteractive && <Chip tone="teal">Mobil</Chip>}
+   910→                                    {f.sensitivity !== "STANDARD" && (
+   911→                                      <Chip tone="violet">{label(SENSITIVITY_MAP, f.sensitivity)}</Chip>
+   912→                                    )}
+   913→                                  </div>
+   914→                                  {f.required === "CONDITIONAL" && f.conditionField && (
+   915→                                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+   916→                                      Koşul: {f.conditionField} = {f.conditionValue ?? "—"}
+   917→                                    </p>
+   918→                                  )}
+   919→                                  {f.type === "QA_QUIZ" && (
+   920→                                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+   921→                                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700">
+   922→                                        <Icons.KeyRound className="size-3" /> Doğru cevap:
+   923→                                      </span>
+   924→                                      <Select value={f.correctAnswer ?? undefined} onValueChange={(v) => setCorrectAnswer(f.id, v)}>
+   925→                                        <SelectTrigger className="h-7 w-44 text-[11px]" disabled={busy !== null}>
+   926→                                          <SelectValue placeholder="Seçin — puanlama kapalı" />
+   927→                                        </SelectTrigger>
+   928→                                        <SelectContent>
+   929→                                          {(f.options ?? "").split("\n").map((s) => s.trim()).filter(Boolean).map((opt) => (
+   930→                                            <SelectItem key={opt} value={opt} className="text-xs">{opt}</SelectItem>
+   931→                                          ))}
+   932→                                        </SelectContent>
+   933→                                      </Select>
+   934→                                      {busy === `ca-${f.id}` && <Icons.Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+   935→                                    </div>
+   936→                                  )}
+   937→                                </div>
+   938→                                <div className="flex shrink-0 items-center gap-0.5">
+   939→                                  <Button
+   940→                                    size="icon" variant="ghost" className="size-7" aria-label="Yukarı taşı"
+   941→                                    disabled={i === 0 || busy !== null}
+   942→                                    onClick={() => moveField(f.id, -1)}
+   943→                                  >
+   944→                                    <Icons.ArrowUp className="size-3.5" />
+   945→                                  </Button>
+   946→                                  <Button
+   947→                                    size="icon" variant="ghost" className="size-7" aria-label="Aşağı taşı"
+   948→                                    disabled={i === selectedForm.fields.length - 1 || busy !== null}
+   949→                                    onClick={() => moveField(f.id, 1)}
+   950→                                  >
+   951→                                    <Icons.ArrowDown className="size-3.5" />
+   952→                                  </Button>
+   953→                                  <Button
+   954→                                    size="icon" variant="ghost" className="size-7 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+   955→                                    aria-label="Alanı sil"
+   956→                                    disabled={busy !== null}
+   957→                                    onClick={() => deleteField(f.id, f.label)}
+   958→                                  >
+   959→                                    <Icons.Trash2 className="size-3.5" />
+   960→                                  </Button>
+   961→                                </div>
+   962→                              </div>
+   963→                            ))}
+   964→                        </div>
+   965→                      )}
+   966→                    </SectionCard>
+   967→                  </div>
+   968→
+   969→                  {/* SAĞ — Ayar panelleri */}
+   970→                  <div className="space-y-4 min-w-0 lg:col-span-2">
+   971→                    <SectionCard title="Form Ayarları" desc="başlık, açıklama ve gönderi sonrası mesaj">
+   972→                      <div className="grid gap-3">
+   973→                        <div className="grid gap-1">
+   974→                          <Label className="text-xs">Form adı</Label>
+   975→                          <Input value={settings.name} onChange={(e) => setSettings({ ...settings, name: e.target.value })} />
+   976→                        </div>
+   977→                        <div className="grid gap-1">
+   978→                          <Label className="text-xs">Açıklama</Label>
+   979→                          <Textarea rows={2} value={settings.description} onChange={(e) => setSettings({ ...settings, description: e.target.value })} />
+   980→                        </div>
+   981→                        <div className="grid gap-1">
+   982→                          <Label className="text-xs">Başarı mesajı</Label>
+   983→                          <Input
+   984→                            value={settings.successMessage}
+   985→                            placeholder="Örn. Kaydınız alındı, teşekkür ederiz"
+   986→                            onChange={(e) => setSettings({ ...settings, successMessage: e.target.value })}
+   987→                          />
+   988→                        </div>
+   989→                        <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
+   990→                          <Icons.Check className="size-4" /> Kaydet
+   991→                        </Button>
+   992→                      </div>
+   993→                    </SectionCard>
+   994→
+   995→                    <SectionCard
+   996→                      title={<span className="flex items-center gap-2"><Icons.ShieldCheck className="size-4 text-teal-600" /> Spam Koruması</span>}
+   997→                      desc="bot gönderileri otomatik puanlanır ve inceleme kuyruğuna düşer"
+   998→                    >
+   999→                      <div className="grid gap-3">
+  1000→                        <div className="flex items-center justify-between gap-2">
+  1001→                          <div>
+  1002→                            <p className="text-sm font-medium">Gizli alan tuzağı (honeypot)</p>
+  1003→                            <p className="text-xs text-muted-foreground">Gizli alan botları yakalar</p>
+  1004→                          </div>
+  1005→                          <Switch
+  1006→                            checked={settings.honeypotEnabled}
+  1007→                            disabled={busy !== null}
+  1008→                            aria-label="Honeypot"
+  1009→                            onCheckedChange={(v) => setSettings({ ...settings, honeypotEnabled: v })}
+  1010→                          />
+  1011→                        </div>
+  1012→                        <div className="grid grid-cols-2 gap-3">
+  1013→                          <div className="grid gap-1">
+  1014→                            <Label className="text-xs">Zaman tuzağı (sn)</Label>
+  1015→                            <Input
+  1016→                              type="number" min={0} value={settings.minSubmitSeconds}
+  1017→                              onChange={(e) => setSettings({ ...settings, minSubmitSeconds: e.target.value })}
+  1018→                            />
+  1019→                          </div>
+  1020→                          <div className="grid gap-1">
+  1021→                            <Label className="text-xs">E-posta günlük limit</Label>
+  1022→                            <Input
+  1023→                              type="number" min={1} value={settings.maxPerEmailPerDay}
+  1024→                              onChange={(e) => setSettings({ ...settings, maxPerEmailPerDay: e.target.value })}
+  1025→                            />
+  1026→                          </div>
+  1027→                        </div>
+  1028→                        <div className="grid gap-1">
+  1029→                          <Label className="text-xs">Engelli alan adları (virgülle)</Label>
+  1030→                          <Input
+  1031→                            value={settings.blockedDomains}
+  1032→                            placeholder="spam.xyz, tempmail.xyz"
+  1033→                            onChange={(e) => setSettings({ ...settings, blockedDomains: e.target.value })}
+  1034→                          />
+  1035→                        </div>
+  1036→                        <div className="flex items-center justify-between gap-2">
+  1037→                          <div>
+  1038→                            <p className="text-sm font-medium">Temiz gönderileri otomatik onayla</p>
+  1039→                            <p className="text-xs text-muted-foreground">Spam eşiği altındaki gönderiler doğrudan onaylanır</p>
+  1040→                          </div>
+  1041→                          <Switch
+  1042→                            checked={settings.autoApprove}
+  1043→                            disabled={busy !== null}
+  1044→                            aria-label="Otomatik onay"
+  1045→                            onCheckedChange={(v) => setSettings({ ...settings, autoApprove: v })}
+  1046→                          />
+  1047→                        </div>
+  1048→                        <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
+  1049→                          <Icons.Check className="size-4" /> Kaydet
+  1050→                        </Button>
+  1051→                      </div>
+  1052→                    </SectionCard>
+  1053→
+  1054→                    {selectedForm.type === "REGISTRATION" && (
+  1055→                      <SectionCard
+  1056→                        title={<span className="flex items-center gap-2"><Icons.CreditCard className="size-4 text-emerald-600" /> Online Ödeme</span>}
+  1057→                        desc="kayıt formu gönderiminde sanal POS akışı açılır"
+  1058→                      >
+  1059→                        <div className="grid gap-3">
+  1060→                          <div className="flex items-center justify-between gap-2">
+  1061→                            <div>
+  1062→                              <p className="text-sm font-medium">Online ödeme aktif</p>
+  1063→                              <p className="text-xs text-muted-foreground">Kayıt sonrası ödeme adımı gösterilir</p>
+  1064→                            </div>
+  1065→                            <Switch
+  1066→                              checked={settings.enableOnlinePayment}
+  1067→                              disabled={busy !== null}
+  1068→                              aria-label="Online ödeme"
+  1069→                              onCheckedChange={(v) => setSettings({ ...settings, enableOnlinePayment: v })}
+  1070→                            />
+  1071→                          </div>
+  1072→                          <div className="grid gap-1">
+  1073→                            <Label className="text-xs">Varsayılan kategori</Label>
+  1074→                            <Select
+  1075→                              value={settings.defaultCategoryId || "AUTO"}
+  1076→                              onValueChange={(v) => setSettings({ ...settings, defaultCategoryId: v })}
+  1077→                            >
+  1078→                              <SelectTrigger><SelectValue placeholder="Kategori seçin" /></SelectTrigger>
+  1079→                              <SelectContent>
+  1080→                                <SelectItem value="AUTO">Kategori otomatik</SelectItem>
+  1081→                                {categoryList.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+  1082→                              </SelectContent>
+  1083→                            </Select>
+  1084→                          </div>
+  1085→                          <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
+  1086→                            <Icons.Check className="size-4" /> Kaydet
+  1087→                          </Button>
+  1088→                        </div>
+  1089→                      </SectionCard>
+  1090→                    )}
+  1091→                  </div>
+  1092→                </div>
+  1093→              )}
+  1094→            </>
+  1095→          )}
+  1096→        </TabsContent>
+  1097→
+  1098→        {/* ══ TAB 3 — YANITLAR & İSTATİSTİK ════════════════════════════════ */}
+  1099→        <TabsContent value="inbox" className="mt-4 space-y-4">
+  1100→          <div className="flex flex-wrap items-end gap-2">
+  1101→            <div className="grid gap-1">
+  1102→              <Label className="text-xs">Form</Label>
+  1103→              <Select value={selectedFormId} onValueChange={setSelectedFormId}>
+  1104→                <SelectTrigger className="w-60"><SelectValue placeholder="Form seçin" /></SelectTrigger>
+  1105→                <SelectContent>
+  1106→                  {formList.map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
+  1107→                </SelectContent>
+  1108→              </Select>
+  1109→            </div>
+  1110→            <div className="grid gap-1">
+  1111→              <Label className="text-xs">Durum</Label>
+  1112→              <Select value={statusFilter} onValueChange={setStatusFilter}>
+  1113→                <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+  1114→                <SelectContent>
+  1115→                  <SelectItem value="ALL">Tümü</SelectItem>
+  1116→                  {Object.entries(FORM_SUBMISSION_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+  1117→                </SelectContent>
+  1118→              </Select>
+  1119→            </div>
+  1120→            <div className="grid gap-1">
+  1121→              <Label className="text-xs">Kaynak</Label>
+  1122→              <Select value={sourceFilter} onValueChange={setSourceFilter}>
+  1123→                <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+  1124→                <SelectContent>
+  1125→                  <SelectItem value="ALL">Tümü</SelectItem>
+  1126→                  {Object.entries(SUBMISSION_SOURCES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+  1127→                </SelectContent>
+  1128→              </Select>
+  1129→            </div>
+  1130→          </div>
+  1131→
+  1132→          <SectionCard title="Gönderiler" desc="onaylanan kayıt formu gönderileri kayıt zinciri kurar; spam gönderiler balon dışında tutulur">
+  1133→            {!selectedFormId ? (
+  1134→              <EmptyState title="Form seçin" desc="Yanıtları görmek için yukarıdan bir form seçin." />
+  1135→            ) : subLoading ? (
+  1136→              <Loading rows={4} />
+  1137→            ) : subError ? (
+  1138→              <ErrorState message={subError} onRetry={reloadSubs} />
+  1139→            ) : subList.length === 0 ? (
+  1140→              <EmptyState title="Bu filtrede gönderi yok" desc="Canlı Kayıt Masası sekmesinden test gönderimi yapabilirsiniz." />
+  1141→            ) : (
+  1142→              <>
+  1143→                {/* masaüstü tablo */}
+  1144→                <div className="hidden max-h-96 overflow-y-auto maven-scroll md:block">
+  1145→                  <table className="w-full text-sm">
+  1146→                    <thead className="sticky top-0 bg-card">
+  1147→                      <tr className="border-b text-left text-xs text-muted-foreground">
+  1148→                        <th className="py-2 pr-3 font-medium">Gönderen</th>
+  1149→                        <th className="py-2 pr-3 font-medium">Kurum</th>
+  1150→                        <th className="py-2 pr-3 font-medium">Form</th>
+  1151→                        <th className="py-2 pr-3 font-medium">Durum</th>
+  1152→                        <th className="py-2 pr-3 font-medium">Spam</th>
+  1153→                        <th className="py-2 pr-3 font-medium">Quiz</th>
+  1154→                        <th className="py-2 pr-3 font-medium">Süre</th>
+  1155→                        <th className="py-2 pr-3 font-medium">Kaynak</th>
+  1156→                        <th className="py-2 pr-3 font-medium">Tarih</th>
+  1157→                        <th className="py-2 text-right font-medium">Aksiyon</th>
+  1158→                      </tr>
+  1159→                    </thead>
+  1160→                    <tbody>
+  1161→                      {subList.map((s) => (
+  1162→                        <tr key={s.id} className="border-b align-top last:border-0 hover:bg-muted/40">
+  1163→                          <td className="py-2 pr-3">
+  1164→                            <p className="font-medium">{s.respondentName}</p>
+  1165→                            <p className="text-xs text-muted-foreground">{s.respondentEmail}</p>
+  1166→                          </td>
+  1167→                          <td className="py-2 pr-3 text-xs">{s.organization ?? "—"}</td>
+  1168→                          <td className="py-2 pr-3 text-xs">{s.form?.name ?? "—"}</td>
+  1169→                          <td className="py-2 pr-3"><StatusBadge map={FORM_SUBMISSION_STATUS} value={s.status} /></td>
+  1170→                          <td className="py-2 pr-3">{spamPill(s.spamScore)}</td>
+  1171→                          <td className="py-2 pr-3">{quizPill(s)}</td>
+  1172→                          <td className="py-2 pr-3 text-xs tabular-nums">{s.elapsedSeconds != null ? `${Math.round(s.elapsedSeconds)} sn` : "—"}</td>
+  1173→                          <td className="py-2 pr-3 text-xs">{label(SUBMISSION_SOURCES, s.source)}</td>
+  1174→                          <td className="py-2 pr-3 text-xs text-muted-foreground">{fmtDate(s.createdAt)}</td>
+  1175→                          <td className="py-2">
+  1176→                            <div className="flex items-center justify-end gap-0.5">
+  1177→                              <Button size="icon" variant="ghost" className="size-7" aria-label="Detay" onClick={() => openDetail(s.id)}>
+  1178→                                <Icons.Eye className="size-3.5" />
+  1179→                              </Button>
+  1180→                              {s.status !== "SPAM" && (
+  1181→                                <>
+  1182→                                  <Button
+  1183→                                    size="icon" variant="ghost" className="size-7 text-emerald-600 hover:bg-emerald-50"
+  1184→                                    aria-label="Onayla" disabled={busy !== null || s.status === "APPROVED"}
+  1185→                                    onClick={() => submissionAction(s.id, "approve")}
+  1186→                                  >
+  1187→                                    <Icons.Check className="size-3.5" />
+  1188→                                  </Button>
+  1189→                                  <Button
+  1190→                                    size="icon" variant="ghost" className="size-7 text-rose-600 hover:bg-rose-50"
+  1191→                                    aria-label="Ret" disabled={busy !== null || s.status === "REJECTED"}
+  1192→                                    onClick={() => submissionAction(s.id, "reject")}
+  1193→                                  >
+  1194→                                    <Icons.X className="size-3.5" />
+  1195→                                  </Button>
+  1196→                                  <Button
+  1197→                                    size="icon" variant="ghost" className="size-7 text-amber-600 hover:bg-amber-50"
+  1198→                                    aria-label="Spam işaretle" disabled={busy !== null}
+  1199→                                    onClick={() => submissionAction(s.id, "spam")}
+  1200→                                  >
+  1201→                                    <Icons.Flag className="size-3.5" />
+  1202→                                  </Button>
+  1203→                                </>
+  1204→                              )}
+  1205→                              {s.status === "SPAM" && (
+  1206→                                <Button
+  1207→                                  size="sm" variant="outline" className="h-7 px-2 text-xs"
+  1208→                                  disabled={busy !== null}
+  1209→                                  onClick={() => submissionAction(s.id, "pending")}
+  1210→                                >
+  1211→                                  <Icons.Undo2 className="size-3" /> İncelemeye Al
+  1212→                                </Button>
+  1213→                              )}
+  1214→                            </div>
+  1215→                          </td>
+  1216→                        </tr>
+  1217→                      ))}
+  1218→                    </tbody>
+  1219→                  </table>
+  1220→                </div>
+  1221→                {/* mobil kartlar */}
+  1222→                <div className="max-h-96 space-y-2 overflow-y-auto maven-scroll md:hidden">
+  1223→                  {subList.map((s) => (
+  1224→                    <div key={s.id} className="rounded-lg border p-3">
+  1225→                      <div className="flex items-start justify-between gap-2">
+  1226→                        <div className="min-w-0">
+  1227→                          <p className="truncate text-sm font-medium">{s.respondentName}</p>
+  1228→                          <p className="truncate text-xs text-muted-foreground">{s.respondentEmail}</p>
+  1229→                        </div>
+  1230→                        <StatusBadge map={FORM_SUBMISSION_STATUS} value={s.status} />
+  1231→                      </div>
+  1232→                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+  1233→                        {s.organization && <span>{s.organization}</span>}
+  1234→                        <span>{s.form?.name}</span>
+  1235→                        {spamPill(s.spamScore)}
+  1236→                        {quizPill(s)}
+  1237→                        <span>{s.elapsedSeconds != null ? `${Math.round(s.elapsedSeconds)} sn` : null}</span>
+  1238→                        <span>{label(SUBMISSION_SOURCES, s.source)}</span>
+  1239→                        <span>{fmtDate(s.createdAt)}</span>
+  1240→                      </div>
+  1241→                      <div className="mt-2 flex items-center gap-1.5">
+  1242→                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => openDetail(s.id)}>
+  1243→                          <Icons.Eye className="size-3" /> Detay
+  1244→                        </Button>
+  1245→                        {s.status !== "SPAM" ? (
+  1246→                          <>
+  1247→                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-emerald-700" disabled={busy !== null} onClick={() => submissionAction(s.id, "approve")}>
+  1248→                              <Icons.Check className="size-3" /> Onayla
+  1249→                            </Button>
+  1250→                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-rose-700" disabled={busy !== null} onClick={() => submissionAction(s.id, "reject")}>
+  1251→                              <Icons.X className="size-3" /> Ret
+  1252→                            </Button>
+  1253→                            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-amber-700" disabled={busy !== null} onClick={() => submissionAction(s.id, "spam")}>
+  1254→                              <Icons.Flag className="size-3" /> Spam
+  1255→                            </Button>
+  1256→                          </>
+  1257→                        ) : (
+  1258→                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={busy !== null} onClick={() => submissionAction(s.id, "pending")}>
+  1259→                            <Icons.Undo2 className="size-3" /> İncelemeye Al
+  1260→                          </Button>
+  1261→                        )}
+  1262→                      </div>
+  1263→                    </div>
+  1264→                  ))}
+  1265→                </div>
+  1266→                {/* TASK-A F6: kesintisiz yükleme */}
+  1267→                {subMore?.hasMore && (
+  1268→                  <div className="flex items-center justify-center border-t pt-3">
+  1269→                    <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={subMore.loading} onClick={subMore.next}>
+  1270→                      {subMore.loading ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ChevronsDown className="size-3.5" />}
+  1271→                      Daha fazla yükle
+  1272→                    </Button>
+  1273→                  </div>
+  1274→                )}
+  1275→              </>
+  1276→            )}
+  1277→          </SectionCard>
+  1278→
+  1279→          {/* İstatistik bölümü */}
+  1280→          {selectedFormId && (
+  1281→            statsLoading ? (
+  1282→              <Loading rows={3} />
+  1283→            ) : statsError ? (
+  1284→              <ErrorState message={statsError} onRetry={reloadStats} />
+  1285→            ) : stats ? (
+  1286→              <div className="space-y-4">
+  1287→                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+  1288→                  <KpiCard
+  1289→                    label="Toplam Gönderi" value={stats.totals.submissions}
+  1290→                    sub={`geçerli ${stats.totals.valid} · spam ${stats.totals.spam}`}
+  1291→                    icon={<Icons.Inbox className="size-4" />}
+  1292→                  />
+  1293→                  <KpiCard
+  1294→                    label="Onaylı" value={stats.totals.approved} tone="emerald"
+  1295→                    sub={`bekleyen ${stats.totals.pending} · ret ${stats.totals.rejected}`}
+  1296→                    icon={<Icons.Check className="size-4" />}
+  1297→                  />
+  1298→                  <KpiCard
+  1299→                    label="Spam Oranı" value={`${stats.totals.spamRate}%`} tone="rose"
+  1300→                    sub="spam koruması yakaladı"
+  1301→                    icon={<Icons.ShieldCheck className="size-4" />}
+  1302→                  />
+  1303→                  <KpiCard
+  1304→                    label="Ort. Doldurma" value={stats.totals.avgElapsedSeconds != null ? `${stats.totals.avgElapsedSeconds} sn` : "—"}
+  1305→                    tone="violet" sub="form açılma → gönderim" icon={<Icons.Timer className="size-4" />}
+  1306→                  />
+  1307→                </div>
+  1308→
+  1309→                <div className="grid gap-3 lg:grid-cols-3">
+  1310→                  <SectionCard
+  1311→                    title="Günlük Akış"
+  1312→                    desc="son 14 gün gönderi adedi"
+  1313→                    className={npsStat ? "min-w-0 lg:col-span-2" : "min-w-0 lg:col-span-3"}
+  1314→                  >
+  1315→                    {(() => {
+  1316→                      const max = Math.max(...stats.daily.map((d) => d.count), 1);
+  1317→                      return (
+  1318→                        <div>
+  1319→                          <div className="flex h-28 items-end gap-1">
+  1320→                            {stats.daily.map((d) => (
+  1321→                              <div
+  1322→                                key={d.date}
+  1323→                                title={`${fmtDate(d.date)} — ${d.count} gönderi`}
+  1324→                                className={`min-w-2 flex-1 rounded-t ${d.count > 0 ? "bg-teal-500/80" : "bg-muted"}`}
+  1325→                                style={{ height: `${Math.max((d.count / max) * 100, 4)}%` }}
+  1326→                              />
+  1327→                            ))}
+  1328→                          </div>
+  1329→                          <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+  1330→                            <span>{fmtDate(stats.daily[0]?.date)}</span>
+  1331→                            <span>{fmtDate(stats.daily[stats.daily.length - 1]?.date)}</span>
+  1332→                          </div>
+  1333→                        </div>
+  1334→                      );
+  1335→                    })()}
+  1336→                  </SectionCard>
+  1337→
+  1338→                  {npsStat?.nps && (
+  1339→                    <SectionCard title="NPS Skoru" desc={npsStat.label}>
+  1340→                      <div className="flex items-end gap-4">
+  1341→                        <span className={`text-5xl font-semibold tabular-nums ${npsStat.nps.score >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+  1342→                          {npsStat.nps.score}
+  1343→                        </span>
+  1344→                        <div className="space-y-0.5 text-xs">
+  1345→                          <p className="text-emerald-700">Promoter: {npsStat.nps.promoters}</p>
+  1346→                          <p className="text-amber-700">Pasif: {npsStat.nps.passives}</p>
+  1347→                          <p className="text-rose-700">Detractor: {npsStat.nps.detractors}</p>
+  1348→                        </div>
+  1349→                      </div>
+  1350→                    </SectionCard>
+  1351→                  )}
+  1352→
+  1353→                  {stats.quiz && (
+  1354→                    <SectionCard
+  1355→                      title="QA Quiz Sonuçları"
+  1356→                      desc={`${stats.quiz.questionCount} soru · ${stats.quiz.scoredCount} puanlanmış gönderi`}
+  1357→                      className={npsStat ? "min-w-0 lg:col-span-3" : "min-w-0 lg:col-span-2"}
+  1358→                    >
+  1359→                      <div className="grid gap-4 sm:grid-cols-3">
+  1360→                        <div className="rounded-lg border bg-muted/20 p-3 text-center">
+  1361→                          <p className="text-xs text-muted-foreground">Ortalama Skor</p>
+  1362→                          <p className={`text-3xl font-semibold tabular-nums ${(stats.quiz.avgScore ?? 0) >= 75 ? "text-emerald-600" : (stats.quiz.avgScore ?? 0) >= 50 ? "text-amber-600" : "text-rose-600"}`}>
+  1363→                            %{stats.quiz.avgScore != null ? Math.round(stats.quiz.avgScore * 10) / 10 : "—"}
+  1364→                          </p>
+  1365→                        </div>
+  1366→                        <div className="rounded-lg border bg-muted/20 p-3 text-center">
+  1367→                          <p className="text-xs text-muted-foreground">Geçme Oranı (50+)</p>
+  1368→                          <p className="text-3xl font-semibold tabular-nums text-teal-600">%{stats.quiz.passRate}</p>
+  1369→                        </div>
+  1370→                        <div className="rounded-lg border bg-muted/20 p-3">
+  1371→                          <p className="mb-1.5 text-xs text-muted-foreground">Skor Dağılımı</p>
+  1372→                          <div className="space-y-1">
+  1373→                            {stats.quiz.buckets.map((b) => (
+  1374→                              <div key={b.label} className="flex items-center gap-2">
+  1375→                                <span className="w-12 shrink-0 text-[10px] tabular-nums text-muted-foreground">{b.label}</span>
+  1376→                                <div className="h-1.5 flex-1 overflow-hidden rounded bg-muted">
+  1377→                                  <div
+  1378→                                    className={`h-full rounded ${b.label === "75-100" ? "bg-emerald-500" : b.label === "50-74" ? "bg-amber-400" : "bg-rose-400"}`}
+  1379→                                    style={{ width: `${Math.max((b.count / Math.max(stats.quiz?.scoredCount ?? 1, 1)) * 100, b.count > 0 ? 6 : 0)}%` }}
+  1380→                                  />
+  1381→                                </div>
+  1382→                                <span className="w-4 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">{b.count}</span>
+  1383→                              </div>
+  1384→                            ))}
+  1385→                          </div>
+  1386→                        </div>
+  1387→                      </div>
+  1388→                      {stats.quiz.fields.length > 0 && (
+  1389→                        <div className="mt-3 space-y-1.5 border-t pt-3">
+  1390→                          {stats.quiz.fields.map((qf) => (
+  1391→                            <div key={qf.fieldId} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+  1392→                              <span className="min-w-0 flex-1 truncate font-medium">{qf.label}</span>
+  1393→                              <span className="text-[11px] text-muted-foreground">
+  1394→                                doğru cevap: <span className="font-medium text-emerald-700">{qf.correctAnswer ?? "—"}</span>
+  1395→                              </span>
+  1396→                              <div className="flex h-1.5 w-24 overflow-hidden rounded bg-muted" title={`${qf.correctCount} doğru / ${qf.wrongCount} yanlış`}>
+  1397→                                <div className="h-full bg-emerald-500" style={{ width: `${qf.correctRate}%` }} />
+  1398→                                <div className="h-full bg-rose-400" style={{ width: `${100 - qf.correctRate}%` }} />
+  1399→                              </div>
+  1400→                              <span className="w-14 text-right tabular-nums text-muted-foreground">
+  1401→                                {qf.correctCount}✓ {qf.wrongCount}✗
+  1402→                              </span>
+  1403→                            </div>
+  1404→                          ))}
+  1405→                        </div>
+  1406→                      )}
+  1407→                    </SectionCard>
+  1408→                  )}
+  1409→                </div>
+  1410→
+  1411→                {stats.fields.length === 0 ? (
+  1412→                  <EmptyState title="Alan istatistiği yok" desc="Formda istatistik hesaplanabilir alan bulunmuyor." />
+  1413→                ) : (
+  1414→                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+  1415→                    {stats.fields.map((st) => {
+  1416→                      const dist = st.distribution ?? [];
+  1417→                      const maxCount = Math.max(...dist.map((d) => d.count), 1);
+  1418→                      const isChoice = CHOICE_FIELD_TYPES.includes(st.type);
+  1419→                      return (
+  1420→                        <div key={st.fieldId} className="flex flex-col rounded-xl border bg-card p-4 shadow-sm">
+  1421→                          <div className="flex items-start justify-between gap-2">
+  1422→                            <div className="min-w-0">
+  1423→                              <p className="truncate text-sm font-medium">{st.label}</p>
+  1424→                              <p className="text-xs text-muted-foreground">{label(FORM_FIELD_TYPES, st.type)}</p>
+  1425→                            </div>
+  1426→                            {st.mobileInteractive && <Badge variant="outline" className="shrink-0">Mobil Öge</Badge>}
+  1427→                          </div>
+  1428→                          <p className="mt-2 text-xs text-muted-foreground">
+  1429→                            Yanıt oranı: <span className="font-semibold text-foreground">{st.responseRate}%</span> ({st.responseCount} yanıt)
+  1430→                          </p>
+  1431→                          {isChoice && dist.length > 0 && (
+  1432→                            <div className="mt-2 space-y-1.5">
+  1433→                              {dist.map((d) => (
+  1434→                                <div key={d.value} className="flex items-center gap-2 text-xs">
+  1435→                                  <span className="w-24 shrink-0 truncate" title={barLabel(d.value)}>{barLabel(d.value)}</span>
+  1436→                                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+  1437→                                    <div className="h-full rounded-full bg-teal-500" style={{ width: `${Math.round((d.count / maxCount) * 100)}%` }} />
+  1438→                                  </div>
+  1439→                                  <span className="w-8 shrink-0 text-right tabular-nums text-muted-foreground">{d.count}</span>
+  1440→                                </div>
+  1441→                              ))}
+  1442→                            </div>
+  1443→                          )}
+  1444→                          {st.numeric && (
+  1445→                            <p className="mt-2 text-xs">
+  1446→                              Ort <span className="font-semibold tabular-nums">{st.numeric.avg}</span>
+  1447→                              <span className="text-muted-foreground"> ({st.numeric.min}–{st.numeric.max})</span>
+  1448→                            </p>
+  1449→                          )}
+  1450→                          {st.samples && st.samples.length > 0 && (
+  1451→                            <div className="mt-2 space-y-0.5">
+  1452→                              {st.samples.map((smp, i) => (
+  1453→                                <p key={i} className="truncate text-xs italic text-muted-foreground">{smp}</p>
+  1454→                              ))}
+  1455→                            </div>
+  1456→                          )}
+  1457→                        </div>
+  1458→                      );
+  1459→                    })}
+  1460→                  </div>
+  1461→                )}
+  1462→              </div>
+  1463→            ) : null
+  1464→          )}
+  1465→        </TabsContent>
+  1466→
+  1467→        {/* ══ TAB 4 — CANLI KAYIT MASASI ═══════════════════════════════════ */}
+  1468→        <TabsContent value="live" className="mt-4 space-y-4">
+  1469→          <p className="text-sm text-muted-foreground">
+  1470→            Halkaya açık kayıt sayfasının birebir önizlemesi — spam koruması ve online ödeme akışı canlı test edilir.
+  1471→          </p>
+  1472→          <div className="flex flex-wrap items-end gap-2">
+  1473→            <div className="grid gap-1">
+  1474→              <Label className="text-xs">Yayındaki form</Label>
+  1475→              <Select value={liveFormId} onValueChange={setLiveFormId}>
+  1476→                <SelectTrigger className="w-64"><SelectValue placeholder="Form seçin" /></SelectTrigger>
+  1477→                <SelectContent>
+  1478→                  {liveForms.map((f) => (
+  1479→                    <SelectItem key={f.id} value={f.id}>
+  1480→                      {f.name} · {label(FORM_TYPES, f.type)}
+  1481→                    </SelectItem>
+  1482→                  ))}
+  1483→                </SelectContent>
+  1484→              </Select>
+  1485→            </div>
+  1486→            <Chip tone="teal">Ziyaretçi görünümü</Chip>
+  1487→          </div>
+  1488→
+  1489→          {liveForms.length === 0 ? (
+  1490→            <EmptyState
+  1491→              title="Yayında herkese açık form yok"
+  1492→              desc="Formlar sekmesinde formu yayınlayın ve Herkese Açık anahtarını açın."
+  1493→            />
+  1494→          ) : !liveForm ? (
+  1495→            <EmptyState title="Form seçin" desc="Önizlemek için yukarıdan yayındaki bir form seçin." />
+  1496→          ) : (
+  1497→            <div className="mx-auto w-full max-w-2xl space-y-4">
+  1498→              <SectionCard title={liveForm.name} desc={liveForm.description ?? undefined}>
+  1499→                <div className="relative space-y-4">
+  1500→                  {liveForm.fields.filter(isLiveVisible).map((f) => renderLiveField(f))}
+  1501→
+  1502→                  <Separator />
+  1503→
+  1504→                  {/* Ziyaretçi bilgileri — REGISTRATION'da tam, diğerlerinde ad + e-posta */}
+  1505→                  <div className="grid gap-3 sm:grid-cols-2">
+  1506→                    <div className="grid gap-1">
+  1507→                      <Label className="text-xs">Ad Soyad</Label>
+  1508→                      <Input value={visitor.name} onChange={(e) => setVisitor({ ...visitor, name: e.target.value })} />
+  1509→                    </div>
+  1510→                    <div className="grid gap-1">
+  1511→                      <Label className="text-xs">E-posta<span className="text-rose-500"> *</span></Label>
+  1512→                      <Input type="email" value={visitor.email} onChange={(e) => setVisitor({ ...visitor, email: e.target.value })} />
+  1513→                    </div>
+  1514→                    {liveForm.type === "REGISTRATION" && (
+  1515→                      <>
+  1516→                        <div className="grid gap-1">
+  1517→                          <Label className="text-xs">Telefon</Label>
+  1518→                          <Input type="tel" value={visitor.phone} onChange={(e) => setVisitor({ ...visitor, phone: e.target.value })} />
+  1519→                        </div>
+  1520→                        <div className="grid gap-1">
+  1521→                          <Label className="text-xs">Kurum</Label>
+  1522→                          <Input value={visitor.organization} onChange={(e) => setVisitor({ ...visitor, organization: e.target.value })} />
+  1523→                        </div>
+  1524→                      </>
+  1525→                    )}
+  1526→                  </div>
+  1527→
+  1528→                  {/* Ödeme yöntemi — sadece online ödemeli kayıt formu */}
+  1529→                  {liveForm.type === "REGISTRATION" && liveForm.enableOnlinePayment && (
+  1530→                    <div className="grid gap-1">
+  1531→                      <Label className="text-xs">Ödeme yöntemi</Label>
+  1532→                      <Select value={payMethod} onValueChange={setPayMethod}>
+  1533→                        <SelectTrigger><SelectValue /></SelectTrigger>
+  1534→                        <SelectContent>
+  1535→                          {PAY_METHOD_OPTS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
+  1536→                        </SelectContent>
+  1537→                      </Select>
+  1538→                    </div>
+  1539→                  )}
+  1540→
+  1541→                  {/* Honeypot — gizli alan, ekran okuyuculardan da saklanır */}
+  1542→                  {liveForm.honeypotEnabled && (
+  1543→                    <div className="absolute -left-[9999px] top-auto h-px w-px overflow-hidden" aria-hidden>
+  1544→                      <Input
+  1545→                        value={honeypot}
+  1546→                        name="website"
+  1547→                        autoComplete="off"
+  1548→                        tabIndex={-1}
+  1549→                        onChange={(e) => setHoneypot(e.target.value)}
+  1550→                      />
+  1551→                    </div>
+  1552→                  )}
+  1553→
+  1554→                  <Button
+  1555→                    className="w-full"
+  1556→                    disabled={busy !== null || !visitor.email.trim()}
+  1557→                    onClick={submitLive}
+  1558→                  >
+  1559→                    <Icons.Send className="size-4" /> {busy === "live" ? "Gönderiliyor…" : liveForm.type === "REGISTRATION" ? "Kaydımı Gönder" : "Yanıtı Gönder"}
+  1560→                  </Button>
+  1561→                  <p className="text-center text-[11px] text-muted-foreground">
+  1562→                    Spam koruması aktif: {liveForm.honeypotEnabled ? "honeypot, " : ""}
+  1563→                    zaman tuzağı {liveForm.minSubmitSeconds ?? 4} sn, e-posta günlük limit {liveForm.maxPerEmailPerDay ?? 5}
+  1564→                  </p>
+  1565→                </div>
+  1566→              </SectionCard>
+  1567→
+  1568→              {/* Gönderim sonucu */}
+  1569→              {liveResult && (
+  1570→                <SectionCard title="Gönderim Sonucu" desc={`Gönderi no: ${liveResult.submissionId.slice(0, 12)}…`}>
+  1571→                  <div className="space-y-3">
+  1572→                    {liveResult.status === "SPAM" ? (
+  1573→                      <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+  1574→                        <p className="flex items-center gap-2 font-semibold">
+  1575→                          <Icons.ShieldAlert className="size-4" /> Spam şüphesi — gönderi incelemeye alındı
+  1576→                        </p>
+  1577→                        <p className="mt-1 text-xs">Skor: {Math.round(liveResult.spamScore)}</p>
+  1578→                        {liveResult.spamReasons.length > 0 && (
+  1579→                          <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs">
+  1580→                            {liveResult.spamReasons.map((r, i) => <li key={i}>{r}</li>)}
+  1581→                          </ul>
+  1582→                        )}
+  1583→                      </div>
+  1584→                    ) : (
+  1585→                      <div className={`rounded-lg border p-4 text-sm ${liveResult.status === "APPROVED" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+  1586→                        <p className="flex items-center gap-2 font-semibold">
+  1587→                          <Icons.CheckCircle2 className="size-4" />
+  1588→                          {liveResult.status === "APPROVED" ? "Kaydınız onaylandı" : "Başvurunuz alındı — incelemede"}
+  1589→                        </p>
+  1590→                        {liveForm.successMessage && <p className="mt-1 text-xs">{liveForm.successMessage}</p>}
+  1591→                        {liveResult.registration && (
+  1592→                          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+  1593→                            <span>Kayıt No: <span className="font-mono font-semibold">{liveResult.registration.confirmationNo}</span></span>
+  1594→                            <StatusBadge map={REG_STATUS_MAP} value={liveResult.registration.status} />
+  1595→                          </p>
+  1596→                        )}
+  1597→                      </div>
+  1598→                    )}
+  1599→                    {liveResult.chainError && (
+  1600→                      <p className="text-xs text-rose-600">Kayıt zinciri uyarısı: {liveResult.chainError}</p>
+  1601→                    )}
+  1602→
+  1603→                    {/* QA quiz anında puan — doğru cevabı işaretlenmiş sorular için */}
+  1604→                    {liveResult.quizScore != null && liveResult.status !== "SPAM" && (
+  1605→                      <div className="rounded-lg border border-teal-200 bg-teal-50/60 p-3 text-sm text-teal-800">
+  1606→                        <p className="flex items-center gap-2 font-semibold">
+  1607→                          <Icons.Sigma className="size-4" /> Quiz sonucu: %{Math.round(liveResult.quizScore)}
+  1608→                          {liveResult.quizCorrect != null && liveResult.quizTotal ? ` — ${liveResult.quizCorrect}/${liveResult.quizTotal} doğru` : ""}
+  1609→                        </p>
+  1610→                        <p className="mt-0.5 text-xs">Yanıtınız mobil QA motorunca otomatik puanlandı.</p>
+  1611→                      </div>
+  1612→                    )}
+  1613→
+  1614→                    {/* Online ödeme simülasyonu */}
+  1615→                    {liveResult.payment && liveResult.status !== "SPAM" && payOutcome?.outcome !== "SUCCEEDED" && (
+  1616→                      <div className="rounded-lg border p-4">
+  1617→                        <p className="flex items-center gap-2 text-sm font-semibold">
+  1618→                          <Icons.CreditCard className="size-4" /> Online Ödeme
+  1619→                        </p>
+  1620→                        <p className="mt-0.5 text-xs text-muted-foreground">
+  1621→                          Tutar: <span className="font-semibold text-foreground">{fmtMoney(liveResult.payment.amount, liveResult.payment.currency ?? "TRY")}</span>
+  1622→                          {liveResult.order && <> · Sipariş {liveResult.order.orderNo}</>}
+  1623→                        </p>
+  1624→                        {payOutcome?.outcome === "FAILED" && (
+  1625→                          <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
+  1626→                            {payOutcome.message} — kart bilgilerini düzeltip tekrar deneyin.
+  1627→                          </p>
+  1628→                        )}
+  1629→                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+  1630→                          <div className="grid gap-1 sm:col-span-2">
+  1631→                            <Label className="text-xs">Kart üzerindeki isim</Label>
+  1632→                            <Input value={pay.cardHolder} onChange={(e) => setPay({ ...pay, cardHolder: e.target.value })} />
+  1633→                          </div>
+  1634→                          <div className="grid gap-1 sm:col-span-2">
+  1635→                            <Label className="text-xs">Kart numarası</Label>
+  1636→                            <Input
+  1637→                              inputMode="numeric" placeholder="4242 4242 4242 4242"
+  1638→                              value={pay.cardNumber}
+  1639→                              onChange={(e) => setPay({ ...pay, cardNumber: e.target.value })}
+  1640→                            />
+  1641→                          </div>
+  1642→                          <div className="grid gap-1">
+  1643→                            <Label className="text-xs">Son kullanma</Label>
+  1644→                            <Input placeholder="AA/YY" value={pay.expiry} onChange={(e) => setPay({ ...pay, expiry: e.target.value })} />
+  1645→                          </div>
+  1646→                          <div className="grid gap-1">
+  1647→                            <Label className="text-xs">CVC</Label>
+  1648→                            <Input placeholder="123" value={pay.cvc} onChange={(e) => setPay({ ...pay, cvc: e.target.value })} />
+  1649→                          </div>
+  1650→                        </div>
+  1651→                        <div className="mt-3 flex flex-wrap items-center gap-2">
+  1652→                          <Button
+  1653→                            size="sm"
+  1654→                            disabled={busy !== null || !pay.cardHolder.trim() || !pay.cardNumber.trim() || !pay.expiry.trim() || !pay.cvc.trim()}
+  1655→                            onClick={processPayment}
+  1656→                          >
+  1657→                            <Icons.Lock className="size-3.5" /> {busy === "pay" ? "İşleniyor…" : "Ödemeyi Tamamla"}
+  1658→                          </Button>
+  1659→                          <Chip tone="teal">4242 4242 4242 4242 → Başarılı</Chip>
+  1660→                          <Chip tone="neutral">**0000 → Red</Chip>
+  1661→                        </div>
+  1662→                      </div>
+  1663→                    )}
+  1664→                    {payOutcome?.outcome === "SUCCEEDED" && (
+  1665→                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+  1666→                        <p className="flex items-center gap-2 font-semibold">
+  1667→                          <Icons.CheckCircle2 className="size-4" /> Ödeme başarılı
+  1668→                        </p>
+  1669→                        <p className="mt-1 text-xs">
+  1670→                          Referans: <span className="font-mono">{payOutcome.payment?.reference ?? "—"}</span>
+  1671→                          {payOutcome.message ? ` · ${payOutcome.message}` : ""}
+  1672→                        </p>
+  1673→                      </div>
+  1674→                    )}
+  1675→
+  1676→                    <div className="flex justify-end">
+  1677→                      <Button variant="outline" size="sm" onClick={resetLive}>
+  1678→                        <Icons.RotateCcw className="size-3.5" /> Yeni Gönderim
+  1679→                      </Button>
+  1680→                    </div>
+  1681→                  </div>
+  1682→                </SectionCard>
+  1683→              )}
+  1684→            </div>
+  1685→          )}
+  1686→        </TabsContent>
+  1687→      </Tabs>
+  1688→
+  1689→      {/* ══ YENİ FORM DİALOGU ══════════════════════════════════════════════ */}
+  1690→      <Dialog open={createOpen} onOpenChange={(o) => !o && setCreateOpen(false)}>
+  1691→        <DialogContent className="max-h-[90vh] overflow-y-auto maven-scroll sm:max-w-lg">
+  1692→          <DialogHeader>
+  1693→            <DialogTitle>Yeni Form</DialogTitle>
+  1694→            <DialogDescription>
+  1695→              Kayıt formu, anket, geri bildirim veya mobil interaktif QA ögesi oluşturun.
+  1696→            </DialogDescription>
+  1697→          </DialogHeader>
+  1698→          <div className="grid gap-3">
+  1699→            <div className="grid gap-1">
+  1700→              <Label className="text-xs">Form adı</Label>
+  1701→              <Input value={newForm.name} onChange={(e) => setNewForm({ ...newForm, name: e.target.value })} placeholder="Örn. Online Kayıt Formu" />
+  1702→            </div>
+  1703→            <div className="grid gap-1">
+  1704→              <Label className="text-xs">Tür</Label>
+  1705→              <Select value={newForm.type} onValueChange={(v) => setNewForm({ ...newForm, type: v })}>
+  1706→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1707→                <SelectContent>
+  1708→                  {Object.entries(FORM_TYPES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+  1709→                </SelectContent>
+  1710→              </Select>
+  1711→              <p className="text-xs text-muted-foreground">{FORM_TYPE_HINTS[newForm.type]}</p>
+  1712→            </div>
+  1713→            <div className="grid gap-1">
+  1714→              <Label className="text-xs">Açıklama</Label>
+  1715→              <Textarea rows={2} value={newForm.description} onChange={(e) => setNewForm({ ...newForm, description: e.target.value })} />
+  1716→            </div>
+  1717→
+  1718→            <Separator />
+  1719→            <p className="flex items-center gap-1.5 text-xs font-semibold">
+  1720→              <Icons.ShieldCheck className="size-3.5 text-teal-600" /> Spam Koruması
+  1721→            </p>
+  1722→            <div className="flex items-center justify-between gap-2">
+  1723→              <div>
+  1724→                <p className="text-sm font-medium">Gizli alan tuzağı (honeypot)</p>
+  1725→                <p className="text-xs text-muted-foreground">Gizli alan botları yakalar</p>
+  1726→              </div>
+  1727→              <Switch
+  1728→                checked={newForm.honeypotEnabled}
+  1729→                aria-label="Honeypot"
+  1730→                onCheckedChange={(v) => setNewForm({ ...newForm, honeypotEnabled: v })}
+  1731→              />
+  1732→            </div>
+  1733→            <div className="grid grid-cols-2 gap-3">
+  1734→              <div className="grid gap-1">
+  1735→                <Label className="text-xs">Zaman tuzağı (sn)</Label>
+  1736→                <Input type="number" min={0} value={newForm.minSubmitSeconds} onChange={(e) => setNewForm({ ...newForm, minSubmitSeconds: e.target.value })} />
+  1737→              </div>
+  1738→              <div className="grid gap-1">
+  1739→                <Label className="text-xs">E-posta günlük limit</Label>
+  1740→                <Input type="number" min={1} value={newForm.maxPerEmailPerDay} onChange={(e) => setNewForm({ ...newForm, maxPerEmailPerDay: e.target.value })} />
+  1741→              </div>
+  1742→            </div>
+  1743→            <div className="grid gap-1">
+  1744→              <Label className="text-xs">Engelli alan adları (virgülle ayır)</Label>
+  1745→              <Input value={newForm.blockedDomains} placeholder="spam.xyz, tempmail.xyz" onChange={(e) => setNewForm({ ...newForm, blockedDomains: e.target.value })} />
+  1746→            </div>
+  1747→
+  1748→            {newForm.type === "REGISTRATION" && (
+  1749→              <>
+  1750→                <Separator />
+  1751→                <p className="flex items-center gap-1.5 text-xs font-semibold">
+  1752→                  <Icons.CreditCard className="size-3.5 text-emerald-600" /> Kayıt &amp; Ödeme
+  1753→                </p>
+  1754→                <div className="flex items-center justify-between gap-2">
+  1755→                  <div>
+  1756→                    <p className="text-sm font-medium">Online ödeme aktif</p>
+  1757→                    <p className="text-xs text-muted-foreground">Kayıt sonrası sanal POS adımı gösterilir</p>
+  1758→                  </div>
+  1759→                  <Switch
+  1760→                    checked={newForm.enableOnlinePayment}
+  1761→                    aria-label="Online ödeme"
+  1762→                    onCheckedChange={(v) => setNewForm({ ...newForm, enableOnlinePayment: v })}
+  1763→                  />
+  1764→                </div>
+  1765→                <div className="grid gap-1">
+  1766→                  <Label className="text-xs">Varsayılan kategori</Label>
+  1767→                  <Select value={newForm.defaultCategoryId} onValueChange={(v) => setNewForm({ ...newForm, defaultCategoryId: v })}>
+  1768→                    <SelectTrigger><SelectValue /></SelectTrigger>
+  1769→                    <SelectContent>
+  1770→                      <SelectItem value="AUTO">Kategori otomatik</SelectItem>
+  1771→                      {categoryList.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+  1772→                    </SelectContent>
+  1773→                  </Select>
+  1774→                </div>
+  1775→                <div className="flex items-center justify-between gap-2">
+  1776→                  <div>
+  1777→                    <p className="text-sm font-medium">Temiz gönderileri otomatik onayla</p>
+  1778→                    <p className="text-xs text-muted-foreground">Spam eşiği altındakiler doğrudan onaylanır</p>
+  1779→                  </div>
+  1780→                  <Switch
+  1781→                    checked={newForm.autoApprove}
+  1782→                    aria-label="Otomatik onay"
+  1783→                    onCheckedChange={(v) => setNewForm({ ...newForm, autoApprove: v })}
+  1784→                  />
+  1785→                </div>
+  1786→              </>
+  1787→            )}
+  1788→          </div>
+  1789→          <DialogFooter>
+  1790→            <Button variant="outline" onClick={() => setCreateOpen(false)}>Vazgeç</Button>
+  1791→            <Button disabled={busy !== null || !newForm.name.trim()} onClick={createForm}>
+  1792→              {busy === "create" ? "Oluşturuluyor…" : "Formu Oluştur"}
+  1793→            </Button>
+  1794→          </DialogFooter>
+  1795→        </DialogContent>
+  1796→      </Dialog>
+  1797→
+  1798→      {/* ══ ALAN EKLE DİALOGU ══════════════════════════════════════════════ */}
+  1799→      <Dialog open={fieldOpen} onOpenChange={(o) => !o && setFieldOpen(false)}>
+  1800→        <DialogContent className="max-h-[90vh] overflow-y-auto maven-scroll sm:max-w-lg">
+  1801→          <DialogHeader>
+  1802→            <DialogTitle>Alan Ekle</DialogTitle>
+  1803→            <DialogDescription>
+  1804→              {selectedForm ? `${selectedForm.name} — yeni alan sıra ${selectedForm.fields.length + 1} olarak eklenir.` : "Form seçilmedi."}
+  1805→            </DialogDescription>
+  1806→          </DialogHeader>
+  1807→          <div className="grid gap-3">
+  1808→            <div className="grid gap-1">
+  1809→              <Label className="text-xs">Etiket</Label>
+  1810→              <Input value={newField.label} onChange={(e) => setNewField({ ...newField, label: e.target.value })} placeholder="Örn. Kurum Adı" />
+  1811→            </div>
+  1812→            <div className="grid gap-1">
+  1813→              <Label className="text-xs">Alan türü</Label>
+  1814→              <Select
+  1815→                value={newField.type}
+  1816→                onValueChange={(v) =>
+  1817→                  setNewField((p) => ({
+  1818→                    ...p,
+  1819→                    type: v,
+  1820→                    mobileInteractive: MOBILE_TYPES.includes(v) ? true : p.mobileInteractive,
+  1821→                  }))
+  1822→                }
+  1823→              >
+  1824→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1825→                <SelectContent>
+  1826→                  {Object.entries(FORM_FIELD_TYPES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+  1827→                </SelectContent>
+  1828→              </Select>
+  1829→            </div>
+  1830→            {newField.type !== "SECTION" && (
+  1831→              <div className="grid gap-1">
+  1832→                <Label className="text-xs">Placeholder</Label>
+  1833→                <Input value={newField.placeholder} onChange={(e) => setNewField({ ...newField, placeholder: e.target.value })} />
+  1834→              </div>
+  1835→            )}
+  1836→            <div className="grid gap-1">
+  1837→              <Label className="text-xs">Yardım metni</Label>
+  1838→              <Input value={newField.helpText} onChange={(e) => setNewField({ ...newField, helpText: e.target.value })} />
+  1839→            </div>
+  1840→            {OPTION_FIELD_TYPES.includes(newField.type) && (
+  1841→              <div className="grid gap-1">
+  1842→                <Label className="text-xs">Seçenekler</Label>
+  1843→                <Textarea
+  1844→                  rows={3}
+  1845→                  value={newField.options}
+  1846→                  placeholder={"Seçenek başına bir satır:\nKongre Kaydı\nWorkshop\nGala Yemeği"}
+  1847→                  onChange={(e) => setNewField({ ...newField, options: e.target.value })}
+  1848→                />
+  1849→              </div>
+  1850→            )}
+  1851→            <div className="grid grid-cols-2 gap-3">
+  1852→              <div className="grid gap-1">
+  1853→                <Label className="text-xs">Zorunluluk</Label>
+  1854→                <Select value={newField.required} onValueChange={(v) => setNewField({ ...newField, required: v })}>
+  1855→                  <SelectTrigger><SelectValue /></SelectTrigger>
+  1856→                  <SelectContent>
+  1857→                    <SelectItem value="OPTIONAL">Opsiyonel</SelectItem>
+  1858→                    <SelectItem value="ALWAYS">Zorunlu</SelectItem>
+  1859→                    <SelectItem value="CONDITIONAL">Koşullu</SelectItem>
+  1860→                  </SelectContent>
+  1861→                </Select>
+  1862→              </div>
+  1863→              <div className="grid gap-1">
+  1864→                <Label className="text-xs">Gizlilik</Label>
+  1865→                <Select value={newField.sensitivity} onValueChange={(v) => setNewField({ ...newField, sensitivity: v })}>
+  1866→                  <SelectTrigger><SelectValue /></SelectTrigger>
+  1867→                  <SelectContent>
+  1868→                    {Object.entries(SENSITIVITY_MAP).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+  1869→                  </SelectContent>
+  1870→                </Select>
+  1871→              </div>
+  1872→            </div>
+  1873→            {newField.required === "CONDITIONAL" && (
+  1874→              <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-2">
+  1875→                <div className="grid gap-1">
+  1876→                  <Label className="text-xs">Koşul alanı (önceki sorunun etiketi)</Label>
+  1877→                  <Input value={newField.conditionField} onChange={(e) => setNewField({ ...newField, conditionField: e.target.value })} />
+  1878→                </div>
+  1879→                <div className="grid gap-1">
+  1880→                  <Label className="text-xs">Koşul değeri</Label>
+  1881→                  <Input
+  1882→                    value={newField.conditionValue}
+  1883→                    placeholder="Onay kutusu için true"
+  1884→                    onChange={(e) => setNewField({ ...newField, conditionValue: e.target.value })}
+  1885→                  />
+  1886→                </div>
+  1887→              </div>
+  1888→            )}
+  1889→            {MOBILE_TYPES.includes(newField.type) && (
+  1890→              <div className="flex items-center justify-between gap-2 rounded-lg border bg-teal-50/40 p-3">
+  1891→                <div>
+  1892→                  <p className="text-sm font-medium">Mobil uygulamada interaktif öge</p>
+  1893→                  <p className="text-xs text-muted-foreground">Bu tür mobil interaktif olarak otomatik açıldı</p>
+  1894→                </div>
+  1895→                <Switch
+  1896→                  checked={newField.mobileInteractive}
+  1897→                  aria-label="Mobil interaktif"
+  1898→                  onCheckedChange={(v) => setNewField({ ...newField, mobileInteractive: v })}
+  1899→                />
+  1900→              </div>
+  1901→            )}
+  1902→            {newField.type === "QA_QUIZ" && (
+  1903→              <div className="rounded-lg border bg-emerald-50/40 p-3">
+  1904→                <Label className="text-xs font-medium">Doğru Cevap (QA motoru puanlaması)</Label>
+  1905→                <Select
+  1906→                  value={newField.correctAnswer || undefined}
+  1907→                  onValueChange={(v) => setNewField({ ...newField, correctAnswer: v })}
+  1908→                >
+  1909→                  <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Seçeneklerden seçin…" /></SelectTrigger>
+  1910→                  <SelectContent>
+  1911→                    {newField.options.split("\n").map((s) => s.trim()).filter(Boolean).map((opt) => (
+  1912→                      <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+  1913→                    ))}
+  1914→                  </SelectContent>
+  1915→                </Select>
+  1916→                <p className="mt-1 text-[11px] text-muted-foreground">
+  1917→                  İşaretlenirse gönderiler otomatik puanlanır (quiz skoru %) — mobil uygulamada interaktif test olarak çalışır.
+  1918→                </p>
+  1919→              </div>
+  1920→            )}
+  1921→          </div>
+  1922→          <DialogFooter>
+  1923→            <Button variant="outline" onClick={() => setFieldOpen(false)}>Vazgeç</Button>
+  1924→            <Button disabled={busy !== null || !newField.label.trim() || !selectedForm} onClick={addField}>
+  1925→              {busy === "field" ? "Ekleniyor…" : "Alanı Ekle"}
+  1926→            </Button>
+  1927→          </DialogFooter>
+  1928→        </DialogContent>
+  1929→      </Dialog>
+  1930→
+  1931→      {/* ══ GÖNDERİ DETAY DİALOGU ══════════════════════════════════════════ */}
+  1932→      <Dialog open={detailId !== null} onOpenChange={(o) => !o && setDetailId(null)}>
+  1933→        <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-2xl">
+  1934→          {detailLoading || !detail ? (
+  1935→            <Loading rows={4} />
+  1936→          ) : (
+  1937→            <>
+  1938→              <DialogHeader>
+  1939→                <DialogTitle className="flex flex-wrap items-center gap-2">
+  1940→                  {detail.respondentName}
+  1941→                  <StatusBadge map={FORM_SUBMISSION_STATUS} value={detail.status} />
+  1942→                </DialogTitle>
+  1943→                <DialogDescription>
+  1944→                  {detail.form?.name} · {fmtDateTime(detail.createdAt)}
+  1945→                </DialogDescription>
+  1946→              </DialogHeader>
+  1947→
+  1948→              <div className="grid gap-3 text-sm sm:grid-cols-2">
+  1949→                <div><span className="text-xs text-muted-foreground">E-posta</span><p>{detail.respondentEmail}</p></div>
+  1950→                <div><span className="text-xs text-muted-foreground">Telefon</span><p>{detail.phone ?? "—"}</p></div>
+  1951→                <div><span className="text-xs text-muted-foreground">Kurum</span><p>{detail.organization ?? "—"}</p></div>
+  1952→                <div><span className="text-xs text-muted-foreground">Kaynak</span><p>{label(SUBMISSION_SOURCES, detail.source)}</p></div>
+  1953→                <div><span className="text-xs text-muted-foreground">Doldurma süresi</span><p>{detail.elapsedSeconds != null ? `${Math.round(detail.elapsedSeconds)} sn` : "—"}</p></div>
+  1954→                <div><span className="text-xs text-muted-foreground">Gönderi IP</span><p className="font-mono text-xs">{detail.submitIp ?? "—"}</p></div>
+  1955→              </div>
+  1956→
+  1957→              {(detail.spamScore > 0 || parseJsonArray(detail.spamReasons).length > 0) && (
+  1958→                <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+  1959→                  <p className="font-semibold">Spam puanı: {Math.round(detail.spamScore)}</p>
+  1960→                  {parseJsonArray(detail.spamReasons).length > 0 && (
+  1961→                    <ul className="mt-1 list-disc space-y-0.5 pl-5">
+  1962→                      {parseJsonArray(detail.spamReasons).map((r, i) => <li key={i}>{r}</li>)}
+  1963→                    </ul>
+  1964→                  )}
+  1965→                </div>
+  1966→              )}
+  1967→
+  1968→              <Separator />
+  1969→              <p className="text-xs font-semibold">Alan Yanıtları</p>
+  1970→              {(detail.quizScore != null) && (
+  1971→                <div className="rounded-lg border border-teal-200 bg-teal-50/60 p-3 text-xs text-teal-800">
+  1972→                  <p className="flex items-center gap-2 font-semibold">
+  1973→                    <Icons.Sigma className="size-3.5" /> Quiz skoru: %{Math.round(detail.quizScore)}
+  1974→                    {detail.quizCorrect != null && detail.quizTotal ? ` — ${detail.quizCorrect}/${detail.quizTotal} doğru` : ""}
+  1975→                  </p>
+  1976→                </div>
+  1977→              )}
+  1978→              <div className="max-h-64 space-y-1.5 overflow-y-auto maven-scroll pr-1">
+  1979→                {(detail.form?.fields ?? [])
+  1980→                  .filter((f) => f.type !== "SECTION")
+  1981→                  .map((f) => {
+  1982→                    const raw = detail.answers.find((a) => a.fieldId === f.id)?.answer ?? "";
+  1983→                    let shown = raw;
+  1984→                    if (f.type === "MULTI_CHOICE" || f.type === "QA_QUIZ") shown = parseJsonArray(raw).join(", ") || "—";
+  1985→                    else if (f.type === "CHECKBOX") shown = raw === "true" ? "Evet" : raw === "false" ? "Hayır" : "—";
+  1986→                    const isQuiz = f.type === "QA_QUIZ" && Boolean(f.correctAnswer);
+  1987→                    const isCorrect = isQuiz && raw.trim() === f.correctAnswer;
+  1988→                    return (
+  1989→                      <div key={f.id} className={`flex items-start justify-between gap-3 rounded-md px-2.5 py-1.5 text-xs ${isQuiz ? (isCorrect ? "border border-emerald-200 bg-emerald-50" : "border border-rose-200 bg-rose-50") : "bg-muted/50"}`}>
+  1990→                        <span className="min-w-0 shrink-0 font-medium">
+  1991→                          {f.label}
+  1992→                          {isQuiz && (
+  1993→                            <span className={`ml-1.5 inline-flex items-center gap-0.5 align-middle text-[10px] font-semibold ${isCorrect ? "text-emerald-700" : "text-rose-700"}`}>
+  1994→                              {isCorrect ? <Icons.Check className="size-3" /> : <Icons.X className="size-3" />}
+  1995→                              {isCorrect ? "doğru" : `yanlış — doğrusu: ${f.correctAnswer}`}
+  1996→                            </span>
+  1997→                          )}
+  1998→                        </span>
+  1999→                        <span className="min-w-0 flex-1 truncate text-right text-muted-foreground" title={shown}>{shown || "—"}</span>
+  2000→                      </div>
+
+[showing lines 1-2000 of 2052; use offset=2001 with limit to continue reading]

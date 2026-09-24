@@ -4,8 +4,8 @@
 // R9-c: Roller & Yetkiler sekmesi (özel rol motoru + hiyerarşi + giriş mock'u), CV & VCard, aile/refakatçi,
 //       kurumsal kimlik kartı + kontak yönetimi + kurum QR paneli
 // R10-a: çift tık → kişi düzenleme, kişi fotoğrafı + kurum logosu (upload-linked, benzersiz adla medya klasörüne)
-import { useEffect, useRef, useState } from "react";
-import { listEntity, apiSend, apiGet } from "@/lib/client";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
 import { fmtDate, fmtDateTime, fmtMoney, EVENT_ROLES, REG_SOURCES, FUNDING_SOURCES, REGISTRATION_STATUS, PAYMENT_STATUS, ATTENDANCE_STATUS, SUBMISSION_STATUS, SESSION_STATUS, ACCOMMODATION_STATUS, BADGE_STATUS, CERTIFICATE_STATUS, CAPABILITIES, CONTACT_ROLE, RELATION_TYPE, CV_KIND, MATERIAL_TYPE, label } from "@/lib/constants";
@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { useLang, t, tLabel } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -110,6 +111,11 @@ const ORG_TYPES: Record<string, string> = {
   COMPANY: "Şirket", ASSOCIATION: "Dernek", UNIVERSITY: "Üniversite", PCO: "PCO (Profesyonel Organizatör)",
   AGENCY: "Ajans", VENUE: "Mekân", HOTEL: "Otel", PUBLIC_AUTHORITY: "Kamu", MEDIA: "Medya",
 };
+// sponsor teslim durumları — sabit map, render'da tLabel köprüsüyle çevrilir
+const DELIVERABLE_MAP: Record<string, string> = {
+  NOT_STARTED: "Başlamadı", WAITING_SPONSOR: "Sponsor bekliyor", SUBMITTED: "Gönderildi", UNDER_REVIEW: "İncelemede",
+  APPROVED: "Onaylandı", REJECTED: "Reddedildi", COMPLETED: "Tamamlandı",
+};
 const CV_KIND_ORDER = ["EDUCATION", "EXPERIENCE", "AWARD", "LANGUAGE", "PUBLICATION", "CERTIFICATION"] as const;
 const parsePerms = (raw?: string | null): string[] => { try { const p = JSON.parse(raw ?? "[]"); return Array.isArray(p) ? p.map(String) : []; } catch { return []; } };
 const slugifyKey = (s: string) =>
@@ -140,6 +146,7 @@ function LinkedPhotoUploader({
   fit?: "cover" | "contain";
 }) {
   const { toast } = useToast();
+  useLang(); // dil değişiminde yeniden render
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<string | null>(currentUrl ?? null);
@@ -150,11 +157,11 @@ function LinkedPhotoUploader({
     ev.target.value = ""; // aynı dosya yeniden seçilebilsin
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      toast({ title: "Desteklenmeyen dosya", description: "Lütfen bir görsel dosyası seçin (image/*).", variant: "destructive" });
+      toast({ title: t("people.upload.badTypeTitle"), description: t("people.upload.badTypeDesc"), variant: "destructive" });
       return;
     }
     if (file.size > MAX_IMAGE_KB * 1024) {
-      toast({ title: "Dosya çok büyük", description: `Görsel en fazla ${MAX_IMAGE_KB} KB olabilir — daha küçük bir dosya seçin.`, variant: "destructive" });
+      toast({ title: t("people.upload.tooBigTitle"), description: t("people.upload.tooBigDesc", { max: MAX_IMAGE_KB }), variant: "destructive" });
       return;
     }
     setBusy(true);
@@ -162,7 +169,7 @@ function LinkedPhotoUploader({
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const fr = new FileReader();
         fr.onload = () => resolve(String(fr.result));
-        fr.onerror = () => reject(new Error("Dosya okunamadı"));
+        fr.onerror = () => reject(new Error(t("people.upload.readFailed")));
         fr.readAsDataURL(file);
       });
       const res = await apiSend<UploadLinkedResult>("/api/media/upload-linked", "POST", {
@@ -171,9 +178,9 @@ function LinkedPhotoUploader({
       const finalUrl = res.asset.dataUrl ?? dataUrl;
       await onApply(finalUrl);
       setPreview(finalUrl);
-      toast({ title: "Görsel yüklendi", description: `Medya Arşivi → ${folderLabel}: ${res.asset.name}` });
+      toast({ title: t("people.upload.loaded"), description: t("people.upload.loadedDesc", { folder: folderLabel, name: res.asset.name }) });
     } catch (e) {
-      toast({ title: "Yükleme başarısız", description: e instanceof Error ? e.message : "Görsel yüklenemedi", variant: "destructive" });
+      toast({ title: t("people.upload.failed"), description: e instanceof Error ? e.message : t("people.upload.failedDesc"), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -192,13 +199,13 @@ function LinkedPhotoUploader({
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" size="sm" variant="outline" disabled={busy || !editionId} onClick={() => fileRef.current?.click()}>
             {busy ? <Icons.Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Icons.ImageUp className="size-3.5" />}
-            {preview ? "Değiştir" : "Görsel Seç"}
+            {preview ? t("people.upload.change") : t("people.upload.pick")}
           </Button>
-          <span className="text-[11px] text-muted-foreground">{preview ? "görsel bağlı" : "görsel yok"}</span>
+          <span className="text-[11px] text-muted-foreground">{preview ? t("people.upload.attached") : t("people.upload.none")}</span>
         </div>
-        <p className="mt-1 text-[11px] leading-snug text-muted-foreground">Medya Arşivi → {folderLabel} klasörüne benzersiz adla kaydedilir (≤ {MAX_IMAGE_KB} KB).</p>
+        <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{t("people.upload.helper", { folder: folderLabel, max: MAX_IMAGE_KB })}</p>
       </div>
-      <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={pick} disabled={busy} aria-label="Görsel dosyası seç" />
+      <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={pick} disabled={busy} aria-label={t("people.upload.ariaPick")} />
     </div>
   );
 }
@@ -214,12 +221,13 @@ function Row360Line({ label, children }: { label: string; children: React.ReactN
 
 // Mükerrer öneri satırındaki tek kişi kartı (kimlik özeti + kayıt tarihi)
 function DupPersonCard({ p }: { p: DuplicatePerson }) {
+  useLang(); // dil değişiminde yeniden render
   return (
     <div className="min-w-0 rounded-lg border bg-card p-3">
       <p className="truncate text-sm font-semibold">{p.fullName}</p>
       {p.email && <p className="truncate text-xs text-muted-foreground">{p.email}</p>}
       {(p.company || p.title) && <p className="truncate text-xs text-muted-foreground">{[p.company, p.title].filter(Boolean).join(" · ")}</p>}
-      <p className="mt-1 text-[11px] text-muted-foreground">kayıt: {fmtDate(p.createdAt)}</p>
+      <p className="mt-1 text-[11px] text-muted-foreground">{t("people.dup.registeredAt")} {fmtDate(p.createdAt)}</p>
     </div>
   );
 }
@@ -227,6 +235,7 @@ function DupPersonCard({ p }: { p: DuplicatePerson }) {
 // ── R9-c: CV zaman çizelgesi (kişi 360 içi) ─────────────────────────────────
 function CvPanel({ personId, editionId }: { personId: string; editionId: string | null }) {
   const { toast } = useToast();
+  useLang(); // dil değişiminde yeniden render
   const { data: cvs, error, reload, loading } = useApi<CvEntryRow[]>(
     () => listEntity<CvEntryRow>("cv-entries", { personId, limit: 100 }),
     [personId],
@@ -259,19 +268,19 @@ function CvPanel({ personId, editionId }: { personId: string; editionId: string 
       };
       if (editing) await apiSend(`/api/cv-entries/${editing.id}`, "PUT", payload);
       else await apiSend("/api/cv-entries", "POST", payload);
-      toast({ title: editing ? "CV kaydı güncellendi" : "CV kaydı eklendi", description: form.title });
+      toast({ title: editing ? t("people.cv.updated") : t("people.cv.added"), description: form.title });
       setOpen(false); reload();
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "CV kaydı kaydedilemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("people.cv.saveFailed"), variant: "destructive" });
     } finally { setBusy(false); }
   };
   const remove = async (c: CvEntryRow) => {
     try {
       await apiSend(`/api/cv-entries/${c.id}`, "DELETE");
-      toast({ title: "CV kaydı silindi", description: c.title });
+      toast({ title: t("people.cv.deleted"), description: c.title });
       reload();
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "Silinemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("people.deleteFailed"), variant: "destructive" });
     }
   };
 
@@ -280,24 +289,24 @@ function CvPanel({ personId, editionId }: { personId: string; editionId: string 
 
   return (
     <SectionCard
-      title="CV & Deneyimler"
-      desc="Eğitim, deneyim, ödül, dil, yayın ve sertifikalar — kişiye bağlı zaman çizelgesi"
+      title={t("people.cv.title")}
+      desc={t("people.cv.desc")}
       action={
-        <Button size="sm" variant="outline" onClick={openNew} disabled={!canAdd} aria-label="CV kaydı ekle">
-          <Icons.Plus className="size-3.5" /> Ekle
+        <Button size="sm" variant="outline" onClick={openNew} disabled={!canAdd} aria-label={t("people.cv.addAria")}>
+          <Icons.Plus className="size-3.5" /> {t("people.add")}
         </Button>
       }
     >
-      {!canAdd && <p className="mb-2 text-[11px] text-amber-600">CV kaydı için bir edisyon seçili olmalı (etkinlik izolasyonu).</p>}
+      {!canAdd && <p className="mb-2 text-[11px] text-amber-600">{t("people.cv.needEdition")}</p>}
       {loading ? <Loading rows={2} /> : error ? <ErrorState message={error} onRetry={reload} /> : groups.length === 0 ? (
-        <p className="py-2 text-xs text-muted-foreground">Henüz CV kaydı yok — &quot;Ekle&quot; ile ilk kaydı girin.</p>
+        <p className="py-2 text-xs text-muted-foreground">{t("people.cv.empty")}</p>
       ) : (
         <div className="maven-scroll max-h-96 space-y-4 overflow-y-auto pr-1">
           {groups.map((g, gi) => (
             <div key={g.kind} className="maven-stagger-item" style={{ animationDelay: `${gi * 60}ms` }}>
               <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold">
-                <Chip tone="teal">{label(CV_KIND, g.kind)}</Chip>
-                <span className="font-normal tabular-nums text-muted-foreground">{g.items.length} kayıt</span>
+                <Chip tone="teal">{tLabel(CV_KIND, g.kind)}</Chip>
+                <span className="font-normal tabular-nums text-muted-foreground">{t("people.cv.count", { count: g.items.length })}</span>
               </p>
               {/* zaman çizelgesi: sol hat + nokta düğümleri */}
               <ol className="relative ml-1.5 space-y-3 border-l-2 border-teal-500/25 pl-4">
@@ -308,11 +317,11 @@ function CvPanel({ personId, editionId }: { personId: string; editionId: string 
                       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                         <p className="min-w-0 text-sm font-medium leading-tight">{c.title}</p>
                         <span className="flex shrink-0 items-center gap-1">
-                          {c.isCurrent && <Chip tone="emerald">Devam ediyor</Chip>}
-                          <button onClick={() => openEdit(c)} className="rounded p-1 text-muted-foreground opacity-60 transition hover:bg-muted hover:text-foreground group-hover:opacity-100" aria-label={`${c.title} kaydını düzenle`}>
+                          {c.isCurrent && <Chip tone="emerald">{t("people.cv.ongoing")}</Chip>}
+                          <button onClick={() => openEdit(c)} className="rounded p-1 text-muted-foreground opacity-60 transition hover:bg-muted hover:text-foreground group-hover:opacity-100" aria-label={t("people.cv.editAria", { title: c.title })}>
                             <Icons.Pencil className="size-3.5" />
                           </button>
-                          <button onClick={() => remove(c)} className="rounded p-1 text-muted-foreground opacity-60 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100" aria-label={`${c.title} kaydını sil`}>
+                          <button onClick={() => remove(c)} className="rounded p-1 text-muted-foreground opacity-60 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100" aria-label={t("people.cv.deleteAria", { title: c.title })}>
                             <Icons.Trash2 className="size-3.5" />
                           </button>
                         </span>
@@ -336,37 +345,37 @@ function CvPanel({ personId, editionId }: { personId: string; editionId: string 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{editing ? "CV Kaydını Düzenle" : "Yeni CV Kaydı"}</DialogTitle>
-            <DialogDescription>Tür, başlık ve tarih aralığı — &quot;Devam ediyor&quot; işaretliyse bitiş tarihi yok sayılır.</DialogDescription>
+            <DialogTitle>{editing ? t("people.cv.editTitle") : t("people.cv.newTitle")}</DialogTitle>
+            <DialogDescription>{t("people.cv.dialogDesc")}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <Label>Tür</Label>
+              <Label>{t("people.lblType")}</Label>
               <Select value={form.kind} onValueChange={(v) => setForm({ ...form, kind: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(CV_KIND).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  {Object.entries(CV_KIND).map(([k]) => <SelectItem key={k} value={k}>{tLabel(CV_KIND, k)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            <div><Label>Sıra</Label><Input type="number" className="mt-1 tabular-nums" value={form.order} onChange={(e) => setForm({ ...form, order: e.target.value })} /></div>
-            <div className="sm:col-span-2"><Label>Başlık *</Label><Input className="mt-1" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Örn. Endüstri Mühendisliği — Lisans" /></div>
-            <div><Label>Kurum / Okul</Label><Input className="mt-1" value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value })} /></div>
-            <div><Label>Şehir</Label><Input className="mt-1" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
-            <div><Label>Başlangıç</Label><Input type="date" className="mt-1 tabular-nums" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></div>
+            <div><Label>{t("people.cv.order")}</Label><Input type="number" className="mt-1 tabular-nums" value={form.order} onChange={(e) => setForm({ ...form, order: e.target.value })} /></div>
+            <div className="sm:col-span-2"><Label>{t("people.cv.titleLabel")}</Label><Input className="mt-1" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={t("people.cv.titlePlaceholder")} /></div>
+            <div><Label>{t("people.cv.orgSchool")}</Label><Input className="mt-1" value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value })} /></div>
+            <div><Label>{t("people.lblCity")}</Label><Input className="mt-1" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
+            <div><Label>{t("people.cv.start")}</Label><Input type="date" className="mt-1 tabular-nums" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></div>
             <div>
-              <Label className={cn(form.isCurrent && "opacity-50")}>Bitiş</Label>
+              <Label className={cn(form.isCurrent && "opacity-50")}>{t("people.cv.end")}</Label>
               <Input type="date" className="mt-1 tabular-nums" disabled={form.isCurrent} value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
             </div>
             <div className="flex items-center gap-2 sm:col-span-2">
               <Checkbox id="cv-current" checked={form.isCurrent} onCheckedChange={(v) => setForm({ ...form, isCurrent: v === true })} />
-              <Label htmlFor="cv-current" className="cursor-pointer text-sm font-normal">Devam ediyor</Label>
+              <Label htmlFor="cv-current" className="cursor-pointer text-sm font-normal">{t("people.cv.ongoing")}</Label>
             </div>
-            <div className="sm:col-span-2"><Label>Açıklama</Label><Textarea className="mt-1" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
+            <div className="sm:col-span-2"><Label>{t("people.lblDesc")}</Label><Textarea className="mt-1" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Vazgeç</Button>
-            <Button onClick={save} disabled={busy || !form.title.trim()}>{busy ? "Kaydediliyor…" : "Kaydet"}</Button>
+            <Button variant="outline" onClick={() => setOpen(false)}>{t("people.cancel")}</Button>
+            <Button onClick={save} disabled={busy || !form.title.trim()}>{busy ? t("people.saving") : t("people.save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -377,6 +386,7 @@ function CvPanel({ personId, editionId }: { personId: string; editionId: string 
 // ── R9-c: QR VCard kartı (kişi 360 içi) ─────────────────────────────────────
 function VCardPanel({ personId }: { personId: string }) {
   const { toast } = useToast();
+  useLang(); // dil değişiminde yeniden render
   const { data, error, reload, loading } = useApi<PersonVCard | null>(
     () => apiGet<PersonVCard>(`/api/people/${personId}/vcard?format=json`),
     [personId],
@@ -385,9 +395,9 @@ function VCardPanel({ personId }: { personId: string }) {
     if (!data?.qrDataUrl) return;
     try {
       await navigator.clipboard.writeText(data.qrDataUrl);
-      toast({ title: "QR veri adresi kopyalandı", description: "data:image/png;base64,… — tasarım araçlarında kullanılabilir." });
+      toast({ title: t("people.vcard.copied"), description: t("people.vcard.copiedDesc") });
     } catch {
-      toast({ title: "Kopyalanamadı", description: "Tarayıcı pano erişimini engelledi.", variant: "destructive" });
+      toast({ title: t("people.copyFailTitle"), description: t("people.copyFailDesc"), variant: "destructive" });
     }
   };
 
@@ -395,42 +405,42 @@ function VCardPanel({ personId }: { personId: string }) {
 
   return (
     <SectionCard
-      title="QR VCard"
-      desc="Yaka kartı ve etiket için taranabilir sanal kartvizit (vCard 3.0)"
+      title={t("people.vcard.title")}
+      desc={t("people.vcard.desc")}
       action={
         data && (
           <Button size="sm" variant="outline" asChild>
             <a href={`/api/people/${personId}/vcard?format=vcf`} download>
-              <Icons.Download className="size-3.5" /> vCard indir
+              <Icons.Download className="size-3.5" /> {t("people.vcard.download")}
             </a>
           </Button>
         )
       }
     >
       {loading ? <Loading rows={2} /> : error ? <ErrorState message={error} onRetry={reload} /> : !data ? (
-        <p className="text-xs text-muted-foreground">Kartvizit üretilemedi.</p>
+        <p className="text-xs text-muted-foreground">{t("people.vcard.genFailed")}</p>
       ) : noContact ? (
-        <EmptyState title="Kartvizit için iletişim bilgisi yok" desc="QR kartvizit üretimi için kişiye en az e-posta veya telefon girin." />
+        <EmptyState title={t("people.vcard.noContactTitle")} desc={t("people.vcard.noContactDesc")} />
       ) : (
         <div className="flex flex-col gap-4 sm:flex-row">
           {/* QR — köşe vurgulu ince çerçeve */}
           <div className="maven-qrvcard mx-auto shrink-0 sm:mx-0">
-            <img src={data.qrDataUrl} alt={`${data.person.fullName} vCard QR kodu`} width={120} height={120} className="size-[120px]" />
+            <img src={data.qrDataUrl} alt={t("people.vcard.qrAlt", { name: data.person.fullName })} width={120} height={120} className="size-[120px]" />
           </div>
           <div className="min-w-0 flex-1 space-y-2">
             <div>
               <p className="text-sm font-semibold leading-tight">{data.person.fullName}</p>
               <p className="truncate text-xs text-muted-foreground">{[data.person.title, data.person.company].filter(Boolean).join(" · ") || "—"}</p>
-              {data.person.edition && <p className="mt-0.5 text-[11px] text-muted-foreground">son edisyon: {data.person.edition}</p>}
+              {data.person.edition && <p className="mt-0.5 text-[11px] text-muted-foreground">{t("people.vcard.lastEdition", { edition: data.person.edition })}</p>}
             </div>
             <div className="flex flex-wrap gap-1">
-              {data.person.roles.slice(0, 4).map((r) => <Chip key={r} tone="teal">{label(EVENT_ROLES, r)}</Chip>)}
+              {data.person.roles.slice(0, 4).map((r) => <Chip key={r} tone="teal">{tLabel(EVENT_ROLES, r)}</Chip>)}
               {data.person.roles.length > 4 && <Chip tone="neutral">+{data.person.roles.length - 4}</Chip>}
-              {data.person.roles.length === 0 && <span className="text-[11px] text-muted-foreground">atanmış rol yok</span>}
+              {data.person.roles.length === 0 && <span className="text-[11px] text-muted-foreground">{t("people.vcard.noRoles")}</span>}
             </div>
             <div className="flex flex-wrap gap-2 pt-1">
               <Button size="sm" variant="ghost" className="h-7" onClick={copyQr}>
-                <Icons.Copy className="size-3.5" /> QR&apos;ı kopyala
+                <Icons.Copy className="size-3.5" /> {t("people.vcard.copyQr")}
               </Button>
             </div>
           </div>
@@ -442,6 +452,7 @@ function VCardPanel({ personId }: { personId: string }) {
 
 // ── R9-c: Aile / refakatçi bağları (kişi 360 içi) ───────────────────────────
 function FamilyPanel({ person }: { person: PersonRow }) {
+  useLang(); // dil değişiminde yeniden render
   // refakatçiler: aynı soyadla arama → client'ta parentPersonId filtresi (hafif yaklaşım)
   const { data: relatives, error, reload, loading } = useApi<PersonRow[]>(
     () => listEntity<PersonRow>("people", { q: person.lastName, limit: 100 }),
@@ -463,11 +474,11 @@ function FamilyPanel({ person }: { person: PersonRow }) {
   const parentFound = person.parentPersonId ? (relatives ?? []).find((p) => p.id === person.parentPersonId) : null;
   const parentLabel = parentFound ? fullName(parentFound)
     : parentInfo && parentInfo.id === person.parentPersonId ? (parentInfo.name ?? "—")
-    : "yükleniyor…";
+    : t("people.family.loading");
 
   return (
-    <SectionCard title="Aile & Refakatçiler" desc="Ana kişi–misafir hiyerarşisi (Parent_ID kuralı)">
-      <Row360Line label="Bağlı olduğu kişi">
+    <SectionCard title={t("people.family.title")} desc={t("people.family.desc")}>
+      <Row360Line label={t("people.family.linkedTo")}>
         {person.parentPersonId ? (
           <span className="inline-flex items-center gap-1.5">
             <Icons.Link2 className="size-3.5 text-teal-600" aria-hidden />
@@ -475,11 +486,11 @@ function FamilyPanel({ person }: { person: PersonRow }) {
           </span>
         ) : "—"}
       </Row360Line>
-      <Row360Line label="Bağlantı türü">{person.relationType ? <Chip tone="violet">{label(RELATION_TYPE, person.relationType)}</Chip> : "—"}</Row360Line>
+      <Row360Line label={t("people.lblRelation")}>{person.relationType ? <Chip tone="violet">{tLabel(RELATION_TYPE, person.relationType)}</Chip> : "—"}</Row360Line>
       <Separator className="my-2" />
-      <p className="mb-1.5 text-xs font-semibold text-muted-foreground">Refakatçiler</p>
+      <p className="mb-1.5 text-xs font-semibold text-muted-foreground">{t("people.family.dependents")}</p>
       {loading ? <Loading rows={1} /> : error ? <ErrorState message={error} onRetry={reload} /> : dependents.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Bu kişiye bağlı refakatçi yok.</p>
+        <p className="text-xs text-muted-foreground">{t("people.family.none")}</p>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {dependents.map((d, i) => (
@@ -487,7 +498,7 @@ function FamilyPanel({ person }: { person: PersonRow }) {
               <span className="maven-stagger-item inline-flex items-center gap-1" style={{ animationDelay: `${i * 50}ms` }}>
                 <Icons.UserRound className="size-3" aria-hidden />
                 {d.firstName} {d.lastName}
-                <span className="opacity-70">· {label(RELATION_TYPE, d.relationType)}</span>
+                <span className="opacity-70">· {tLabel(RELATION_TYPE, d.relationType)}</span>
               </span>
             </Chip>
           ))}
@@ -499,6 +510,7 @@ function FamilyPanel({ person }: { person: PersonRow }) {
 
 // ── R9-c: Roller & Yetkiler sekmesi ─────────────────────────────────────────
 function RolesPanel() {
+  useLang(); // dil değişiminde yeniden render
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
 
@@ -540,28 +552,28 @@ function RolesPanel() {
       };
       if (editing) await apiSend(`/api/custom-roles/${editing.id}`, "PUT", payload);
       else await apiSend("/api/custom-roles", "POST", payload);
-      toast({ title: editing ? "Rol güncellendi" : "Rol oluşturuldu", description: `${form.name} · seviye ${form.hierarchyLevel}` });
+      toast({ title: editing ? t("people.roles.updated") : t("people.roles.created"), description: t("people.roles.savedDesc", { name: form.name, level: form.hierarchyLevel }) });
       setDialogOpen(false); reload(); bump();
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "Rol kaydedilemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("people.roles.saveFailed"), variant: "destructive" });
     } finally { setBusy(false); }
   };
   const toggleActive = async (r: CustomRoleRow) => {
     try {
       await apiSend(`/api/custom-roles/${r.id}`, "PUT", { isActive: !r.isActive });
-      toast({ title: r.isActive ? "Rol pasifleştirildi" : "Rol aktifleştirildi", description: r.name });
+      toast({ title: r.isActive ? t("people.roles.deactivated") : t("people.roles.activated"), description: r.name });
       reload();
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "Durum değiştirilemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("people.roles.toggleFailed"), variant: "destructive" });
     }
   };
   const deleteRole = async (r: CustomRoleRow) => {
     try {
       await apiSend(`/api/custom-roles/${r.id}`, "DELETE");
-      toast({ title: "Rol silindi", description: r.name });
+      toast({ title: t("people.roles.deleted"), description: r.name });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Silinemedi", description: e instanceof Error ? e.message : "Rola bağlı atamalar olabilir.", variant: "destructive" });
+      toast({ title: t("people.deleteFailed"), description: e instanceof Error ? e.message : t("people.roles.deleteBlockedDesc"), variant: "destructive" });
     }
   };
 
@@ -580,10 +592,10 @@ function RolesPanel() {
       } else {
         await apiSend("/api/role-assignments", "POST", { participationId: assignPart, role: value, notes: "Rol panelinden atandı" });
       }
-      toast({ title: "Rol atandı", description: `${fullName(parts?.find((p) => p.id === assignPart)?.person ?? null)} → ${kind === "cus" ? sorted.find((r) => r.id === value)?.name : label(EVENT_ROLES, value)}` });
+      toast({ title: t("people.roles.assigned"), description: t("people.roles.assignedDesc", { person: fullName(parts?.find((p) => p.id === assignPart)?.person ?? null), role: kind === "cus" ? String(sorted.find((r) => r.id === value)?.name) : tLabel(EVENT_ROLES, value) }) });
       setAssignPart(""); setAssignRole(""); bump();
     } catch (e) {
-      toast({ title: "Atama başarısız", description: e instanceof Error ? e.message : "Rol atanamadı", variant: "destructive" });
+      toast({ title: t("people.roles.assignFailed"), description: e instanceof Error ? e.message : t("people.roles.assignFailedDesc"), variant: "destructive" });
     } finally { setAssignBusy(false); }
   };
 
@@ -592,7 +604,7 @@ function RolesPanel() {
   const mockRole = sorted.find((r) => r.id === mockId) ?? null;
 
   if (!currentEditionId) {
-    return <EmptyState title="Edisyon seçili değil" desc="Özel roller edisyon kapsamında tanımlanır — üstten bir etkinlik seçin." />;
+    return <EmptyState title={t("people.roles.noEdition")} desc={t("people.roles.noEditionDesc")} />;
   }
 
   return (
@@ -600,12 +612,12 @@ function RolesPanel() {
       <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
         {/* ── Özel rol kartları ── */}
         <SectionCard
-          title="Özel Roller"
-          desc="Edisyona özel rol tanımları — hiyerarşi seviyesi 1 (en üst) → 99 (en alt)"
-          action={<Button size="sm" onClick={openNew}><Icons.Plus className="size-4" /> Yeni Rol</Button>}
+          title={t("people.roles.title")}
+          desc={t("people.roles.desc")}
+          action={<Button size="sm" onClick={openNew}><Icons.Plus className="size-4" /> {t("people.roles.newRole")}</Button>}
         >
           {loading ? <Loading rows={3} /> : error ? <ErrorState message={error} onRetry={reload} /> : sorted.length === 0 ? (
-            <EmptyState title="Henüz özel rol yok" desc="Akreditasyon denetçisi, gala host gibi etkinliğe özel roller tanımlayın." />
+            <EmptyState title={t("people.roles.empty")} desc={t("people.roles.emptyDesc")} />
           ) : (
             <div className="maven-scroll grid max-h-96 gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
               {sorted.map((r, i) => (
@@ -615,25 +627,25 @@ function RolesPanel() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <p className="truncate text-sm font-semibold">{r.name}</p>
-                        <Chip tone="neutral">Sv. <span className="tabular-nums">{r.hierarchyLevel}</span></Chip>
-                        {!r.isActive && <Chip tone="amber">pasif</Chip>}
+                        <Chip tone="neutral">{t("people.roles.sv")} <span className="tabular-nums">{r.hierarchyLevel}</span></Chip>
+                        {!r.isActive && <Chip tone="amber">{t("people.roles.passive")}</Chip>}
                       </div>
                       <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{r.key}</p>
                       {r.description && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{r.description}</p>}
                       <div className="mt-2 flex flex-wrap gap-1">
-                        {parsePerms(r.permissions).map((p) => <Chip key={p} tone="teal">{CAP_LABEL[p] ?? p}</Chip>)}
+                        {parsePerms(r.permissions).map((p) => <Chip key={p} tone="teal">{tLabel(CAP_LABEL, p)}</Chip>)}
                       </div>
                       <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t pt-2">
-                        <Chip tone={r.isSystem ? "violet" : "neutral"}>{r.isSystem ? "sistem rolü" : "özel rol"}</Chip>
+                        <Chip tone={r.isSystem ? "violet" : "neutral"}>{r.isSystem ? t("people.roles.systemRole") : t("people.roles.customRole")}</Chip>
                         <span className="ml-auto flex items-center gap-0.5">
-                          <button onClick={() => openEdit(r)} className="rounded p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={`${r.name} rolünü düzenle`}>
+                          <button onClick={() => openEdit(r)} className="rounded p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={t("people.roles.editAria", { name: r.name })}>
                             <Icons.Pencil className="size-3.5" />
                           </button>
-                          <button onClick={() => toggleActive(r)} className="rounded p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={r.isActive ? `${r.name} rolünü pasifleştir` : `${r.name} rolünü aktifleştir`}>
+                          <button onClick={() => toggleActive(r)} className="rounded p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={r.isActive ? t("people.roles.deactivateAria", { name: r.name }) : t("people.roles.activateAria", { name: r.name })}>
                             <Icons.Power className={cn("size-3.5", r.isActive && "text-emerald-600")} />
                           </button>
                           {!r.isSystem && (
-                            <button onClick={() => deleteRole(r)} className="rounded p-1.5 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600" aria-label={`${r.name} rolünü sil`}>
+                            <button onClick={() => deleteRole(r)} className="rounded p-1.5 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600" aria-label={t("people.roles.deleteAria", { name: r.name })}>
                               <Icons.Trash2 className="size-3.5" />
                             </button>
                           )}
@@ -648,26 +660,26 @@ function RolesPanel() {
         </SectionCard>
 
         {/* ── Rol giriş ekranı mock'u (yalnız tasarım önizlemesi) ── */}
-        <SectionCard title="Rol Giriş Ekranı" desc="Dış portal rol girişi — yalnızca tasarım önizlemesi">
+        <SectionCard title={t("people.roles.mockTitle")} desc={t("people.roles.mockDesc")}>
           <Select value={mockId} onValueChange={setMockId}>
-            <SelectTrigger className="h-9" aria-label="Mock ekranı için rol seç"><SelectValue placeholder="Rol seçin…" /></SelectTrigger>
+            <SelectTrigger className="h-9" aria-label={t("people.roles.mockAria")}><SelectValue placeholder={t("people.rolePh")} /></SelectTrigger>
             <SelectContent>
-              {sorted.map((r) => <SelectItem key={r.id} value={r.id}>{r.name} · Sv. {r.hierarchyLevel}</SelectItem>)}
-              {sorted.length === 0 && <SelectItem value="__none" disabled>Önce özel rol tanımlayın</SelectItem>}
+              {sorted.map((r) => <SelectItem key={r.id} value={r.id}>{r.name} · {t("people.roles.sv")} {r.hierarchyLevel}</SelectItem>)}
+              {sorted.length === 0 && <SelectItem value="__none" disabled>{t("people.roles.defineFirst")}</SelectItem>}
             </SelectContent>
           </Select>
           {mockRole ? (
             <RoleLoginMock key={mockRole.id} role={mockRole} />
           ) : (
-            <p className="mt-3 text-xs text-muted-foreground">Bir rol seçildiğinde portal giriş ekranı önizlemesi burada görünür.</p>
+            <p className="mt-3 text-xs text-muted-foreground">{t("people.roles.mockHint")}</p>
           )}
         </SectionCard>
       </div>
 
       {/* ── Hiyerarşi rayı ── */}
-      <SectionCard title="Hiyerarşi Rayı" desc="Seviye sırasına göre yetki zinciri — büyük daire üst yetki">
+      <SectionCard title={t("people.roles.railTitle")} desc={t("people.roles.railDesc")}>
         {sorted.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Rol tanımı yok — zincir boş.</p>
+          <p className="text-xs text-muted-foreground">{t("people.roles.railEmpty")}</p>
         ) : (
           <div className="maven-scroll overflow-x-auto pb-2">
             <div className="flex min-w-max items-center py-2">
@@ -681,7 +693,7 @@ function RolesPanel() {
                         railSize(r.hierarchyLevel),
                         ROLE_RING[r.color ?? "teal"] ?? ROLE_RING.teal
                       )}
-                      title={`${r.name} — seviye ${r.hierarchyLevel}`}
+                      title={t("people.roles.levelTip", { name: r.name, level: r.hierarchyLevel })}
                     >
                       <span className="tabular-nums">{r.hierarchyLevel}</span>
                     </span>
@@ -695,110 +707,110 @@ function RolesPanel() {
       </SectionCard>
 
       {/* ── Rol ataması köprüsü ── */}
-      <SectionCard title="Rol Ataması" desc="Katılım seç → rol ver; özel roller EventRoleAssignment.customRoleId ile bağlanır">
+      <SectionCard title={t("people.roles.assignTitle")} desc={t("people.roles.assignDesc")}>
         <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
           <div>
-            <Label className="text-xs text-muted-foreground">Katılım (kişi)</Label>
+            <Label className="text-xs text-muted-foreground">{t("people.roles.partLabel")}</Label>
             <Select value={assignPart} onValueChange={setAssignPart}>
-              <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Katılım seçin…" /></SelectTrigger>
+              <SelectTrigger className="mt-1 h-9"><SelectValue placeholder={t("people.roles.partPh")} /></SelectTrigger>
               <SelectContent className="maven-scroll max-h-72">
                 {(parts ?? []).map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     {fullName(p.person)}{p.person.company ? ` — ${p.person.company}` : ""}
                   </SelectItem>
                 ))}
-                {(parts ?? []).length === 0 && <SelectItem value="__none" disabled>Bu edisyonda katılım yok</SelectItem>}
+                {(parts ?? []).length === 0 && <SelectItem value="__none" disabled>{t("people.roles.noParticipations")}</SelectItem>}
               </SelectContent>
             </Select>
           </div>
           <div>
-            <Label className="text-xs text-muted-foreground">Rol</Label>
+            <Label className="text-xs text-muted-foreground">{t("people.lblRole")}</Label>
             <Select value={assignRole} onValueChange={setAssignRole}>
-              <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Rol seçin…" /></SelectTrigger>
+              <SelectTrigger className="mt-1 h-9"><SelectValue placeholder={t("people.rolePh")} /></SelectTrigger>
               <SelectContent>
-                {Object.entries(EVENT_ROLES).map(([k, v]) => <SelectItem key={k} value={`std:${k}`}>{v}</SelectItem>)}
+                {Object.entries(EVENT_ROLES).map(([k]) => <SelectItem key={k} value={`std:${k}`}>{tLabel(EVENT_ROLES, k)}</SelectItem>)}
                 {sorted.length > 0 && (
                   <>
                     <div className="my-1 border-t" />
-                    {sorted.map((r) => <SelectItem key={r.id} value={`cus:${r.id}`}>{r.name} (özel · Sv. {r.hierarchyLevel})</SelectItem>)}
+                    {sorted.map((r) => <SelectItem key={r.id} value={`cus:${r.id}`}>{t("people.roles.customRoleItem", { name: r.name, level: r.hierarchyLevel })}</SelectItem>)}
                   </>
                 )}
               </SelectContent>
             </Select>
           </div>
           <Button className="h-9" onClick={doAssign} disabled={assignBusy || !assignPart || !assignRole}>
-            {assignBusy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.UserCheck className="size-4" />} Ata
+            {assignBusy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.UserCheck className="size-4" />} {t("people.roles.assignBtn")}
           </Button>
         </div>
-        <p className="mt-2 text-[11px] text-muted-foreground">Katılım listesi en fazla 50 kayıt gösterir; kişi araması Kişiler sekmesindeki 360 görünümünden yapılabilir.</p>
+        <p className="mt-2 text-[11px] text-muted-foreground">{t("people.roles.assignHint")}</p>
       </SectionCard>
 
       {/* ── rol oluştur/düzenle diyaloğu ── */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editing ? "Özel Rolü Düzenle" : "Yeni Özel Rol"}</DialogTitle>
-            <DialogDescription>Anahtar benzersiz olmalı (edisyon kapsamında); yetkiler CAPABILITIES anahtarlarından seçilir.</DialogDescription>
+            <DialogTitle>{editing ? t("people.roles.editDialogTitle") : t("people.roles.newDialogTitle")}</DialogTitle>
+            <DialogDescription>{t("people.roles.dialogDesc")}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <Label>Rol adı *</Label>
-              <Input className="mt-1" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value, key: form.keyTouched ? form.key : slugifyKey(e.target.value) })} placeholder="Örn. Akreditasyon Denetçisi" />
+              <Label>{t("people.roles.nameLabel")}</Label>
+              <Input className="mt-1" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value, key: form.keyTouched ? form.key : slugifyKey(e.target.value) })} placeholder={t("people.roles.namePh")} />
             </div>
             <div className="sm:col-span-2">
-              <Label>Anahtar (key)</Label>
-              <Input className={cn("mt-1 font-mono text-xs", keyClash && "border-rose-400 focus-visible:ring-rose-300")} value={keyHint} onChange={(e) => setForm({ ...form, key: slugifyKey(e.target.value), keyTouched: true })} placeholder="otomatik öneri" />
+              <Label>{t("people.roles.keyLabel")}</Label>
+              <Input className={cn("mt-1 font-mono text-xs", keyClash && "border-rose-400 focus-visible:ring-rose-300")} value={keyHint} onChange={(e) => setForm({ ...form, key: slugifyKey(e.target.value), keyTouched: true })} placeholder={t("people.roles.keyPh")} />
               <p className={cn("mt-1 text-[11px]", keyClash ? "text-rose-600" : "text-muted-foreground")}>
-                {keyClash ? "Bu anahtar başka rolde kullanılıyor — benzersiz olmalı." : `slug önerisi: ${keyHint || "—"}`}
+                {keyClash ? t("people.roles.keyClash") : t("people.roles.slugSuggestion", { slug: keyHint || "—" })}
               </p>
             </div>
             <div className="sm:col-span-2">
               <div className="flex items-baseline justify-between">
-                <Label>Hiyerarşi seviyesi</Label>
-                <span className="text-xs font-semibold tabular-nums text-primary">{form.hierarchyLevel} <span className="font-normal text-muted-foreground">(1 en üst · 99 en alt)</span></span>
+                <Label>{t("people.roles.levelLabel")}</Label>
+                <span className="text-xs font-semibold tabular-nums text-primary">{form.hierarchyLevel} <span className="font-normal text-muted-foreground">{t("people.roles.levelRange")}</span></span>
               </div>
               <div className="mt-2 flex items-center gap-3">
-                <Slider value={[form.hierarchyLevel]} min={1} max={99} step={1} onValueChange={(v) => setForm({ ...form, hierarchyLevel: v[0] ?? 50 })} aria-label="Hiyerarşi seviyesi" />
+                <Slider value={[form.hierarchyLevel]} min={1} max={99} step={1} onValueChange={(v) => setForm({ ...form, hierarchyLevel: v[0] ?? 50 })} aria-label={t("people.roles.levelAria")} />
                 <Input type="number" min={1} max={99} className="h-9 w-20 tabular-nums" value={form.hierarchyLevel} onChange={(e) => setForm({ ...form, hierarchyLevel: Math.min(99, Math.max(1, Number(e.target.value) || 1)) })} />
               </div>
             </div>
             <div className="sm:col-span-2">
-              <Label>Renk</Label>
-              <div className="mt-1.5 flex flex-wrap gap-1.5" role="radiogroup" aria-label="Rol rengi">
+              <Label>{t("people.roles.colorLabel")}</Label>
+              <div className="mt-1.5 flex flex-wrap gap-1.5" role="radiogroup" aria-label={t("people.roles.colorAria")}>
                 {ROLE_COLORS.map((c) => (
                   <button key={c.key} type="button" role="radio" aria-checked={form.color === c.key} onClick={() => setForm({ ...form, color: c.key })}
                     className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                       form.color === c.key ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:border-primary/40")}>
-                    <span className={cn("size-3 rounded-full", ROLE_DOT[c.key])} aria-hidden /> {c.label}
+                    <span className={cn("size-3 rounded-full", ROLE_DOT[c.key])} aria-hidden /> {t(`people.color.${c.key}`)}
                   </button>
                 ))}
               </div>
             </div>
             <div className="sm:col-span-2">
-              <Label>Yetkiler (CAPABILITIES)</Label>
+              <Label>{t("people.roles.capsLabel")}</Label>
               <div className="maven-scroll mt-1.5 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto rounded-lg border bg-muted/20 p-2.5">
                 {CAPABILITIES.map((c) => {
                   const on = form.permissions.includes(c.key);
                   return (
-                    <button key={c.key} type="button" aria-pressed={on} title={c.desc}
+                    <button key={c.key} type="button" aria-pressed={on} title={t(`people.capDesc.${c.key}`)}
                       onClick={() => setForm({ ...form, permissions: on ? form.permissions.filter((p) => p !== c.key) : [...form.permissions, c.key] })}
                       className={cn("rounded-md border px-2 py-1 text-[11px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                         on ? "border-teal-300 bg-teal-50 text-teal-700" : "bg-card text-muted-foreground hover:border-teal-300 hover:text-teal-700")}>
-                      {on && <Icons.Check className="mr-1 inline size-3" aria-hidden />}{c.label}
+                      {on && <Icons.Check className="mr-1 inline size-3" aria-hidden />}{tLabel(CAP_LABEL, c.key)}
                     </button>
                   );
                 })}
               </div>
             </div>
             <div className="sm:col-span-2">
-              <Label>Açıklama</Label>
-              <Textarea className="mt-1" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Rolün kapsamı ve sorumluluğu…" />
+              <Label>{t("people.lblDesc")}</Label>
+              <Textarea className="mt-1" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder={t("people.roles.descPh")} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Vazgeç</Button>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>{t("people.cancel")}</Button>
             <Button onClick={saveRole} disabled={busy || !form.name.trim() || !keyHint || keyClash}>
-              {busy ? "Kaydediliyor…" : editing ? "Güncelle" : "Oluştur"}
+              {busy ? t("people.saving") : editing ? t("people.update") : t("people.create")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -809,6 +821,7 @@ function RolesPanel() {
 
 // rol giriş ekranı mock'u — tarayıcı çerçevesi + su damgası (yalnız tasarım)
 function RoleLoginMock({ role }: { role: CustomRoleRow }) {
+  useLang(); // dil değişiminde yeniden render
   const bgOnly = ROLE_DOT[role.color ?? "teal"] ?? ROLE_DOT.teal;
   return (
     <div className="maven-portal-frame relative mt-3 overflow-hidden rounded-2xl border bg-card shadow-lg ring-1 ring-black/[0.03]">
@@ -828,7 +841,7 @@ function RoleLoginMock({ role }: { role: CustomRoleRow }) {
       <div className="maven-mock-watermark relative px-4 py-5">
         {/* Önizleme su damgası */}
         <span className="pointer-events-none absolute inset-0 grid select-none place-items-center" aria-hidden>
-          <span className="-rotate-12 text-3xl font-bold uppercase tracking-[0.3em] text-muted-foreground/10">Önizleme</span>
+          <span className="-rotate-12 text-3xl font-bold uppercase tracking-[0.3em] text-muted-foreground/10">{t("people.mock.watermark")}</span>
         </span>
         <div className="relative">
           <div className="mb-3 flex items-center gap-2">
@@ -842,17 +855,17 @@ function RoleLoginMock({ role }: { role: CustomRoleRow }) {
           </div>
           <div className="space-y-2.5 opacity-90">
             <div>
-              <Label className="text-[10px] text-muted-foreground">E-posta</Label>
-              <Input disabled placeholder="ornek@kurum.com" className="mt-0.5 h-8 bg-muted/40 text-xs" aria-label="E-posta (devre dışı önizleme)" />
+              <Label className="text-[10px] text-muted-foreground">{t("people.lblEmail")}</Label>
+              <Input disabled placeholder="ornek@kurum.com" className="mt-0.5 h-8 bg-muted/40 text-xs" aria-label={t("people.mock.emailAria")} />
             </div>
             <div>
-              <Label className="text-[10px] text-muted-foreground">Şifre</Label>
-              <Input disabled type="password" placeholder="••••••••" className="mt-0.5 h-8 bg-muted/40 text-xs" aria-label="Şifre (devre dışı önizleme)" />
+              <Label className="text-[10px] text-muted-foreground">{t("people.lblPassword")}</Label>
+              <Input disabled type="password" placeholder="••••••••" className="mt-0.5 h-8 bg-muted/40 text-xs" aria-label={t("people.mock.passwordAria")} />
             </div>
-            <Button disabled className="h-8 w-full text-xs">Giriş Yap</Button>
+            <Button disabled className="h-8 w-full text-xs">{t("people.mock.login")}</Button>
             <p className="flex items-center gap-1 pt-0.5 text-[10px] text-muted-foreground">
               <Icons.Info className="size-3 shrink-0" aria-hidden />
-              Bu ekran gerçek kimlik doğrulama içermez — dış portal ayrı uygulamasının tasarım önizlemesidir.
+              {t("people.mock.disclaimer")}
             </p>
           </div>
         </div>
@@ -862,6 +875,7 @@ function RoleLoginMock({ role }: { role: CustomRoleRow }) {
 }
 
 export function PeopleView() {
+  useLang(); // dil değişiminde yeniden render
   const { tenant, bump, currentEditionId, refreshKey } = useApp();
   const { toast } = useToast();
   const [q, setQ] = useState("");
@@ -879,10 +893,25 @@ export function PeopleView() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [resolutions, setResolutions] = useState<Record<string, "target" | "source">>({});
 
-  const { data, error, reload, loading } = useApi<PersonRow[]>(() => listEntity<PersonRow>("people", { q, limit: 300 }), [q]);
+  // TASK-A F6: kişiler imleçli load-more + sunucu-taraflı q arama — 300 satırlık sessiz kesme kaldırıldı
+  const { data: peoplePaged, error, reload, loading, more: peopleMore } = useApi<{ items: PersonRow[]; nextCursor?: string | null }>(
+    (cursor?: string) => listEntityPaged<PersonRow>("people", { q: q.trim() || undefined, limit: 200 }, cursor),
+    [q],
+    { append: true },
+  );
+  const data = useMemo(() => peoplePaged?.items ?? [], [peoplePaged]);
 
   // Olası mükerrerler — tenant geneli (edisyon-bağımsız, null-guard gerekmez); edisyon değişince tazelensin
   const { data: dupData, error: dupError, reload: dupReload } = useApi<DuplicatesData>(() => apiGet<DuplicatesData>("/api/people/duplicates"), [currentEditionId, refreshKey]);
+
+  // Faz E: sabit durum map'lerini tLabel köprüsüyle çevir (render başına bir kez)
+  const regStatusMap = Object.fromEntries(Object.entries(REGISTRATION_STATUS).map(([k]) => [k, tLabel(REGISTRATION_STATUS, k)]));
+  const payStatusMap = Object.fromEntries(Object.entries(PAYMENT_STATUS).map(([k]) => [k, tLabel(PAYMENT_STATUS, k)]));
+  const attStatusMap = Object.fromEntries(Object.entries(ATTENDANCE_STATUS).map(([k]) => [k, tLabel(ATTENDANCE_STATUS, k)]));
+  const badgeStatusMap = Object.fromEntries(Object.entries(BADGE_STATUS).map(([k]) => [k, tLabel(BADGE_STATUS, k)]));
+  const certStatusMap = Object.fromEntries(Object.entries(CERTIFICATE_STATUS).map(([k]) => [k, tLabel(CERTIFICATE_STATUS, k)]));
+  // SUBMISSION_STATUS: status.REJECTED köprüsü tabanda "Reddedildi" olduğundan çakışır — people.subStatus.* ile çevrilir
+  const subStatusMap = Object.fromEntries(Object.entries(SUBMISSION_STATUS).map(([k]) => [k, t(`people.subStatus.${k}`)]));
 
   const open360 = async (p: PersonRow) => {
     setSelected(p);
@@ -926,10 +955,10 @@ export function PeopleView() {
     try {
       if (editingPerson) {
         await apiSend(`/api/people/${editingPerson.id}`, "PUT", payload);
-        toast({ title: "Kişi güncellendi", description: `${form.firstName} ${form.lastName}` });
+        toast({ title: t("people.person.updated"), description: `${form.firstName} ${form.lastName}` });
       } else {
         await apiSend("/api/people", "POST", { ...payload, tenantId: tenant?.id });
-        toast({ title: "Kişi oluşturuldu", description: `${form.firstName} ${form.lastName} tenant içine eklendi.` });
+        toast({ title: t("people.person.created"), description: t("people.person.createdDesc", { name: `${form.firstName} ${form.lastName}` }) });
       }
       setCreateOpen(false);
       setForm(defaultForm);
@@ -940,7 +969,7 @@ export function PeopleView() {
         try { setDetail(await apiGet<Person360>(`/api/people/${selected.id}`)); } catch { /* yoksay */ }
       }
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "Kişi kaydedilemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("people.person.saveFailed"), variant: "destructive" });
     }
   };
 
@@ -980,7 +1009,7 @@ export function PeopleView() {
     const target = sug.persons.find((p) => p.id === mergeTarget) ?? null;
     const source = sug.persons.find((p) => p.id !== mergeTarget) ?? null;
     if (!target || !source) {
-      toast({ title: "Hata", description: "Kaynak ve hedef aynı olamaz.", variant: "destructive" });
+      toast({ title: t("common.error"), description: t("people.merge.sameSide"), variant: "destructive" });
       return;
     }
     setMergeBusy(true);
@@ -988,16 +1017,18 @@ export function PeopleView() {
       const r = await apiSend<{ mergedRegistrations?: number; resolvedEditions?: number }>("/api/flows", "POST", {
         action: "person.merge", sourceId: source.id, targetId: target.id, resolutions, fillProfile: true,
       });
+      const movedPart = r.mergedRegistrations ? t("people.merge.movedRegs", { count: r.mergedRegistrations }) : "";
+      const resolvedPart = r.resolvedEditions ? t("people.merge.resolvedEds", { count: r.resolvedEditions }) : "";
       toast({
-        title: "Kişiler birleştirildi — geçmiş korundu",
-        description: `${source.fullName} → ${target.fullName}${r.mergedRegistrations ? ` · ${r.mergedRegistrations} kayıt taşındı` : ""}${r.resolvedEditions ? ` · ${r.resolvedEditions} edisyonda çakışma çözüldü` : ""}`,
+        title: t("people.merge.doneTitle"),
+        description: `${source.fullName} → ${target.fullName}${movedPart}${resolvedPart}`,
       });
       setMergeSug(null);
       setMergeTarget(null);
       setMergePreview(null);
       reload(); dupReload(); bump(); // kişi listesi + mükerrer listesi + global sayaçlar
     } catch (e) {
-      toast({ title: "Birleştirme başarısız", description: e instanceof Error ? e.message : "Kişiler birleştirilemedi", variant: "destructive" });
+      toast({ title: t("people.merge.failTitle"), description: e instanceof Error ? e.message : t("people.merge.failDesc"), variant: "destructive" });
     } finally {
       setMergeBusy(false);
     }
@@ -1005,51 +1036,51 @@ export function PeopleView() {
 
   return (
     <div>
-      <PageHeader title="Kişiler" desc="Tenant içinde tekil kimlik — e-posta güçlü işaret, kesin kimlik değil (birleştirme onaylı yapılır)">
+      <PageHeader title={t("people.title")} desc={t("people.desc")}>
         {dupData && dupData.suggestions.length === 0 && (
           <Chip tone="emerald">
-            <span className="inline-flex items-center gap-1"><Icons.CheckCircle2 className="size-3" aria-hidden />Mükerrer yok</span>
+            <span className="inline-flex items-center gap-1"><Icons.CheckCircle2 className="size-3" aria-hidden />{t("people.dup.none")}</span>
           </Chip>
         )}
-        <Input placeholder="Ad, e-posta, kurum ara…" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />
+        <Input placeholder={t("people.searchPh")} value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild><Button size="sm" onClick={openCreate}><Icons.UserPlus className="size-4" /> Kişi Ekle</Button></DialogTrigger>
+          <DialogTrigger asChild><Button size="sm" onClick={openCreate}><Icons.UserPlus className="size-4" /> {t("people.person.add")}</Button></DialogTrigger>
           <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>{editingPerson ? "Kişiyi Düzenle" : "Yeni Kişi"}</DialogTitle>
-              <DialogDescription>Tüm kişi durumunu tek ekranda gör/düzenle — refakatçi/misafir profili için ana kişi bağlanabilir (Parent_ID). Çift tıklama ile de açılır.</DialogDescription>
+              <DialogTitle>{editingPerson ? t("people.person.editTitle") : t("people.person.newTitle")}</DialogTitle>
+              <DialogDescription>{t("people.person.dialogDesc")}</DialogDescription>
             </DialogHeader>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div><Label>Ad *</Label><Input value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} /></div>
-              <div><Label>Soyad *</Label><Input value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} /></div>
-              <div className="sm:col-span-2"><Label>E-posta</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-              <div><Label>Telefon</Label><Input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
-              <div><Label>Şehir</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
-              <div><Label>Kurum</Label><Input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} /></div>
-              <div><Label>Unvan</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
-              <div><Label>Ülke</Label><Input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} /></div>
+              <div><Label>{t("people.lblFirstName")}</Label><Input value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} /></div>
+              <div><Label>{t("people.lblLastName")}</Label><Input value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} /></div>
+              <div className="sm:col-span-2"><Label>{t("people.lblEmail")}</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+              <div><Label>{t("people.lblPhone")}</Label><Input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+              <div><Label>{t("people.lblCity")}</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
+              <div><Label>{t("people.lblCompany")}</Label><Input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} /></div>
+              <div><Label>{t("people.lblTitle")}</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
+              <div><Label>{t("people.lblCountry")}</Label><Input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} /></div>
               <div>
-                <Label>LinkedIn</Label>
+                <Label>{t("people.lblLinkedin")}</Label>
                 <Input value={form.linkedin} onChange={(e) => setForm({ ...form, linkedin: e.target.value })} placeholder="linkedin.com/in/…" />
               </div>
               <div>
-                <Label>Durum</Label>
+                <Label>{t("people.lblStatus")}</Label>
                 <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ACTIVE">Aktif</SelectItem>
-                    <SelectItem value="PASSIVE">Pasif</SelectItem>
+                    <SelectItem value="ACTIVE">{t("people.statusActive")}</SelectItem>
+                    <SelectItem value="PASSIVE">{t("people.statusPassive")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="sm:col-span-2">
-                <Label>Bio</Label>
-                <Textarea rows={2} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} placeholder="Kısa özgeçmiş / tanıtım…" />
+                <Label>{t("people.lblBio")}</Label>
+                <Textarea rows={2} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} placeholder={t("people.person.bioPh")} />
               </div>
               {/* R10-a: kişi fotoğrafı — benzersiz adla Medya Arşivi → Kişi Fotoğrafları klasörüne */}
               {editingPerson ? (
                 <div className="rounded-lg border bg-muted/20 p-3 sm:col-span-2">
-                  <p className="mb-2 text-xs font-semibold">Kişi Fotoğrafı</p>
+                  <p className="mb-2 text-xs font-semibold">{t("people.person.photoLabel")}</p>
                   <LinkedPhotoUploader
                     editionId={currentEditionId}
                     systemFolder="KISI_FOTOGRAF"
@@ -1063,45 +1094,45 @@ export function PeopleView() {
                       reload();
                       if (selected?.id === editingPerson.id) setDetail((d) => (d ? { ...d, person: { ...d.person, photoUrl: dataUrl } } : d));
                     }}
-                    folderLabel="Kişi Fotoğrafları"
-                    alt={`${editingPerson.firstName} ${editingPerson.lastName} fotoğrafı`}
+                    folderLabel={t("people.folder.personPhotos")}
+                    alt={t("people.photoAlt", { name: `${editingPerson.firstName} ${editingPerson.lastName}` })}
                   />
                 </div>
               ) : (
-                <p className="text-[11px] leading-snug text-muted-foreground sm:col-span-2">Fotoğraf, kişi kaydedildikten sonra “Kişiyi Düzenle” ekranından eklenir — benzersiz adla Medya Arşivi → Kişi Fotoğrafları klasörüne gider.</p>
+                <p className="text-[11px] leading-snug text-muted-foreground sm:col-span-2">{t("people.person.photoHint")}</p>
               )}
               <div className="sm:col-span-2">
-                <Label>Bağlı olduğu ana kişi (opsiyonel)</Label>
+                <Label>{t("people.person.parentLabel")}</Label>
                 <Select value={form.parentPersonId} onValueChange={(v) => setForm({ ...form, parentPersonId: v })}>
-                  <SelectTrigger className="mt-1"><SelectValue placeholder="Yok" /></SelectTrigger>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder={t("people.nonePh")} /></SelectTrigger>
                   <SelectContent className="maven-scroll max-h-64">
-                    <SelectItem value="none">— Ana kişi yok —</SelectItem>
-                    {(data ?? []).filter((p) => p.id !== editingPerson?.id).map((p) => (
+                    <SelectItem value="none">{t("people.person.noParent")}</SelectItem>
+                    {data.filter((p) => p.id !== editingPerson?.id).map((p) => (
                       <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}{p.company ? ` — ${p.company}` : ""}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="sm:col-span-2">
-                <Label className={cn(form.parentPersonId === "none" && "opacity-50")}>Bağlantı türü</Label>
+                <Label className={cn(form.parentPersonId === "none" && "opacity-50")}>{t("people.lblRelation")}</Label>
                 <Select value={form.relationType} onValueChange={(v) => setForm({ ...form, relationType: v })} disabled={form.parentPersonId === "none"}>
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {Object.entries(RELATION_TYPE).filter(([k]) => k !== "SELF").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                    {Object.entries(RELATION_TYPE).filter(([k]) => k !== "SELF").map(([k]) => <SelectItem key={k} value={k}>{tLabel(RELATION_TYPE, k)}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <p className="mt-1 text-[11px] text-muted-foreground">Eş, çocuk, misafir veya asistan — refakatçi yaka kartlarında gösterilir.</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">{t("people.person.relationHint")}</p>
               </div>
             </div>
-            <DialogFooter><Button onClick={savePerson} disabled={!form.firstName || !form.lastName}>{editingPerson ? "Kaydet" : "Oluştur"}</Button></DialogFooter>
+            <DialogFooter><Button onClick={savePerson} disabled={!form.firstName || !form.lastName}>{editingPerson ? t("people.save") : t("people.create")}</Button></DialogFooter>
           </DialogContent>
         </Dialog>
       </PageHeader>
 
       <Tabs defaultValue="people">
         <TabsList className="h-auto">
-          <TabsTrigger value="people"><Icons.Users className="size-4" /> Kişiler</TabsTrigger>
-          <TabsTrigger value="roles"><Icons.ShieldCheck className="size-4" /> Roller &amp; Yetkiler</TabsTrigger>
+          <TabsTrigger value="people"><Icons.Users className="size-4" /> {t("people.tabPeople")}</TabsTrigger>
+          <TabsTrigger value="roles"><Icons.ShieldCheck className="size-4" /> {t("people.tabRoles")}</TabsTrigger>
         </TabsList>
 
         {/* ═══ Kişiler sekmesi — mevcut akış korunmuş ═══ */}
@@ -1110,14 +1141,14 @@ export function PeopleView() {
           {dupError && !dupData && (
             <p className="mb-3 flex items-center gap-1.5 text-xs text-muted-foreground">
               <Icons.TriangleAlert className="size-3.5 shrink-0 text-amber-500" aria-hidden />
-              Mükerrer taraması yüklenemedi — kişi listesi etkilenmedi.
+              {t("people.dup.scanFailed")}
             </p>
           )}
           {dupData && dupData.suggestions.length > 0 && (
             <SectionCard
-              title="Olası Mükerrerler"
-              desc="Tenant genelinde kimlik eşleşmesi — öneriler bağlamadan incelenmelidir"
-              action={<Chip tone="amber">{dupData.suggestions.length} öneri</Chip>}
+              title={t("people.dup.title")}
+              desc={t("people.dup.desc")}
+              action={<Chip tone="amber">{t("people.dup.suggestionCount", { count: dupData.suggestions.length })}</Chip>}
               className="mb-4"
             >
               <div className="maven-scroll max-h-96 space-y-3 overflow-y-auto">
@@ -1131,7 +1162,7 @@ export function PeopleView() {
                           <Icons.ArrowLeftRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                           <Chip tone={REASON_TONE[s.reason] ?? "neutral"}>{dupData.reasonLabels[s.reason] ?? s.reason}</Chip>
                           <Button size="sm" variant="outline" onClick={() => openMerge(s)}>
-                            <Icons.Merge className="size-4" /> Birleştir
+                            <Icons.Merge className="size-4" /> {t("people.merge.btn")}
                           </Button>
                         </div>
                         <DupPersonCard p={b} />
@@ -1143,20 +1174,20 @@ export function PeopleView() {
             </SectionCard>
           )}
 
-          {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (data ?? []).length === 0 ? (
-            <EmptyState title="Kişi bulunamadı" desc="Filtre sonucu yok — aramayı temizleyin veya yeni kişi ekleyin." />
+          {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : data.length === 0 ? (
+            <EmptyState title={t("people.emptyTitle")} desc={t("people.emptyDesc")} />
           ) : (
             <div className="grid gap-2">
-              {(data ?? []).map((p) => (
+              {data.map((p) => (
                 <button
                   key={p.id}
                   onClick={() => open360(p)}
                   onDoubleClick={() => openEdit(p)}
-                  title="Çift tıkla: kişiyi düzenle — tüm kişi alanları tek diyaloğda"
+                  title={t("people.person.dblClickTip")}
                   className="flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border bg-card p-3 text-left transition hover:border-primary/40 hover:shadow-sm"
                 >
                   {p.photoUrl ? (
-                    <img src={p.photoUrl} alt={`${p.firstName} ${p.lastName} fotoğrafı`} className="size-9 shrink-0 rounded-full border object-cover" />
+                    <img src={p.photoUrl} alt={t("people.photoAlt", { name: `${p.firstName} ${p.lastName}` })} className="size-9 shrink-0 rounded-full border object-cover" />
                   ) : (
                     <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
                       {p.firstName[0]}{p.lastName[0]}
@@ -1165,14 +1196,23 @@ export function PeopleView() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">
                       {p.firstName} {p.lastName}
-                      {p.status === "MERGED" && <Chip tone="rose">birleştirildi</Chip>}
-                      {p.parentPersonId && <Chip tone="violet">refakatçi</Chip>}
+                      {p.status === "MERGED" && <Chip tone="rose">{t("people.mergedChip")}</Chip>}
+                      {p.parentPersonId && <Chip tone="violet">{t("people.dependentChip")}</Chip>}
                     </p>
-                    <p className="truncate text-xs text-muted-foreground">{p.title ? `${p.title} · ` : ""}{p.company ?? "—"} · {p.email ?? "e-posta yok"}</p>
+                    <p className="truncate text-xs text-muted-foreground">{p.title ? `${p.title} · ` : ""}{p.company ?? "—"} · {p.email ?? t("people.noEmail")}</p>
                   </div>
                   <Icons.ChevronRight className="size-4 shrink-0 text-muted-foreground" />
                 </button>
               ))}
+              {/* TASK-A F6: kesintisiz yükleme */}
+              {peopleMore?.hasMore && (
+                <div className="flex items-center justify-center pt-1">
+                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={peopleMore.loading} onClick={peopleMore.next}>
+                    {peopleMore.loading ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ChevronsDown className="size-3.5" />}
+                    {t("people.loadMore")}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1180,11 +1220,11 @@ export function PeopleView() {
           <Dialog open={Boolean(mergeSug)} onOpenChange={(o) => { if (!o) setMergeSug(null); }}>
             <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-xl">
               <DialogHeader>
-                <DialogTitle>Kişileri Birleştir</DialogTitle>
-                <DialogDescription>{mergeSug?.note ?? "Kaynak kişi hedefe taşınır; hedef kayıt korunur."}</DialogDescription>
+                <DialogTitle>{t("people.merge.title")}</DialogTitle>
+                <DialogDescription>{mergeSug?.note ?? t("people.merge.defaultDesc")}</DialogDescription>
               </DialogHeader>
 
-              <div role="radiogroup" aria-label="Korunacak kişi" className="grid gap-2 sm:grid-cols-2">
+              <div role="radiogroup" aria-label={t("people.merge.keepAria")} className="grid gap-2 sm:grid-cols-2">
                 {mergeSug?.persons.map((p, i) => {
                   const checked = mergeTarget === p.id;
                   return (
@@ -1204,9 +1244,9 @@ export function PeopleView() {
                       </span>
                       <span className="min-w-0">
                         <span className="block text-sm font-medium">
-                          {i === 0 ? "A'yı koru" : "B'yi koru"} <span className="font-normal text-muted-foreground">({i === 0 ? "B" : "A"} birleşir)</span>
+                          {i === 0 ? t("people.merge.keepA") : t("people.merge.keepB")} <span className="font-normal text-muted-foreground">({i === 0 ? t("people.merge.mergesB") : t("people.merge.mergesA")})</span>
                         </span>
-                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">{p.fullName} · {p.email ?? "e-posta yok"} · {p.company ?? "—"}</span>
+                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">{p.fullName} · {p.email ?? t("people.noEmail")} · {p.company ?? "—"}</span>
                       </span>
                     </button>
                   );
@@ -1215,22 +1255,22 @@ export function PeopleView() {
 
               {/* ── Çakışma önizlemesi — hedef seçilince yüklenir ── */}
               {previewLoading && (
-                <p className="flex items-center gap-2 py-2 text-xs text-muted-foreground"><Icons.Loader2 className="size-3.5 animate-spin" /> Çakışma analizi yapılıyor…</p>
+                <p className="flex items-center gap-2 py-2 text-xs text-muted-foreground"><Icons.Loader2 className="size-3.5 animate-spin" /> {t("people.merge.analyzing")}</p>
               )}
               {mergePreview && !previewLoading && (
                 <div className="maven-portal-enter space-y-3">
                   {/* profil alan farkları */}
                   {mergePreview.fieldDiffs.length > 0 && (
                     <div className="rounded-lg border bg-muted/20 p-3">
-                      <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold"><Icons.SlidersHorizontal className="size-3.5 text-primary" /> Profil alanları</p>
+                      <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold"><Icons.SlidersHorizontal className="size-3.5 text-primary" /> {t("people.merge.profileFields")}</p>
                       <ul className="space-y-1">
                         {mergePreview.fieldDiffs.map((f) => (
                           <li key={f.field} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
-                            <span className="w-14 shrink-0 font-medium text-muted-foreground">{MERGE_FIELD_LABELS[f.field] ?? f.field}</span>
+                            <span className="w-14 shrink-0 font-medium text-muted-foreground">{tLabel(MERGE_FIELD_LABELS, f.field)}</span>
                             {f.kind === "fill" ? (
-                              <Chip tone="teal">hedef boş → &quot;{f.source}&quot; kaynaktan doldurulur</Chip>
+                              <Chip tone="teal">{t("people.merge.fillFromSource", { value: f.source ?? "—" })}</Chip>
                             ) : (
-                              <Chip tone="amber">farklı: hedef &quot;{f.target}&quot; · kaynak &quot;{f.source}&quot; → hedef korunur</Chip>
+                              <Chip tone="amber">{t("people.merge.conflict", { target: f.target ?? "—", source: f.source ?? "—" })}</Chip>
                             )}
                           </li>
                         ))}
@@ -1243,7 +1283,7 @@ export function PeopleView() {
                     <div className="space-y-2">
                       <p className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800">
                         <Icons.TriangleAlert className="size-3.5" aria-hidden />
-                        {mergePreview.conflictingEditions.length} edisyonda iki katılım var — kazanan seçilmeli
+                        {t("people.merge.conflictCount", { count: mergePreview.conflictingEditions.length })}
                       </p>
                       {mergePreview.conflictingEditions.map((c) => {
                         const winner = resolutions[c.editionId] ?? c.defaultWinner;
@@ -1266,9 +1306,9 @@ export function PeopleView() {
                                 {active && <Icons.CheckCircle2 className="size-3.5 shrink-0 text-primary" aria-hidden />}
                               </span>
                               <span className="mt-1 block text-[10px] leading-relaxed text-muted-foreground">
-                                {s.regNo ? <><span className="font-mono">{s.regNo}</span> · </> : "kayıt yok · "}
-                                {s.regStatus ? <>{REGISTRATION_STATUS[s.regStatus] ?? s.regStatus}{s.categoryName ? ` (${s.categoryName})` : ""} · </> : ""}
-                                {s.badgeCount > 0 ? `${s.badgeCount} yaka kartı` : "yaka kartı yok"}
+                                {s.regNo ? <><span className="font-mono">{s.regNo}</span> · </> : t("people.merge.noReg")}
+                                {s.regStatus ? <>{tLabel(REGISTRATION_STATUS, s.regStatus)}{s.categoryName ? ` (${s.categoryName})` : ""} · </> : ""}
+                                {s.badgeCount > 0 ? t("people.merge.badgeCount", { count: s.badgeCount }) : t("people.merge.noBadges")}
                               </span>
                             </button>
                           );
@@ -1276,14 +1316,14 @@ export function PeopleView() {
                         return (
                           <div key={c.editionId} className="rounded-lg border bg-card p-2.5">
                             <p className="mb-1.5 text-[11px] font-semibold text-muted-foreground">{c.editionName} · {fmtDate(c.startDate)}</p>
-                            <div role="radiogroup" aria-label={`${c.editionName} için kazanacak katılım`} className="flex flex-col gap-2 sm:flex-row">
+                            <div role="radiogroup" aria-label={t("people.merge.winnerAria", { edition: c.editionName })} className="flex flex-col gap-2 sm:flex-row">
                               <SideBox sideName="source" s={c.source} />
                               <SideBox sideName="target" s={c.target} />
                             </div>
                             <p className="mt-1.5 text-[10px] text-muted-foreground">
                               {winner === "target"
-                                ? `${mergePreview.source.firstName} katılımındaki kayıtlar/yaka kartları/taramalar ${mergePreview.target.firstName} katılımına taşınır, boşalan silinir.`
-                                : `${mergePreview.target.firstName} katılımındaki kayıtlar/yaka kartları/taramalar ${mergePreview.source.firstName} katılımına taşınır, boşalan silinir.`}
+                                ? t("people.merge.moveTemplate", { from: mergePreview.source.firstName, to: mergePreview.target.firstName })
+                                : t("people.merge.moveTemplate", { from: mergePreview.target.firstName, to: mergePreview.source.firstName })}
                             </p>
                           </div>
                         );
@@ -1291,18 +1331,18 @@ export function PeopleView() {
                     </div>
                   ) : (
                     <p className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-700">
-                      <Icons.CheckCircle2 className="size-3.5" aria-hidden /> Edisyon çakışması yok — katılımlar doğrudan taşınır.
+                      <Icons.CheckCircle2 className="size-3.5" aria-hidden /> {t("people.merge.noConflicts")}
                     </p>
                   )}
 
                   {/* taşınacaklar özeti */}
                   <div className="flex flex-wrap gap-1.5">
-                    {mergePreview.movableParticipations > 0 && <Chip tone="teal">{mergePreview.movableParticipations} katılım</Chip>}
+                    {mergePreview.movableParticipations > 0 && <Chip tone="teal">{t("people.merge.participationCount", { count: mergePreview.movableParticipations })}</Chip>}
                     {Object.entries(mergePreview.moves).filter(([, n]) => n > 0).map(([k, n]) => (
-                      <Chip key={k} tone="neutral">{n} {MERGE_MOVE_LABELS[k] ?? k}</Chip>
+                      <Chip key={k} tone="neutral">{t("people.merge.moveCount", { count: n, what: tLabel(MERGE_MOVE_LABELS, k) })}</Chip>
                     ))}
                     {mergePreview.loserBadges > 0 && (
-                      <Chip tone="amber">{mergePreview.loserBadges} yaka kartı kaybeden taraftan kazanan tarafına taşınır</Chip>
+                      <Chip tone="amber">{t("people.merge.loserBadges", { count: mergePreview.loserBadges })}</Chip>
                     )}
                   </div>
                 </div>
@@ -1310,13 +1350,13 @@ export function PeopleView() {
 
               <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
                 <Icons.TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
-                <span>Birleştirme geri alınamaz ve tek işlemde yapılır. Kaynak kişinin katılımları, bildirileri, yazarlıkları, hakemlikleri, görevleri ve saha taramaları hedefe taşınır; kaynak kişi MERGED durumuna geçer ve kişiler listesinde gizlenir.</span>
+                <span>{t("people.merge.warning")}</span>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setMergeSug(null)} disabled={mergeBusy}>İptal</Button>
+                <Button variant="outline" onClick={() => setMergeSug(null)} disabled={mergeBusy}>{t("people.cancelMerge")}</Button>
                 <Button onClick={confirmMerge} disabled={mergeBusy || !mergeTarget || previewLoading}>
                   {mergeBusy ? <Icons.Loader2 className="size-4 animate-spin" aria-hidden /> : <Icons.Merge className="size-4" aria-hidden />}
-                  Birleştir
+                  {t("people.merge.btn")}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -1329,19 +1369,19 @@ export function PeopleView() {
                 <SheetTitle className="flex items-center gap-2">
                   {detail?.person.photoUrl && <img src={detail.person.photoUrl} alt="" className="size-8 shrink-0 rounded-full border object-cover" aria-hidden />}
                   <span className="min-w-0 truncate">{selected?.firstName} {selected?.lastName}</span>
-                  {detail?.person.status === "MERGED" && <Chip tone="rose">birleştirildi</Chip>}
+                  {detail?.person.status === "MERGED" && <Chip tone="rose">{t("people.mergedChip")}</Chip>}
                 </SheetTitle>
-                <SheetDescription>Kişi 360 — modüllerin gerçeklerini birleştiren görünüm; veri sahibi değildir.</SheetDescription>
+                <SheetDescription>{t("people.p360.desc")}</SheetDescription>
               </SheetHeader>
               {detailLoading ? <div className="p-6"><Loading rows={5} /></div> : !detail ? (
-                <EmptyState title="360 verisi alınamadı" />
+                <EmptyState title={t("people.p360.failed")} />
               ) : (
                 <div className="space-y-4 px-4 pb-8">
                   <SectionCard
-                    title="Kimlik"
+                    title={t("people.p360.identity")}
                     action={
                       <Button size="sm" variant="outline" onClick={() => openEdit(detail.person)}>
-                        <Icons.Pencil className="size-3.5" /> Düzenle
+                        <Icons.Pencil className="size-3.5" /> {t("people.edit")}
                       </Button>
                     }
                   >
@@ -1360,18 +1400,18 @@ export function PeopleView() {
                           setSelected((s) => (s && s.id === detail.person.id ? { ...s, photoUrl: dataUrl } : s));
                           reload();
                         }}
-                        folderLabel="Kişi Fotoğrafları"
-                        alt={`${detail.person.firstName} ${detail.person.lastName} fotoğrafı`}
+                        folderLabel={t("people.folder.personPhotos")}
+                        alt={t("people.photoAlt", { name: `${detail.person.firstName} ${detail.person.lastName}` })}
                       />
                     </div>
-                    <Row360Line label="E-posta">{detail.person.email ?? "—"}</Row360Line>
-                    <Row360Line label="Telefon">{detail.person.phone ?? "—"}</Row360Line>
-                    <Row360Line label="Kurum">{detail.person.company ?? "—"}</Row360Line>
-                    <Row360Line label="Unvan">{detail.person.title ?? "—"}</Row360Line>
-                    <Row360Line label="Şehir">{detail.person.city ?? "—"}</Row360Line>
-                    <Row360Line label="Ülke">{detail.person.country ?? "—"}</Row360Line>
+                    <Row360Line label={t("people.lblEmail")}>{detail.person.email ?? "—"}</Row360Line>
+                    <Row360Line label={t("people.lblPhone")}>{detail.person.phone ?? "—"}</Row360Line>
+                    <Row360Line label={t("people.lblCompany")}>{detail.person.company ?? "—"}</Row360Line>
+                    <Row360Line label={t("people.lblTitle")}>{detail.person.title ?? "—"}</Row360Line>
+                    <Row360Line label={t("people.lblCity")}>{detail.person.city ?? "—"}</Row360Line>
+                    <Row360Line label={t("people.lblCountry")}>{detail.person.country ?? "—"}</Row360Line>
                     {detail.person.linkedin && (
-                      <Row360Line label="LinkedIn">
+                      <Row360Line label={t("people.lblLinkedin")}>
                         <span className="block truncate text-xs text-primary underline-offset-2">{detail.person.linkedin}</span>
                       </Row360Line>
                     )}
@@ -1389,30 +1429,30 @@ export function PeopleView() {
                     const reg = part.registrations?.[0];
                     const badge = part.badgeInstances?.[0];
                     return (
-                      <SectionCard key={part.id} title={part.edition?.name ?? "Edisyon"} desc={`Katılım · kaynak: ${label(REG_SOURCES, part.source)}`}>
-                        <Row360Line label="Kayıt">
+                      <SectionCard key={part.id} title={part.edition?.name ?? t("people.fallbackEdition")} desc={t("people.p360.participationDesc", { source: tLabel(REG_SOURCES, part.source) })}>
+                        <Row360Line label={t("people.p360.regLabel")}>
                           {reg ? (
                             <span className="inline-flex flex-wrap items-center justify-end gap-1">
-                              <StatusBadge map={REGISTRATION_STATUS} value={reg.status} />
-                              <StatusBadge map={PAYMENT_STATUS} value={["SPONSOR_ENTITLEMENT", "SPEAKER_ENTITLEMENT", "HOST_COMPLIMENTARY", "STAFF"].includes(reg.fundingSource) ? "NOT_REQUIRED" : "PENDING"} />
+                              <StatusBadge map={regStatusMap} value={reg.status} />
+                              <StatusBadge map={payStatusMap} value={["SPONSOR_ENTITLEMENT", "SPEAKER_ENTITLEMENT", "HOST_COMPLIMENTARY", "STAFF"].includes(reg.fundingSource) ? "NOT_REQUIRED" : "PENDING"} />
                             </span>
-                          ) : "kayıt yok"}
+                          ) : t("people.p360.noReg")}
                         </Row360Line>
-                        <Row360Line label="Kategori">{reg?.category?.name ?? "—"}</Row360Line>
-                        <Row360Line label="Fon kaynak">{label(FUNDING_SOURCES, reg?.fundingSource)}</Row360Line>
-                        <Row360Line label="Katılım"><StatusBadge map={ATTENDANCE_STATUS} value={part.attendance} /></Row360Line>
-                        <Row360Line label="Yaka Kartı">
-                          {badge ? <span className="inline-flex items-center gap-1"><Chip tone="violet">{badge.profile?.name ?? "Profil"}</Chip> <StatusBadge map={BADGE_STATUS} value={badge.status} /></span> : "—"}
+                        <Row360Line label={t("people.p360.category")}>{reg?.category?.name ?? "—"}</Row360Line>
+                        <Row360Line label={t("people.p360.funding")}>{tLabel(FUNDING_SOURCES, reg?.fundingSource)}</Row360Line>
+                        <Row360Line label={t("people.p360.attendanceLabel")}><StatusBadge map={attStatusMap} value={part.attendance} /></Row360Line>
+                        <Row360Line label={t("people.p360.badge")}>
+                          {badge ? <span className="inline-flex items-center gap-1"><Chip tone="violet">{badge.profile?.name ?? t("people.p360.profileFallback")}</Chip> <StatusBadge map={badgeStatusMap} value={badge.status} /></span> : "—"}
                         </Row360Line>
                         <Separator className="my-2" />
-                        <p className="mb-1 text-xs font-semibold text-muted-foreground">Roller</p>
+                        <p className="mb-1 text-xs font-semibold text-muted-foreground">{t("people.p360.roles")}</p>
                         <div className="flex flex-wrap gap-1">
-                          {(part.roleAssignments ?? []).map((r) => <Chip key={r.id} tone="teal">{label(EVENT_ROLES, r.role)}</Chip>)}
-                          {(part.roleAssignments ?? []).length === 0 && <span className="text-xs text-muted-foreground">rol atanmadı</span>}
+                          {(part.roleAssignments ?? []).map((r) => <Chip key={r.id} tone="teal">{tLabel(EVENT_ROLES, r.role)}</Chip>)}
+                          {(part.roleAssignments ?? []).length === 0 && <span className="text-xs text-muted-foreground">{t("people.p360.noRoles")}</span>}
                         </div>
                         {(part.programAssignments ?? []).length > 0 && (
                           <>
-                            <p className="mb-1 mt-3 text-xs font-semibold text-muted-foreground">Program</p>
+                            <p className="mb-1 mt-3 text-xs font-semibold text-muted-foreground">{t("people.p360.program")}</p>
                             <div className="space-y-1">
                               {part.programAssignments.map((pa) => (
                                 <div key={pa.id} className="flex items-center justify-between gap-2 text-xs">
@@ -1425,11 +1465,11 @@ export function PeopleView() {
                         )}
                         {(part.scanEvents ?? []).length > 0 && (
                           <>
-                            <p className="mb-1 mt-3 text-xs font-semibold text-muted-foreground">Son taramalar</p>
+                            <p className="mb-1 mt-3 text-xs font-semibold text-muted-foreground">{t("people.p360.recentScans")}</p>
                             <div className="space-y-1">
                               {part.scanEvents.slice(0, 4).map((s) => (
                                 <div key={s.id} className="flex items-center justify-between gap-2 text-xs">
-                                  <span>{s.location === "SESSION" ? "Oturum girişi" : s.location} · {fmtDateTime(s.scannedAt)}</span>
+                                  <span>{s.location === "SESSION" ? t("people.p360.sessionScan") : s.location} · {fmtDateTime(s.scannedAt)}</span>
                                   <Chip tone={s.result === "ALLOWED" ? "emerald" : s.result === "DENIED" ? "rose" : "amber"}>{s.result}</Chip>
                                 </div>
                               ))}
@@ -1438,12 +1478,12 @@ export function PeopleView() {
                         )}
                         {(part.certIssues ?? []).length > 0 && (
                           <>
-                            <p className="mb-1 mt-3 text-xs font-semibold text-muted-foreground">Sertifikalar</p>
+                            <p className="mb-1 mt-3 text-xs font-semibold text-muted-foreground">{t("people.p360.certificates")}</p>
                             <div className="space-y-1">
                               {part.certIssues.map((c) => (
                                 <div key={c.id} className="flex items-center justify-between gap-2 text-xs">
                                   <span className="truncate">{c.definition.name}</span>
-                                  <StatusBadge map={CERTIFICATE_STATUS} value={c.status} />
+                                  <StatusBadge map={certStatusMap} value={c.status} />
                                 </div>
                               ))}
                             </div>
@@ -1458,14 +1498,14 @@ export function PeopleView() {
                   <VCardPanel personId={detail.person.id} />
 
                   {(detail.submissions ?? []).length > 0 && (
-                    <SectionCard title="Bilimsel" desc="yazarlık ve hakemlik">
+                    <SectionCard title={t("people.p360.scientific")} desc={t("people.p360.scientificDesc")}>
                       {detail.submissions.map((s) => (
                         <Row360Line key={s.id} label={s.code}>
-                          <span className="inline-flex items-center justify-end gap-1"><span className="max-w-52 truncate">{s.title}</span> <StatusBadge map={SUBMISSION_STATUS} value={s.status} /></span>
+                          <span className="inline-flex items-center justify-end gap-1"><span className="max-w-52 truncate">{s.title}</span> <StatusBadge map={subStatusMap} value={s.status} /></span>
                         </Row360Line>
                       ))}
                       {detail.reviewAssignments.map((r) => (
-                        <Row360Line key={r.id} label="Hakemlik">
+                        <Row360Line key={r.id} label={t("people.p360.reviewLabel")}>
                           <span className="inline-flex items-center justify-end gap-1"><span className="max-w-52 truncate">{r.submission.code} — {r.submission.title}</span> <Chip tone={r.status === "COMPLETED" ? "emerald" : "amber"}>{r.status}</Chip></span>
                         </Row360Line>
                       ))}
@@ -1488,6 +1528,7 @@ export function PeopleView() {
 
 // ── R9-c: Kurum QR paneli (Kurum QR + Konum QR) ─────────────────────────────
 function OrgQrPanel({ orgId, orgName }: { orgId: string; orgName: string }) {
+  useLang(); // dil değişiminde yeniden render
   const { toast } = useToast();
   const { data, error, reload, loading } = useApi<OrgVCard>(
     () => apiGet<OrgVCard>(`/api/organizations/${orgId}/vcard?format=json`),
@@ -1497,45 +1538,45 @@ function OrgQrPanel({ orgId, orgName }: { orgId: string; orgName: string }) {
     if (!data?.locationQrDataUrl) return;
     try {
       await navigator.clipboard.writeText(data.locationQrDataUrl);
-      toast({ title: "Konum QR veri adresi kopyalandı", description: "Tabela ve yönlendirme tasarımında kullanılabilir." });
+      toast({ title: t("people.orgqr.copied"), description: t("people.orgqr.copiedDesc") });
     } catch {
-      toast({ title: "Kopyalanamadı", description: "Tarayıcı pano erişimini engelledi.", variant: "destructive" });
+      toast({ title: t("people.copyFailTitle"), description: t("people.copyFailDesc"), variant: "destructive" });
     }
   };
 
   return (
     <SectionCard
-      title="Kurum QR Paneli"
-      desc="Kartvizit ve konum yönlendirmesi — tabela, stand ve baskı malzemelerinde kullanılır"
+      title={t("people.orgqr.title")}
+      desc={t("people.orgqr.desc")}
       action={
         data && (
           <Button size="sm" variant="outline" asChild>
             <a href={`/api/organizations/${orgId}/vcard?format=vcf`} download>
-              <Icons.Download className="size-3.5" /> vCard indir
+              <Icons.Download className="size-3.5" /> {t("people.vcard.download")}
             </a>
           </Button>
         )
       }
     >
       {loading ? <Loading rows={2} /> : error ? <ErrorState message={error} onRetry={reload} /> : !data ? (
-        <p className="text-xs text-muted-foreground">QR üretilemedi.</p>
+        <p className="text-xs text-muted-foreground">{t("people.orgqr.genFailed")}</p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="maven-stagger-item flex flex-col items-center gap-2 rounded-xl border bg-muted/20 p-4" style={{ animationDelay: "0ms" }}>
             <div className="maven-qrvcard">
-              <img src={data.qrDataUrl} alt={`${orgName} kurum vCard QR kodu`} width={120} height={120} className="size-[120px]" />
+              <img src={data.qrDataUrl} alt={t("people.orgqr.vcardAlt", { name: orgName })} width={120} height={120} className="size-[120px]" />
             </div>
-            <p className="text-xs font-semibold">Kurum QR</p>
-            <p className="text-center text-[11px] leading-snug text-muted-foreground">vCard kartviziti — taramada kişi rehberine kurum olarak eklenir</p>
+            <p className="text-xs font-semibold">{t("people.orgqr.vcardLabel")}</p>
+            <p className="text-center text-[11px] leading-snug text-muted-foreground">{t("people.orgqr.vcardHint")}</p>
           </div>
           <div className="maven-stagger-item flex flex-col items-center gap-2 rounded-xl border bg-muted/20 p-4" style={{ animationDelay: "80ms" }}>
             <div className="maven-qrvcard">
-              <img src={data.locationQrDataUrl} alt={`${orgName} konum QR kodu`} width={120} height={120} className="size-[120px]" />
+              <img src={data.locationQrDataUrl} alt={t("people.orgqr.locationAlt", { name: orgName })} width={120} height={120} className="size-[120px]" />
             </div>
-            <p className="text-xs font-semibold">Konum QR</p>
-            <p className="max-w-full break-words text-center text-[11px] leading-snug text-muted-foreground">{data.locationPayload || "konum bilgisi yok"}</p>
+            <p className="text-xs font-semibold">{t("people.orgqr.locationLabel")}</p>
+            <p className="max-w-full break-words text-center text-[11px] leading-snug text-muted-foreground">{data.locationPayload || t("people.orgqr.noLocation")}</p>
             <Button size="sm" variant="ghost" className="h-7" onClick={copyLocation}>
-              <Icons.Copy className="size-3.5" /> Konum QR&apos;ı kopyala
+              <Icons.Copy className="size-3.5" /> {t("people.orgqr.copyLocation")}
             </Button>
           </div>
         </div>
@@ -1546,6 +1587,7 @@ function OrgQrPanel({ orgId, orgName }: { orgId: string; orgName: string }) {
 
 // ── R9-c: Kurum iletişim kişileri (sınırsız kontak, rol + birincil yıldızı) ──
 function OrgContactsPanel({ orgId, contacts, onChanged }: { orgId: string; contacts: OrgContactRow[]; onChanged: () => void }) {
+  useLang(); // dil değişiminde yeniden render
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<OrgContactRow | null>(null);
@@ -1575,10 +1617,10 @@ function OrgContactsPanel({ orgId, contacts, onChanged }: { orgId: string; conta
           if (c.isPrimary && c.id !== editing?.id) await apiSend(`/api/organization-contacts/${c.id}`, "PUT", { isPrimary: false });
         }
       }
-      toast({ title: editing ? "İletişim kişisi güncellendi" : "İletişim kişisi eklendi", description: form.name });
+      toast({ title: editing ? t("people.contacts.updated") : t("people.contacts.added"), description: form.name });
       setOpen(false); onChanged();
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "Kontak kaydedilemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("people.contacts.saveFailed"), variant: "destructive" });
     } finally { setBusy(false); }
   };
   const togglePrimary = async (c: OrgContactRow) => {
@@ -1586,34 +1628,34 @@ function OrgContactsPanel({ orgId, contacts, onChanged }: { orgId: string; conta
       if (!c.isPrimary) {
         for (const o of contacts) { if (o.isPrimary && o.id !== c.id) await apiSend(`/api/organization-contacts/${o.id}`, "PUT", { isPrimary: false }); }
         await apiSend(`/api/organization-contacts/${c.id}`, "PUT", { isPrimary: true });
-        toast({ title: "Birincil kontak güncellendi", description: c.name });
+        toast({ title: t("people.contacts.primaryUpdated"), description: c.name });
       } else {
         await apiSend(`/api/organization-contacts/${c.id}`, "PUT", { isPrimary: false });
-        toast({ title: "Birincil işareti kaldırıldı", description: c.name });
+        toast({ title: t("people.contacts.primaryRemoved"), description: c.name });
       }
       onChanged();
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "Güncellenemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("people.contacts.updateFailed"), variant: "destructive" });
     }
   };
   const remove = async (c: OrgContactRow) => {
     try {
       await apiSend(`/api/organization-contacts/${c.id}`, "DELETE");
-      toast({ title: "İletişim kişisi silindi", description: c.name });
+      toast({ title: t("people.contacts.deleted"), description: c.name });
       onChanged();
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "Silinemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("people.deleteFailed"), variant: "destructive" });
     }
   };
 
   return (
     <SectionCard
-      title="İletişim Kişileri"
-      desc="Rol bazlı sınırsız kontak — ödeme, teknik, basın sorumluları ayrı ayrı tutulur"
-      action={<Button size="sm" variant="outline" onClick={openNew}><Icons.Plus className="size-3.5" /> Ekle</Button>}
+      title={t("people.contacts.title")}
+      desc={t("people.contacts.desc")}
+      action={<Button size="sm" variant="outline" onClick={openNew}><Icons.Plus className="size-3.5" /> {t("people.add")}</Button>}
     >
       {contacts.length === 0 ? (
-        <p className="py-2 text-xs text-muted-foreground">Kayıtlı kontak yok — &quot;Ekle&quot; ile ilk iletişim kişisini girin.</p>
+        <p className="py-2 text-xs text-muted-foreground">{t("people.contacts.empty")}</p>
       ) : (
         <div className="maven-scroll max-h-96 space-y-2 overflow-y-auto pr-1">
           {contacts.map((c, i) => (
@@ -1621,26 +1663,26 @@ function OrgContactsPanel({ orgId, contacts, onChanged }: { orgId: string; conta
               <button
                 onClick={() => togglePrimary(c)}
                 className="mt-0.5 shrink-0 rounded p-0.5 transition hover:scale-110"
-                aria-label={c.isPrimary ? `${c.name} birincil işaretini kaldır` : `${c.name} kontak birincil yap`}
-                title={c.isPrimary ? "Birincil kontak — kaldırmak için tıkla" : "Birincil kontak yap"}
+                aria-label={c.isPrimary ? t("people.contacts.removePrimaryAria", { name: c.name }) : t("people.contacts.makePrimaryAria", { name: c.name })}
+                title={c.isPrimary ? t("people.contacts.primaryTip") : t("people.contacts.makePrimaryTip")}
               >
                 <Icons.Star className={cn("size-4", c.isPrimary ? "fill-amber-400 text-amber-400" : "text-muted-foreground/40 hover:text-amber-400")} />
               </button>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <p className="truncate text-sm font-medium leading-tight">{c.name}</p>
-                  <Chip tone={c.role === "PRIMARY" ? "teal" : "neutral"}>{label(CONTACT_ROLE, c.role)}</Chip>
+                  <Chip tone={c.role === "PRIMARY" ? "teal" : "neutral"}>{tLabel(CONTACT_ROLE, c.role)}</Chip>
                   {c.department && <Chip tone="violet">{c.department}</Chip>}
                 </div>
                 <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                  {[c.title, c.email, c.phone].filter(Boolean).join(" · ") || "iletişim bilgisi yok"}
+                  {[c.title, c.email, c.phone].filter(Boolean).join(" · ") || t("people.contacts.noInfo")}
                 </p>
               </div>
               <span className="flex shrink-0 items-center gap-0.5 opacity-60 transition group-hover:opacity-100">
-                <button onClick={() => openEdit(c)} className="rounded p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={`${c.name} kontak düzenle`}>
+                <button onClick={() => openEdit(c)} className="rounded p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={t("people.contacts.editAria", { name: c.name })}>
                   <Icons.Pencil className="size-3.5" />
                 </button>
-                <button onClick={() => remove(c)} className="rounded p-1.5 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600" aria-label={`${c.name} kontak sil`}>
+                <button onClick={() => remove(c)} className="rounded p-1.5 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600" aria-label={t("people.contacts.deleteAria", { name: c.name })}>
                   <Icons.Trash2 className="size-3.5" />
                 </button>
               </span>
@@ -1652,32 +1694,32 @@ function OrgContactsPanel({ orgId, contacts, onChanged }: { orgId: string; conta
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{editing ? "İletişim Kişisini Düzenle" : "Yeni İletişim Kişisi"}</DialogTitle>
-            <DialogDescription>Kurumun ödeme, teknik veya basın sorumlusunu ayrı ayrı kaydedin.</DialogDescription>
+            <DialogTitle>{editing ? t("people.contacts.editTitle") : t("people.contacts.newTitle")}</DialogTitle>
+            <DialogDescription>{t("people.contacts.dialogDesc")}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="sm:col-span-2"><Label>Ad Soyad *</Label><Input className="mt-1" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-            <div><Label>Unvan</Label><Input className="mt-1" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
+            <div className="sm:col-span-2"><Label>{t("people.lblFullName")}</Label><Input className="mt-1" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+            <div><Label>{t("people.lblTitle")}</Label><Input className="mt-1" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
             <div>
-              <Label>Rol</Label>
+              <Label>{t("people.lblRole")}</Label>
               <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(CONTACT_ROLE).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  {Object.entries(CONTACT_ROLE).map(([k]) => <SelectItem key={k} value={k}>{tLabel(CONTACT_ROLE, k)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            <div><Label>Departman</Label><Input className="mt-1" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} placeholder="Örn. Finans" /></div>
-            <div><Label>Telefon</Label><Input className="mt-1" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
-            <div className="sm:col-span-2"><Label>E-posta</Label><Input type="email" className="mt-1" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+            <div><Label>{t("people.lblDepartment")}</Label><Input className="mt-1" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} placeholder={t("people.contacts.deptPh")} /></div>
+            <div><Label>{t("people.lblPhone")}</Label><Input className="mt-1" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+            <div className="sm:col-span-2"><Label>{t("people.lblEmail")}</Label><Input type="email" className="mt-1" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
             <div className="flex items-center gap-2 sm:col-span-2">
               <Checkbox id="contact-primary" checked={form.isPrimary} onCheckedChange={(v) => setForm({ ...form, isPrimary: v === true })} />
-              <Label htmlFor="contact-primary" className="cursor-pointer text-sm font-normal">Birincil kontak (kartvizitte görünür)</Label>
+              <Label htmlFor="contact-primary" className="cursor-pointer text-sm font-normal">{t("people.contacts.primaryCheckbox")}</Label>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Vazgeç</Button>
-            <Button onClick={save} disabled={busy || !form.name.trim()}>{busy ? "Kaydediliyor…" : "Kaydet"}</Button>
+            <Button variant="outline" onClick={() => setOpen(false)}>{t("people.cancel")}</Button>
+            <Button onClick={save} disabled={busy || !form.name.trim()}>{busy ? t("people.saving") : t("people.save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1686,6 +1728,7 @@ function OrgContactsPanel({ orgId, contacts, onChanged }: { orgId: string; conta
 }
 
 export function OrganizationsView() {
+  useLang(); // dil değişiminde yeniden render
   const { tenant, bump, refreshKey, currentEditionId } = useApp();
   const { toast } = useToast();
   const [q, setQ] = useState("");
@@ -1696,6 +1739,14 @@ export function OrganizationsView() {
   const [form, setForm] = useState({ name: "", type: "COMPANY", city: "", website: "", generalEmail: "", address: "", description: "", locationNote: "" });
 
   const { data, error, reload, loading } = useApi<OrgRow[]>(() => listEntity<OrgRow>("organizations", { q }), [q, refreshKey]);
+
+  // Faz E: teslim + sipariş durum map'leri (render başına bir kez)
+  const deliverableStatusMap = Object.fromEntries(Object.entries(DELIVERABLE_MAP).map(([k]) => [k, tLabel(DELIVERABLE_MAP, k)]));
+  // PARTIALLY_PAID taban status sözlüğünde PAYMENT "Kısmi" ile çakıştığından sipariş durumu people.orderStatus.* ile çevrilir
+  const orderStatusMap: Record<string, string> = {
+    OPEN: t("people.orderStatus.open"), PARTIALLY_PAID: t("people.orderStatus.partiallyPaid"),
+    PAID: t("people.orderStatus.paid"), CANCELLED: t("people.orderStatus.cancelled"),
+  };
 
   const open360 = async (o: OrgRow) => {
     setSelected(o);
@@ -1733,35 +1784,35 @@ export function OrganizationsView() {
     try {
       if (editingOrg) {
         await apiSend(`/api/organizations/${editingOrg.id}`, "PUT", payload);
-        toast({ title: "Kurum güncellendi", description: form.name });
+        toast({ title: t("people.org.updated"), description: form.name });
       } else {
         await apiSend("/api/organizations", "POST", { ...payload, tenantId: tenant?.id });
-        toast({ title: "Kurum oluşturuldu", description: form.name });
+        toast({ title: t("people.org.created"), description: form.name });
       }
       setCreateOpen(false); setForm(defaultOrgForm); setEditingOrg(null);
       reload(); bump();
       if (selected?.id === editingOrg?.id) void reloadDetail();
     } catch (e) {
-      toast({ title: "Hata", description: e instanceof Error ? e.message : "Kurum kaydedilemedi", variant: "destructive" });
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("people.org.saveFailed"), variant: "destructive" });
     }
   };
 
   return (
     <div>
-      <PageHeader title="Kurum/Kuruluşlar" desc="Sponsor bir TÜR değil, edisyona atanan ROL'dür (§4) — kalıcı profil burada, roller edisyon içinde">
-        <Input placeholder="Kurum ara…" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />
+      <PageHeader title={t("people.orgTitle")} desc={t("people.orgDesc")}>
+        <Input placeholder={t("people.org.searchPh")} value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild><Button size="sm" onClick={openCreate}><Icons.Building2 className="size-4" /> Kurum Ekle</Button></DialogTrigger>
+          <DialogTrigger asChild><Button size="sm" onClick={openCreate}><Icons.Building2 className="size-4" /> {t("people.org.add")}</Button></DialogTrigger>
           <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{editingOrg ? "Kurumu Düzenle" : "Yeni Kurum"}</DialogTitle>
-              <DialogDescription>Kurumsal kimlik kartı alanları QR kartvizite gömülür.</DialogDescription>
+              <DialogTitle>{editingOrg ? t("people.org.editTitle") : t("people.org.newTitle")}</DialogTitle>
+              <DialogDescription>{t("people.org.dialogDesc")}</DialogDescription>
             </DialogHeader>
             <div className="grid gap-3 sm:grid-cols-2">
               {/* R10-a: kurum logosu — benzersiz adla Medya Arşivi → Kurum/Kuruluş Logoları klasörüne */}
               {editingOrg ? (
                 <div className="rounded-lg border bg-muted/20 p-3 sm:col-span-2">
-                  <p className="mb-2 text-xs font-semibold">Kurum/Kuruluş Logosu</p>
+                  <p className="mb-2 text-xs font-semibold">{t("people.org.logoLabel")}</p>
                   <LinkedPhotoUploader
                     editionId={currentEditionId}
                     systemFolder="KURUM_LOGO"
@@ -1776,41 +1827,41 @@ export function OrganizationsView() {
                       reload();
                       if (selected?.id === editingOrg.id) setDetail((d) => (d ? { ...d, organization: { ...d.organization, logoUrl: dataUrl } } : d));
                     }}
-                    folderLabel="Kurum/Kuruluş Logoları"
-                    alt={`${editingOrg.name} logosu`}
+                    folderLabel={t("people.folder.orgLogos")}
+                    alt={t("people.logoAlt", { name: editingOrg.name })}
                   />
                 </div>
               ) : (
-                <p className="text-[11px] leading-snug text-muted-foreground sm:col-span-2">Logo, kurum kaydedildikten sonra “Kurumu Düzenle” ekranından eklenir — Medya Arşivi → Kurum/Kuruluş Logoları klasörüne benzersiz adla kaydedilir.</p>
+                <p className="text-[11px] leading-snug text-muted-foreground sm:col-span-2">{t("people.org.logoHint")}</p>
               )}
-              <div className="sm:col-span-2"><Label>Ad</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+              <div className="sm:col-span-2"><Label>{t("people.lblName")}</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
               <div>
-                <Label>Tür</Label>
+                <Label>{t("people.lblType")}</Label>
                 <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {Object.entries(ORG_TYPES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                    {Object.entries(ORG_TYPES).map(([k]) => <SelectItem key={k} value={k}>{tLabel(ORG_TYPES, k)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
-              <div><Label>Şehir</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
-              <div><Label>Web</Label><Input value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} /></div>
-              <div><Label>Genel E-posta</Label><Input type="email" placeholder="info@kurum.com" value={form.generalEmail} onChange={(e) => setForm({ ...form, generalEmail: e.target.value })} /></div>
+              <div><Label>{t("people.lblCity")}</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
+              <div><Label>{t("people.lblWeb")}</Label><Input value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} /></div>
+              <div><Label>{t("people.org.generalEmail")}</Label><Input type="email" placeholder="info@kurum.com" value={form.generalEmail} onChange={(e) => setForm({ ...form, generalEmail: e.target.value })} /></div>
               <div className="sm:col-span-2">
-                <Label>Adres</Label>
-                <Textarea className="mt-1" rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Mahalle, cadde, no, ilçe / il" />
+                <Label>{t("people.lblAddress")}</Label>
+                <Textarea className="mt-1" rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder={t("people.org.addressPh")} />
               </div>
               <div className="sm:col-span-2">
-                <Label>Açıklama</Label>
-                <Textarea className="mt-1" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Kurum hakkında kısa bilgi…" />
+                <Label>{t("people.lblDesc")}</Label>
+                <Textarea className="mt-1" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder={t("people.org.descPh")} />
               </div>
               <div className="sm:col-span-2">
-                <Label>Konum Notu</Label>
-                <Input value={form.locationNote} onChange={(e) => setForm({ ...form, locationNote: e.target.value })} placeholder="Salon / Fuar / Otel konumu — QR'a gömülür" />
-                <p className="mt-1 text-[11px] text-muted-foreground">Örn. &quot;Fuar Alanı · Stand A24&quot; — Konum QR bu notu kullanır.</p>
+                <Label>{t("people.lblLocationNote")}</Label>
+                <Input value={form.locationNote} onChange={(e) => setForm({ ...form, locationNote: e.target.value })} placeholder={t("people.org.locationPh")} />
+                <p className="mt-1 text-[11px] text-muted-foreground">{t("people.org.locationExample")}</p>
               </div>
             </div>
-            <DialogFooter><Button onClick={saveOrg} disabled={!form.name}>{editingOrg ? "Kaydet" : "Oluştur"}</Button></DialogFooter>
+            <DialogFooter><Button onClick={saveOrg} disabled={!form.name}>{editingOrg ? t("people.save") : t("people.create")}</Button></DialogFooter>
           </DialogContent>
         </Dialog>
       </PageHeader>
@@ -1818,16 +1869,16 @@ export function OrganizationsView() {
       {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
           {(data ?? []).map((o, i) => (
-            <button key={o.id} onClick={() => open360(o)} onDoubleClick={() => openEdit(o)} title="Çift tıkla: kurumu düzenle" className="maven-stagger-item min-w-0 cursor-pointer rounded-xl border bg-card p-4 text-left transition hover:border-primary/40 hover:shadow-sm" style={{ animationDelay: `${i * 40}ms` }}>
+            <button key={o.id} onClick={() => open360(o)} onDoubleClick={() => openEdit(o)} title={t("people.org.dblClickTip")} className="maven-stagger-item min-w-0 cursor-pointer rounded-xl border bg-card p-4 text-left transition hover:border-primary/40 hover:shadow-sm" style={{ animationDelay: `${i * 40}ms` }}>
               <div className="flex items-center gap-2">
                 {o.logoUrl ? (
-                  <img src={o.logoUrl} alt={`${o.name} logosu`} className="size-12 shrink-0 rounded-lg border bg-background object-contain p-0.5" />
+                  <img src={o.logoUrl} alt={t("people.logoAlt", { name: o.name })} className="size-12 shrink-0 rounded-lg border bg-background object-contain p-0.5" />
                 ) : (
                   <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-violet-500/10 text-violet-600"><Icons.Building2 className="size-4" /></span>
                 )}
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{o.name}</p>
-                  <p className="text-xs text-muted-foreground">{o.city ?? "—"} · {label(ORG_TYPES, o.type)}</p>
+                  <p className="text-xs text-muted-foreground">{o.city ?? "—"} · {tLabel(ORG_TYPES, o.type)}</p>
                 </div>
               </div>
               {(o.generalEmail || o.locationNote) && (
@@ -1838,8 +1889,8 @@ export function OrganizationsView() {
                 </p>
               )}
               <div className="mt-3 flex flex-wrap gap-1.5">
-                <Chip tone="teal">{o._count?.eventAssignments ?? 0} etkinlik rolü</Chip>
-                <Chip tone="violet">{o._count?.sponsorAgreements ?? 0} anlaşma</Chip>
+                <Chip tone="teal">{t("people.org.roleCount", { count: o._count?.eventAssignments ?? 0 })}</Chip>
+                <Chip tone="violet">{t("people.org.agreementCount", { count: o._count?.sponsorAgreements ?? 0 })}</Chip>
               </div>
             </button>
           ))}
@@ -1851,22 +1902,22 @@ export function OrganizationsView() {
         <SheetContent className="w-full overflow-y-auto maven-scroll sm:max-w-xl">
           <SheetHeader>
             <SheetTitle>{selected?.name}</SheetTitle>
-            <SheetDescription>Kurum 360 — kimlik kartı, roller, sözleşmeler, haklar, standlar, finans ve kontaklar</SheetDescription>
+            <SheetDescription>{t("people.org360.desc")}</SheetDescription>
           </SheetHeader>
           {!detail ? <div className="p-6"><Loading rows={5} /></div> : (
             <div className="space-y-4 px-4 pb-8">
               <SectionCard
-                title="Kurumsal Kimlik Kartı"
-                desc="Genel iletişim ve konum — QR kartvizitine gömülür (düşünce bulutu 5)"
+                title={t("people.org360.identityTitle")}
+                desc={t("people.org360.identityDesc")}
                 action={
                   <Button size="sm" variant="outline" onClick={() => openEdit(detail.organization)}>
-                    <Icons.Pencil className="size-3.5" /> Düzenle
+                    <Icons.Pencil className="size-3.5" /> {t("people.edit")}
                   </Button>
                 }
               >
                 {/* R10-a: logo — kurum 360 kimlik kartında görüntülenir ve buradan yüklenir */}
                 <div className="mb-2 rounded-lg border bg-muted/20 p-3">
-                  <p className="mb-2 text-xs font-semibold">Kurum/Kuruluş Logosu</p>
+                  <p className="mb-2 text-xs font-semibold">{t("people.org.logoLabel")}</p>
                   <LinkedPhotoUploader
                     editionId={currentEditionId}
                     systemFolder="KURUM_LOGO"
@@ -1881,19 +1932,19 @@ export function OrganizationsView() {
                       setSelected((s) => (s && s.id === detail.organization.id ? { ...s, logoUrl: dataUrl } : s));
                       reload();
                     }}
-                    folderLabel="Kurum/Kuruluş Logoları"
-                    alt={`${detail.organization.name} logosu`}
+                    folderLabel={t("people.folder.orgLogos")}
+                    alt={t("people.logoAlt", { name: detail.organization.name })}
                   />
                 </div>
-                <Row360Line label="Tür"><Chip tone="violet">{label(ORG_TYPES, detail.organization.type)}</Chip></Row360Line>
-                <Row360Line label="Genel E-posta">{detail.organization.generalEmail ?? "—"}</Row360Line>
-                <Row360Line label="Web">{detail.organization.website ?? "—"}</Row360Line>
-                <Row360Line label="Adres">
+                <Row360Line label={t("people.lblType")}><Chip tone="violet">{tLabel(ORG_TYPES, detail.organization.type)}</Chip></Row360Line>
+                <Row360Line label={t("people.org.generalEmail")}>{detail.organization.generalEmail ?? "—"}</Row360Line>
+                <Row360Line label={t("people.lblWeb")}>{detail.organization.website ?? "—"}</Row360Line>
+                <Row360Line label={t("people.lblAddress")}>
                   {detail.organization.address
                     ? <span className="whitespace-pre-line text-xs leading-snug">{detail.organization.address}</span>
                     : "—"}
                 </Row360Line>
-                <Row360Line label="Konum Notu">
+                <Row360Line label={t("people.lblLocationNote")}>
                   {detail.organization.locationNote
                     ? <span className="inline-flex items-center gap-1 text-xs"><Icons.MapPin className="size-3 shrink-0 text-teal-600" aria-hidden />{detail.organization.locationNote}</span>
                     : "—"}
@@ -1908,36 +1959,36 @@ export function OrganizationsView() {
 
               <OrgQrPanel orgId={detail.organization.id} orgName={detail.organization.name} />
 
-              <SectionCard title="Rol ve Görevler" desc="etkinlik bazında atamalar">
-                {detail.eventAssignments.length === 0 ? <EmptyState title="Bu kuruma atanmış etkinlik rolü yok" /> : detail.eventAssignments.map((a) => (
+              <SectionCard title={t("people.org360.rolesTitle")} desc={t("people.org360.rolesDesc")}>
+                {detail.eventAssignments.length === 0 ? <EmptyState title={t("people.org360.noRoles")} /> : detail.eventAssignments.map((a) => (
                   <Row360Line key={a.id} label={a.edition.name}><Chip tone="teal">{a.role}</Chip></Row360Line>
                 ))}
               </SectionCard>
 
               {detail.sponsorAgreements.map((ag) => (
-                <SectionCard key={ag.id} title={ag.package?.name ?? ag.tier?.name ?? "Sponsorluk"} desc={`durum: ${ag.status} · ${fmtMoney(ag.amount, ag.currency)}`}>
-                  <Row360Line label="Sözleşme"><Chip tone={ag.status === "ACTIVE" || ag.status === "CONTRACTED" ? "emerald" : "amber"}>{ag.status}</Chip></Row360Line>
+                <SectionCard key={ag.id} title={ag.package?.name ?? ag.tier?.name ?? t("people.org360.sponsorship")} desc={t("people.org360.statusMoney", { status: ag.status, amount: fmtMoney(ag.amount, ag.currency) })}>
+                  <Row360Line label={t("people.org360.agreement")}><Chip tone={ag.status === "ACTIVE" || ag.status === "CONTRACTED" ? "emerald" : "amber"}>{ag.status}</Chip></Row360Line>
                   {detail.entitlements.filter((e) => e.quantityGranted > 0).map((e) => (
                     <Row360Line key={e.id} label={e.label}>
                       <span className="tabular-nums text-sm font-medium">
                         {e.quantityConsumed} / {e.quantityGranted}
-                        {e.quantityReserved > 0 && <span className="ml-1 text-xs text-amber-600">(+{e.quantityReserved} ayrılmış)</span>}
-                        <span className="ml-1 text-xs text-emerald-600">kalan {Math.max(0, e.quantityGranted - e.quantityConsumed - e.quantityReserved)}</span>
+                        {e.quantityReserved > 0 && <span className="ml-1 text-xs text-amber-600">{t("people.org360.reserved", { count: e.quantityReserved })}</span>}
+                        <span className="ml-1 text-xs text-emerald-600">{t("people.org360.remaining", { count: Math.max(0, e.quantityGranted - e.quantityConsumed - e.quantityReserved) })}</span>
                       </span>
                     </Row360Line>
                   ))}
-                  <Row360Line label="Stand">
+                  <Row360Line label={t("people.org360.booth")}>
                     {detail.boothAllocations.length > 0
                       ? detail.boothAllocations.map((b) => <span key={b.id} className="ml-1"><Chip tone="violet">{b.boothUnit.code}</Chip> {b.boothUnit.sizeSqm} m²</span>)
                       : "—"}
                   </Row360Line>
                   <Separator className="my-2" />
-                  <p className="mb-1 text-xs font-semibold text-muted-foreground">Teslimler</p>
+                  <p className="mb-1 text-xs font-semibold text-muted-foreground">{t("people.org360.deliverables")}</p>
                   <div className="space-y-1">
                     {ag.deliverables.map((d) => (
                       <div key={d.id} className="flex items-center justify-between gap-2 text-xs">
                         <span>{d.name}</span>
-                        <StatusBadge map={{ NOT_STARTED: "Başlamadı", WAITING_SPONSOR: "Sponsor bekliyor", SUBMITTED: "Gönderildi", UNDER_REVIEW: "İncelemede", APPROVED: "Onaylandı", REJECTED: "Reddedildi", COMPLETED: "Tamamlandı" }} value={d.status} />
+                        <StatusBadge map={deliverableStatusMap} value={d.status} />
                       </div>
                     ))}
                   </div>
@@ -1945,10 +1996,10 @@ export function OrganizationsView() {
               ))}
 
               {detail.orders.length > 0 && (
-                <SectionCard title="Finansal" desc="siparişler">
+                <SectionCard title={t("people.org360.financeTitle")} desc={t("people.org360.financeDesc")}>
                   {detail.orders.map((o) => (
                     <Row360Line key={o.id} label={o.orderNo}>
-                      <span className="tabular-nums">{fmtMoney(o.totalAmount, o.currency)} <StatusBadge map={{ OPEN: "Açık", PARTIALLY_PAID: "Kısmi ödendi", PAID: "Ödendi", CANCELLED: "İptal" }} value={o.status} /></span>
+                      <span className="tabular-nums">{fmtMoney(o.totalAmount, o.currency)} <StatusBadge map={orderStatusMap} value={o.status} /></span>
                     </Row360Line>
                   ))}
                 </SectionCard>

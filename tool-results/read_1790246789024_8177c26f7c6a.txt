@@ -1,0 +1,552 @@
+     1→"use client";
+     2→// Sahada — canlı onsite kontrol (§07/§42): kapı seçimi, arama, tarama, tekrar/ret kuyruğu
+     3→// + Sertifikalar (§43) + İletişim + Operasyon + Ayarlar
+     4→import { useEffect, useMemo, useRef, useState } from "react";
+     5→import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
+     6→import { useApp } from "@/lib/store";
+     7→import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
+     8→import { ATTENDANCE_STATUS, BADGE_STATUS, BADGE_FONTS, CAMPAIGN_PHASE, CERTIFICATE_STATUS, EMAIL_TEMPLATE_CATEGORY, MAIL_PROVIDER_KIND, TASK_STATUS, TASK_PRIORITY, fmtDateTime, fmtDate, label, CAPABILITIES } from "@/lib/constants";
+     9→import { Button } from "@/components/ui/button";
+    10→import { Input } from "@/components/ui/input";
+    11→import { Label } from "@/components/ui/label";
+    12→import { Textarea } from "@/components/ui/textarea";
+    13→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    14→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+    15→import { Switch } from "@/components/ui/switch";
+    16→import { Checkbox } from "@/components/ui/checkbox";
+    17→import { useToast } from "@/hooks/use-toast";
+    18→import { useLang, t, exportI18nJson, importI18nJson } from "@/lib/i18n";
+    19→import * as Icons from "lucide-react";
+    20→import { cn } from "@/lib/utils";
+    21→
+    22→// ─── SAHA ───────────────────────────────────────────────────────────────────
+    23→
+    24→interface ScanRow {
+    25→  id: string; location: string; doorName?: string | null; action: string; result: string; reason?: string | null; device?: string | null; operator?: string | null; scannedAt: string;
+    26→  participation?: { id: string; person: { firstName: string; lastName: string } } | null;
+    27→}
+    28→interface ScanResult {
+    29→  result: string; tone?: string; reason?: string | null;
+    30→  person?: { id: string; name: string; company?: string | null; title?: string | null };
+    31→  registration?: { status: string; category?: string | null; funding: string } | null;
+    32→  badge?: { status: string; profile?: string | null } | null;
+    33→}
+    34→
+    35→export function OnsiteView() {
+    36→  const { currentEditionId, bump, refreshKey } = useApp();
+    37→  const { toast } = useToast();
+    38→  const [door, setDoor] = useState("Kapı A");
+    39→  const [code, setCode] = useState("");
+    40→  const [scanning, setScanning] = useState(false);
+    41→  const [last, setLast] = useState<ScanResult | null>(null);
+    42→  const [denyTarget, setDenyTarget] = useState<string | null>(null);
+    43→  const [forceReason, setForceReason] = useState("");
+    44→
+    45→  const { data: scans, error, reload, loading } = useApi<ScanRow[]>(() => listEntity<ScanRow>("scan-events", { limit: 60 }), [currentEditionId, refreshKey]);
+    46→
+    47→  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    48→  const todays = (scans ?? []).filter((s) => new Date(s.scannedAt) >= todayStart);
+    49→  const uniqueArrived = new Set(todays.filter((s) => s.action === "ENTRY" && s.result === "ALLOWED").map((s) => s.participation?.id)).size;
+    50→  const rescans = todays.filter((s) => s.result === "RESCAN_WARNING");
+    51→  const denied = todays.filter((s) => s.result === "DENIED");
+    52→
+    53→  const scan = async (force?: string) => {
+    54→    if (!code.trim()) return;
+    55→    setScanning(true);
+    56→    try {
+    57→      const res = await apiSend<ScanResult>("/api/scan", "POST", { code: code.trim(), door, forceReason: force });
+    58→      setLast(res);
+    59→      if (res.result === "ALLOWED") setCode("");
+    60→      if (force) setDenyTarget(null); setForceReason("");
+    61→      toast({
+    62→        title: res.result === "ALLOWED" ? "Giriş izin verildi" : res.result === "RESCAN_WARNING" ? "Tekrar tarama — sarı durum" : "Giriş reddedildi",
+    63→        variant: res.result === "DENIED" ? "destructive" : "default",
+    64→        description: res.person ? `${res.person.name}${res.reason ? ` — ${res.reason}` : ""}` : res.reason,
+    65→      });
+    66→      reload(); bump();
+    67→    } catch (e) {
+    68→      const msg = e instanceof Error ? e.message : "Tarama hatası";
+    69→      if (msg.includes("bulunamadı")) {
+    70→        setLast({ result: "DENIED", tone: "red", reason: msg });
+    71→      }
+    72→      toast({ title: "Tarama", description: msg, variant: "destructive" });
+    73→    } finally {
+    74→      setScanning(false);
+    75→    }
+    76→  };
+    77→
+    78→  return (
+    79→    <div className="space-y-5">
+    80→      <PageHeader title="Sahada — Canlı Kontrol" desc="Kapı masası: kimlik doğrulama, tekrar tarama ayrı sarı durum; tarama geçmişi silinmez" />
+    81→
+    82→      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    83→        <KpiCard label="Benzersiz Gelen (bugün)" value={uniqueArrived} sub="geçerli ilk giriş — oturum girişi sayılmaz" tone="emerald" icon={<Icons.UserCheck className="size-4" />} />
+    84→        <KpiCard label="Tekrar Tarama" value={rescans.length} sub="ilk girişin yerine geçmez" tone="amber" icon={<Icons.RotateCcw className="size-4" />} />
+    85→        <KpiCard label="Reddedilen" value={denied.length} sub="yetkiliye yönlendirme" tone="rose" icon={<Icons.UserX className="size-4" />} />
+    86→        <KpiCard label="Toplam Olay" value={todays.length} sub="son 24 saat" icon={<Icons.Activity className="size-4" />} />
+    87→      </div>
+    88→
+    89→      <div className="grid gap-4 lg:grid-cols-5">
+    90→        <SectionCard title="Tarama Masası" desc={`${door} · görevli kapsamı: etkinlik girişi + oturum`} className="min-w-0 lg:col-span-2">
+    91→          <div className="flex gap-2">
+    92→            {["Kapı A", "Kapı B", "Gala", "VIP Lounge"].map((d) => (
+    93→              <button key={d} onClick={() => setDoor(d)} className={cn("rounded-lg border px-3 py-1.5 text-xs font-medium transition", door === d ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:border-primary/40")}>
+    94→                {d}
+    95→              </button>
+    96→            ))}
+    97→          </div>
+    98→          <div className="mt-3 flex gap-2">
+    99→            <Input placeholder="QR kodu (örn. QR-0001) veya part_id…" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && scan()} className="font-mono" />
+   100→            <Button onClick={() => scan()} disabled={scanning || !code.trim()}>
+   101→              <Icons.ScanLine className="size-4" /> {scanning ? "Okutuluyor…" : "Tara"}
+   102→            </Button>
+   103→          </div>
+   104→
+   105→          {/* sonuç kartı */}
+   106→          {last && (
+   107→            <div className={cn("mt-3 rounded-lg border-2 p-3",
+   108→              last.result === "ALLOWED" ? "border-emerald-300 bg-emerald-50/70" : last.result === "RESCAN_WARNING" ? "border-amber-300 bg-amber-50/70" : "border-rose-300 bg-rose-50/70")}>
+   109→              <div className="flex items-center gap-2">
+   110→                {last.result === "ALLOWED" ? <Icons.CircleCheck className="size-5 text-emerald-600" /> : last.result === "RESCAN_WARNING" ? <Icons.TriangleAlert className="size-5 text-amber-600" /> : <Icons.Ban className="size-5 text-rose-600" />}
+   111→                <p className="text-sm font-bold">{last.result === "ALLOWED" ? "Girişe izin ver" : last.result === "RESCAN_WARNING" ? "Tekrar tarama" : "Yetkiliye yönlendir"}</p>
+   112→              </div>
+   113→              {last.person && (
+   114→                <div className="mt-2 space-y-0.5 text-xs">
+   115→                  <p className="font-semibold">{last.person.name} <span className="font-normal text-muted-foreground">{last.person.title ? `· ${last.person.title}` : ""}</span></p>
+   116→                  <p className="text-muted-foreground">{last.person.company ?? "—"}</p>
+   117→                </div>
+   118→              )}
+   119→              {last.registration && (
+   120→                <div className="mt-2 flex flex-wrap gap-1 text-[11px]">
+   121→                  <Chip tone="teal">{last.registration.category ?? "kategori yok"}</Chip>
+   122→                  <Chip tone={last.registration.status === "CONFIRMED" ? "emerald" : "amber"}>kayıt: {last.registration.status}</Chip>
+   123→                  {last.badge && <Chip tone="violet">yaka kartı: {last.badge.profile} {last.badge.status}</Chip>}
+   124→                </div>
+   125→              )}
+   126→              {last.reason && <p className="mt-2 text-xs text-muted-foreground">{last.reason}</p>}
+   127→              {last.result === "DENIED" && (
+   128→                <Button size="sm" variant="outline" className="mt-2" onClick={() => setDenyTarget(last.person?.id ?? "")}>
+   129→                  Manuel İstisna (gerekçe ile)
+   130→                </Button>
+   131→              )}
+   132→            </div>
+   133→          )}
+   134→          <p className="mt-3 text-[11px] text-muted-foreground">Demo: QR-0001 … QR-0024 aktif yaka kartları; iptal/reddedilen katılımcı kodu yoktur → kırmızı durum.</p>
+   135→        </SectionCard>
+   136→
+   137→        <SectionCard title="Canlı Tarama Akışı" desc="olay bazlı — ilk geçerli giriş ve tekrar tarama ayrı satır" className="min-w-0 lg:col-span-3" bodyClass="max-h-[420px] overflow-y-auto maven-scroll">
+   138→          {loading ? <Loading rows={6} /> : error ? <ErrorState message={error} onRetry={reload} /> : (scans ?? []).length === 0 ? (
+   139→            <EmptyState title="Bu kapı için giriş kaydı yok" desc="Doğru gün ve kapıyı seçtiğinizden emin olun." />
+   140→          ) : (
+   141→            <div className="space-y-1.5">
+   142→              {(scans ?? []).map((s) => (
+   143→                <div key={s.id} className={cn("flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-sm",
+   144→                  s.result === "ALLOWED" ? "border-emerald-100 bg-emerald-50/40" : s.result === "RESCAN_WARNING" ? "border-amber-200 bg-amber-50/60" : "border-rose-200 bg-rose-50/60")}>
+   145→                  <span className={cn("grid size-6 place-items-center rounded-full text-white",
+   146→                    s.result === "ALLOWED" ? "bg-emerald-500" : s.result === "RESCAN_WARNING" ? "bg-amber-500" : "bg-rose-500")}>
+   147→                    {s.result === "ALLOWED" ? <Icons.Check className="size-3.5" /> : s.result === "RESCAN_WARNING" ? <Icons.RotateCcw className="size-3.5" /> : <Icons.X className="size-3.5" />}
+   148→                  </span>
+   149→                  <span className="min-w-0 flex-1 truncate font-medium">
+   150→                    {s.participation ? `${s.participation.person.firstName} ${s.participation.person.lastName}` : "Bilinmeyen kod"}
+   151→                    <span className="ml-2 text-xs text-muted-foreground">{s.action} · {s.location}{s.doorName ? ` (${s.doorName})` : ""}</span>
+   152→                  </span>
+   153→                  {s.reason && <span className="hidden max-w-56 truncate text-xs text-muted-foreground md:inline">{s.reason}</span>}
+   154→                  <span className="text-xs tabular-nums text-muted-foreground">{fmtDateTime(s.scannedAt)}</span>
+   155→                  <span className="text-[11px] text-muted-foreground">{s.operator}</span>
+   156→                </div>
+   157→              ))}
+   158→            </div>
+   159→          )}
+   160→        </SectionCard>
+   161→      </div>
+   162→
+   163→      <Dialog open={Boolean(denyTarget)} onOpenChange={(o) => !o && setDenyTarget(null)}>
+   164→        <DialogContent className="sm:max-w-sm">
+   165→          <DialogHeader><DialogTitle>Manuel İstisna</DialogTitle><DialogDescription>Gerekçe zorunlu; karar tarama geçmişine DENIED + istisna olarak işlenir.</DialogDescription></DialogHeader>
+   166→          <div><Label>Gerekçe</Label><Textarea value={forceReason} onChange={(e) => setForceReason(e.target.value)} placeholder="Örn. yaka kartı basımı sürüyor, kimlik ibraz edildi…" className="mt-1" /></div>
+   167→          <DialogFooter>
+   168→            <Button variant="outline" onClick={() => setDenyTarget(null)}>Vazgeç</Button>
+   169→            <Button disabled={!forceReason} onClick={() => scan(forceReason)}>İstisna Uygula</Button>
+   170→          </DialogFooter>
+   171→        </DialogContent>
+   172→      </Dialog>
+   173→    </div>
+   174→  );
+   175→}
+   176→
+   177→// ─── SERTİFİKALAR ───────────────────────────────────────────────────────────
+   178→
+   179→interface CertDefRow {
+   180→  id: string; name: string; type: string; eligibilityRule?: string | null; signerName?: string | null;
+   181→  widthMm: number; heightMm: number; bleedMm: number; orientation: string; backgroundDataUrl: string | null;
+   182→  fontKey: string; textColor: string; bodyTemplate: string | null; tierNote: string | null;
+   183→  designJson?: string | null; issues: { id: string; status: string; eligibilityNote?: string | null }[];
+   184→}
+   185→interface CertIssueRow {
+   186→  id: string; status: string; eligibilityNote?: string | null; generatedAt?: string | null; deliveredAt?: string | null;
+   187→  participation?: { id: string; person: { firstName: string; lastName: string; company: string | null; title: string | null } } | null;
+   188→}
+   189→interface CertDraft {
+   190→  id: string; name: string;
+   191→  widthMm: number; heightMm: number; bleedMm: number; orientation: string;
+   192→  fontKey: string; textColor: string; tierNote: string | null;
+   193→  backgroundDataUrl: string | null; bodyTemplate: string | null; designJson: string | null;
+   194→}
+   195→
+   196→// gövde şablonu yer tutucuları — tıkla, metnin sonuna eklenir
+   197→const CERT_TOKENS = ["{{fullName}}", "{{title}}", "{{company}}", "{{edition}}", "{{tier}}", "{{date}}", "{{serial}}"] as const;
+   198→const MAX_BG_BYTES = 600 * 1024;
+   199→
+   200→// ── R10-b: KANVAS sertifika tasarımcısı — yaka kartı tasarımcısı mimarisi ───
+   201→const CERT_PX_PER_MM = 2.2; // kanvas ölçeği (mobilde overflow-x kabı ile kaydırılır)
+   202→
+   203→type CertElementType = "text" | "image" | "line" | "qr";
+   204→interface CertElement {
+   205→  id: string;
+   206→  type: CertElementType;
+   207→  x: number; y: number; w: number; h: number; // mm
+   208→  text?: string;               // metin içeriği — {{}} yer tutucuları serbest / görsel alan etiketi
+   209→  placeholderBinding?: string; // ayrılmış bağlama: bodyTemplate | tierNote ...
+   210→  fontSize?: number; fontWeight?: number; color?: string; align?: string;
+   211→  imageDataUrl?: string;       // image elemanı dataURL (≤600KB)
+   212→  radius?: number;             // köşe yarıçapı (mm)
+   213→}
+   214→const CERT_ELEMENT_LABELS: Record<CertElementType, string> = { text: "Metin", image: "Görsel", line: "Çizgi", qr: "QR" };
+   215→const certR1 = (n: number) => Math.round(n * 10) / 10;
+   216→const certClamp = (n: number, min: number, max: number) => Math.min(Math.max(n, min), max);
+   217→const certUid = () => `ce${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+   218→
+   219→function parseCertElements(json: string | null): CertElement[] {
+   220→  try {
+   221→    const arr = json ? (JSON.parse(json) as CertElement[]) : [];
+   222→    return Array.isArray(arr) ? arr.filter((e) => e && typeof e.x === "number" && typeof e.y === "number") : [];
+   223→  } catch { return []; }
+   224→}
+   225→
+   226→// yeni tasarım varsayılan eleman seti: başlık, gövde, düzey notu, imza, tarih, logo alanı
+   227→const defaultCertElements = (editionName: string, bodyTemplate: string, tierNote: string): CertElement[] => [
+   228→  { id: certUid(), type: "text", x: 20, y: 15, w: 257, h: 12, text: editionName, fontSize: 7.5, fontWeight: 800, color: "0f766e", align: "center" },
+   229→  { id: certUid(), type: "text", x: 40, y: 62, w: 217, h: 9, text: tierNote || "{{tier}}", placeholderBinding: "tierNote", fontSize: 4, fontWeight: 600, color: "6b7280", align: "center" },
+   230→  { id: certUid(), type: "text", x: 40, y: 84, w: 217, h: 42, text: bodyTemplate || "Bu belge {{fullName}} adına {{edition}} etkinliğine {{tier}} olarak katılımını belgelemek üzere düzenlenmiştir.", placeholderBinding: "bodyTemplate", fontSize: 4.4, fontWeight: 400, color: "1f2937", align: "center" },
+   231→  { id: certUid(), type: "line", x: 200, y: 168, w: 50, h: 0.8, color: "1f2937" },
+   232→  { id: certUid(), type: "text", x: 190, y: 170.5, w: 70, h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "1f2937", align: "center" },
+   233→  { id: certUid(), type: "text", x: 24, y: 188, w: 60, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "6b7280", align: "left" },
+   234→  { id: certUid(), type: "image", x: 252, y: 180, w: 28, h: 16, text: "Logo alanı", color: "94a3b8", radius: 1 },
+   235→];
+   236→
+   237→// yerleşim şablonları — kullanıcı: "farklı alanlara farklı yerleşimler yapabileyim"
+   238→interface CertPresetCtx { editionName: string; bodyTemplate: string; tierNote: string; widthMm: number; heightMm: number }
+   239→const CERT_PRESETS: { key: string; label: string; orientation: string; build: (c: CertPresetCtx) => CertElement[] }[] = [
+   240→  {
+   241→    key: "classic", label: "Yatay Klasik", orientation: "LANDSCAPE",
+   242→    build: (c) => {
+   243→      const W = c.widthMm, H = c.heightMm;
+   244→      return [
+   245→        { id: certUid(), type: "text", x: certR1(W * 0.07), y: certR1(H * 0.075), w: certR1(W * 0.86), h: 12, text: c.editionName, fontSize: 7.5, fontWeight: 800, color: "0f766e", align: "center" },
+   246→        { id: certUid(), type: "text", x: certR1(W * 0.13), y: certR1(H * 0.28), w: certR1(W * 0.74), h: 8, text: c.tierNote || "{{tier}}", fontSize: 4, fontWeight: 600, color: "6b7280", align: "center" },
+   247→        { id: certUid(), type: "text", x: certR1(W * 0.13), y: certR1(H * 0.40), w: certR1(W * 0.74), h: 42, text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4.4, fontWeight: 400, color: "1f2937", align: "center" },
+   248→        { id: certUid(), type: "line", x: certR1(W * 0.62), y: certR1(H * 0.80), w: certR1(W * 0.20), h: 0.8, color: "1f2937" },
+   249→        { id: certUid(), type: "text", x: certR1(W * 0.60), y: certR1(H * 0.815), w: certR1(W * 0.24), h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "1f2937", align: "center" },
+   250→        { id: certUid(), type: "text", x: certR1(W * 0.08), y: certR1(H * 0.90), w: 60, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "6b7280", align: "left" },
+   251→        { id: certUid(), type: "image", x: certR1(W * 0.86), y: certR1(H * 0.86), w: 28, h: 16, text: "Logo alanı", color: "94a3b8", radius: 1 },
+   252→      ];
+   253→    },
+   254→  },
+   255→  {
+   256→    key: "modern", label: "Dikey Modern", orientation: "PORTRAIT",
+   257→    build: (c) => {
+   258→      const W = c.widthMm, H = c.heightMm;
+   259→      return [
+   260→        { id: certUid(), type: "image", x: 16, y: 16, w: 36, h: 18, text: "Logo alanı", color: "94a3b8", radius: 1 },
+   261→        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.15), w: W - 32, h: 14, text: c.editionName, fontSize: 7, fontWeight: 800, color: "0f172a", align: "left" },
+   262→        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.22), w: W - 32, h: 8, text: c.tierNote || "{{tier}}", fontSize: 3.6, fontWeight: 600, color: "0f766e", align: "left" },
+   263→        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.33), w: W - 32, h: certR1(H * 0.24), text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4, fontWeight: 400, color: "1f2937", align: "left" },
+   264→        { id: certUid(), type: "line", x: 16, y: certR1(H * 0.85), w: 60, h: 0.8, color: "1f2937" },
+   265→        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.865), w: 90, h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "1f2937", align: "left" },
+   266→        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.93), w: 90, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "6b7280", align: "left" },
+   267→        { id: certUid(), type: "qr", x: W - 42, y: certR1(H * 0.86), w: 26, h: 26, color: "0f766e" },
+   268→      ];
+   269→    },
+   270→  },
+   271→  {
+   272→    key: "minimal", label: "Minimal", orientation: "LANDSCAPE",
+   273→    build: (c) => {
+   274→      const W = c.widthMm, H = c.heightMm;
+   275→      return [
+   276→        { id: certUid(), type: "text", x: certR1(W * 0.13), y: certR1(H * 0.36), w: certR1(W * 0.74), h: 12, text: c.editionName, fontSize: 7, fontWeight: 700, color: "1f2937", align: "center" },
+   277→        { id: certUid(), type: "text", x: certR1(W * 0.17), y: certR1(H * 0.48), w: certR1(W * 0.66), h: 34, text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4.4, fontWeight: 400, color: "374151", align: "center" },
+   278→      ];
+   279→    },
+   280→  },
+   281→  {
+   282→    key: "prestige", label: "Prestij", orientation: "LANDSCAPE",
+   283→    build: (c) => {
+   284→      const W = c.widthMm, H = c.heightMm;
+   285→      const gold = "8a6d1a";
+   286→      return [
+   287→        { id: certUid(), type: "line", x: 12, y: 12, w: W - 24, h: 0.8, color: gold },
+   288→        { id: certUid(), type: "line", x: 12, y: H - 12.8, w: W - 24, h: 0.8, color: gold },
+   289→        { id: certUid(), type: "line", x: 12, y: 12, w: 0.8, h: H - 24, color: gold },
+   290→        { id: certUid(), type: "line", x: W - 12.8, y: 12, w: 0.8, h: H - 24, color: gold },
+   291→        { id: certUid(), type: "text", x: certR1(W * 0.10), y: certR1(H * 0.14), w: certR1(W * 0.80), h: 13, text: c.editionName, fontSize: 8.5, fontWeight: 800, color: gold, align: "center" },
+   292→        { id: certUid(), type: "line", x: certR1(W * 0.37), y: certR1(H * 0.235), w: certR1(W * 0.26), h: 0.6, color: gold },
+   293→        { id: certUid(), type: "text", x: certR1(W * 0.20), y: certR1(H * 0.28), w: certR1(W * 0.60), h: 8, text: c.tierNote || "{{tier}}", fontSize: 4, fontWeight: 600, color: "57534e", align: "center" },
+   294→        { id: certUid(), type: "text", x: certR1(W * 0.17), y: certR1(H * 0.40), w: certR1(W * 0.66), h: 42, text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4.4, fontWeight: 400, color: "292524", align: "center" },
+   295→        { id: certUid(), type: "line", x: certR1(W * 0.18), y: certR1(H * 0.80), w: 50, h: 0.8, color: "292524" },
+   296→        { id: certUid(), type: "text", x: certR1(W * 0.15), y: certR1(H * 0.815), w: 70, h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "292524", align: "center" },
+   297→        { id: certUid(), type: "line", x: certR1(W * 0.62), y: certR1(H * 0.80), w: 50, h: 0.8, color: "292524" },
+   298→        { id: certUid(), type: "text", x: certR1(W * 0.59), y: certR1(H * 0.815), w: 70, h: 8, text: "Akreditasyon · Bilimsel Komite", fontSize: 3.2, fontWeight: 700, color: "292524", align: "center" },
+   299→        { id: certUid(), type: "text", x: certR1(W * 0.08), y: certR1(H * 0.90), w: 60, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "57534e", align: "left" },
+   300→        { id: certUid(), type: "image", x: certR1(W / 2 - 14), y: certR1(H * 0.85), w: 28, h: 16, text: "Logo alanı", color: "94a3b8", radius: 1 },
+   301→      ];
+   302→    },
+   303→  },
+   304→];
+   305→
+   306→export function CertificatesView() {
+   307→  const { currentEditionId, tenant, editions, bump, refreshKey } = useApp();
+   308→  const { toast } = useToast();
+   309→  const [busy, setBusy] = useState<string | null>(null);
+   310→  const [selectedDefId, setSelectedDefId] = useState<string | null>(null);
+   311→  const [draft, setDraft] = useState<CertDraft | null>(null);
+   312→  const [savingDesign, setSavingDesign] = useState(false);
+   313→  const [issueSel, setIssueSel] = useState<Set<string>>(new Set());
+   314→  const [printing, setPrinting] = useState(false);
+   315→  const [mailBusyId, setMailBusyId] = useState<string | null>(null);
+   316→  const bgFileRef = useRef<HTMLInputElement>(null);
+   317→  // ── R10-b: kanvas durumu ──
+   318→  const [selElId, setSelElId] = useState<string | null>(null);
+   319→  const [certPreviewMode, setCertPreviewMode] = useState(false);
+   320→  const [previewPid, setPreviewPid] = useState<string | null>(null);
+   321→  const [presetKey, setPresetKey] = useState("none");
+   322→  const elFileRef = useRef<HTMLInputElement>(null);
+   323→  const dragRef = useRef<{ id: string; mode: "move" | "resize"; startX: number; startY: number; origX: number; origY: number; origW: number; origH: number } | null>(null);
+   324→
+   325→  const edition = editions.find((e) => e.id === currentEditionId);
+   326→
+   327→  const { data: defs, error, reload, loading } = useApi<CertDefRow[]>(
+   328→    () => listEntity<CertDefRow>("certificate-definitions", { editionId: currentEditionId ?? undefined }),
+   329→    [currentEditionId, refreshKey],
+   330→  );
+   331→
+   332→  const selectedDef = (defs ?? []).find((d) => d.id === selectedDefId) ?? null;
+   333→
+   334→  // seçili tanımın belge listesi — kişi dahil (registry include: participation.person)
+   335→  const { data: issues, error: issueError, reload: reloadIssues, loading: issueLoading } = useApi<CertIssueRow[]>(
+   336→    () => (selectedDefId ? listEntity<CertIssueRow>("certificate-issues", { definitionId: selectedDefId, limit: 100 }) : Promise.resolve([])),
+   337→    [selectedDefId, refreshKey],
+   338→  );
+   339→
+   340→  const selectDef = (d: CertDefRow) => {
+   341→    setSelectedDefId(d.id);
+   342→    setIssueSel(new Set());
+   343→    setDraft({
+   344→      id: d.id, name: d.name,
+   345→      widthMm: d.widthMm ?? 297, heightMm: d.heightMm ?? 210, bleedMm: d.bleedMm ?? 0,
+   346→      orientation: d.orientation ?? "LANDSCAPE", fontKey: d.fontKey ?? "playfair",
+   347→      textColor: `#${(d.textColor ?? "1f2937").replace("#", "")}`, tierNote: d.tierNote ?? null,
+   348→      backgroundDataUrl: d.backgroundDataUrl ?? null, bodyTemplate: d.bodyTemplate ?? "",
+   349→      designJson: d.designJson ?? null,
+   350→    });
+   351→    setSelElId(null); setCertPreviewMode(false); setPreviewPid(null); setPresetKey("none");
+   352→  };
+   353→
+   354→  const patchDraft = (patch: Partial<CertDraft>) => setDraft((d) => (d ? { ...d, ...patch } : d));
+   355→
+   356→  const generate = async (def: CertDefRow) => {
+   357→    setBusy(def.id);
+   358→    try {
+   359→      const res = await apiSend<{ eligible: number }>("/api/flows", "POST", { action: "certificate.generate", definitionId: def.id });
+   360→      toast({ title: "Sertifika üretimi tamamlandı", description: `${res.eligible} uygun belge oluşturuldu. İsim önizlemesi snapshot'tan alınır.` });
+   361→      reload(); bump();
+   362→    } catch (e) {
+   363→      toast({ title: "Üretim başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   364→    } finally { setBusy(null); }
+   365→  };
+   366→
+   367→  const saveDesign = async () => {
+   368→    if (!draft) return;
+   369→    setSavingDesign(true);
+   370→    try {
+   371→      const saved = await apiSend<CertDefRow>(`/api/certificate-definitions/${draft.id}`, "PUT", {
+   372→        widthMm: draft.widthMm, heightMm: draft.heightMm, bleedMm: draft.bleedMm,
+   373→        orientation: draft.orientation, fontKey: draft.fontKey,
+   374→        textColor: draft.textColor.replace("#", ""), tierNote: draft.tierNote,
+   375→        backgroundDataUrl: draft.backgroundDataUrl, bodyTemplate: draft.bodyTemplate,
+   376→        designJson: draft.designJson, // R10-b: kanvas eleman dizisi
+   377→      });
+   378→      toast({ title: "Sertifika tasarımı kaydedildi", description: `${saved.name} · ${saved.widthMm}×${saved.heightMm} mm · ${saved.orientation === "PORTRAIT" ? "dikey" : "yatay"} · ${parseCertElements(draft.designJson).length} eleman` });
+   379→      reload(); bump();
+   380→    } catch (e) {
+   381→      toast({ title: "Tasarım kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   382→    } finally { setSavingDesign(false); }
+   383→  };
+   384→
+   385→  // arka plan yükleme — Medya Arşivi → Sertifikalar klasörüne benzersiz adla kaydedilir
+   386→  const uploadBackground = (file: File) => {
+   387→    if (file.size > MAX_BG_BYTES) {
+   388→      toast({ title: "Görsel çok büyük", description: `En fazla 600 KB yüklenebilir — seçilen dosya ${(file.size / 1024).toFixed(0)} KB.`, variant: "destructive" });
+   389→      return;
+   390→    }
+   391→    if (!draft || !currentEditionId) return;
+   392→    const reader = new FileReader();
+   393→    reader.onload = async () => {
+   394→      const dataUrl = String(reader.result);
+   395→      try {
+   396→        const res = await apiSend<{ asset: { dataUrl: string; name: string } }>("/api/media/upload-linked", "POST", {
+   397→          editionId: currentEditionId, systemFolder: "SERTIFIKA", linkedType: "CERTIFICATE", linkedId: draft.id,
+   398→          name: `${selectedDef?.name ?? draft.name}-arkaplan`, dataUrl,
+   399→        });
+   400→        patchDraft({ backgroundDataUrl: res.asset.dataUrl });
+   401→        toast({ title: "Arka plan yüklendi", description: `${res.asset.name} — Medya Arşivi → Sertifikalar klasörüne benzersiz adla kaydedildi.` });
+   402→      } catch (e) {
+   403→        // arşiv yazılamazsa tasarımcıya yerel uygula — kayıt yine de mümkün
+   404→        patchDraft({ backgroundDataUrl: dataUrl });
+   405→        toast({ title: "Arka plan eklendi (arşiv dışı)", description: e instanceof Error ? e.message : "Medya Arşivi'ne yazılamadı", variant: "destructive" });
+   406→      }
+   407→    };
+   408→    reader.readAsDataURL(file);
+   409→  };
+   410→
+   411→  // sertifika baskı sayfası — text/html döner, blob URL yeni sekmede (popup engellenirse iframe)
+   412→  const openCertSheet = async (participationIds: string[]) => {
+   413→    if (!currentEditionId || !selectedDefId) return;
+   414→    if (participationIds.length === 0) {
+   415→      toast({ title: "Belge seçilmedi", description: "Listeden en az bir katılımcı seçin.", variant: "destructive" });
+   416→      return;
+   417→    }
+   418→    setPrinting(true);
+   419→    try {
+   420→      const res = await fetch("/api/certificates/print-sheet", {
+   421→        method: "POST", headers: { "Content-Type": "application/json" },
+   422→        body: JSON.stringify({ editionId: currentEditionId, definitionId: selectedDefId, participationIds }),
+   423→      });
+   424→      if (!res.ok) {
+   425→        const body = (await res.json().catch(() => ({}))) as { error?: string };
+   426→        throw new Error(body.error ?? `Sertifika sayfası üretilemedi (${res.status})`);
+   427→      }
+   428→      const html = await res.text();
+   429→      const blob = new Blob([html], { type: "text/html" });
+   430→      const url = URL.createObjectURL(blob);
+   431→      const win = window.open(url);
+   432→      if (!win) {
+   433→        const frame = document.createElement("iframe");
+   434→        frame.style.position = "fixed";
+   435→        frame.style.right = "0"; frame.style.bottom = "0";
+   436→        frame.style.width = "0"; frame.style.height = "0"; frame.style.border = "0";
+   437→        frame.src = url;
+   438→        document.body.appendChild(frame);
+   439→        toast({ title: "Sertifika sayfası hazır", description: "Açılır pencere engellendi — sayfa yerleşik çerçevede açıldı." });
+   440→      }
+   441→      // ELIGIBLE → GENERATED geçişi sunucu tarafında otomatik; listeyi tazele
+   442→      reloadIssues(); reload(); bump();
+   443→    } catch (e) {
+   444→      toast({ title: "Sertifika yazdırma başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   445→    } finally { setPrinting(false); }
+   446→  };
+   447→
+   448→  // e-posta ile gönder (simülasyon) — deliveredAt işlenir, toast şablon bilgisini verir
+   449→  const mailDeliver = async (issue: CertIssueRow) => {
+   450→    if (!issue.participation) return;
+   451→    setMailBusyId(issue.id);
+   452→    try {
+   453→      await apiSend(`/api/certificate-issues/${issue.id}`, "PUT", { status: "DELIVERED", deliveredAt: new Date().toISOString() });
+   454→      toast({ title: "Sertifika e-postayla gönderildi (simülasyon)", description: "Şablon: Teşekkür + Sertifika Teslimi — alıcı: " + issue.participation.person.firstName + " " + issue.participation.person.lastName });
+   455→      reloadIssues(); reload(); bump();
+   456→    } catch (e) {
+   457→      toast({ title: "Gönderim başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   458→    } finally { setMailBusyId(null); }
+   459→  };
+   460→
+   461→  // ── R10-b: kanvas yardımcıları — kişi-özel doldurma + eleman CRUD + sürükleme ──
+   462→  const editionName = edition ? `${edition.name}${edition.editionLabel ? ` — ${edition.editionLabel}` : ""}` : "Etkinlik";
+   463→
+   464→  const certElements = useMemo<CertElement[]>(() => {
+   465→    if (!draft) return [];
+   466→    const parsed = parseCertElements(draft.designJson);
+   467→    if (parsed.length > 0) return parsed;
+   468→    return defaultCertElements(editionName, draft.bodyTemplate ?? "", draft.tierNote ?? "");
+   469→  }, [draft?.designJson, draft?.bodyTemplate, draft?.tierNote, editionName]);
+   470→
+   471→  // önizleme kişisi — seçili issue'nun katılımcı adı (print-sheet fill eşlemesi)
+   472→  const previewIssue = (issues ?? []).find((i) => i.participation && i.participation.id === previewPid) ?? (issues ?? []).find((i) => i.participation) ?? null;
+   473→  const fillFor = (tpl: string): string =>
+   474→    (tpl ?? "")
+   475→      .replace(/\{\{fullName\}\}/g, previewIssue?.participation ? `${previewIssue.participation.person.firstName} ${previewIssue.participation.person.lastName}` : "Ahmet Yılmaz")
+   476→      .replace(/\{\{title\}\}/g, previewIssue?.participation?.person.title || "Ar-Ge Müdürü")
+   477→      .replace(/\{\{company\}\}/g, previewIssue?.participation?.person.company || "ABC Pharma")
+   478→      .replace(/\{\{edition\}\}/g, editionName)
+   479→      .replace(/\{\{series\}\}/g, tenant?.name ?? "Maven")
+   480→      .replace(/\{\{type\}\}/g, draft?.name ?? "Sertifika")
+   481→      .replace(/\{\{tier\}\}/g, draft?.tierNote || "Katılımcı")
+   482→      .replace(/\{\{date\}\}/g, new Date().toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" }))
+   483→      .replace(/\{\{serial\}\}/g, "PAR-000001")
+   484→      .replace(/\{\{signer\}\}/g, selectedDef?.signerName ?? "Yetkili")
+   485→      .replace(/\n/g, " ");
+   486→
+   487→  const setCertElements = (els: CertElement[]) => patchDraft({ designJson: JSON.stringify(els) });
+   488→  const updateCertElement = (id: string, patch: Partial<CertElement>) =>
+   489→    setCertElements(certElements.map((el) => (el.id === id ? { ...el, ...patch } : el)));
+   490→  const addCertElement = (type: CertElementType) => {
+   491→    const offset = certElements.length * 4;
+   492→    const base: CertElement = {
+   493→      id: certUid(), type, x: certR1(20 + offset), y: certR1(20 + offset),
+   494→      w: type === "line" ? 60 : type === "qr" ? 24 : 60, h: type === "line" ? 0.8 : type === "qr" ? 24 : 12,
+   495→      text: type === "text" ? "Metin" : type === "image" ? "Görsel alanı" : undefined,
+   496→      fontSize: type === "text" ? 4.2 : undefined, fontWeight: type === "text" ? 400 : undefined,
+   497→      color: "1f2937", align: type === "text" ? "left" : undefined, radius: type === "image" ? 1 : undefined,
+   498→    };
+   499→    setCertElements([...certElements, base]);
+   500→    setSelElId(base.id);
+   501→  };
+   502→  const removeCertElement = (id: string) => {
+   503→    setCertElements(certElements.filter((el) => el.id !== id));
+   504→    setSelElId(null);
+   505→  };
+   506→  // katman sırası: dizi sırası = çizim sırası; öne → sona taşı, arkaya → başa taşı
+   507→  const reorderCertElement = (id: string, dir: 1 | -1) => {
+   508→    const idx = certElements.findIndex((el) => el.id === id);
+   509→    const target = idx + dir;
+   510→    if (idx < 0 || target < 0 || target >= certElements.length) return;
+   511→    const els = [...certElements];
+   512→    [els[idx], els[target]] = [els[target], els[idx]];
+   513→    setCertElements(els);
+   514→  };
+   515→
+   516→  const applyPreset = (key: string) => {
+   517→    const preset = CERT_PRESETS.find((p) => p.key === key);
+   518→    if (!preset || !draft) return;
+   519→    const isPortrait = preset.orientation === "PORTRAIT";
+   520→    const widthMm = isPortrait ? Math.min(draft.widthMm, draft.heightMm) : Math.max(draft.widthMm, draft.heightMm);
+   521→    const heightMm = isPortrait ? Math.max(draft.widthMm, draft.heightMm) : Math.min(draft.widthMm, draft.heightMm);
+   522→    patchDraft({
+   523→      designJson: JSON.stringify(preset.build({ editionName, bodyTemplate: draft.bodyTemplate ?? "", tierNote: draft.tierNote ?? "", widthMm, heightMm })),
+   524→      orientation: preset.orientation, widthMm, heightMm,
+   525→    });
+   526→    setSelElId(null);
+   527→    setPresetKey(key);
+   528→    toast({ title: "Yerleşim uygulandı — Kaydet'i unutmayın", description: preset.label });
+   529→  };
+   530→
+   531→  // sürükleme: pointer capture ile taşima + sağ alt köşe tutamacıyla boyutlandırma
+   532→  const startDrag = (e: React.PointerEvent, el: CertElement, mode: "move" | "resize") => {
+   533→    e.stopPropagation();
+   534→    setSelElId(el.id);
+   535→    dragRef.current = { id: el.id, mode, startX: e.clientX, startY: e.clientY, origX: el.x, origY: el.y, origW: el.w, origH: el.h };
+   536→    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+   537→  };
+   538→  const moveDrag = (e: React.PointerEvent) => {
+   539→    const d = dragRef.current;
+   540→    if (!d || !draft) return;
+   541→    const dx = (e.clientX - d.startX) / CERT_PX_PER_MM;
+   542→    const dy = (e.clientY - d.startY) / CERT_PX_PER_MM;
+   543→    if (d.mode === "move") {
+   544→      updateCertElement(d.id, { x: certR1(certClamp(d.origX + dx, 0, draft.widthMm)), y: certR1(certClamp(d.origY + dy, 0, draft.heightMm)) });
+   545→    } else {
+   546→      updateCertElement(d.id, { w: Math.max(1, certR1(d.origW + dx)), h: Math.max(0.4, certR1(d.origH + dy)) });
+   547→    }
+   548→  };
+   549→  const endDrag = () => { dragRef.current = null; };
+   550→
+
+[showing lines 1-550 of 2073; use offset=551 with limit to continue reading]

@@ -2,7 +2,7 @@
 // Sahada — canlı onsite kontrol (§07/§42): kapı seçimi, arama, tarama, tekrar/ret kuyruğu
 // + Sertifikalar (§43) + İletişim + Operasyon + Ayarlar
 import { useEffect, useMemo, useRef, useState } from "react";
-import { listEntity, apiSend, apiGet } from "@/lib/client";
+import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
 import { ATTENDANCE_STATUS, BADGE_STATUS, BADGE_FONTS, CAMPAIGN_PHASE, CERTIFICATE_STATUS, EMAIL_TEMPLATE_CATEGORY, MAIL_PROVIDER_KIND, TASK_STATUS, TASK_PRIORITY, fmtDateTime, fmtDate, label, CAPABILITIES } from "@/lib/constants";
@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { useLang, t, exportI18nJson, importI18nJson } from "@/lib/i18n";
+import { useLang, t, tLabel, exportI18nJson, importI18nJson } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +33,7 @@ interface ScanResult {
 }
 
 export function OnsiteView() {
+  useLang(); // dil değişiminde yeniden render
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
   const [door, setDoor] = useState("Kapı A");
@@ -59,17 +60,17 @@ export function OnsiteView() {
       if (res.result === "ALLOWED") setCode("");
       if (force) setDenyTarget(null); setForceReason("");
       toast({
-        title: res.result === "ALLOWED" ? "Giriş izin verildi" : res.result === "RESCAN_WARNING" ? "Tekrar tarama — sarı durum" : "Giriş reddedildi",
+        title: res.result === "ALLOWED" ? t("onsite.toastAllowed") : res.result === "RESCAN_WARNING" ? t("onsite.toastRescan") : t("onsite.toastDenied"),
         variant: res.result === "DENIED" ? "destructive" : "default",
         description: res.person ? `${res.person.name}${res.reason ? ` — ${res.reason}` : ""}` : res.reason,
       });
       reload(); bump();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Tarama hatası";
+      const msg = e instanceof Error ? e.message : t("onsite.scanError");
       if (msg.includes("bulunamadı")) {
         setLast({ result: "DENIED", tone: "red", reason: msg });
       }
-      toast({ title: "Tarama", description: msg, variant: "destructive" });
+      toast({ title: t("onsite.scanToast"), description: msg, variant: "destructive" });
     } finally {
       setScanning(false);
     }
@@ -77,17 +78,17 @@ export function OnsiteView() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Sahada — Canlı Kontrol" desc="Kapı masası: kimlik doğrulama, tekrar tarama ayrı sarı durum; tarama geçmişi silinmez" />
+      <PageHeader title={t("onsite.title")} desc={t("onsite.desc")} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard label="Benzersiz Gelen (bugün)" value={uniqueArrived} sub="geçerli ilk giriş — oturum girişi sayılmaz" tone="emerald" icon={<Icons.UserCheck className="size-4" />} />
-        <KpiCard label="Tekrar Tarama" value={rescans.length} sub="ilk girişin yerine geçmez" tone="amber" icon={<Icons.RotateCcw className="size-4" />} />
-        <KpiCard label="Reddedilen" value={denied.length} sub="yetkiliye yönlendirme" tone="rose" icon={<Icons.UserX className="size-4" />} />
-        <KpiCard label="Toplam Olay" value={todays.length} sub="son 24 saat" icon={<Icons.Activity className="size-4" />} />
+        <KpiCard label={t("onsite.kpiUnique")} value={uniqueArrived} sub={t("onsite.kpiUniqueSub")} tone="emerald" icon={<Icons.UserCheck className="size-4" />} />
+        <KpiCard label={t("onsite.kpiRescan")} value={rescans.length} sub={t("onsite.kpiRescanSub")} tone="amber" icon={<Icons.RotateCcw className="size-4" />} />
+        <KpiCard label={t("onsite.kpiDenied")} value={denied.length} sub={t("onsite.kpiDeniedSub")} tone="rose" icon={<Icons.UserX className="size-4" />} />
+        <KpiCard label={t("onsite.kpiTotal")} value={todays.length} sub={t("onsite.kpiTotalSub")} icon={<Icons.Activity className="size-4" />} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
-        <SectionCard title="Tarama Masası" desc={`${door} · görevli kapsamı: etkinlik girişi + oturum`} className="min-w-0 lg:col-span-2">
+        <SectionCard title={t("onsite.scanDesk")} desc={t("onsite.scanDeskDesc", { door })} className="min-w-0 lg:col-span-2">
           <div className="flex gap-2">
             {["Kapı A", "Kapı B", "Gala", "VIP Lounge"].map((d) => (
               <button key={d} onClick={() => setDoor(d)} className={cn("rounded-lg border px-3 py-1.5 text-xs font-medium transition", door === d ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:border-primary/40")}>
@@ -96,9 +97,9 @@ export function OnsiteView() {
             ))}
           </div>
           <div className="mt-3 flex gap-2">
-            <Input placeholder="QR kodu (örn. QR-0001) veya part_id…" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && scan()} className="font-mono" />
+            <Input placeholder={t("onsite.codePlaceholder")} value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && scan()} className="font-mono" />
             <Button onClick={() => scan()} disabled={scanning || !code.trim()}>
-              <Icons.ScanLine className="size-4" /> {scanning ? "Okutuluyor…" : "Tara"}
+              <Icons.ScanLine className="size-4" /> {scanning ? t("onsite.scanning") : t("onsite.scan")}
             </Button>
           </div>
 
@@ -108,7 +109,7 @@ export function OnsiteView() {
               last.result === "ALLOWED" ? "border-emerald-300 bg-emerald-50/70" : last.result === "RESCAN_WARNING" ? "border-amber-300 bg-amber-50/70" : "border-rose-300 bg-rose-50/70")}>
               <div className="flex items-center gap-2">
                 {last.result === "ALLOWED" ? <Icons.CircleCheck className="size-5 text-emerald-600" /> : last.result === "RESCAN_WARNING" ? <Icons.TriangleAlert className="size-5 text-amber-600" /> : <Icons.Ban className="size-5 text-rose-600" />}
-                <p className="text-sm font-bold">{last.result === "ALLOWED" ? "Girişe izin ver" : last.result === "RESCAN_WARNING" ? "Tekrar tarama" : "Yetkiliye yönlendir"}</p>
+                <p className="text-sm font-bold">{last.result === "ALLOWED" ? t("onsite.resultAllowed") : last.result === "RESCAN_WARNING" ? t("onsite.resultRescan") : t("onsite.resultDenied")}</p>
               </div>
               {last.person && (
                 <div className="mt-2 space-y-0.5 text-xs">
@@ -118,25 +119,25 @@ export function OnsiteView() {
               )}
               {last.registration && (
                 <div className="mt-2 flex flex-wrap gap-1 text-[11px]">
-                  <Chip tone="teal">{last.registration.category ?? "kategori yok"}</Chip>
-                  <Chip tone={last.registration.status === "CONFIRMED" ? "emerald" : "amber"}>kayıt: {last.registration.status}</Chip>
-                  {last.badge && <Chip tone="violet">yaka kartı: {last.badge.profile} {last.badge.status}</Chip>}
+                  <Chip tone="teal">{last.registration.category ?? t("onsite.noCategory")}</Chip>
+                  <Chip tone={last.registration.status === "CONFIRMED" ? "emerald" : "amber"}>{t("onsite.regChip", { status: last.registration.status })}</Chip>
+                  {last.badge && <Chip tone="violet">{t("onsite.badgeChip", { profile: last.badge.profile ?? "", status: last.badge.status })}</Chip>}
                 </div>
               )}
               {last.reason && <p className="mt-2 text-xs text-muted-foreground">{last.reason}</p>}
               {last.result === "DENIED" && (
                 <Button size="sm" variant="outline" className="mt-2" onClick={() => setDenyTarget(last.person?.id ?? "")}>
-                  Manuel İstisna (gerekçe ile)
+                  {t("onsite.manualException")}
                 </Button>
               )}
             </div>
           )}
-          <p className="mt-3 text-[11px] text-muted-foreground">Demo: QR-0001 … QR-0024 aktif yaka kartları; iptal/reddedilen katılımcı kodu yoktur → kırmızı durum.</p>
+          <p className="mt-3 text-[11px] text-muted-foreground">{t("onsite.demoNote")}</p>
         </SectionCard>
 
-        <SectionCard title="Canlı Tarama Akışı" desc="olay bazlı — ilk geçerli giriş ve tekrar tarama ayrı satır" className="min-w-0 lg:col-span-3" bodyClass="max-h-[420px] overflow-y-auto maven-scroll">
+        <SectionCard title={t("onsite.liveFeed")} desc={t("onsite.liveFeedDesc")} className="min-w-0 lg:col-span-3" bodyClass="max-h-[420px] overflow-y-auto maven-scroll">
           {loading ? <Loading rows={6} /> : error ? <ErrorState message={error} onRetry={reload} /> : (scans ?? []).length === 0 ? (
-            <EmptyState title="Bu kapı için giriş kaydı yok" desc="Doğru gün ve kapıyı seçtiğinizden emin olun." />
+            <EmptyState title={t("onsite.emptyTitle")} desc={t("onsite.emptyDesc")} />
           ) : (
             <div className="space-y-1.5">
               {(scans ?? []).map((s) => (
@@ -147,7 +148,7 @@ export function OnsiteView() {
                     {s.result === "ALLOWED" ? <Icons.Check className="size-3.5" /> : s.result === "RESCAN_WARNING" ? <Icons.RotateCcw className="size-3.5" /> : <Icons.X className="size-3.5" />}
                   </span>
                   <span className="min-w-0 flex-1 truncate font-medium">
-                    {s.participation ? `${s.participation.person.firstName} ${s.participation.person.lastName}` : "Bilinmeyen kod"}
+                    {s.participation ? `${s.participation.person.firstName} ${s.participation.person.lastName}` : t("onsite.unknownCode")}
                     <span className="ml-2 text-xs text-muted-foreground">{s.action} · {s.location}{s.doorName ? ` (${s.doorName})` : ""}</span>
                   </span>
                   {s.reason && <span className="hidden max-w-56 truncate text-xs text-muted-foreground md:inline">{s.reason}</span>}
@@ -162,11 +163,11 @@ export function OnsiteView() {
 
       <Dialog open={Boolean(denyTarget)} onOpenChange={(o) => !o && setDenyTarget(null)}>
         <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>Manuel İstisna</DialogTitle><DialogDescription>Gerekçe zorunlu; karar tarama geçmişine DENIED + istisna olarak işlenir.</DialogDescription></DialogHeader>
-          <div><Label>Gerekçe</Label><Textarea value={forceReason} onChange={(e) => setForceReason(e.target.value)} placeholder="Örn. yaka kartı basımı sürüyor, kimlik ibraz edildi…" className="mt-1" /></div>
+          <DialogHeader><DialogTitle>{t("onsite.exceptionTitle")}</DialogTitle><DialogDescription>{t("onsite.exceptionDesc")}</DialogDescription></DialogHeader>
+          <div><Label>{t("onsite.reasonLabel")}</Label><Textarea value={forceReason} onChange={(e) => setForceReason(e.target.value)} placeholder={t("onsite.reasonPlaceholder")} className="mt-1" /></div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDenyTarget(null)}>Vazgeç</Button>
-            <Button disabled={!forceReason} onClick={() => scan(forceReason)}>İstisna Uygula</Button>
+            <Button variant="outline" onClick={() => setDenyTarget(null)}>{t("common.cancel")}</Button>
+            <Button disabled={!forceReason} onClick={() => scan(forceReason)}>{t("onsite.applyException")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -227,11 +228,11 @@ function parseCertElements(json: string | null): CertElement[] {
 const defaultCertElements = (editionName: string, bodyTemplate: string, tierNote: string): CertElement[] => [
   { id: certUid(), type: "text", x: 20, y: 15, w: 257, h: 12, text: editionName, fontSize: 7.5, fontWeight: 800, color: "0f766e", align: "center" },
   { id: certUid(), type: "text", x: 40, y: 62, w: 217, h: 9, text: tierNote || "{{tier}}", placeholderBinding: "tierNote", fontSize: 4, fontWeight: 600, color: "6b7280", align: "center" },
-  { id: certUid(), type: "text", x: 40, y: 84, w: 217, h: 42, text: bodyTemplate || "Bu belge {{fullName}} adına {{edition}} etkinliğine {{tier}} olarak katılımını belgelemek üzere düzenlenmiştir.", placeholderBinding: "bodyTemplate", fontSize: 4.4, fontWeight: 400, color: "1f2937", align: "center" },
+  { id: certUid(), type: "text", x: 40, y: 84, w: 217, h: 42, text: bodyTemplate || t("certificates.defaultBody"), placeholderBinding: "bodyTemplate", fontSize: 4.4, fontWeight: 400, color: "1f2937", align: "center" },
   { id: certUid(), type: "line", x: 200, y: 168, w: 50, h: 0.8, color: "1f2937" },
   { id: certUid(), type: "text", x: 190, y: 170.5, w: 70, h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "1f2937", align: "center" },
   { id: certUid(), type: "text", x: 24, y: 188, w: 60, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "6b7280", align: "left" },
-  { id: certUid(), type: "image", x: 252, y: 180, w: 28, h: 16, text: "Logo alanı", color: "94a3b8", radius: 1 },
+  { id: certUid(), type: "image", x: 252, y: 180, w: 28, h: 16, text: t("certificates.canvasLogoArea"), color: "94a3b8", radius: 1 },
 ];
 
 // yerleşim şablonları — kullanıcı: "farklı alanlara farklı yerleşimler yapabileyim"
@@ -244,11 +245,11 @@ const CERT_PRESETS: { key: string; label: string; orientation: string; build: (c
       return [
         { id: certUid(), type: "text", x: certR1(W * 0.07), y: certR1(H * 0.075), w: certR1(W * 0.86), h: 12, text: c.editionName, fontSize: 7.5, fontWeight: 800, color: "0f766e", align: "center" },
         { id: certUid(), type: "text", x: certR1(W * 0.13), y: certR1(H * 0.28), w: certR1(W * 0.74), h: 8, text: c.tierNote || "{{tier}}", fontSize: 4, fontWeight: 600, color: "6b7280", align: "center" },
-        { id: certUid(), type: "text", x: certR1(W * 0.13), y: certR1(H * 0.40), w: certR1(W * 0.74), h: 42, text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4.4, fontWeight: 400, color: "1f2937", align: "center" },
+        { id: certUid(), type: "text", x: certR1(W * 0.13), y: certR1(H * 0.40), w: certR1(W * 0.74), h: 42, text: c.bodyTemplate || t("certificates.defaultBodyShort"), fontSize: 4.4, fontWeight: 400, color: "1f2937", align: "center" },
         { id: certUid(), type: "line", x: certR1(W * 0.62), y: certR1(H * 0.80), w: certR1(W * 0.20), h: 0.8, color: "1f2937" },
         { id: certUid(), type: "text", x: certR1(W * 0.60), y: certR1(H * 0.815), w: certR1(W * 0.24), h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "1f2937", align: "center" },
         { id: certUid(), type: "text", x: certR1(W * 0.08), y: certR1(H * 0.90), w: 60, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "6b7280", align: "left" },
-        { id: certUid(), type: "image", x: certR1(W * 0.86), y: certR1(H * 0.86), w: 28, h: 16, text: "Logo alanı", color: "94a3b8", radius: 1 },
+        { id: certUid(), type: "image", x: certR1(W * 0.86), y: certR1(H * 0.86), w: 28, h: 16, text: t("certificates.canvasLogoArea"), color: "94a3b8", radius: 1 },
       ];
     },
   },
@@ -257,10 +258,10 @@ const CERT_PRESETS: { key: string; label: string; orientation: string; build: (c
     build: (c) => {
       const W = c.widthMm, H = c.heightMm;
       return [
-        { id: certUid(), type: "image", x: 16, y: 16, w: 36, h: 18, text: "Logo alanı", color: "94a3b8", radius: 1 },
+        { id: certUid(), type: "image", x: 16, y: 16, w: 36, h: 18, text: t("certificates.canvasLogoArea"), color: "94a3b8", radius: 1 },
         { id: certUid(), type: "text", x: 16, y: certR1(H * 0.15), w: W - 32, h: 14, text: c.editionName, fontSize: 7, fontWeight: 800, color: "0f172a", align: "left" },
         { id: certUid(), type: "text", x: 16, y: certR1(H * 0.22), w: W - 32, h: 8, text: c.tierNote || "{{tier}}", fontSize: 3.6, fontWeight: 600, color: "0f766e", align: "left" },
-        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.33), w: W - 32, h: certR1(H * 0.24), text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4, fontWeight: 400, color: "1f2937", align: "left" },
+        { id: certUid(), type: "text", x: 16, y: certR1(H * 0.33), w: W - 32, h: certR1(H * 0.24), text: c.bodyTemplate || t("certificates.defaultBodyShort"), fontSize: 4, fontWeight: 400, color: "1f2937", align: "left" },
         { id: certUid(), type: "line", x: 16, y: certR1(H * 0.85), w: 60, h: 0.8, color: "1f2937" },
         { id: certUid(), type: "text", x: 16, y: certR1(H * 0.865), w: 90, h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "1f2937", align: "left" },
         { id: certUid(), type: "text", x: 16, y: certR1(H * 0.93), w: 90, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "6b7280", align: "left" },
@@ -274,7 +275,7 @@ const CERT_PRESETS: { key: string; label: string; orientation: string; build: (c
       const W = c.widthMm, H = c.heightMm;
       return [
         { id: certUid(), type: "text", x: certR1(W * 0.13), y: certR1(H * 0.36), w: certR1(W * 0.74), h: 12, text: c.editionName, fontSize: 7, fontWeight: 700, color: "1f2937", align: "center" },
-        { id: certUid(), type: "text", x: certR1(W * 0.17), y: certR1(H * 0.48), w: certR1(W * 0.66), h: 34, text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4.4, fontWeight: 400, color: "374151", align: "center" },
+        { id: certUid(), type: "text", x: certR1(W * 0.17), y: certR1(H * 0.48), w: certR1(W * 0.66), h: 34, text: c.bodyTemplate || t("certificates.defaultBodyShort"), fontSize: 4.4, fontWeight: 400, color: "374151", align: "center" },
       ];
     },
   },
@@ -291,19 +292,20 @@ const CERT_PRESETS: { key: string; label: string; orientation: string; build: (c
         { id: certUid(), type: "text", x: certR1(W * 0.10), y: certR1(H * 0.14), w: certR1(W * 0.80), h: 13, text: c.editionName, fontSize: 8.5, fontWeight: 800, color: gold, align: "center" },
         { id: certUid(), type: "line", x: certR1(W * 0.37), y: certR1(H * 0.235), w: certR1(W * 0.26), h: 0.6, color: gold },
         { id: certUid(), type: "text", x: certR1(W * 0.20), y: certR1(H * 0.28), w: certR1(W * 0.60), h: 8, text: c.tierNote || "{{tier}}", fontSize: 4, fontWeight: 600, color: "57534e", align: "center" },
-        { id: certUid(), type: "text", x: certR1(W * 0.17), y: certR1(H * 0.40), w: certR1(W * 0.66), h: 42, text: c.bodyTemplate || "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.", fontSize: 4.4, fontWeight: 400, color: "292524", align: "center" },
+        { id: certUid(), type: "text", x: certR1(W * 0.17), y: certR1(H * 0.40), w: certR1(W * 0.66), h: 42, text: c.bodyTemplate || t("certificates.defaultBodyShort"), fontSize: 4.4, fontWeight: 400, color: "292524", align: "center" },
         { id: certUid(), type: "line", x: certR1(W * 0.18), y: certR1(H * 0.80), w: 50, h: 0.8, color: "292524" },
         { id: certUid(), type: "text", x: certR1(W * 0.15), y: certR1(H * 0.815), w: 70, h: 8, text: "{{signer}}", fontSize: 3.4, fontWeight: 700, color: "292524", align: "center" },
         { id: certUid(), type: "line", x: certR1(W * 0.62), y: certR1(H * 0.80), w: 50, h: 0.8, color: "292524" },
-        { id: certUid(), type: "text", x: certR1(W * 0.59), y: certR1(H * 0.815), w: 70, h: 8, text: "Akreditasyon · Bilimsel Komite", fontSize: 3.2, fontWeight: 700, color: "292524", align: "center" },
+        { id: certUid(), type: "text", x: certR1(W * 0.59), y: certR1(H * 0.815), w: 70, h: 8, text: t("certificates.accreditation"), fontSize: 3.2, fontWeight: 700, color: "292524", align: "center" },
         { id: certUid(), type: "text", x: certR1(W * 0.08), y: certR1(H * 0.90), w: 60, h: 7, text: "{{date}}", fontSize: 3, fontWeight: 400, color: "57534e", align: "left" },
-        { id: certUid(), type: "image", x: certR1(W / 2 - 14), y: certR1(H * 0.85), w: 28, h: 16, text: "Logo alanı", color: "94a3b8", radius: 1 },
+        { id: certUid(), type: "image", x: certR1(W / 2 - 14), y: certR1(H * 0.85), w: 28, h: 16, text: t("certificates.canvasLogoArea"), color: "94a3b8", radius: 1 },
       ];
     },
   },
 ];
 
 export function CertificatesView() {
+  useLang(); // dil değişiminde yeniden render
   const { currentEditionId, tenant, editions, bump, refreshKey } = useApp();
   const { toast } = useToast();
   const [busy, setBusy] = useState<string | null>(null);
@@ -357,10 +359,10 @@ export function CertificatesView() {
     setBusy(def.id);
     try {
       const res = await apiSend<{ eligible: number }>("/api/flows", "POST", { action: "certificate.generate", definitionId: def.id });
-      toast({ title: "Sertifika üretimi tamamlandı", description: `${res.eligible} uygun belge oluşturuldu. İsim önizlemesi snapshot'tan alınır.` });
+      toast({ title: t("certificates.generateDone"), description: t("certificates.generateDoneDesc", { count: res.eligible }) });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Üretim başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("certificates.generateFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setBusy(null); }
   };
 
@@ -375,17 +377,17 @@ export function CertificatesView() {
         backgroundDataUrl: draft.backgroundDataUrl, bodyTemplate: draft.bodyTemplate,
         designJson: draft.designJson, // R10-b: kanvas eleman dizisi
       });
-      toast({ title: "Sertifika tasarımı kaydedildi", description: `${saved.name} · ${saved.widthMm}×${saved.heightMm} mm · ${saved.orientation === "PORTRAIT" ? "dikey" : "yatay"} · ${parseCertElements(draft.designJson).length} eleman` });
+      toast({ title: t("certificates.designSaved"), description: t("certificates.designSavedDesc", { name: saved.name, w: saved.widthMm, h: saved.heightMm, orient: saved.orientation === "PORTRAIT" ? t("certificates.portraitShort") : t("certificates.landscapeShort"), elements: parseCertElements(draft.designJson).length }) });
       reload(); bump();
     } catch (e) {
-      toast({ title: "Tasarım kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("certificates.designSaveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setSavingDesign(false); }
   };
 
   // arka plan yükleme — Medya Arşivi → Sertifikalar klasörüne benzersiz adla kaydedilir
   const uploadBackground = (file: File) => {
     if (file.size > MAX_BG_BYTES) {
-      toast({ title: "Görsel çok büyük", description: `En fazla 600 KB yüklenebilir — seçilen dosya ${(file.size / 1024).toFixed(0)} KB.`, variant: "destructive" });
+      toast({ title: t("certificates.imageTooLarge"), description: t("certificates.imageTooLargeDesc", { size: (file.size / 1024).toFixed(0) }), variant: "destructive" });
       return;
     }
     if (!draft || !currentEditionId) return;
@@ -398,11 +400,11 @@ export function CertificatesView() {
           name: `${selectedDef?.name ?? draft.name}-arkaplan`, dataUrl,
         });
         patchDraft({ backgroundDataUrl: res.asset.dataUrl });
-        toast({ title: "Arka plan yüklendi", description: `${res.asset.name} — Medya Arşivi → Sertifikalar klasörüne benzersiz adla kaydedildi.` });
+        toast({ title: t("certificates.bgUploaded"), description: t("certificates.bgUploadedDesc", { name: res.asset.name }) });
       } catch (e) {
         // arşiv yazılamazsa tasarımcıya yerel uygula — kayıt yine de mümkün
         patchDraft({ backgroundDataUrl: dataUrl });
-        toast({ title: "Arka plan eklendi (arşiv dışı)", description: e instanceof Error ? e.message : "Medya Arşivi'ne yazılamadı", variant: "destructive" });
+        toast({ title: t("certificates.bgLocalOnly"), description: e instanceof Error ? e.message : t("certificates.mediaArchiveFail"), variant: "destructive" });
       }
     };
     reader.readAsDataURL(file);
@@ -412,7 +414,7 @@ export function CertificatesView() {
   const openCertSheet = async (participationIds: string[]) => {
     if (!currentEditionId || !selectedDefId) return;
     if (participationIds.length === 0) {
-      toast({ title: "Belge seçilmedi", description: "Listeden en az bir katılımcı seçin.", variant: "destructive" });
+      toast({ title: t("certificates.noneSelected"), description: t("certificates.noneSelectedDesc"), variant: "destructive" });
       return;
     }
     setPrinting(true);
@@ -423,7 +425,7 @@ export function CertificatesView() {
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Sertifika sayfası üretilemedi (${res.status})`);
+        throw new Error(body.error ?? t("certificates.sheetFailed", { status: res.status }));
       }
       const html = await res.text();
       const blob = new Blob([html], { type: "text/html" });
@@ -436,12 +438,12 @@ export function CertificatesView() {
         frame.style.width = "0"; frame.style.height = "0"; frame.style.border = "0";
         frame.src = url;
         document.body.appendChild(frame);
-        toast({ title: "Sertifika sayfası hazır", description: "Açılır pencere engellendi — sayfa yerleşik çerçevede açıldı." });
+        toast({ title: t("certificates.sheetReady"), description: t("certificates.sheetReadyDesc") });
       }
       // ELIGIBLE → GENERATED geçişi sunucu tarafında otomatik; listeyi tazele
       reloadIssues(); reload(); bump();
     } catch (e) {
-      toast({ title: "Sertifika yazdırma başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("certificates.printFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setPrinting(false); }
   };
 
@@ -451,15 +453,15 @@ export function CertificatesView() {
     setMailBusyId(issue.id);
     try {
       await apiSend(`/api/certificate-issues/${issue.id}`, "PUT", { status: "DELIVERED", deliveredAt: new Date().toISOString() });
-      toast({ title: "Sertifika e-postayla gönderildi (simülasyon)", description: "Şablon: Teşekkür + Sertifika Teslimi — alıcı: " + issue.participation.person.firstName + " " + issue.participation.person.lastName });
+      toast({ title: t("certificates.mailSent"), description: t("certificates.mailSentDesc", { name: issue.participation.person.firstName + " " + issue.participation.person.lastName }) });
       reloadIssues(); reload(); bump();
     } catch (e) {
-      toast({ title: "Gönderim başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("certificates.mailFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setMailBusyId(null); }
   };
 
   // ── R10-b: kanvas yardımcıları — kişi-özel doldurma + eleman CRUD + sürükleme ──
-  const editionName = edition ? `${edition.name}${edition.editionLabel ? ` — ${edition.editionLabel}` : ""}` : "Etkinlik";
+  const editionName = edition ? `${edition.name}${edition.editionLabel ? ` — ${edition.editionLabel}` : ""}` : t("certificates.fallbackEdition");
 
   const certElements = useMemo<CertElement[]>(() => {
     if (!draft) return [];
@@ -492,7 +494,7 @@ export function CertificatesView() {
     const base: CertElement = {
       id: certUid(), type, x: certR1(20 + offset), y: certR1(20 + offset),
       w: type === "line" ? 60 : type === "qr" ? 24 : 60, h: type === "line" ? 0.8 : type === "qr" ? 24 : 12,
-      text: type === "text" ? "Metin" : type === "image" ? "Görsel alanı" : undefined,
+      text: type === "text" ? t("certificates.elTypeText") : type === "image" ? t("certificates.elementImageArea") : undefined,
       fontSize: type === "text" ? 4.2 : undefined, fontWeight: type === "text" ? 400 : undefined,
       color: "1f2937", align: type === "text" ? "left" : undefined, radius: type === "image" ? 1 : undefined,
     };
@@ -525,7 +527,7 @@ export function CertificatesView() {
     });
     setSelElId(null);
     setPresetKey(key);
-    toast({ title: "Yerleşim uygulandı — Kaydet'i unutmayın", description: preset.label });
+    toast({ title: t("certificates.presetApplied"), description: presetLabel(preset.key) });
   };
 
   // sürükleme: pointer capture ile taşima + sağ alt köşe tutamacıyla boyutlandırma
@@ -574,13 +576,13 @@ export function CertificatesView() {
       style.fontSize = (el.fontSize ?? 4) * CERT_PX_PER_MM;
       style.fontWeight = (el.fontWeight ?? 400) as React.CSSProperties["fontWeight"];
       style.textAlign = (el.align ?? "left") as React.CSSProperties["textAlign"];
-      content = <span className="block whitespace-pre-wrap" style={{ wordBreak: "break-word" }}>{certPreviewMode ? fillFor(el.text ?? "") : (el.text || "Metin")}</span>;
+      content = <span className="block whitespace-pre-wrap" style={{ wordBreak: "break-word" }}>{certPreviewMode ? fillFor(el.text ?? "") : (el.text || t("certificates.elTypeText"))}</span>;
     } else if (el.type === "line") {
       content = <div className="size-full" style={{ background: color, opacity: 0.85, borderRadius: (el.radius ?? 0) * CERT_PX_PER_MM }} />;
     } else if (el.type === "image") {
       content = el.imageDataUrl
-        ? <img src={el.imageDataUrl} alt="Sertifika görseli" className="size-full object-cover" style={{ borderRadius: (el.radius ?? 0) * CERT_PX_PER_MM }} />
-        : <span className={cn("flex size-full items-center justify-center rounded border border-dashed px-1 text-center text-[10px] leading-tight", selected ? "border-teal-500 text-teal-700" : "border-slate-400/70 text-slate-500")}>{el.text || "Görsel alanı"}</span>;
+        ? <img src={el.imageDataUrl} alt={t("certificates.imageAlt")} className="size-full object-cover" style={{ borderRadius: (el.radius ?? 0) * CERT_PX_PER_MM }} />
+        : <span className={cn("flex size-full items-center justify-center rounded border border-dashed px-1 text-center text-[10px] leading-tight", selected ? "border-teal-500 text-teal-700" : "border-slate-400/70 text-slate-500")}>{el.text || t("certificates.elementImageArea")}</span>;
     } else {
       content = (
         <span className={cn("flex size-full items-center justify-center rounded-[2px] border border-dashed", certPreviewMode ? "border-teal-600/50 bg-teal-50/60" : "border-teal-500/70 bg-teal-50")}>
@@ -600,7 +602,7 @@ export function CertificatesView() {
           selected && "ring-2 ring-teal-500 ring-offset-1 ring-offset-white",
           el.type === "text" && "bg-slate-500/5",
         )}
-        title={`${CERT_ELEMENT_LABELS[el.type]} — sürükleyerek taşı`}
+        title={t("certificates.elementDragTitle", { type: elTypeLabel(el.type) })}
       >
         {content}
         {selected && (
@@ -609,7 +611,7 @@ export function CertificatesView() {
             onPointerMove={moveDrag}
             onPointerUp={endDrag}
             className="absolute -bottom-1.5 -right-1.5 size-3 cursor-nwse-resize rounded-sm border border-teal-600 bg-teal-500"
-            aria-label="Boyutlandırma tutamacı"
+            aria-label={t("certificates.resizeHandle")}
           />
         )}
       </div>
@@ -627,11 +629,20 @@ export function CertificatesView() {
 
   const selectedIssuePids = (issues ?? []).filter((i) => issueSel.has(i.id) && i.participation).map((i) => i.participation!.id);
 
+  // Faz E: sabit etiketler dil sözlüğünden + durum map'i tLabel köprüsüyle
+  const elTypeLabel = (ty: CertElementType): string =>
+    ty === "text" ? t("certificates.elTypeText") : ty === "image" ? t("certificates.elTypeImage") : ty === "line" ? t("certificates.elTypeLine") : t("certificates.elTypeQr");
+  const presetLabel = (key: string): string =>
+    key === "classic" ? t("certificates.presetClassic") : key === "modern" ? t("certificates.presetModern") : key === "minimal" ? t("certificates.presetMinimal") : t("certificates.presetPrestige");
+  const tokenAddTitle = (tok: string) => t("certificates.tokenAddTitle", { token: tok });
+  const tokenAddTextTitle = (tok: string) => t("certificates.tokenAddTextTitle", { token: tok });
+  const certStatusMap = Object.fromEntries(Object.entries(CERTIFICATE_STATUS).map(([k]) => [k, tLabel(CERTIFICATE_STATUS, k)]));
+
   return (
     <div className="space-y-5">
-      <PageHeader title="Sertifikalar" desc="Uygunluk kuralı → uygunluk listesi → üretim → gönderim; 'Üretildi' ile 'Gönderildi' ayrı metrik" />
+      <PageHeader title={t("certificates.title")} desc={t("certificates.desc")} />
       {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (defs ?? []).length === 0 ? (
-        <EmptyState title="Henüz sertifika türü oluşturulmadı" desc="Önce uygunluk koşullarını tanımlayın." />
+        <EmptyState title={t("certificates.emptyDefs")} desc={t("certificates.emptyDefsDesc")} />
       ) : (
         <>
           {/* 1 — tanım kartları (seçilebilir) */}
@@ -643,26 +654,26 @@ export function CertificatesView() {
                 <SectionCard
                   key={d.id}
                   title={d.name}
-                  desc={d.eligibilityRule ?? "kural tanımsız"}
+                  desc={d.eligibilityRule ?? t("certificates.noRule")}
                   className={cn("transition", selected && "ring-2 ring-teal-500")}
                   action={
                     <div className="flex items-center gap-1.5">
-                      <Button size="sm" variant={selected ? "default" : "outline"} onClick={() => selectDef(d)} title="Tasarımcı + belge listesi">
-                        <Icons.Palette className="size-3.5" /> Tasarımcı
+                      <Button size="sm" variant={selected ? "default" : "outline"} onClick={() => selectDef(d)} title={t("certificates.designerTitle")}>
+                        <Icons.Palette className="size-3.5" /> {t("certificates.designer")}
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => generate(d)} disabled={busy === d.id}>
-                        {busy === d.id ? "Üretiliyor…" : "Üret"}
+                        {busy === d.id ? t("certificates.generating") : t("certificates.generate")}
                       </Button>
                     </div>
                   }
                 >
                   <div className="grid grid-cols-4 gap-1.5 text-center text-[11px]">
-                    <div className="rounded-md bg-emerald-50 p-1.5"><p className="text-base font-bold text-emerald-700 tabular-nums">{cnt("GENERATED") + cnt("DELIVERED")}</p><p className="text-emerald-600/80">uygun</p></div>
-                    <div className="rounded-md bg-sky-50 p-1.5"><p className="text-base font-bold text-sky-700 tabular-nums">{cnt("GENERATED")}</p><p className="text-sky-600/80">üretildi</p></div>
-                    <div className="rounded-md bg-teal-50 p-1.5"><p className="text-base font-bold text-teal-700 tabular-nums">{cnt("DELIVERED")}</p><p className="text-teal-600/80">gönderildi</p></div>
-                    <div className="rounded-md bg-rose-50 p-1.5"><p className="text-base font-bold text-rose-700 tabular-nums">{cnt("NOT_ELIGIBLE") + cnt("REVOKED")}</p><p className="text-rose-600/80">eksik/iptal</p></div>
+                    <div className="rounded-md bg-emerald-50 p-1.5"><p className="text-base font-bold text-emerald-700 tabular-nums">{cnt("GENERATED") + cnt("DELIVERED")}</p><p className="text-emerald-600/80">{t("certificates.cntEligible")}</p></div>
+                    <div className="rounded-md bg-sky-50 p-1.5"><p className="text-base font-bold text-sky-700 tabular-nums">{cnt("GENERATED")}</p><p className="text-sky-600/80">{t("certificates.cntGenerated")}</p></div>
+                    <div className="rounded-md bg-teal-50 p-1.5"><p className="text-base font-bold text-teal-700 tabular-nums">{cnt("DELIVERED")}</p><p className="text-teal-600/80">{t("certificates.cntDelivered")}</p></div>
+                    <div className="rounded-md bg-rose-50 p-1.5"><p className="text-base font-bold text-rose-700 tabular-nums">{cnt("NOT_ELIGIBLE") + cnt("REVOKED")}</p><p className="text-rose-600/80">{t("certificates.cntMissing")}</p></div>
                   </div>
-                  <p className="mt-2 text-[11px] text-muted-foreground">İmzacı: {d.signerName ?? "—"} · belgedeki ad: EventProfileSnapshot&apos;tan</p>
+                  <p className="mt-2 text-[11px] text-muted-foreground">{t("certificates.signerLine", { signer: d.signerName ?? "—" })}</p>
                 </SectionCard>
               );
             })}
@@ -671,16 +682,16 @@ export function CertificatesView() {
           {/* 2 — Tasarımcı + canlı önizleme */}
           {!draft || !selectedDef ? (
             <EmptyState
-              title="Tasarımcı için bir sertifika türü seçin"
-              desc="Yukarıdaki kartlardan 'Tasarımcı' düğmesine basın — boyut, arka plan, gövde şablonu ve canlı önizleme burada açılır."
+              title={t("certificates.pickDef")}
+              desc={t("certificates.pickDefDesc")}
             />
           ) : (
             <div className="grid gap-4 lg:grid-cols-12">
               <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none min-w-0 lg:col-span-5">
-                <SectionCard title={`Tasarım Özellikleri — ${selectedDef.name}`} desc="ölçüler mm · gövde şablonu kişi-özeldir (yer tutuculara tıkla)">
+                <SectionCard title={t("certificates.designProps", { name: selectedDef.name })} desc={t("certificates.designPropsDesc")}>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {([
-                      ["Genişlik (mm)", "widthMm", 100, 500, 5], ["Yükseklik (mm)", "heightMm", 100, 500, 5], ["Baskı payı (mm)", "bleedMm", 0, 15, 1],
+                      [t("certificates.fWidth"), "widthMm", 100, 500, 5], [t("certificates.fHeight"), "heightMm", 100, 500, 5], [t("certificates.fBleed"), "bleedMm", 0, 15, 1],
                     ] as [string, "widthMm" | "heightMm" | "bleedMm", number, number, number][]).map(([lbl, key, min, max, step]) => (
                       <div key={key} className="space-y-1">
                         <Label className="text-[11px] text-muted-foreground">{lbl}</Label>
@@ -689,50 +700,50 @@ export function CertificatesView() {
                       </div>
                     ))}
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Yön</Label>
+                      <Label className="text-[11px] text-muted-foreground">{t("certificates.orientation")}</Label>
                       <Select value={draft.orientation} onValueChange={(v) => patchDraft({ orientation: v })}>
                         <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="LANDSCAPE">Yatay</SelectItem>
-                          <SelectItem value="PORTRAIT">Dikey</SelectItem>
+                          <SelectItem value="LANDSCAPE">{t("certificates.landscape")}</SelectItem>
+                          <SelectItem value="PORTRAIT">{t("certificates.portrait")}</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Yazı tipi</Label>
+                      <Label className="text-[11px] text-muted-foreground">{t("certificates.font")}</Label>
                       <Select value={draft.fontKey} onValueChange={(v) => patchDraft({ fontKey: v })}>
                         <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                         <SelectContent>{Object.entries(BADGE_FONTS).map(([k, f]) => <SelectItem key={k} value={k}>{f.label}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Metin rengi</Label>
+                      <Label className="text-[11px] text-muted-foreground">{t("certificates.textColor")}</Label>
                       <div className="flex items-center gap-2">
-                        <input type="color" value={draft.textColor} onChange={(e) => patchDraft({ textColor: e.target.value })} className="h-8 w-10 cursor-pointer rounded border" aria-label="Metin rengi" />
+                        <input type="color" value={draft.textColor} onChange={(e) => patchDraft({ textColor: e.target.value })} className="h-8 w-10 cursor-pointer rounded border" aria-label={t("certificates.textColor")} />
                         <Input value={draft.textColor} onChange={(e) => patchDraft({ textColor: e.target.value })} className="h-8 font-mono text-[11px]" />
                       </div>
                     </div>
                     <div className="col-span-2 space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Düzey notu (tier)</Label>
-                      <Input value={draft.tierNote ?? ""} onChange={(e) => patchDraft({ tierNote: e.target.value })} className="h-8 text-xs" placeholder="Katılımcı düzeyi" />
+                      <Label className="text-[11px] text-muted-foreground">{t("certificates.tierNote")}</Label>
+                      <Input value={draft.tierNote ?? ""} onChange={(e) => patchDraft({ tierNote: e.target.value })} className="h-8 text-xs" placeholder={t("certificates.tierNotePlaceholder")} />
                     </div>
                   </div>
 
                   {/* arka plan yükleme */}
                   <div className="mt-3 rounded-lg border border-dashed bg-muted/20 p-3">
-                    <p className="flex items-center gap-1.5 text-xs font-medium"><Icons.ImageUp className="size-3.5 text-teal-600" /> Arka plan görseli</p>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">Tasarımcıdan gelen görsel en arka layer&apos;a eklenir · en fazla 600 KB</p>
+                    <p className="flex items-center gap-1.5 text-xs font-medium"><Icons.ImageUp className="size-3.5 text-teal-600" /> {t("certificates.bgImage")}</p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">{t("certificates.bgImageDesc")}</p>
                     <div className="mt-2 flex items-center gap-2">
                       <input ref={bgFileRef} type="file" accept="image/*" className="hidden"
                         onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadBackground(f); e.target.value = ""; }} />
                       <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => bgFileRef.current?.click()}>
-                        <Icons.Upload className="size-3" /> Görsel seç
+                        <Icons.Upload className="size-3" /> {t("certificates.pickImage")}
                       </Button>
                       {draft.backgroundDataUrl && (
                         <Button variant="ghost" size="sm" className="h-7 text-xs text-rose-600 hover:text-rose-700" onClick={() => patchDraft({ backgroundDataUrl: null })}>
-                          <Icons.Trash2 className="size-3" /> Kaldır
+                          <Icons.Trash2 className="size-3" /> {t("certificates.remove")}
                         </Button>
                       )}
                     </div>
@@ -740,26 +751,26 @@ export function CertificatesView() {
 
                   {/* gövde şablonu */}
                   <div className="mt-3 space-y-1.5">
-                    <Label className="text-[11px] text-muted-foreground">Gövde şablonu (HTML destekli)</Label>
+                    <Label className="text-[11px] text-muted-foreground">{t("certificates.bodyTemplate")}</Label>
                     <div className="flex flex-wrap gap-1">
                       {CERT_TOKENS.map((t) => (
                         <button key={t} type="button"
                           onClick={() => patchDraft({ bodyTemplate: (draft.bodyTemplate ?? "") + t })}
                           className="rounded-md border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-teal-700 transition hover:border-teal-400 hover:bg-teal-50"
-                          title={`Şablona ${t} ekle`}>
+                          title={tokenAddTitle(t)}>
                           {t}
                         </button>
                       ))}
                     </div>
                     <Textarea value={draft.bodyTemplate ?? ""} onChange={(e) => patchDraft({ bodyTemplate: e.target.value })} rows={5}
-                      className="font-mono text-[11px]" placeholder="Bu belge, {{edition}} etkinliğine {{tier}} olarak katılımını belgelemek üzere düzenlenmiştir…" />
+                      className="font-mono text-[11px]" placeholder={t("certificates.bodyPlaceholder")} />
                   </div>
 
                   <div className="mt-3 flex items-center gap-2">
                     <Button size="sm" onClick={saveDesign} disabled={savingDesign}>
-                      {savingDesign ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} Tasarımı Kaydet
+                      {savingDesign ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} {t("certificates.saveDesign")}
                     </Button>
-                    <span className="text-[11px] text-muted-foreground">Kayıtlı boyutlar baskı sayfasının @page ölçüsünü belirler.</span>
+                    <span className="text-[11px] text-muted-foreground">{t("certificates.saveDesignNote")}</span>
                   </div>
                 </SectionCard>
               </div>
@@ -767,31 +778,31 @@ export function CertificatesView() {
               {/* R10-b: kanvas — mm koordinatlı eleman yerleşimi (yaka kartı tasarımcısı mimarisi) */}
               <div className="animate-in fade-in slide-in-from-bottom-1 motion-reduce:animate-none min-w-0 lg:col-span-7" style={{ animationDelay: "60ms" }}>
                 <SectionCard
-                  title={`Kanvas — ${selectedDef.name}`}
-                  desc={`${draft.widthMm}×${draft.heightMm} mm · ızgara 5 mm · elemanı sürükle, köşe tutamacıyla boyutlandır`}
+                  title={t("certificates.canvas", { name: selectedDef.name })}
+                  desc={t("certificates.canvasDesc", { w: draft.widthMm, h: draft.heightMm })}
                 >
                   {/* araç çubuğu: yerleşim şablonu + önizleme + kaydet + eleman ekle */}
                   <div className="flex flex-wrap items-center gap-2">
                     <Select value={presetKey} onValueChange={applyPreset}>
-                      <SelectTrigger className="h-8 w-44 text-xs" aria-label="Yerleşim şablonu seç"><SelectValue placeholder="Yerleşim şablonu…" /></SelectTrigger>
+                      <SelectTrigger className="h-8 w-44 text-xs" aria-label={t("certificates.presetSelect")}><SelectValue placeholder={t("certificates.presetPlaceholder")} /></SelectTrigger>
                       <SelectContent>
-                        {CERT_PRESETS.map((p) => <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>)}
+                        {CERT_PRESETS.map((p) => <SelectItem key={p.key} value={p.key}>{presetLabel(p.key)}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Button variant={certPreviewMode ? "default" : "outline"} size="sm" className="h-8 text-xs"
                       onClick={() => { setCertPreviewMode((v) => !v); setSelElId(null); }}
-                      title="Yer tutucuları seçili katılımcı verisiyle göster">
-                      {certPreviewMode ? <Icons.Pencil className="size-3.5" /> : <Icons.Eye className="size-3.5" />} {certPreviewMode ? "Tasarıma Dön" : "Gerçek Veriyle Önizle"}
+                      title={t("certificates.previewToggleTitle")}>
+                      {certPreviewMode ? <Icons.Pencil className="size-3.5" /> : <Icons.Eye className="size-3.5" />} {certPreviewMode ? t("certificates.backToDesign") : t("certificates.previewReal")}
                     </Button>
                     <Button size="sm" className="h-8 text-xs" onClick={saveDesign} disabled={savingDesign}>
-                      {savingDesign ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} Kaydet
+                      {savingDesign ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} {t("common.save")}
                     </Button>
                     <span className="ms-auto flex items-center gap-1">
-                      <span className="mr-1 hidden text-[10px] font-medium uppercase tracking-wide text-muted-foreground sm:inline">Eleman Ekle</span>
-                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("text")} aria-label="Metin elemanı ekle"><Icons.Type className="size-3" /> Metin</Button>
-                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("line")} aria-label="Çizgi elemanı ekle"><Icons.Minus className="size-3" /> Çizgi</Button>
-                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("image")} aria-label="Görsel elemanı ekle"><Icons.Image className="size-3" /> Görsel</Button>
-                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("qr")} aria-label="QR elemanı ekle"><Icons.QrCode className="size-3" /> QR</Button>
+                      <span className="mr-1 hidden text-[10px] font-medium uppercase tracking-wide text-muted-foreground sm:inline">{t("certificates.addElement")}</span>
+                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("text")} aria-label={t("certificates.addText")}><Icons.Type className="size-3" /> {t("certificates.elTypeText")}</Button>
+                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("line")} aria-label={t("certificates.addLine")}><Icons.Minus className="size-3" /> {t("certificates.elTypeLine")}</Button>
+                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("image")} aria-label={t("certificates.addImage")}><Icons.Image className="size-3" /> {t("certificates.elTypeImage")}</Button>
+                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => addCertElement("qr")} aria-label={t("certificates.addQr")}><Icons.QrCode className="size-3" /> {t("certificates.elTypeQr")}</Button>
                     </span>
                   </div>
 
@@ -813,7 +824,7 @@ export function CertificatesView() {
                         ))}
                       </div>
                       <div
-                        tabIndex={0} role="application" aria-label="Sertifika kanvası — elemanları sürükleyip ok tuşlarıyla ince ayar yapın"
+                        tabIndex={0} role="application" aria-label={t("certificates.canvasAria")}
                         onKeyDown={onCanvasKeyDown}
                         onPointerDown={() => setSelElId(null)}
                         className="relative shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
@@ -840,7 +851,7 @@ export function CertificatesView() {
                         )}
                         {/* baskı payı kılavuzu */}
                         {draft.bleedMm > 0 && (
-                          <div className="pointer-events-none absolute" title={`baskı payı ${draft.bleedMm} mm`}
+                          <div className="pointer-events-none absolute" title={t("certificates.bleedTitle", { mm: draft.bleedMm })}
                             style={{ left: draft.bleedMm * CERT_PX_PER_MM, top: draft.bleedMm * CERT_PX_PER_MM, right: draft.bleedMm * CERT_PX_PER_MM, bottom: draft.bleedMm * CERT_PX_PER_MM, border: "1.5px dashed rgba(217,119,6,.45)" }} />
                         )}
                         {certElements.map((el) => renderCertElement(el))}
@@ -852,14 +863,14 @@ export function CertificatesView() {
                       </div>
                     </div>
                   </div>
-                  <p className="mt-2 text-[10px] text-muted-foreground">Ok tuşları: 1 mm taşı (Shift = 5 mm) · Delete: seçili elemanı sil · mm cetvelli, baskı payı kesikli turuncu çerçeve.</p>
+                  <p className="mt-2 text-[10px] text-muted-foreground">{t("certificates.canvasHelp")}</p>
 
                   {/* önizleme kişisi seçimi */}
                   {certPreviewMode && (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <Label className="text-[11px] text-muted-foreground">Önizleme kişisi:</Label>
+                      <Label className="text-[11px] text-muted-foreground">{t("certificates.previewPerson")}</Label>
                       <Select value={previewPid ?? previewIssue?.participation?.id ?? ""} onValueChange={setPreviewPid}>
-                        <SelectTrigger className="h-7 w-56 text-xs"><SelectValue placeholder="Belge listesinden kişi" /></SelectTrigger>
+                        <SelectTrigger className="h-7 w-56 text-xs"><SelectValue placeholder={t("certificates.previewPersonPlaceholder")} /></SelectTrigger>
                         <SelectContent className="maven-scroll max-h-64">
                           {(issues ?? []).filter((i) => i.participation).map((i) => (
                             <SelectItem key={i.id} value={i.participation!.id}>{i.participation!.person.firstName} {i.participation!.person.lastName}</SelectItem>
@@ -871,18 +882,18 @@ export function CertificatesView() {
                 </SectionCard>
 
                 {/* eleman listesi + özellik paneli */}
-                <SectionCard title="Elemanlar" className="mt-4" desc={selElId ? "seçili eleman özellikleri — mm cinsinden" : "kanvasta elemana tıklayarak seçin"}>
+                <SectionCard title={t("certificates.elements")} className="mt-4" desc={selElId ? t("certificates.elementsPropsDesc") : t("certificates.elementsHint")}>
                   <div className="maven-scroll max-h-40 space-y-1 overflow-y-auto">
                     {certElements.length === 0 ? (
-                      <p className="py-2 text-center text-[11px] text-muted-foreground">Eleman yok — yukarıdaki Eleman Ekle düğmeleriyle başlayın.</p>
+                      <p className="py-2 text-center text-[11px] text-muted-foreground">{t("certificates.noElements")}</p>
                     ) : certElements.map((el, i) => (
                       <button key={el.id} type="button" onClick={() => setSelElId(el.id)}
                         className={cn("flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-[11px] transition hover:border-teal-400 hover:bg-teal-50/40", selElId === el.id && "border-teal-500 bg-teal-50/60")}>
                         <Icons.GripVertical className="size-3 shrink-0 text-muted-foreground" />
-                        <span className="shrink-0 font-medium">{CERT_ELEMENT_LABELS[el.type]}</span>
+                        <span className="shrink-0 font-medium">{elTypeLabel(el.type)}</span>
                         {el.text && <span className="min-w-0 flex-1 truncate text-muted-foreground">{el.text}</span>}
                         <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">{el.x},{el.y} mm</span>
-                        <span className="sr-only">{i + 1}. eleman</span>
+                        <span className="sr-only">{t("certificates.elementN", { n: i + 1 })}</span>
                       </button>
                     ))}
                   </div>
@@ -893,31 +904,31 @@ export function CertificatesView() {
                     return (
                       <div className="mt-3 space-y-2.5 rounded-lg border bg-muted/20 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <Chip tone="teal">{CERT_ELEMENT_LABELS[el.type]}</Chip>
+                          <Chip tone="teal">{elTypeLabel(el.type)}</Chip>
                           <span className="flex items-center gap-1">
-                            <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => reorderCertElement(el.id, -1)} aria-label="Elemanı arkaya taşı" title="Arkaya taşı">
-                              <Icons.ArrowDownToLine className="size-3" /> arkaya
+                            <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => reorderCertElement(el.id, -1)} aria-label={t("certificates.backwardAria")} title={t("certificates.sendBackwardTitle")}>
+                              <Icons.ArrowDownToLine className="size-3" /> {t("certificates.sendBackward")}
                             </Button>
-                            <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => reorderCertElement(el.id, 1)} aria-label="Elemanı öne taşı" title="Öne taşı">
-                              <Icons.ArrowUpToLine className="size-3" /> öne
+                            <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => reorderCertElement(el.id, 1)} aria-label={t("certificates.forwardAria")} title={t("certificates.bringForwardTitle")}>
+                              <Icons.ArrowUpToLine className="size-3" /> {t("certificates.bringForward")}
                             </Button>
                             <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px] text-rose-600 hover:text-rose-700" onClick={() => removeCertElement(el.id)}>
-                              <Icons.Trash2 className="size-3" /> Elemanı sil
+                              <Icons.Trash2 className="size-3" /> {t("certificates.deleteElement")}
                             </Button>
                           </span>
                         </div>
                         <div className="grid grid-cols-4 gap-2">
-                          {certNumField("X (mm)", el.x, (n) => updateCertElement(el.id, { x: n }))}
-                          {certNumField("Y (mm)", el.y, (n) => updateCertElement(el.id, { y: n }))}
-                          {certNumField("G (mm)", el.w, (n) => updateCertElement(el.id, { w: Math.max(n, 1) }))}
-                          {certNumField("H (mm)", el.h, (n) => updateCertElement(el.id, { h: Math.max(n, 0.4) }))}
+                          {certNumField(t("certificates.fX"), el.x, (n) => updateCertElement(el.id, { x: n }))}
+                          {certNumField(t("certificates.fY"), el.y, (n) => updateCertElement(el.id, { y: n }))}
+                          {certNumField(t("certificates.fW"), el.w, (n) => updateCertElement(el.id, { w: Math.max(n, 1) }))}
+                          {certNumField(t("certificates.fH"), el.h, (n) => updateCertElement(el.id, { h: Math.max(n, 0.4) }))}
                         </div>
                         {el.type === "text" && (
                           <>
                             <div className="grid grid-cols-2 gap-2">
-                              {certNumField("Yazı boyu (mm)", el.fontSize ?? 4, (n) => updateCertElement(el.id, { fontSize: certClamp(n, 0.5, 30) }), 0.2, 0.5, 30)}
+                              {certNumField(t("certificates.fontSize"), el.fontSize ?? 4, (n) => updateCertElement(el.id, { fontSize: certClamp(n, 0.5, 30) }), 0.2, 0.5, 30)}
                               <div className="space-y-1">
-                                <Label className="text-[11px] text-muted-foreground">Kalınlık</Label>
+                                <Label className="text-[11px] text-muted-foreground">{t("certificates.weight")}</Label>
                                 <Select value={String(el.fontWeight ?? 400)} onValueChange={(v) => updateCertElement(el.id, { fontWeight: Number(v) })}>
                                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                                   <SelectContent>
@@ -928,33 +939,33 @@ export function CertificatesView() {
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                               <div className="space-y-1">
-                                <Label className="text-[11px] text-muted-foreground">Renk</Label>
+                                <Label className="text-[11px] text-muted-foreground">{t("certificates.color")}</Label>
                                 <div className="flex items-center gap-2">
-                                  <input type="color" value={hex} onChange={(e) => updateCertElement(el.id, { color: e.target.value.replace("#", "") })} className="h-8 w-10 cursor-pointer rounded border" aria-label="Eleman rengi" />
+                                  <input type="color" value={hex} onChange={(e) => updateCertElement(el.id, { color: e.target.value.replace("#", "") })} className="h-8 w-10 cursor-pointer rounded border" aria-label={t("certificates.elementColor")} />
                                   <Input value={hex} onChange={(e) => updateCertElement(el.id, { color: e.target.value.replace("#", "") })} className="h-8 font-mono text-[11px]" />
                                 </div>
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-[11px] text-muted-foreground">Hizalama</Label>
+                                <Label className="text-[11px] text-muted-foreground">{t("certificates.align")}</Label>
                                 <Select value={el.align ?? "left"} onValueChange={(v) => updateCertElement(el.id, { align: v })}>
                                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="left">Sola</SelectItem>
-                                    <SelectItem value="center">Ortaya</SelectItem>
-                                    <SelectItem value="right">Sağa</SelectItem>
+                                    <SelectItem value="left">{t("certificates.alignLeft")}</SelectItem>
+                                    <SelectItem value="center">{t("certificates.alignCenter")}</SelectItem>
+                                    <SelectItem value="right">{t("certificates.alignRight")}</SelectItem>
                                   </SelectContent>
                                 </Select>
                               </div>
                             </div>
                             <div className="space-y-1">
-                              <Label className="text-[11px] text-muted-foreground">Metin içeriği (yer tutucular serbest)</Label>
+                              <Label className="text-[11px] text-muted-foreground">{t("certificates.textContent")}</Label>
                               <Textarea value={el.text ?? ""} onChange={(e) => updateCertElement(el.id, { text: e.target.value })} rows={3} className="text-xs" />
                               <div className="flex flex-wrap gap-1">
                                 {([...CERT_TOKENS, "{{signer}}"] as string[]).map((t) => (
                                   <button key={t} type="button"
                                     onClick={() => updateCertElement(el.id, { text: (el.text ?? "") + t })}
                                     className="rounded-md border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-teal-700 transition hover:border-teal-400 hover:bg-teal-50"
-                                    title={`Metne ${t} ekle`}>
+                                    title={tokenAddTextTitle(t)}>
                                     {t}
                                   </button>
                                 ))}
@@ -964,14 +975,14 @@ export function CertificatesView() {
                         )}
                         {el.type === "image" && (
                           <div className="space-y-1">
-                            <Label className="text-[11px] text-muted-foreground">Görsel (≤ 600 KB) ve köşe yarıçapı</Label>
+                            <Label className="text-[11px] text-muted-foreground">{t("certificates.imagePropLabel")}</Label>
                             <div className="flex flex-wrap items-center gap-2">
                               <input ref={elFileRef} type="file" accept="image/*" className="hidden"
                                 onChange={(e) => {
                                   const f = e.target.files?.[0];
                                   if (f) {
                                     if (f.size > MAX_BG_BYTES) {
-                                      toast({ title: "Görsel çok büyük", description: `En fazla 600 KB — seçilen ${(f.size / 1024).toFixed(0)} KB.`, variant: "destructive" });
+                                      toast({ title: t("certificates.imageTooLarge"), description: t("certificates.imageTooLargeDesc2", { size: (f.size / 1024).toFixed(0) }), variant: "destructive" });
                                     } else {
                                       const reader = new FileReader();
                                       reader.onload = () => updateCertElement(el.id, { imageDataUrl: String(reader.result) });
@@ -980,24 +991,24 @@ export function CertificatesView() {
                                   }
                                   e.target.value = "";
                                 }} />
-                              <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => elFileRef.current?.click()} aria-label="Eleman görseli seç">
-                                <Icons.Upload className="size-3" /> Görsel seç
+                              <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => elFileRef.current?.click()} aria-label={t("certificates.pickElementImage")}>
+                                <Icons.Upload className="size-3" /> {t("certificates.pickImage")}
                               </Button>
                               {el.imageDataUrl && (
-                                <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-rose-600 hover:text-rose-700" onClick={() => updateCertElement(el.id, { imageDataUrl: undefined })} aria-label="Eleman görselini kaldır">
-                                  <Icons.Trash2 className="size-3" /> Kaldır
+                                <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-rose-600 hover:text-rose-700" onClick={() => updateCertElement(el.id, { imageDataUrl: undefined })} aria-label={t("certificates.removeElementImage")}>
+                                  <Icons.Trash2 className="size-3" /> {t("certificates.remove")}
                                 </Button>
                               )}
-                              <Input type="number" min={0} max={20} step={0.5} value={el.radius ?? 0} onChange={(e) => updateCertElement(el.id, { radius: Number(e.target.value) || 0 })} className="h-7 w-20 text-xs tabular-nums" aria-label="Köşe yarıçapı (mm)" placeholder="radius mm" />
+                              <Input type="number" min={0} max={20} step={0.5} value={el.radius ?? 0} onChange={(e) => updateCertElement(el.id, { radius: Number(e.target.value) || 0 })} className="h-7 w-20 text-xs tabular-nums" aria-label={t("certificates.radiusAria")} placeholder="radius mm" />
                             </div>
-                            <p className="text-[10px] text-muted-foreground">Logo alanı için görsel seçmeyin — etiket metni kanvasında görünür, baskıda yalnız yüklenmiş görsel basılır.</p>
+                            <p className="text-[10px] text-muted-foreground">{t("certificates.logoNote")}</p>
                           </div>
                         )}
                         {el.type === "line" && (
-                          <p className="text-[10px] text-muted-foreground">Çizgi: H değeri kalınlıktır; çerçeve için 4 çizgi elemanı birleştirin (Prestij yerleşiminde hazır).</p>
+                          <p className="text-[10px] text-muted-foreground">{t("certificates.lineNote")}</p>
                         )}
                         {el.type === "qr" && (
-                          <p className="text-[10px] text-muted-foreground">QR: baskı sayfasında seri numarasıyla üretilir (qrcode); kanvasda yer tutucu gösterilir.</p>
+                          <p className="text-[10px] text-muted-foreground">{t("certificates.qrNote")}</p>
                         )}
                       </div>
                     );
@@ -1008,30 +1019,30 @@ export function CertificatesView() {
               {/* 3 — belge listesi */}
               <div className="min-w-0 lg:col-span-12">
                 <SectionCard
-                  title={`Belge Listesi — ${selectedDef.name}`}
-                  desc="satır seç → toplu yazdır; ELIGIBLE belge baskıda otomatik GENERATED olur"
+                  title={t("certificates.issueList", { name: selectedDef.name })}
+                  desc={t("certificates.issueListDesc")}
                   action={
                     <div className="flex items-center gap-2">
-                      <Chip tone="teal">{issueSel.size} seçili</Chip>
+                      <Chip tone="teal">{t("certificates.selectedCount", { count: issueSel.size })}</Chip>
                       <Button size="sm" variant="outline" onClick={() => openCertSheet(selectedIssuePids)} disabled={printing || selectedIssuePids.length === 0}>
-                        {printing ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Printer className="size-3.5" />} Toplu Yazdır
+                        {printing ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Printer className="size-3.5" />} {t("certificates.printAll")}
                       </Button>
                     </div>
                   }
                 >
                   {issueLoading ? <Loading rows={5} /> : issueError ? <ErrorState message={issueError} onRetry={reloadIssues} /> : (issues ?? []).length === 0 ? (
-                    <EmptyState title="Bu tanım için belge yok" desc="'Üret' ile uygunluk listesinden belge oluşturun." />
+                    <EmptyState title={t("certificates.noIssues")} desc={t("certificates.noIssuesDesc")} />
                   ) : (
                     <div className="maven-scroll max-h-96 overflow-y-auto rounded-lg border">
                       <table className="w-full text-xs">
                         <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
                           <tr>
-                            <th className="w-10 px-3 py-2 font-medium"><span className="sr-only">Seçim</span></th>
-                            <th className="px-3 py-2 font-medium">Kişi</th>
-                            <th className="px-3 py-2 font-medium">Durum</th>
-                            <th className="hidden px-3 py-2 font-medium sm:table-cell">Üretim</th>
-                            <th className="hidden px-3 py-2 font-medium sm:table-cell">Gönderim</th>
-                            <th className="px-3 py-2 text-right font-medium">İşlem</th>
+                            <th className="w-10 px-3 py-2 font-medium"><span className="sr-only">{t("certificates.thSelect")}</span></th>
+                            <th className="px-3 py-2 font-medium">{t("certificates.thPerson")}</th>
+                            <th className="px-3 py-2 font-medium">{t("certificates.thStatus")}</th>
+                            <th className="hidden px-3 py-2 font-medium sm:table-cell">{t("certificates.thGenerated")}</th>
+                            <th className="hidden px-3 py-2 font-medium sm:table-cell">{t("certificates.thDelivered")}</th>
+                            <th className="px-3 py-2 text-right font-medium">{t("certificates.thAction")}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1048,27 +1059,27 @@ export function CertificatesView() {
                                       return next;
                                     })
                                   }
-                                  aria-label={`${i.participation?.person.firstName ?? ""} belgesini seç`}
+                                  aria-label={t("certificates.selectIssueAria", { name: i.participation?.person.firstName ?? "" })}
                                 />
                               </td>
                               <td className="animate-in fade-in px-3 py-2 motion-reduce:animate-none" style={{ animationDelay: `${idx * 25}ms` }}>
                                 <div className="font-medium">{i.participation ? `${i.participation.person.firstName} ${i.participation.person.lastName}` : "—"}</div>
                                 {i.participation?.person.company && <div className="text-[11px] text-muted-foreground">{i.participation.person.company}</div>}
                               </td>
-                              <td className="px-3 py-2"><StatusBadge map={CERTIFICATE_STATUS} value={i.status} /></td>
+                              <td className="px-3 py-2"><StatusBadge map={certStatusMap} value={i.status} /></td>
                               <td className="hidden whitespace-nowrap px-3 py-2 text-[11px] tabular-nums text-muted-foreground sm:table-cell">{fmtDateTime(i.generatedAt)}</td>
                               <td className="hidden whitespace-nowrap px-3 py-2 text-[11px] tabular-nums text-muted-foreground sm:table-cell">{fmtDateTime(i.deliveredAt)}</td>
                               <td className="px-3 py-2 text-right">
                                 <div className="flex items-center justify-end gap-1">
-                                  <Button variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={printing || !i.participation} onClick={() => openCertSheet([i.participation!.id])} title="Tek belge baskı sayfası">
-                                    <Icons.ExternalLink className="size-3" /> Sertifikayı aç
+                                  <Button variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={printing || !i.participation} onClick={() => openCertSheet([i.participation!.id])} title={t("certificates.openOneTitle")}>
+                                    <Icons.ExternalLink className="size-3" /> {t("certificates.openOne")}
                                   </Button>
                                   {(i.status === "GENERATED" || i.status === "DELIVERED") && (
                                     <Button variant="outline" size="sm" className="h-7 gap-1 border-teal-300 bg-teal-50 px-2 text-xs text-teal-800 hover:bg-teal-100 hover:text-teal-900"
                                       disabled={mailBusyId === i.id || !i.participation}
                                       onClick={() => mailDeliver(i)}
-                                      title="deliveredAt işlenir + Teşekkür şablonu (simülasyon)">
-                                      {mailBusyId === i.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.MailCheck className="size-3" />} E-posta ile gönder
+                                      title={t("certificates.mailBtnTitle")}>
+                                      {mailBusyId === i.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.MailCheck className="size-3" />} {t("certificates.mailBtn")}
                                     </Button>
                                   )}
                                 </div>
@@ -1107,6 +1118,7 @@ interface FormLite { id: string; name: string }
 
 const AUDIENCE_MODE: Record<string, string> = { SEGMENT: "Segment (kural)", CUSTOM: "Özel Liste", BOTH: "Segment + Özel Liste" };
 const CAMPAIGN_STATUS: Record<string, string> = { DRAFT: "Taslak", TESTED: "Test edildi", SCHEDULED: "Zamanlandı", SENT: "Gönderildi", FAILED: "Başarısız" };
+const PROVIDER_STATUS: Record<string, string> = { ACTIVE: "Aktif", PAUSED: "Duraklatıldı" };
 const PHASE_TONE: Record<string, "teal" | "amber" | "violet"> = { PRE_EVENT: "teal", DURING_EVENT: "amber", POST_EVENT: "violet" };
 
 const PHASE_PILLS: { key: string; label: string }[] = [
@@ -1117,6 +1129,7 @@ const PHASE_PILLS: { key: string; label: string }[] = [
 ];
 
 export function CommunicationsView() {
+  useLang(); // dil değişiminde yeniden render
   const { currentEditionId, tenant, bump, refreshKey } = useApp();
   const { toast } = useToast();
 
@@ -1170,9 +1183,9 @@ export function CommunicationsView() {
 
   const saveCampaign = async () => {
     if (!currentEditionId) return;
-    if (!campaignForm.name.trim()) { toast({ title: "Kampanya adı zorunlu", variant: "destructive" }); return; }
+    if (!campaignForm.name.trim()) { toast({ title: t("communications.nameRequired"), variant: "destructive" }); return; }
     if (campaignForm.audienceMode !== "SEGMENT" && !campaignForm.customRecipients.trim()) {
-      toast({ title: "Özel liste boş", description: "CUSTOM/BOTH modda alıcı e-postaları zorunlu.", variant: "destructive" });
+      toast({ title: t("communications.customEmpty"), description: t("communications.customEmptyDesc"), variant: "destructive" });
       return;
     }
     setCampaignBusy(true);
@@ -1185,11 +1198,11 @@ export function CommunicationsView() {
       };
       if (campaignEdit) await apiSend(`/api/campaigns/${campaignEdit.id}`, "PUT", payload);
       else await apiSend("/api/campaigns", "POST", payload);
-      toast({ title: campaignEdit ? "Kampanya güncellendi" : "Kampanya oluşturuldu", description: `${campaignForm.name} · ${label(CAMPAIGN_PHASE, campaignForm.phase)}` });
+      toast({ title: campaignEdit ? t("communications.updated") : t("communications.created"), description: t("communications.savedDesc", { name: campaignForm.name, phase: tLabel(CAMPAIGN_PHASE, campaignForm.phase) }) });
       setCampaignOpen(false);
       reload(); bump();
     } catch (e) {
-      toast({ title: "Kampanya kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("communications.saveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setCampaignBusy(false); }
   };
 
@@ -1206,10 +1219,10 @@ export function CommunicationsView() {
         const t = (templates ?? []).find((x) => x.id === c.templateId);
         if (t) await apiSend(`/api/email-templates/${t.id}`, "PUT", { usageCount: (t.usageCount ?? 0) + 1 });
       }
-      toast({ title: "Kampanya gönderildi (simülasyon)", description: `${total} alıcı${c.templateId ? " · şablon kullanım sayısı +1" : ""}${c.providerId ? ` · sağlayıcı: ${providerName(c.providerId)}` : ""}` });
+      toast({ title: t("communications.sentToast"), description: t("communications.sentDesc", { total, tpl: c.templateId ? t("communications.sentDescTpl") : "", provider: c.providerId ? t("communications.sentDescProvider", { name: providerName(c.providerId) ?? "" }) : "" }) });
       reload(); reloadTemplates(); bump();
     } catch (e) {
-      toast({ title: "Gönderim başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("communications.sendFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     }
   };
 
@@ -1231,18 +1244,18 @@ export function CommunicationsView() {
   const saveTemplate = async () => {
     if (!currentEditionId) return;
     if (!templateForm.name.trim() || !templateForm.subject.trim()) {
-      toast({ title: "Ad ve konu zorunlu", variant: "destructive" }); return;
+      toast({ title: t("communications.tplNameRequired"), variant: "destructive" }); return;
     }
     setTemplateBusy(true);
     try {
       const payload = { editionId: currentEditionId, name: templateForm.name.trim(), subject: templateForm.subject.trim(), category: templateForm.category, phase: templateForm.phase, htmlBody: templateForm.htmlBody };
       if (templateEdit) await apiSend(`/api/email-templates/${templateEdit.id}`, "PUT", payload);
       else await apiSend("/api/email-templates", "POST", payload);
-      toast({ title: templateEdit ? "Şablon güncellendi" : "Şablon oluşturuldu", description: `${templateForm.name} · ${label(EMAIL_TEMPLATE_CATEGORY, templateForm.category)}` });
+      toast({ title: templateEdit ? t("communications.tplUpdated") : t("communications.tplCreated"), description: t("communications.tplSavedDesc", { name: templateForm.name, category: catLabel(templateForm.category) }) });
       setTemplateOpen(false);
       reloadTemplates(); bump();
     } catch (e) {
-      toast({ title: "Şablon kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("communications.tplSaveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setTemplateBusy(false); }
   };
 
@@ -1268,7 +1281,7 @@ export function CommunicationsView() {
   const saveProvider = async () => {
     if (!tenant) return;
     if (!providerForm.name.trim() || !providerForm.fromEmail.trim()) {
-      toast({ title: "Ad ve gönderen e-posta zorunlu", variant: "destructive" }); return;
+      toast({ title: t("communications.provNameRequired"), variant: "destructive" }); return;
     }
     setProviderBusy(true);
     try {
@@ -1281,11 +1294,11 @@ export function CommunicationsView() {
       if (providerForm.password) payload.password = providerForm.password; // boşsa mevcut şifre korunur
       if (providerEdit) await apiSend(`/api/mail-providers/${providerEdit.id}`, "PUT", payload);
       else await apiSend("/api/mail-providers", "POST", payload);
-      toast({ title: providerEdit ? "Sağlayıcı güncellendi" : "Sağlayıcı eklendi", description: `${providerForm.name} · ${label(MAIL_PROVIDER_KIND, providerForm.kind)}` });
+      toast({ title: providerEdit ? t("communications.provUpdated") : t("communications.provCreated"), description: t("communications.provSavedDesc", { name: providerForm.name, kind: tLabel(MAIL_PROVIDER_KIND, providerForm.kind) }) });
       setProviderOpen(false);
       reloadProviders(); bump();
     } catch (e) {
-      toast({ title: "Sağlayıcı kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("communications.provSaveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setProviderBusy(false); }
   };
 
@@ -1297,21 +1310,42 @@ export function CommunicationsView() {
       const passed = res.checks.filter((c) => c.ok).length;
       const failed = res.checks.filter((c) => !c.ok).map((c) => c.label);
       toast({
-        title: res.ok ? `Test gönderimi hazır (${passed}/${res.checks.length} kontrol geçti)` : `Ayar eksik — ${passed}/${res.checks.length} kontrol geçti`,
-        description: `${res.checks.map((c) => `${c.ok ? "✓" : "✗"} ${c.label}: ${c.note}`).join(" · ")}${failed.length ? " — eksik: " + failed.join(", ") : ""}`,
+        title: res.ok ? t("communications.testOk", { passed, total: res.checks.length }) : t("communications.testPartial", { passed, total: res.checks.length }),
+        description: t("communications.testChecks", { checks: res.checks.map((c) => `${c.ok ? "✓" : "✗"} ${c.label}: ${c.note}`).join(" · ") }) + (failed.length ? t("communications.testMissing", { list: failed.join(", ") }) : ""),
         variant: res.ok ? "default" : "destructive",
       });
       reloadProviders(); bump();
     } catch (e) {
-      toast({ title: "Test gönderimi başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("communications.testFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setTestBusyId(null); }
   };
 
+  // Faz E: sabit map'leri tLabel köprüsüyle çevir + kategori/gölge-yardımcıları (t gölgelemesine karşı)
+  const phasePillLabel = (key: string): string => (key === "ALL" ? t("communications.allPhases") : tLabel(CAMPAIGN_PHASE, key));
+  const catLabel = (c: string): string =>
+    c === "INVITATION" ? t("communications.catInvitation")
+    : c === "CONFIRMATION" ? t("communications.catConfirmation")
+    : c === "PAYMENT_REMINDER" ? t("communications.catPaymentReminder")
+    : c === "QUIZ" ? t("communications.catQuiz")
+    : c === "THANK_YOU" ? t("communications.catThankYou")
+    : c === "CUSTOM" ? t("communications.catCustom")
+    : t("communications.catInformation");
+  const previewAria = (name: string) => t("communications.previewAria", { name });
+  const editAria = (name: string) => t("communications.editAria", { name });
+  const usageLabel = (n: number) => t("communications.usageCount", { count: n });
+  const subjectLine = (s: string) => t("communications.subjectLine", { subject: s });
+  const tplPreviewTitle = t("communications.tplPreviewTitle");
+  const rowEditTitle = t("communications.edit");
+  const useInCampaignTitle = t("communications.useInCampaignTitle");
+  const useInCampaignLabel = t("communications.useInCampaign");
+  const campaignStatusMap = Object.fromEntries(Object.entries(CAMPAIGN_STATUS).map(([k]) => [k, tLabel(CAMPAIGN_STATUS, k)]));
+  const providerStatusMap = Object.fromEntries(Object.entries(PROVIDER_STATUS).map(([k]) => [k, tLabel(PROVIDER_STATUS, k)]));
+
   return (
     <div className="space-y-5">
-      <PageHeader title="İletişim — 360 Branding" desc="3 aşamalı süreç (öncesi/zamanı/sonrası) · izinli hedef segment → önizleme → test → canlı gönderim">
+      <PageHeader title={t("communications.title")} desc={t("communications.desc")}>
         <Button size="sm" onClick={() => openCampaignNew()}>
-          <Icons.Megaphone className="size-3.5" /> Yeni Kampanya
+          <Icons.Megaphone className="size-3.5" /> {t("communications.newCampaign")}
         </Button>
       </PageHeader>
 
@@ -1324,18 +1358,18 @@ export function CommunicationsView() {
             onClick={() => setPhaseFilter(p.key)}
             className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${phaseFilter === p.key ? "bg-teal-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
           >
-            {p.label}
+            {phasePillLabel(p.key)}
           </button>
         ))}
-        <span className="ms-auto self-center px-3 text-xs text-muted-foreground">{visibleCampaigns.length} kampanya</span>
+        <span className="ms-auto self-center px-3 text-xs text-muted-foreground">{t("communications.count", { count: visibleCampaigns.length })}</span>
       </div>
 
       {/* 2 — kampanya listesi */}
       {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : visibleCampaigns.length === 0 ? (
         <EmptyState
-          title={(campaigns ?? []).length === 0 ? "Henüz kampanya hazırlamadınız" : "Bu aşamada kampanya yok"}
-          desc={(campaigns ?? []).length === 0 ? "Yeni Kampanya ile başlayın — segment veya özel liste hedefleyin." : "Aşama filtresini değiştirin."}
-          action={(campaigns ?? []).length === 0 ? <Button size="sm" variant="outline" onClick={() => openCampaignNew()}>Kampanya Oluştur</Button> : undefined}
+          title={(campaigns ?? []).length === 0 ? t("communications.emptyAll") : t("communications.emptyPhase")}
+          desc={(campaigns ?? []).length === 0 ? t("communications.emptyAllDesc") : t("communications.emptyPhaseDesc")}
+          action={(campaigns ?? []).length === 0 ? <Button size="sm" variant="outline" onClick={() => openCampaignNew()}>{t("communications.createCampaign")}</Button> : undefined}
         />
       ) : (
         <div className="space-y-3">
@@ -1344,31 +1378,31 @@ export function CommunicationsView() {
               <div className="flex flex-wrap items-center gap-2">
                 <Icons.Megaphone className="size-4 text-teal-600" />
                 <p className="font-semibold">{c.name}</p>
-                <StatusBadge map={CAMPAIGN_STATUS} value={c.status} />
-                <Chip tone={PHASE_TONE[c.phase] ?? "neutral"}>{label(CAMPAIGN_PHASE, c.phase)}</Chip>
-                <Chip>{label(AUDIENCE_MODE, c.audienceMode)}</Chip>
-                <Chip tone={c.isSegmentFixed ? "teal" : "amber"}>{c.isSegmentFixed ? "sabit segment" : "gönderim anında güncel"}</Chip>
-                <span className="ml-auto text-xs text-muted-foreground">{c.sentAt ? fmtDateTime(c.sentAt) : "gönderilmedi"}</span>
+                <StatusBadge map={campaignStatusMap} value={c.status} />
+                <Chip tone={PHASE_TONE[c.phase] ?? "neutral"}>{tLabel(CAMPAIGN_PHASE, c.phase)}</Chip>
+                <Chip>{tLabel(AUDIENCE_MODE, c.audienceMode)}</Chip>
+                <Chip tone={c.isSegmentFixed ? "teal" : "amber"}>{c.isSegmentFixed ? t("communications.fixedSegment") : t("communications.liveList")}</Chip>
+                <span className="ml-auto text-xs text-muted-foreground">{c.sentAt ? fmtDateTime(c.sentAt) : t("communications.notSent")}</span>
                 <div className="flex items-center gap-1">
                   {["DRAFT", "TESTED"].includes(c.status) && (
-                    <Button size="sm" variant="outline" className="h-7 gap-1 border-teal-300 bg-teal-50 px-2 text-xs text-teal-800 hover:bg-teal-100 hover:text-teal-900" onClick={() => sendCampaign(c)} title="Gönderim simülasyonu — bağlı şablon kullanımı +1">
-                      <Icons.Send className="size-3" /> Gönder (sim.)
+                    <Button size="sm" variant="outline" className="h-7 gap-1 border-teal-300 bg-teal-50 px-2 text-xs text-teal-800 hover:bg-teal-100 hover:text-teal-900" onClick={() => sendCampaign(c)} title={t("communications.sendBtnTitle")}>
+                      <Icons.Send className="size-3" /> {t("communications.sendBtn")}
                     </Button>
                   )}
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => openCampaignEdit(c)}>
-                    <Icons.Pencil className="size-3" /> Düzenle
+                    <Icons.Pencil className="size-3" /> {t("communications.edit")}
                   </Button>
                 </div>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">Segment: {c.segmentRule} · hedef {c.audienceCount}{c.customRecipients ? ` · özel liste: ${c.customRecipients.split(/[\n,;]+/).filter((s) => s.trim()).length} alıcı` : ""}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t("communications.segmentLine", { segment: c.segmentRule, target: c.audienceCount })}{c.customRecipients ? t("communications.segmentCustom", { count: c.customRecipients.split(/[\n,;]+/).filter((s) => s.trim()).length }) : ""}</p>
               <p className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-muted-foreground">
-                <span>Şablon: {c.templateId ? templateName(c.templateId) ?? "—" : "—"}</span>
-                <span>Sağlayıcı: {c.providerId ? providerName(c.providerId) ?? "—" : "—"}</span>
-                {c.formId && <span>Quiz formu bağlı</span>}
+                <span>{t("communications.templateLine", { name: c.templateId ? templateName(c.templateId) ?? "—" : "—" })}</span>
+                <span>{t("communications.providerLine", { name: c.providerId ? providerName(c.providerId) ?? "—" : "—" })}</span>
+                {c.formId && <span>{t("communications.quizLinked")}</span>}
               </p>
               {c.status === "SENT" && (
                 <div className="mt-3 grid grid-cols-5 gap-2 text-center text-xs">
-                  {[["gönderilen", c.sentCount], ["teslim", c.deliveredCount], ["açılma", c.openCount], ["tıklama", c.clickCount], ["başarısız", c.failCount]].map(([lbl, v]) => (
+                  {[[t("communications.mSent"), c.sentCount], [t("communications.mDelivered"), c.deliveredCount], [t("communications.mOpen"), c.openCount], [t("communications.mClick"), c.clickCount], [t("communications.mFailed"), c.failCount]].map(([lbl, v]) => (
                     <div key={lbl as string} className="rounded-lg bg-muted p-2">
                       <p className="text-base font-semibold tabular-nums">{v as number}</p>
                       <p className="text-muted-foreground">{lbl as string}</p>
@@ -1376,7 +1410,7 @@ export function CommunicationsView() {
                   ))}
                 </div>
               )}
-              {c.status === "TESTED" && <p className="mt-2 text-xs text-amber-700">Test gönderimi yapıldı: {c.name.split(" ")[0]} paneli — kitle önizlemesi onaylandıktan sonra canlı gönderim açılır.</p>}
+              {c.status === "TESTED" && <p className="mt-2 text-xs text-amber-700">{t("communications.testedNote", { name: c.name.split(" ")[0] })}</p>}
             </div>
           ))}
         </div>
@@ -1384,12 +1418,12 @@ export function CommunicationsView() {
 
       {/* 3 — Şablonlar */}
       <SectionCard
-        title="Şablonlar (E-posta)"
-        desc="HTML mailing şablonları — kategori ve aşama etiketli, kullanım sayacı gönderimle artar"
-        action={<Button size="sm" variant="outline" onClick={openTemplateNew}><Icons.FilePlus2 className="size-3.5" /> Yeni Şablon</Button>}
+        title={t("communications.templates")}
+        desc={t("communications.templatesDesc")}
+        action={<Button size="sm" variant="outline" onClick={openTemplateNew}><Icons.FilePlus2 className="size-3.5" /> {t("communications.newTemplate")}</Button>}
       >
         {(templates ?? []).length === 0 ? (
-          <EmptyState title="Şablon yok" desc="Davet, onay, quiz, teşekkür gibi aşama şablonları oluşturun." />
+          <EmptyState title={t("communications.noTemplates")} desc={t("communications.noTemplatesDesc")} />
         ) : (
           <div className="maven-scroll max-h-96 space-y-1.5 overflow-y-auto">
             {(templates ?? []).map((t, i) => (
@@ -1397,22 +1431,22 @@ export function CommunicationsView() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Icons.FileText className="size-3.5 shrink-0 text-teal-600" />
                   <span className="text-xs font-semibold">{t.name}</span>
-                  <Chip tone="teal">{label(EMAIL_TEMPLATE_CATEGORY, t.category)}</Chip>
-                  <Chip tone={PHASE_TONE[t.phase] ?? "neutral"}>{label(CAMPAIGN_PHASE, t.phase)}</Chip>
-                  <Chip>{t.usageCount} kullanım</Chip>
+                  <Chip tone="teal">{catLabel(t.category)}</Chip>
+                  <Chip tone={PHASE_TONE[t.phase] ?? "neutral"}>{tLabel(CAMPAIGN_PHASE, t.phase)}</Chip>
+                  <Chip>{usageLabel(t.usageCount)}</Chip>
                   <div className="ml-auto flex items-center gap-1">
-                    <Button variant="ghost" size="icon" className="size-7" onClick={() => setPreviewTemplate(t)} aria-label={`${t.name} önizle`} title="HTML gövde önizleme">
+                    <Button variant="ghost" size="icon" className="size-7" onClick={() => setPreviewTemplate(t)} aria-label={previewAria(t.name)} title={tplPreviewTitle}>
                       <Icons.Eye className="size-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="size-7" onClick={() => openTemplateEdit(t)} aria-label={`${t.name} düzenle`} title="Düzenle">
+                    <Button variant="ghost" size="icon" className="size-7" onClick={() => openTemplateEdit(t)} aria-label={editAria(t.name)} title={rowEditTitle}>
                       <Icons.Pencil className="size-3.5" />
                     </Button>
-                    <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => openCampaignNew({ templateId: t.id, name: t.name + " — Kampanya", subject: t.subject })} title="Bu şablonla kampanya oluştur">
-                      <Icons.Link2 className="size-3" /> Kampanyada kullan
+                    <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => openCampaignNew({ templateId: t.id, name: t.name + " — Kampanya", subject: t.subject })} title={useInCampaignTitle}>
+                      <Icons.Link2 className="size-3" /> {useInCampaignLabel}
                     </Button>
                   </div>
                 </div>
-                <p className="mt-1 truncate text-[11px] text-muted-foreground">Konu: {t.subject}</p>
+                <p className="mt-1 truncate text-[11px] text-muted-foreground">{subjectLine(t.subject)}</p>
               </div>
             ))}
           </div>
@@ -1421,12 +1455,12 @@ export function CommunicationsView() {
 
       {/* 4 — Mail Sağlayıcıları */}
       <SectionCard
-        title="Mail Sağlayıcıları"
-        desc="SMTP / Mailjet / SendGrid — günlük limit, varsayılan yıldızı, test gönderimi kontrol listesi"
-        action={<Button size="sm" variant="outline" onClick={openProviderNew}><Icons.PlusCircle className="size-3.5" /> Yeni Sağlayıcı</Button>}
+        title={t("communications.providers")}
+        desc={t("communications.providersDesc")}
+        action={<Button size="sm" variant="outline" onClick={openProviderNew}><Icons.PlusCircle className="size-3.5" /> {t("communications.newProvider")}</Button>}
       >
         {(providers ?? []).length === 0 ? (
-          <EmptyState title="Sağlayıcı yok" desc="Kampanya gönderimi için bir mail sağlayıcı tanımlayın." />
+          <EmptyState title={t("communications.noProviders")} desc={t("communications.noProvidersDesc")} />
         ) : (
           <div className="maven-scroll max-h-96 space-y-1.5 overflow-y-auto">
             {(providers ?? []).map((p, i) => (
@@ -1434,24 +1468,24 @@ export function CommunicationsView() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Icons.Server className="size-3.5 shrink-0 text-teal-600" />
                   <span className="text-xs font-semibold">{p.name}</span>
-                  {p.isDefault && <Icons.Star className="size-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label="varsayılan" />}
-                  <Chip tone="teal">{label(MAIL_PROVIDER_KIND, p.kind)}</Chip>
-                  <StatusBadge map={{ ACTIVE: "Aktif", PAUSED: "Duraklatıldı" }} value={p.status} />
+                  {p.isDefault && <Icons.Star className="size-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label={t("communications.defaultStar")} />}
+                  <Chip tone="teal">{tLabel(MAIL_PROVIDER_KIND, p.kind)}</Chip>
+                  <StatusBadge map={providerStatusMap} value={p.status} />
                   {p.lastTestStatus && (
-                    <Chip tone={p.lastTestStatus === "OK" ? "emerald" : "rose"}>son test: {p.lastTestStatus === "OK" ? "başarılı" : "başarısız"}</Chip>
+                    <Chip tone={p.lastTestStatus === "OK" ? "emerald" : "rose"}>{t("communications.lastTest", { result: p.lastTestStatus === "OK" ? t("communications.testPass") : t("communications.testFail") })}</Chip>
                   )}
                   <div className="ml-auto flex items-center gap-1">
                     <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" disabled={testBusyId === p.id} onClick={() => testProvider(p)} title="POST /api/mail/test — kontrol listesi döner">
-                      {testBusyId === p.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.SendHorizontal className="size-3" />} Test gönderimi
+                      {testBusyId === p.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.SendHorizontal className="size-3" />} {t("communications.testBtn")}
                     </Button>
-                    <Button variant="ghost" size="icon" className="size-7" onClick={() => openProviderEdit(p)} aria-label={`${p.name} düzenle`} title="Düzenle">
+                    <Button variant="ghost" size="icon" className="size-7" onClick={() => openProviderEdit(p)} aria-label={editAria(p.name)} title={t("communications.edit")}>
                       <Icons.Pencil className="size-3.5" />
                     </Button>
                   </div>
                 </div>
                 <p className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-muted-foreground">
                   <span>from: {p.fromName ? `${p.fromName} <${p.fromEmail}>` : p.fromEmail}</span>
-                  <span>limit: {p.dailyLimit ?? "sınırsız"}/gün</span>
+                  <span>{t("communications.limitLine", { limit: p.dailyLimit ?? t("communications.unlimited") })}</span>
                   {p.kind === "SMTP" && p.host && <span>host: {p.host}{p.port ? `:${p.port}` : ""}</span>}
                 </p>
               </div>
@@ -1464,59 +1498,59 @@ export function CommunicationsView() {
       <Dialog open={campaignOpen} onOpenChange={setCampaignOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg maven-scroll">
           <DialogHeader>
-            <DialogTitle>{campaignEdit ? "Kampanyayı Düzenle" : "Yeni Kampanya"}</DialogTitle>
-            <DialogDescription>Aşama, hedef kitle modu, şablon ve sağlayıcı bağlantıları — 360 branding akışı.</DialogDescription>
+            <DialogTitle>{campaignEdit ? t("communications.editCampaign") : t("communications.newCampaign")}</DialogTitle>
+            <DialogDescription>{t("communications.campaignDlgDesc")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
-              <Label className="text-xs">Kampanya adı</Label>
-              <Input value={campaignForm.name} onChange={(e) => setCampaignForm({ ...campaignForm, name: e.target.value })} placeholder="örn. Erken Kayıt Daveti" className="h-8 text-xs" />
+              <Label className="text-xs">{t("communications.fName")}</Label>
+              <Input value={campaignForm.name} onChange={(e) => setCampaignForm({ ...campaignForm, name: e.target.value })} placeholder={t("communications.fNamePlaceholder")} className="h-8 text-xs" />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Aşama</Label>
+                <Label className="text-xs">{t("communications.fPhase")}</Label>
                 <Select value={campaignForm.phase} onValueChange={(v) => setCampaignForm({ ...campaignForm, phase: v })}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>{Object.entries(CAMPAIGN_PHASE).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                  <SelectContent>{Object.entries(CAMPAIGN_PHASE).map(([k, v]) => <SelectItem key={k} value={k}>{tLabel(CAMPAIGN_PHASE, k)}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Hedef kitle modu</Label>
+                <Label className="text-xs">{t("communications.fAudience")}</Label>
                 <Select value={campaignForm.audienceMode} onValueChange={(v) => setCampaignForm({ ...campaignForm, audienceMode: v })}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>{Object.entries(AUDIENCE_MODE).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                  <SelectContent>{Object.entries(AUDIENCE_MODE).map(([k, v]) => <SelectItem key={k} value={k}>{tLabel(AUDIENCE_MODE, k)}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Segment kuralı</Label>
-              <Input value={campaignForm.segmentRule} onChange={(e) => setCampaignForm({ ...campaignForm, segmentRule: e.target.value })} placeholder="kayıt onaylı ama ödeme bekliyor" className="h-8 text-xs" disabled={campaignForm.audienceMode === "CUSTOM"} />
+              <Label className="text-xs">{t("communications.fSegment")}</Label>
+              <Input value={campaignForm.segmentRule} onChange={(e) => setCampaignForm({ ...campaignForm, segmentRule: e.target.value })} placeholder={t("communications.fSegmentPlaceholder")} className="h-8 text-xs" disabled={campaignForm.audienceMode === "CUSTOM"} />
             </div>
             {campaignForm.audienceMode !== "SEGMENT" && (
               <div className="space-y-1">
-                <Label className="text-xs">Özel alıcı listesi</Label>
+                <Label className="text-xs">{t("communications.fCustom")}</Label>
                 <Textarea value={campaignForm.customRecipients} onChange={(e) => setCampaignForm({ ...campaignForm, customRecipients: e.target.value })}
-                  rows={3} className="text-xs" placeholder={"satır veya virgülle ayırın:\nome@firma.com, ikinci@firma.com"} />
-                <p className="text-[10px] text-muted-foreground">{campaignForm.customRecipients.split(/[\n,;]+/).filter((s) => s.trim()).length} alıcı</p>
+                  rows={3} className="text-xs" placeholder={t("communications.fCustomPlaceholder")} />
+                <p className="text-[10px] text-muted-foreground">{t("communications.recipientCount", { count: campaignForm.customRecipients.split(/[\n,;]+/).filter((s) => s.trim()).length })}</p>
               </div>
             )}
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">E-posta şablonu</Label>
+                <Label className="text-xs">{t("communications.fTemplate")}</Label>
                 <Select value={campaignForm.templateId || "NONE"} onValueChange={(v) => setCampaignForm({ ...campaignForm, templateId: v === "NONE" ? "" : v })}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="NONE">— şablon yok —</SelectItem>
+                    <SelectItem value="NONE">{t("communications.noTemplate")}</SelectItem>
                     {(templates ?? []).map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Gönderim sağlayıcısı</Label>
+                <Label className="text-xs">{t("communications.fProvider")}</Label>
                 <Select value={campaignForm.providerId || "NONE"} onValueChange={(v) => setCampaignForm({ ...campaignForm, providerId: v === "NONE" ? "" : v })}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="NONE">— sağlayıcı yok —</SelectItem>
+                    <SelectItem value="NONE">{t("communications.noProvider")}</SelectItem>
                     {(providers ?? []).map((p) => <SelectItem key={p.id} value={p.id}>{p.name}{p.isDefault ? " ★" : ""}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -1524,29 +1558,29 @@ export function CommunicationsView() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Quiz formu (isteğe bağlı)</Label>
+                <Label className="text-xs">{t("communications.fForm")}</Label>
                 <Select value={campaignForm.formId || "NONE"} onValueChange={(v) => setCampaignForm({ ...campaignForm, formId: v === "NONE" ? "" : v })}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="NONE">— form yok —</SelectItem>
+                    <SelectItem value="NONE">{t("communications.noForm")}</SelectItem>
                     {(forms ?? []).map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">E-posta konusu</Label>
+                <Label className="text-xs">{t("communications.fSubject")}</Label>
                 <Input value={campaignForm.subject} onChange={(e) => setCampaignForm({ ...campaignForm, subject: e.target.value })} className="h-8 text-xs" placeholder="{{series}} davetiniz" />
               </div>
             </div>
             <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
-              <span className="text-xs font-medium">Sabit segment</span>
-              <Switch checked={campaignForm.isSegmentFixed} onCheckedChange={(v) => setCampaignForm({ ...campaignForm, isSegmentFixed: v })} aria-label="Sabit segment" />
+              <span className="text-xs font-medium">{t("communications.fFixedSegment")}</span>
+              <Switch checked={campaignForm.isSegmentFixed} onCheckedChange={(v) => setCampaignForm({ ...campaignForm, isSegmentFixed: v })} aria-label={t("communications.fFixedSegment")} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCampaignOpen(false)}>Vazgeç</Button>
+            <Button variant="outline" onClick={() => setCampaignOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={saveCampaign} disabled={campaignBusy}>
-              {campaignBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} Kaydet
+              {campaignBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} {t("common.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1556,25 +1590,25 @@ export function CommunicationsView() {
       <Dialog open={previewTemplate !== null} onOpenChange={(o) => { if (!o) setPreviewTemplate(null); }}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Şablon Önizleme — {previewTemplate?.name}</DialogTitle>
-            <DialogDescription>HTML gövde korumalı mock e-posta çerçevesinde gösterilir.</DialogDescription>
+            <DialogTitle>{t("communications.previewDlgTitle", { name: previewTemplate?.name ?? "" })}</DialogTitle>
+            <DialogDescription>{t("communications.previewDlgDesc")}</DialogDescription>
           </DialogHeader>
           {previewTemplate && (
             <div className="overflow-hidden rounded-lg border">
               <div className="flex items-center gap-2 bg-muted px-3 py-2 text-[11px] text-muted-foreground">
                 <Icons.Mail className="size-3.5 shrink-0" />
-                <span className="truncate">Kimden: {defaultProvider ? `${defaultProvider.fromName ? defaultProvider.fromName + " " : ""}<${defaultProvider.fromEmail}>` : "varsayılan sağlayıcı tanımlı değil"}</span>
-                <Chip tone={PHASE_TONE[previewTemplate.phase] ?? "neutral"}>{label(CAMPAIGN_PHASE, previewTemplate.phase)}</Chip>
+                <span className="truncate">{t("communications.fromLine", { from: defaultProvider ? `${defaultProvider.fromName ? defaultProvider.fromName + " " : ""}<${defaultProvider.fromEmail}>` : t("communications.noDefaultProvider") })}</span>
+                <Chip tone={PHASE_TONE[previewTemplate.phase] ?? "neutral"}>{tLabel(CAMPAIGN_PHASE, previewTemplate.phase)}</Chip>
               </div>
               <div className="border-b bg-muted/40 px-3 py-2 text-xs font-semibold">{previewTemplate.subject}</div>
               <div className="maven-scroll max-h-80 overflow-y-auto bg-white p-4 text-sm text-slate-900" dangerouslySetInnerHTML={{ __html: previewTemplate.htmlBody }} />
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPreviewTemplate(null)}>Kapat</Button>
+            <Button variant="outline" onClick={() => setPreviewTemplate(null)}>{t("common.close")}</Button>
             {previewTemplate && (
               <Button onClick={() => { const t = previewTemplate; setPreviewTemplate(null); openCampaignNew({ templateId: t.id, name: t.name + " — Kampanya", subject: t.subject }); }}>
-                <Icons.Link2 className="size-3.5" /> Kampanyada kullan
+                <Icons.Link2 className="size-3.5" /> {useInCampaignLabel}
               </Button>
             )}
           </DialogFooter>
@@ -1585,46 +1619,46 @@ export function CommunicationsView() {
       <Dialog open={templateOpen} onOpenChange={setTemplateOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg maven-scroll">
           <DialogHeader>
-            <DialogTitle>{templateEdit ? "Şablonu Düzenle" : "Yeni E-posta Şablonu"}</DialogTitle>
-            <DialogDescription>HTML gövde — yer tutucular gönderim anında alıcı verisiyle doldurulur.</DialogDescription>
+            <DialogTitle>{templateEdit ? t("communications.editTemplate") : t("communications.newTemplateDlg")}</DialogTitle>
+            <DialogDescription>{t("communications.templateDlgDesc")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Şablon adı</Label>
-                <Input value={templateForm.name} onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })} className="h-8 text-xs" placeholder="Davet — Erken Kayıt" />
+                <Label className="text-xs">{t("communications.fTplName")}</Label>
+                <Input value={templateForm.name} onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })} className="h-8 text-xs" placeholder={t("communications.fTplNamePlaceholder")} />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Konu</Label>
-                <Input value={templateForm.subject} onChange={(e) => setTemplateForm({ ...templateForm, subject: e.target.value })} className="h-8 text-xs" placeholder="{{series}} davetiniz hazır" />
+                <Label className="text-xs">{t("communications.fSubjectShort")}</Label>
+                <Input value={templateForm.subject} onChange={(e) => setTemplateForm({ ...templateForm, subject: e.target.value })} className="h-8 text-xs" placeholder={t("communications.fSubjectReadyPlaceholder")} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Kategori</Label>
+                <Label className="text-xs">{t("communications.fCategory")}</Label>
                 <Select value={templateForm.category} onValueChange={(v) => setTemplateForm({ ...templateForm, category: v })}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>{Object.entries(EMAIL_TEMPLATE_CATEGORY).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                  <SelectContent>{Object.entries(EMAIL_TEMPLATE_CATEGORY).map(([k, v]) => <SelectItem key={k} value={k}>{catLabel(k)}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Aşama</Label>
+                <Label className="text-xs">{t("communications.fPhase")}</Label>
                 <Select value={templateForm.phase} onValueChange={(v) => setTemplateForm({ ...templateForm, phase: v })}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>{Object.entries(CAMPAIGN_PHASE).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                  <SelectContent>{Object.entries(CAMPAIGN_PHASE).map(([k, v]) => <SelectItem key={k} value={k}>{tLabel(CAMPAIGN_PHASE, k)}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">HTML gövde</Label>
+              <Label className="text-xs">{t("communications.fHtml")}</Label>
               <Textarea value={templateForm.htmlBody} onChange={(e) => setTemplateForm({ ...templateForm, htmlBody: e.target.value })}
                 rows={8} className="font-mono text-[11px]" placeholder={'<div style="font-family:Arial"><h2>Merhaba {{fullName}}</h2>…</div>'} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setTemplateOpen(false)}>Vazgeç</Button>
+            <Button variant="outline" onClick={() => setTemplateOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={saveTemplate} disabled={templateBusy}>
-              {templateBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} Kaydet
+              {templateBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} {t("common.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1634,73 +1668,73 @@ export function CommunicationsView() {
       <Dialog open={providerOpen} onOpenChange={setProviderOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg maven-scroll">
           <DialogHeader>
-            <DialogTitle>{providerEdit ? "Sağlayıcıyı Düzenle" : "Yeni Mail Sağlayıcı"}</DialogTitle>
-            <DialogDescription>SMTP sunucusu veya e-posta platformu — kimlik bilgileri maskelenir.</DialogDescription>
+            <DialogTitle>{providerEdit ? t("communications.editProvider") : t("communications.newProviderDlg")}</DialogTitle>
+            <DialogDescription>{t("communications.providerDlgDesc")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Sağlayıcı adı</Label>
-                <Input value={providerForm.name} onChange={(e) => setProviderForm({ ...providerForm, name: e.target.value })} className="h-8 text-xs" placeholder="Şirket SMTP" />
+                <Label className="text-xs">{t("communications.fProvName")}</Label>
+                <Input value={providerForm.name} onChange={(e) => setProviderForm({ ...providerForm, name: e.target.value })} className="h-8 text-xs" placeholder={t("communications.fProvNamePlaceholder")} />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Tür</Label>
+                <Label className="text-xs">{t("communications.fKind")}</Label>
                 <Select value={providerForm.kind} onValueChange={(v) => setProviderForm({ ...providerForm, kind: v })}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>{Object.entries(MAIL_PROVIDER_KIND).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                  <SelectContent>{Object.entries(MAIL_PROVIDER_KIND).map(([k, v]) => <SelectItem key={k} value={k}>{tLabel(MAIL_PROVIDER_KIND, k)}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div className="col-span-2 space-y-1">
-                <Label className="text-xs">Host (SMTP)</Label>
+                <Label className="text-xs">{t("communications.fHost")}</Label>
                 <Input value={providerForm.host} onChange={(e) => setProviderForm({ ...providerForm, host: e.target.value })} className="h-8 text-xs" placeholder="smtp.firma.com" disabled={providerForm.kind !== "SMTP"} />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Port</Label>
+                <Label className="text-xs">{t("communications.fPort")}</Label>
                 <Input type="number" value={providerForm.port} onChange={(e) => setProviderForm({ ...providerForm, port: e.target.value })} className="h-8 text-xs tabular-nums" placeholder="587" disabled={providerForm.kind !== "SMTP"} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Kullanıcı adı</Label>
+                <Label className="text-xs">{t("communications.fUsername")}</Label>
                 <Input value={providerForm.username} onChange={(e) => setProviderForm({ ...providerForm, username: e.target.value })} className="h-8 text-xs" autoComplete="off" />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Şifre</Label>
+                <Label className="text-xs">{t("communications.fPassword")}</Label>
                 <Input type="password" value={providerForm.password} onChange={(e) => setProviderForm({ ...providerForm, password: e.target.value })} className="h-8 text-xs" autoComplete="new-password" placeholder="••••••" />
-                <p className="text-[10px] text-muted-foreground">UI&apos;da maskelenir{providerEdit ? " — boş bırakılırsa mevcut şifre korunur" : ""}.</p>
+                <p className="text-[10px] text-muted-foreground">{t("communications.pwMaskedLine", { keep: providerEdit ? t("communications.pwKeep") : "" })}</p>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Gönderen e-posta (from)</Label>
+                <Label className="text-xs">{t("communications.fFromEmail")}</Label>
                 <Input value={providerForm.fromEmail} onChange={(e) => setProviderForm({ ...providerForm, fromEmail: e.target.value })} className="h-8 text-xs" placeholder="etkinlik@firma.com" />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Gönderen adı</Label>
-                <Input value={providerForm.fromName} onChange={(e) => setProviderForm({ ...providerForm, fromName: e.target.value })} className="h-8 text-xs" placeholder="Firma Etkinlik Ekibi" />
+                <Label className="text-xs">{t("communications.fFromName")}</Label>
+                <Input value={providerForm.fromName} onChange={(e) => setProviderForm({ ...providerForm, fromName: e.target.value })} className="h-8 text-xs" placeholder={t("communications.fFromNamePlaceholder")} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Yanıt adresi (reply-to)</Label>
+                <Label className="text-xs">{t("communications.fReplyTo")}</Label>
                 <Input value={providerForm.replyTo} onChange={(e) => setProviderForm({ ...providerForm, replyTo: e.target.value })} className="h-8 text-xs" placeholder="destek@firma.com" />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Günlük limit</Label>
+                <Label className="text-xs">{t("communications.fDailyLimit")}</Label>
                 <Input type="number" value={providerForm.dailyLimit} onChange={(e) => setProviderForm({ ...providerForm, dailyLimit: e.target.value })} className="h-8 text-xs tabular-nums" placeholder="2000" />
               </div>
             </div>
             <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
-              <span className="text-xs font-medium">Varsayılan sağlayıcı</span>
-              <Switch checked={providerForm.isDefault} onCheckedChange={(v) => setProviderForm({ ...providerForm, isDefault: v })} aria-label="Varsayılan sağlayıcı" />
+              <span className="text-xs font-medium">{t("communications.fDefault")}</span>
+              <Switch checked={providerForm.isDefault} onCheckedChange={(v) => setProviderForm({ ...providerForm, isDefault: v })} aria-label={t("communications.fDefault")} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setProviderOpen(false)}>Vazgeç</Button>
+            <Button variant="outline" onClick={() => setProviderOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={saveProvider} disabled={providerBusy}>
-              {providerBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} Kaydet
+              {providerBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} {t("common.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1719,8 +1753,16 @@ const KANBAN: { key: string; tone: string }[] = [
 ];
 
 export function OperationsView() {
+  useLang(); // dil değişiminde yeniden render
   const { refreshKey, bump } = useApp();
-  const { data, error, reload, loading } = useApi<TaskRow[]>(() => listEntity<TaskRow>("tasks", { limit: 200 }), [refreshKey]);
+  // TASK-A F6: görevler imleçli load-more — 200 satırlık sessiz kesme kaldırıldı
+  const { data: tasksPaged, error, reload, loading, more: taskMore } = useApi<{ items: TaskRow[]; nextCursor?: string | null }>(
+    (cursor?: string) => listEntityPaged<TaskRow>("tasks", { limit: 200 }, cursor),
+    [refreshKey],
+    { append: true },
+  );
+  const taskData = useMemo(() => tasksPaged?.items ?? [], [tasksPaged]);
+  const generalLabel = t("operations.general"); // items.map içinde t gölgelendiği için yukarıdan
 
   const move = async (t: TaskRow, status: string) => {
     await apiSend(`/api/tasks/${t.id}`, "PUT", { status, completedAt: status === "DONE" ? new Date().toISOString() : null });
@@ -1729,17 +1771,17 @@ export function OperationsView() {
 
   return (
     <div>
-      <PageHeader title="Operasyon" desc="Görevler modül bazlı — kapalı yeteneğin görevi baştan görünmez">
+      <PageHeader title={t("operations.title")} desc={t("operations.desc")}>
         <Button variant="ghost" size="sm" onClick={reload}><Icons.RefreshCw className="size-4" /></Button>
       </PageHeader>
       {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (
         <div className="grid gap-3 overflow-x-auto maven-scroll md:grid-cols-3 xl:grid-cols-6">
           {KANBAN.map((col) => {
-            const items = (data ?? []).filter((t) => t.status === col.key);
+            const items = taskData.filter((t) => t.status === col.key);
             return (
               <div key={col.key} className={cn("min-w-52 rounded-xl p-2.5", col.tone)}>
                 <p className="mb-2 flex items-center justify-between px-1 text-xs font-semibold">
-                  {label(TASK_STATUS, col.key)}
+                  {tLabel(TASK_STATUS, col.key)}
                   <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] tabular-nums">{items.length}</span>
                 </p>
                 <div className="space-y-2">
@@ -1747,23 +1789,32 @@ export function OperationsView() {
                     <div key={t.id} className="rounded-lg border bg-card p-2.5 shadow-sm">
                       <p className="text-xs font-medium leading-snug">{t.title}</p>
                       <p className="mt-1 text-[10px] text-muted-foreground">
-                        {t.edition?.name ?? "Genel"} · {t.module}
+                        {t.edition?.name ?? generalLabel} · {t.module}
                         {t.dueDate && <span className={cn("ml-1", new Date(t.dueDate) < new Date() && t.status !== "DONE" && "font-semibold text-rose-600")}>· {fmtDate(t.dueDate)}</span>}
                       </p>
                       <div className="mt-1.5 flex items-center justify-between">
-                        <Chip tone={t.priority === "URGENT" ? "rose" : t.priority === "HIGH" ? "amber" : "neutral"}>{label(TASK_PRIORITY, t.priority)}</Chip>
+                        <Chip tone={t.priority === "URGENT" ? "rose" : t.priority === "HIGH" ? "amber" : "neutral"}>{tLabel(TASK_PRIORITY, t.priority)}</Chip>
                         <Select value={t.status} onValueChange={(v) => move(t, v)}>
                           <SelectTrigger className="h-6 w-24 text-[10px]"><SelectValue /></SelectTrigger>
-                          <SelectContent>{Object.entries(TASK_STATUS).map(([k, v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}</SelectContent>
+                          <SelectContent>{Object.entries(TASK_STATUS).map(([k, v]) => <SelectItem key={k} value={k} className="text-xs">{tLabel(TASK_STATUS, k)}</SelectItem>)}</SelectContent>
                         </Select>
                       </div>
                     </div>
                   ))}
-                  {items.length === 0 && <p className="px-1 py-4 text-center text-[11px] text-muted-foreground">boş</p>}
+                  {items.length === 0 && <p className="px-1 py-4 text-center text-[11px] text-muted-foreground">{t("operations.empty")}</p>}
                 </div>
               </div>
             );
           })}
+        </div>
+      )}
+      {/* TASK-A F6: kesintisiz yükleme */}
+      {taskMore?.hasMore && (
+        <div className="mt-3 flex items-center justify-center">
+          <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={taskMore.loading} onClick={taskMore.next}>
+            {taskMore.loading ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ChevronsDown className="size-3.5" />}
+            {t("operations.loadMore")}
+          </Button>
         </div>
       )}
     </div>
@@ -1773,6 +1824,7 @@ export function OperationsView() {
 // ─── AYARLAR ────────────────────────────────────────────────────────────────
 
 export function SettingsView() {
+  useLang(); // dil değişiminde yeniden render
   const { editions, currentEditionId, bump, refreshKey, patchCapability } = useApp();
   const { toast } = useToast();
   const edition = editions.find((e) => e.id === currentEditionId);
@@ -1789,26 +1841,26 @@ export function SettingsView() {
     try {
       const cap = await apiSend<{ id: string; key: string; enabled: boolean; setupNote?: string | null }>("/api/flows", "POST", { action: "capability.toggle", capabilityId, editionId: currentEditionId, key, enabled });
       patchCapability(currentEditionId, { id: cap.id ?? busyKey.replace("new-", "cap-"), key, enabled, setupNote: cap.setupNote ?? (enabled ? "hazır" : null) });
-      toast({ title: enabled ? "Yetenek açıldı" : "Yetenek kapatıldı", description: "Navigasyon, wizard, yetki, formlar ve raporlar birlikte değişir." });
+      toast({ title: enabled ? t("settingsView.capOn") : t("settingsView.capOff"), description: t("settingsView.capToastDesc") });
       bump();
     } catch (e) {
-      toast({ title: "Yetenek değiştirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("settingsView.capToggleFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setBusy(null); }
   };
 
-  if (!edition) return <EmptyState title="Edisyon seçin" />;
+  if (!edition) return <EmptyState title={t("settingsView.pickEdition")} />;
 
   const enabledCount = CAPABILITIES.filter((cap) => edition.capabilities?.find((c) => c.key === cap.key && c.enabled)).length;
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Etkinlik Ayarları" desc="Kimlik, tarih, ekip, yayın ve modül seçimleri — kapalı yeteneğin menüsü baştan gizlenir" />
+      <PageHeader title={t("settingsView.title")} desc={t("settingsView.desc")} />
       <LanguageCard />
       <TenantIdentityCard />
       <SectionCard
-        title="Yetenekler (Capabilities)"
-        desc="Modül kartı: açılınca hangi menü/form/rapor geleceği buradan görünür (§6) — switch'i değiştirmek menüyü anında açar/kapatır"
-        action={<Chip tone="teal">{enabledCount}/{CAPABILITIES.length} açık</Chip>}
+        title={t("settingsView.capabilities")}
+        desc={t("settingsView.capabilitiesDesc")}
+        action={<Chip tone="teal">{t("settingsView.enabledCount", { count: enabledCount, total: CAPABILITIES.length })}</Chip>}
       >
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {CAPABILITIES.map((cap) => {
@@ -1819,7 +1871,7 @@ export function SettingsView() {
                 <div className="min-w-0">
                   <p className="flex items-center gap-1.5 text-sm font-medium">
                     {cap.label}
-                    {state?.enabled && <Icons.CheckCircle2 className="size-3.5 shrink-0 text-emerald-500" aria-label="açık" />}
+                    {state?.enabled && <Icons.CheckCircle2 className="size-3.5 shrink-0 text-emerald-500" aria-label={t("settingsView.onAria")} />}
                   </p>
                   <p className="text-xs text-muted-foreground">{cap.desc}</p>
                   {state?.setupNote && state.setupNote !== "hazır" && <Chip tone="amber">{state.setupNote}</Chip>}
@@ -1828,17 +1880,17 @@ export function SettingsView() {
                   checked={Boolean(state?.enabled)}
                   onCheckedChange={(v) => toggleCap(cap.key, capId, v)}
                   disabled={busy === capId || busy === `new-${cap.key}`}
-                  aria-label={`${cap.label} yeteneği`}
+                  aria-label={t("settingsView.capAria", { name: cap.label })}
                 />
               </div>
             );
           })}
         </div>
-        <p className="mt-3 text-xs text-muted-foreground">Hiç oluşturulmamış yetenek için switch kapalı konumda görünür — açtığınızda kayıt otomatik oluşturulur.</p>
+        <p className="mt-3 text-xs text-muted-foreground">{t("settingsView.capNote")}</p>
       </SectionCard>
 
-      <SectionCard title="Kurum / Ekip Atamaları" desc="Aynı kurum çok rol alabilir; rolün görünürlüğü seçilir (§4)">
-        {(assignments ?? []).length === 0 ? <EmptyState title="Atama yok" /> : (
+      <SectionCard title={t("settingsView.assignments")} desc={t("settingsView.assignmentsDesc")}>
+        {(assignments ?? []).length === 0 ? <EmptyState title={t("settingsView.noAssignments")} /> : (
           <div className="flex flex-wrap gap-2">
             {(assignments ?? []).map((a) => (
               <div key={a.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
@@ -1858,6 +1910,7 @@ export function SettingsView() {
 // Tenant logo/tagline/about/iletişim alanlarını düzenler — shell logosu ve
 // Dış Portal → Firma Vitrini bu alanlardan beslenir. PUT /api/tenants/{id} (guard: self).
 export function TenantIdentityCard() {
+  useLang(); // dil değişiminde yeniden render
   const { tenant, bootstrap } = useApp();
   const { toast } = useToast();
   const [form, setForm] = useState({
@@ -1887,11 +1940,11 @@ export function TenantIdentityCard() {
   const pickLogo = (file: File | null) => {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      toast({ title: "Geçersiz dosya", description: "Görsel dosyası seçin (PNG/JPG/SVG).", variant: "destructive" });
+      toast({ title: t("settingsView.invalidFile"), description: t("settingsView.invalidFileDesc"), variant: "destructive" });
       return;
     }
     if (file.size > 300 * 1024) {
-      toast({ title: "Dosya çok büyük", description: "Logo en fazla 300KB olabilir — küçültüp tekrar deneyin.", variant: "destructive" });
+      toast({ title: t("settingsView.fileTooLarge"), description: t("settingsView.fileTooLargeDesc"), variant: "destructive" });
       return;
     }
     const reader = new FileReader();
@@ -1913,9 +1966,9 @@ export function TenantIdentityCard() {
         logoUrl: form.logoUrl || null,
       });
       await bootstrap();
-      toast({ title: "Firma kimliği kaydedildi", description: "Shell logosu ve Firma Vitrini güncellendi." });
+      toast({ title: t("settingsView.identitySaved"), description: t("settingsView.identitySavedDesc") });
     } catch (e) {
-      toast({ title: "Kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("settingsView.saveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -1923,15 +1976,15 @@ export function TenantIdentityCard() {
 
   return (
     <SectionCard
-      title="Firma Kimliği"
-      desc="Sol menü logosu, Firma Vitrini ve arşiv kampanyaları bu kimliği kullanır (tenant geneli)"
+      title={t("settingsView.identity")}
+      desc={t("settingsView.identityDesc")}
       action={<Chip tone="teal">{tenant?.slug ?? "—"}</Chip>}
     >
       <div className="flex flex-col gap-4 sm:flex-row">
         {/* logo önizleme + seçici */}
         <div className="flex flex-col items-center gap-2">
           {form.logoUrl ? (
-            <img src={form.logoUrl} alt="Firma logosu" className="size-20 rounded-2xl border object-cover shadow-sm" />
+            <img src={form.logoUrl} alt={t("settingsView.logoAlt")} className="size-20 rounded-2xl border object-cover shadow-sm" />
           ) : (
             <div className="grid size-20 place-items-center rounded-2xl border border-dashed bg-muted/40 text-2xl font-bold text-muted-foreground">
               {(tenant?.name ?? "M").slice(0, 1)}
@@ -1939,47 +1992,47 @@ export function TenantIdentityCard() {
           )}
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => pickLogo(e.target.files?.[0] ?? null)} />
           <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()}>
-            <Icons.ImagePlus className="size-3.5" /> Logo seç
+            <Icons.ImagePlus className="size-3.5" /> {t("settingsView.pickLogo")}
           </Button>
           {form.logoUrl && (
             <Button size="sm" variant="ghost" className="h-7 text-rose-600 hover:text-rose-700" onClick={() => setForm((f) => ({ ...f, logoUrl: "" }))}>
-              <Icons.Trash2 className="size-3.5" /> Kaldır
+              <Icons.Trash2 className="size-3.5" /> {t("settingsView.remove")}
             </Button>
           )}
-          <p className="max-w-36 text-center text-[10px] text-muted-foreground">≤ 300KB görsel — PNG/JPG/SVG</p>
+          <p className="max-w-36 text-center text-[10px] text-muted-foreground">{t("settingsView.logoHint")}</p>
         </div>
 
         {/* alanlar */}
         <div className="grid flex-1 gap-3 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="t-tagline">Slogan (tagline)</Label>
-            <Input id="t-tagline" value={form.tagline} onChange={(e) => setForm((f) => ({ ...f, tagline: e.target.value }))} placeholder="Örn. Etkinliklerin tek elden organizasyon platformu" />
+            <Label htmlFor="t-tagline">{t("settingsView.fTagline")}</Label>
+            <Input id="t-tagline" value={form.tagline} onChange={(e) => setForm((f) => ({ ...f, tagline: e.target.value }))} placeholder={t("settingsView.fTaglinePlaceholder")} />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="t-about">Hakkında (vitrin metni)</Label>
-            <Textarea id="t-about" rows={3} value={form.aboutText} onChange={(e) => setForm((f) => ({ ...f, aboutText: e.target.value }))} placeholder="Firmanızın kamu bilgilendirme metni — vitrinde Hakkında bölümünde görünür" />
+            <Label htmlFor="t-about">{t("settingsView.fAbout")}</Label>
+            <Textarea id="t-about" rows={3} value={form.aboutText} onChange={(e) => setForm((f) => ({ ...f, aboutText: e.target.value }))} placeholder={t("settingsView.fAboutPlaceholder")} />
           </div>
           <div className="space-y-1.5">
-            <Label>Yetkili Adı</Label>
-            <Input value={form.contactName} onChange={(e) => setForm((f) => ({ ...f, contactName: e.target.value }))} placeholder="Örn. Elif Kaya" />
+            <Label>{t("settingsView.fContactName")}</Label>
+            <Input value={form.contactName} onChange={(e) => setForm((f) => ({ ...f, contactName: e.target.value }))} placeholder={t("settingsView.fContactNamePlaceholder")} />
           </div>
           <div className="space-y-1.5">
-            <Label>Yetkili Telefon</Label>
+            <Label>{t("settingsView.fContactPhone")}</Label>
             <Input value={form.contactPhone} onChange={(e) => setForm((f) => ({ ...f, contactPhone: e.target.value }))} placeholder="+90 212 555 0142" />
           </div>
           <div className="space-y-1.5">
-            <Label>Yetkili E-posta</Label>
+            <Label>{t("settingsView.fContactEmail")}</Label>
             <Input type="email" value={form.contactEmail} onChange={(e) => setForm((f) => ({ ...f, contactEmail: e.target.value }))} placeholder="info@firma.com" />
           </div>
           <div className="space-y-1.5">
-            <Label>Web Sitesi</Label>
+            <Label>{t("settingsView.fWebsite")}</Label>
             <Input value={form.website} onChange={(e) => setForm((f) => ({ ...f, website: e.target.value }))} placeholder="https://firma.com" />
           </div>
         </div>
       </div>
       <div className="mt-4 flex justify-end">
         <Button onClick={save} disabled={busy}>
-          {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Check className="size-4" />} Kimliği Kaydet
+          {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Check className="size-4" />} {t("settingsView.saveIdentity")}
         </Button>
       </div>
     </SectionCard>
@@ -2049,8 +2102,7 @@ export function LanguageCard() {
         </div>
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
-        localStorage: <span className="font-mono">maven.lang</span> · eksik anahtar otomatik TR&apos;ye düşer ve konsola bir kez uyarı yazar.
-        next-intl kullanılmaz — tek kaynak <span className="font-mono">src/i18n/tr.json</span>.
+        {t("settingsView.langNoteA")}<span className="font-mono">maven.lang</span>{t("settingsView.langNoteB")}<span className="font-mono">src/i18n/tr.json</span>.
       </p>
     </SectionCard>
   );

@@ -8,7 +8,7 @@ import { verifyPassword } from "@/lib/auth/password";
 import { verifyTotp, hashRecoveryCode } from "@/lib/auth/totp";
 import { decryptSecret } from "@/lib/secrets";
 import { sessionCookieHeader, SESSION_TTL_SECONDS } from "@/lib/auth/session";
-import { enforceRateLimit } from "@/lib/rate-limit";
+import { enforceRateLimit, enforceRateLimitById } from "@/lib/rate-limit";
 
 const MAX_FAILED = 5;
 const LOCK_MINUTES = 15;
@@ -17,6 +17,7 @@ const MFA_ENFORCED_ROLES = ["ORG_OWNER", "FINANCE_MANAGER"];
 export async function POST(req: NextRequest) {
   const gate = requireAuthEnabled();
   if (gate) return gate;
+  // TASK-A F10: ÇİFT KOVA — IP + kimlik ayrı ayrı (OWASP Credential-Stuffing: birleşik kova stuffing'i kaçırır)
   const denied = enforceRateLimit(req, { key: "auth-login", limit: 10, windowMs: 900_000 });
   if (denied) return denied;
 
@@ -24,6 +25,8 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as { email?: string; password?: string; totp?: string; recoveryCode?: string };
     const email = body.email?.trim().toLowerCase();
     if (!email || !body.password) return NextResponse.json({ error: "E-posta ve parola zorunlu" }, { status: 400 });
+    const deniedUser = enforceRateLimitById(req, { key: "auth-login", limit: 5, windowMs: 900_000, scopeId: email });
+    if (deniedUser) return deniedUser; // aynı kimliğe daha sıkı kova — stuffing/brute denemesi IP değiştirse de yakalanır
 
     const user = await db.user.findFirst({ where: { email } });
     if (!user) return NextResponse.json({ error: "E-posta veya parola hatalı" }, { status: 401 }); // varlık ifşa edilmez

@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useLang, t } from "@/lib/i18n";
 
 // arşiv sayılan durumlar (§7 yaşam döngüsünün kuyruğu)
 const ARCHIVE_STATUSES = ["POST_EVENT", "RECONCILIATION", "ARCHIVED"];
@@ -37,6 +38,7 @@ interface ParticipationRow {
 }
 
 export function ArchiveView() {
+  useLang();
   const { refreshKey } = useApp();
   const { toast } = useToast();
 
@@ -75,7 +77,7 @@ export function ArchiveView() {
       const res = await fetch(`/api/media/export?editionId=${e.id}`, { cache: "no-store" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? "ZIP üretilemedi");
+        throw new Error((body as { error?: string }).error ?? t("archive.zipBuildFailed"));
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -86,9 +88,9 @@ export function ArchiveView() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      toast({ title: "Medya ZIP indirildi", description: `${e.name} — klasör yapısı ve manifest dahil.` });
+      toast({ title: t("archive.zipDownloadedTitle"), description: t("archive.zipDownloadedDesc", { name: e.name }) });
     } catch (err) {
-      toast({ title: "ZIP indirilemedi", description: err instanceof Error ? err.message : "Hata", variant: "destructive" });
+      toast({ title: t("archive.zipFailedTitle"), description: err instanceof Error ? err.message : t("common.error"), variant: "destructive" });
     } finally {
       setZipBusy(null);
     }
@@ -109,10 +111,10 @@ export function ArchiveView() {
         audienceMode: "SEGMENT",
         subject: `${e.name} arşivi — teşekkür ve sonraki etkinlik daveti`,
       });
-      toast({ title: "Kampanya segmenti oluşturuldu", description: `İletişim modülünde "${e.name}" için mailing taslağı hazır.` });
+      toast({ title: t("archive.segmentCreatedTitle"), description: t("archive.segmentCreatedDesc", { name: e.name }) });
       reload();
     } catch (err) {
-      toast({ title: "Segment oluşturulamadı", description: err instanceof Error ? err.message : "Hata", variant: "destructive" });
+      toast({ title: t("archive.segmentFailedTitle"), description: err instanceof Error ? err.message : t("common.error"), variant: "destructive" });
     } finally {
       setCampaignBusy(null);
     }
@@ -121,27 +123,27 @@ export function ArchiveView() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Arşiv"
-        desc="Tamamlanan etkinliklerin çalışma alanı — istatistik, medya ZIP, galeri ve katılımcı kayıtları. Public yüzeyde yalnız sayılar görünür."
+        title={t("archive.title")}
+        desc={t("archive.desc")}
       />
 
       {/* Üst özet — dashboard agregat reuse */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Arşivli Etkinlik" value={archived.length} sub="POST_EVENT / RECONCILIATION / ARCHIVED" tone="amber" icon={<Icons.Archive className="size-4" />} />
-        <KpiCard label="Arşiv Katılımı" value={totalParticipants} sub="tüm arşiv edilen edisyonlar" tone="violet" icon={<Icons.Users className="size-4" />} />
-        <KpiCard label="Arşiv Kaydı" value={totalRegistrations} sub="toplam kayıt sayısı" tone="teal" icon={<Icons.ClipboardList className="size-4" />} />
-        <KpiCard label="Galeri & Medya" value="ZIP" sub="kart başına medya paketi indirilebilir" tone="emerald" icon={<Icons.Images className="size-4" />} />
+        <KpiCard label={t("archive.kpiEditions")} value={archived.length} sub="POST_EVENT / RECONCILIATION / ARCHIVED" tone="amber" icon={<Icons.Archive className="size-4" />} />
+        <KpiCard label={t("archive.kpiParticipation")} value={totalParticipants} sub={t("archive.kpiParticipationSub")} tone="violet" icon={<Icons.Users className="size-4" />} />
+        <KpiCard label={t("archive.kpiRegistrations")} value={totalRegistrations} sub={t("archive.kpiRegistrationsSub")} tone="teal" icon={<Icons.ClipboardList className="size-4" />} />
+        <KpiCard label={t("archive.kpiMedia")} value="ZIP" sub={t("archive.kpiMediaSub")} tone="emerald" icon={<Icons.Images className="size-4" />} />
       </div>
 
       <div className="relative max-w-sm">
         <Icons.Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input value={search} onChange={(ev) => setSearch(ev.target.value)} placeholder="Etkinlik / seri / şehir ara" className="pl-8" />
+        <Input value={search} onChange={(ev) => setSearch(ev.target.value)} placeholder={t("archive.searchPlaceholder")} className="pl-8" />
       </div>
 
       {loading ? <Loading rows={4} /> : error ? <ErrorState message={error} onRetry={reload} /> : archived.length === 0 ? (
         <EmptyState
-          title="Arşiv kaydı yok"
-          desc="POST_EVENT, RECONCILIATION veya ARCHIVED durumdaki etkinlikler burada listelenir. Etkinlikler ekranından durumu değiştirebilirsiniz."
+          title={t("archive.emptyTitle")}
+          desc={t("archive.emptyDesc")}
         />
       ) : (
         <div className="space-y-4">
@@ -162,16 +164,16 @@ export function ArchiveView() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" variant="outline" disabled={zipBusy === e.id} onClick={() => downloadZip(e)}>
-                    {zipBusy === e.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.FileArchive className="size-3.5" />} Medya ZIP
+                    {zipBusy === e.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.FileArchive className="size-3.5" />} {t("archive.btnZip")}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setGaleriEdition(e)}>
-                    <Icons.Images className="size-3.5" /> Galeri
+                    <Icons.Images className="size-3.5" /> {t("archive.btnGallery")}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setPeopleEdition(e)}>
-                    <Icons.Users className="size-3.5" /> Katılımcılar
+                    <Icons.Users className="size-3.5" /> {t("archive.btnPeople")}
                   </Button>
                   <Button size="sm" variant="outline" disabled={campaignBusy === e.id} onClick={() => createCampaignSegment(e)}>
-                    {campaignBusy === e.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Megaphone className="size-3.5" />} Kampanya Segmenti
+                    {campaignBusy === e.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Megaphone className="size-3.5" />} {t("archive.btnCampaign")}
                   </Button>
                 </div>
               </div>
@@ -179,10 +181,10 @@ export function ArchiveView() {
               {/* kart istatistikleri — dashboard agregat reuse */}
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[
-                  { label: "Katılımcı", value: e._count?.participations ?? 0, cls: "text-violet-700 bg-violet-50 border-violet-200" },
-                  { label: "Kayıt", value: e._count?.registrations ?? 0, cls: "text-teal-700 bg-teal-50 border-teal-200" },
-                  { label: "Sponsor", value: e._count?.sponsorAgreements ?? 0, cls: "text-emerald-700 bg-emerald-50 border-emerald-200" },
-                  { label: "Oturum", value: e._count?.sessions ?? 0, cls: "text-amber-700 bg-amber-50 border-amber-200" },
+                  { label: t("archive.statParticipants"), value: e._count?.participations ?? 0, cls: "text-violet-700 bg-violet-50 border-violet-200" },
+                  { label: t("archive.statRegistrations"), value: e._count?.registrations ?? 0, cls: "text-teal-700 bg-teal-50 border-teal-200" },
+                  { label: t("archive.statSponsors"), value: e._count?.sponsorAgreements ?? 0, cls: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+                  { label: t("archive.statSessions"), value: e._count?.sessions ?? 0, cls: "text-amber-700 bg-amber-50 border-amber-200" },
                 ].map((st) => (
                   <div key={st.label} className={cn("rounded-lg border p-2.5", st.cls)}>
                     <p className="text-lg font-bold tabular-nums leading-none">{st.value}</p>
@@ -196,12 +198,10 @@ export function ArchiveView() {
           {/* KVKK sabit notu */}
           <div className="rounded-xl border border-dashed border-muted-foreground/30 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
             <p className="flex items-center gap-1.5 font-semibold text-foreground">
-              <Icons.ShieldCheck className="size-4 text-emerald-600" /> KVKK — Arşiv katılımcı verileri
+              <Icons.ShieldCheck className="size-4 text-emerald-600" /> {t("archive.kvkkTitle")}
             </p>
             <p className="mt-1.5">
-              Arşivdeki katılımcı isim ve iletişim bilgileri yalnız bu çalışma alanında (tenant-içi) tutulur; firma vitrini ve diğer public
-              yüzeylerde yalnız katılımcı <b>adedi</b> görünür. Kişisel veriler silme/anonimleştirme taleplerinde
-              İletişim modülündeki kampanya segmentlerinden ayrıştırılarak yönetilir. (KVKK md.5/6 — veri minimizasyonu)
+              {t("archive.kvkkBodyA")}<b>{t("archive.kvkkBold")}</b>{t("archive.kvkkBodyB")}
             </p>
           </div>
         </div>
@@ -212,14 +212,14 @@ export function ArchiveView() {
         <Dialog open onOpenChange={(v) => !v && setGaleriEdition(null)}>
           <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2"><Icons.Images className="size-4 text-primary" /> Galeri — {galeriEdition.name}</DialogTitle>
-              <DialogDescription>Medya Arşivi&apos;nde bu edisyona yüklenen görseller (en fazla 24 öğe — lazy yüklenir).</DialogDescription>
+              <DialogTitle className="flex items-center gap-2"><Icons.Images className="size-4 text-primary" /> {t("archive.galleryTitle", { name: galeriEdition.name })}</DialogTitle>
+              <DialogDescription>{t("archive.galleryDesc")}</DialogDescription>
             </DialogHeader>
             <GaleriGrid editionId={galeriEdition.id} />
             <DialogFooter>
-              <Button variant="outline" onClick={() => setGaleriEdition(null)}>Kapat</Button>
+              <Button variant="outline" onClick={() => setGaleriEdition(null)}>{t("archive.close")}</Button>
               <Button variant="outline" onClick={() => downloadZip(galeriEdition)} disabled={zipBusy === galeriEdition.id}>
-                {zipBusy === galeriEdition.id ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.FileArchive className="size-4" />} ZIP indir
+                {zipBusy === galeriEdition.id ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.FileArchive className="size-4" />} {t("archive.btnZipDownload")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -231,12 +231,12 @@ export function ArchiveView() {
         <Dialog open onOpenChange={(v) => !v && setPeopleEdition(null)}>
           <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2"><Icons.Users className="size-4 text-primary" /> Katılımcılar — {peopleEdition.name}</DialogTitle>
-              <DialogDescription>Tenant-içi görünüm: isimler yalnız bu çalışma alanında. Public vitrinde yalnız {peopleEdition._count?.participations ?? 0} adeti görünür.</DialogDescription>
+              <DialogTitle className="flex items-center gap-2"><Icons.Users className="size-4 text-primary" /> {t("archive.peopleTitle", { name: peopleEdition.name })}</DialogTitle>
+              <DialogDescription>{t("archive.peopleDesc", { count: peopleEdition._count?.participations ?? 0 })}</DialogDescription>
             </DialogHeader>
             <ParticipantsBlock editionId={peopleEdition.id} />
             <DialogFooter>
-              <Button variant="outline" onClick={() => setPeopleEdition(null)}>Kapat</Button>
+              <Button variant="outline" onClick={() => setPeopleEdition(null)}>{t("archive.close")}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -247,6 +247,7 @@ export function ArchiveView() {
 
 // ── lazy galeri ızgarası — dialog açılınca mount olur, o zaman çeker ──
 function GaleriGrid({ editionId }: { editionId: string }) {
+  useLang();
   const { data, error, loading } = useApi<MediaAssetRow[]>(
     () => listEntity<MediaAssetRow>("media-assets", { editionId, limit: 24 }),
     [editionId]
@@ -258,7 +259,7 @@ function GaleriGrid({ editionId }: { editionId: string }) {
   const others = (data ?? []).filter((a) => !(a.kind === "IMAGE" && a.dataUrl));
 
   if ((data ?? []).length === 0) {
-    return <EmptyState title="Medya yok" desc="Medya Arşivi modülünden bu edisyona dosya yükleyin." />;
+    return <EmptyState title={t("archive.noMediaTitle")} desc={t("archive.noMediaDesc")} />;
   }
   return (
     <div className="space-y-3">
@@ -275,7 +276,7 @@ function GaleriGrid({ editionId }: { editionId: string }) {
           ))}
         </div>
       ) : (
-        <EmptyState title="Görsel yok" desc="IMAGE türünde medya bulunamadı." />
+        <EmptyState title={t("archive.noImagesTitle")} desc={t("archive.noImagesDesc")} />
       )}
       {others.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -290,6 +291,7 @@ function GaleriGrid({ editionId }: { editionId: string }) {
 
 // ── tenant-içi katılımcı bloğu — isimler burada, public'te asla ──
 function ParticipantsBlock({ editionId }: { editionId: string }) {
+  useLang();
   const { data, error, loading } = useApi<ParticipationRow[]>(
     () => listEntity<ParticipationRow>("participations", { editionId, limit: 300 }),
     [editionId]
@@ -298,7 +300,7 @@ function ParticipantsBlock({ editionId }: { editionId: string }) {
   if (loading) return <Loading rows={4} />;
   if (error) return <ErrorState message={error} onRetry={() => undefined} />;
   const rows = data ?? [];
-  if (rows.length === 0) return <EmptyState title="Katılım kaydı yok" />;
+  if (rows.length === 0) return <EmptyState title={t("archive.noParticipationsTitle")} />;
 
   return (
     <div className="maven-scroll max-h-80 space-y-2 overflow-y-auto pr-1">

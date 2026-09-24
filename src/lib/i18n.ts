@@ -7,11 +7,76 @@ import { useSyncExternalStore } from "react";
 import trDict from "@/i18n/tr.json";
 import enDict from "@/i18n/en.json";
 
-export type Lang = "tr" | "en";
+// TASK-A F8: parça sözlükler (src/i18n/_new/<view>.{tr,en}.json) — geliştirme sırasında
+// çeviriler parça dosyalarda yaşar (F9'da tr.json/en.json'a "pişirilir"). Burada derin
+// birleşim yüklenir: TABAN KAZANIR (tr.json/en.json etiketleri donuk — parça yalnız
+// boşluk doldurur). Böylece F8 sonrası TR arayüz bozulmadan çalışmaya devam eder.
+import peopleTr from "@/i18n/_new/people.tr.json";
+import peopleEn from "@/i18n/_new/people.en.json";
+import onsiteTr from "@/i18n/_new/onsite.tr.json";
+import onsiteEn from "@/i18n/_new/onsite.en.json";
+import scientificTr from "@/i18n/_new/scientific.tr.json";
+import scientificEn from "@/i18n/_new/scientific.en.json";
+import formsTr from "@/i18n/_new/forms.tr.json";
+import formsEn from "@/i18n/_new/forms.en.json";
+import archiveTr from "@/i18n/_new/archive.tr.json";
+import archiveEn from "@/i18n/_new/archive.en.json";
+import b2bTr from "@/i18n/_new/b2b.tr.json";
+import b2bEn from "@/i18n/_new/b2b.en.json";
+import socialTr from "@/i18n/_new/social.tr.json";
+import socialEn from "@/i18n/_new/social.en.json";
+import floorsTr from "@/i18n/_new/floors.tr.json";
+import floorsEn from "@/i18n/_new/floors.en.json";
+import integrationsTr from "@/i18n/_new/integrations.tr.json";
+import integrationsEn from "@/i18n/_new/integrations.en.json";
 
 type Dict = Record<string, unknown>;
 
-const DICTS: Record<Lang, Dict> = { tr: trDict as Dict, en: enDict as Dict };
+// derin birleşim: taban (ana sözlük) kazanır, parça yalnız eksik yaprakları doldurur
+function deepMerge(base: Dict, frag: Dict): Dict {
+  const out: Dict = { ...base };
+  for (const [k, v] of Object.entries(frag)) {
+    const bv = out[k];
+    if (v && typeof v === "object" && !Array.isArray(v) && bv && typeof bv === "object" && !Array.isArray(bv)) {
+      out[k] = deepMerge(bv as Dict, v as Dict);
+    } else if (out[k] === undefined) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+const FRAGMENTS: { tr: Dict; en: Dict }[] = [
+  { tr: peopleTr as Dict, en: peopleEn as Dict },
+  { tr: onsiteTr as Dict, en: onsiteEn as Dict },
+  { tr: scientificTr as Dict, en: scientificEn as Dict },
+  { tr: formsTr as Dict, en: formsEn as Dict },
+  { tr: archiveTr as Dict, en: archiveEn as Dict },
+  { tr: b2bTr as Dict, en: b2bEn as Dict },
+  { tr: socialTr as Dict, en: socialEn as Dict },
+  { tr: floorsTr as Dict, en: floorsEn as Dict },
+  { tr: integrationsTr as Dict, en: integrationsEn as Dict },
+];
+
+function withFragments(base: Dict): Dict {
+  let acc = base;
+  for (const f of FRAGMENTS) acc = deepMerge(acc, f.tr);
+  return acc;
+}
+function withFragmentsEn(base: Dict): Dict {
+  let acc = base;
+  for (const f of FRAGMENTS) acc = deepMerge(acc, f.en);
+  return acc;
+}
+
+const BASE_TR = trDict as Dict;
+const BASE_EN = enDict as Dict;
+const DICTS: Record<Lang, Dict> = {
+  tr: withFragments(BASE_TR),
+  en: withFragmentsEn(BASE_EN),
+};
+
+export type Lang = "tr" | "en";
 
 // JSON içe aktarma ile geçici sözlükoverride (Ayarlar → Dil bölümü)
 let override: Partial<Record<Lang, Dict>> = {};
@@ -91,10 +156,21 @@ export function t(key: string, vars?: Record<string, string | number>): string {
   return val;
 }
 
-// uyarısız sessiz arama (enum yardımcıları için)
-function tQuiet(key: string): string | undefined {
+// uyarısız sessiz arama (enum yardımcıları için — constants.label köprüsü)
+export function tQuiet(key: string): string | undefined {
   const lang = getLang();
   return lookup(override[lang] ?? DICTS[lang], key) ?? lookup(DICTS.tr, key);
+}
+
+// TASK-A F8/F9: durum-etiket köprüsü — TR modunda DONUK map etiketi (birebir eski davranış),
+// EN modunda status.<key> sözlüğü (yoksa map etiketine düşer). Böylece aynı enum anahtarı
+// farklı eksenlerde farklı TR etiket taşıyabileceği için TR asla sözlüğe bakmaz.
+export function tStatus(mapLabel: string | undefined, key: string): string {
+  const lang = getLang();
+  if (lang === "en") {
+    return lookup(override.en ?? DICTS.en, `status.${key}`) ?? lookup(DICTS.tr, `status.${key}`) ?? mapLabel ?? key;
+  }
+  return mapLabel ?? key;
 }
 
 // sabit map + status sözlüğü köprüsü: önce t("status.<key>"), yoksa mevcut TR etiket

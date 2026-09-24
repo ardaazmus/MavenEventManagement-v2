@@ -3,12 +3,13 @@
 // 4 sekme: Formlar (liste) · Tasarım Stüdyosu (alan editörü + spam/ödeme ayarları) ·
 // Yanıtlar & İstatistik (inceleme kuyruğu + dağılım analizi) · Canlı Kayıt Masası (halka açık önizleme).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { listEntity, apiSend, apiGet } from "@/lib/client";
+import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
 import {
-  FORM_TYPES, FORM_TYPE_HINTS, FORM_FIELD_TYPES, FORM_SUBMISSION_STATUS, SUBMISSION_SOURCES,
-  STATUS_TONE, label, fmtDate, fmtDateTime, fmtMoney, CHOICE_FIELD_TYPES,
+  FORM_TYPES, FORM_FIELD_TYPES, SUBMISSION_SOURCES,
+  STATUS_TONE, fmtDate, fmtDateTime, fmtMoney, CHOICE_FIELD_TYPES,
+  label, FORM_TYPE_HINTS, FORM_SUBMISSION_STATUS, // TASK-A F8: dil-duyarlı label köprüsü (kalan usages)
 } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +23,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { useLang, t, tLabel } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 
 // ─── API tipleri (sözleşme: UI AGENT SÖZLEŞMESİ / registry) ─────────────────
@@ -107,6 +109,7 @@ const PAY_METHOD_OPTS = [
   { value: "BANK_TRANSFER", label: "Havale / EFT" },
   { value: "PAYMENT_LINK", label: "Ödeme Linki" },
 ];
+const PAY_METHOD_MAP: Record<string, string> = Object.fromEntries(PAY_METHOD_OPTS.map((m) => [m.value, m.label] as const));
 
 // JSON dizi alanını güvenle çöz (spamReasons, çoklu seçim yanıtları)
 function parseJsonArray(v?: string | null): string[] {
@@ -127,15 +130,16 @@ async function apiPatch<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? "İşlem başarısız");
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? t("forms.actionFailed"));
   return data as T;
 }
 const numOr = (v: string, dflt: number) => (Number.isFinite(Number(v)) ? Number(v) : dflt);
-const barLabel = (v: string) => (v === "true" ? "Evet" : v === "false" ? "Hayır" : v);
+const barLabel = (v: string) => (v === "true" ? t("forms.yes") : v === "false" ? t("forms.no") : v);
 
 // ─── Ana bileşen ────────────────────────────────────────────────────────────
 
 export function FormCenterView() {
+  useLang(); // dil değişiminde yeniden render
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
 
@@ -212,20 +216,23 @@ export function FormCenterView() {
   const liveForm = liveForms.find((f) => f.id === liveFormId) ?? null;
 
   // Gönderiler + istatistik (seçili form + filtreler)
+  // TASK-A F6: gönderiler imleçli load-more — 300 satırlık sessiz kesme kaldırıldı
   const {
-    data: submissions, error: subError, reload: reloadSubs, loading: subLoading,
-  } = useApi<SubmissionRow[]>(
-    () => selectedFormId
-      ? listEntity<SubmissionRow>("form-submissions", {
-          formId: selectedFormId,
-          status: statusFilter === "ALL" ? undefined : statusFilter,
-          source: sourceFilter === "ALL" ? undefined : sourceFilter,
-          limit: 300,
-        })
-      : Promise.resolve([]),
+    data: subsPaged, error: subError, reload: reloadSubs, loading: subLoading, more: subMore,
+  } = useApi<{ items: SubmissionRow[]; nextCursor?: string | null }>(
+    (cursor?: string) =>
+      selectedFormId
+        ? listEntityPaged<SubmissionRow>("form-submissions", {
+            formId: selectedFormId,
+            status: statusFilter === "ALL" ? undefined : statusFilter,
+            source: sourceFilter === "ALL" ? undefined : sourceFilter,
+            limit: 200,
+          }, cursor)
+        : Promise.resolve({ items: [] }),
     [selectedFormId, statusFilter, sourceFilter, refreshKey],
+    { append: true },
   );
-  const subList = useMemo(() => submissions ?? [], [submissions]);
+  const subList = useMemo(() => subsPaged?.items ?? [], [subsPaged]);
 
   const {
     data: stats, error: statsError, reload: reloadStats, loading: statsLoading,
@@ -287,7 +294,7 @@ export function FormCenterView() {
         defaultCategoryId: newForm.defaultCategoryId === "AUTO" ? null : newForm.defaultCategoryId,
         autoApprove: newForm.autoApprove,
       });
-      toast({ title: "Form oluşturuldu", description: "Tasarım stüdyosundan alanları ekleyebilirsiniz." });
+      toast({ title: t("forms.toastCreated"), description: t("forms.toastCreatedDesc") });
       setCreateOpen(false);
       setNewForm(emptyNewForm);
       setSelectedFormId(created.id);
@@ -295,7 +302,7 @@ export function FormCenterView() {
       reload();
       bump();
     } catch (e) {
-      toast({ title: "Form oluşturulamadı", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastCreateError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -305,11 +312,11 @@ export function FormCenterView() {
     setBusy(`pub-${f.id}`);
     try {
       await apiSend(`/api/forms/${f.id}`, "PUT", { status: f.status === "PUBLISHED" ? "CLOSED" : "PUBLISHED" });
-      toast({ title: f.status === "PUBLISHED" ? "Form kapatıldı" : "Form yayına alındı", description: f.name });
+      toast({ title: f.status === "PUBLISHED" ? t("forms.toastClosed") : t("forms.toastPublished"), description: f.name });
       reload();
       bump();
     } catch (e) {
-      toast({ title: "Durum değiştirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastStatusError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -319,11 +326,11 @@ export function FormCenterView() {
     setBusy(`public-${f.id}`);
     try {
       await apiSend(`/api/forms/${f.id}`, "PUT", { isPublic: v });
-      toast({ title: v ? "Form herkese açık bağlantıya açıldı" : "Herkese açık erişim kapatıldı", description: f.name });
+      toast({ title: v ? t("forms.toastPublicOn") : t("forms.toastPublicOff"), description: f.name });
       reload();
       bump();
     } catch (e) {
-      toast({ title: "Erişim ayarı güncellenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastAccessError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -346,11 +353,11 @@ export function FormCenterView() {
         enableOnlinePayment: settings.enableOnlinePayment,
         defaultCategoryId: settings.defaultCategoryId === "AUTO" ? null : settings.defaultCategoryId,
       });
-      toast({ title: "Form ayarları kaydedildi", description: selectedForm.name });
+      toast({ title: t("forms.toastSettingsSaved"), description: selectedForm.name });
       reload();
       bump();
     } catch (e) {
-      toast({ title: "Ayarlar kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastSettingsError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -375,13 +382,13 @@ export function FormCenterView() {
         correctAnswer: newField.type === "QA_QUIZ" ? (newField.correctAnswer || null) : null,
         order: selectedForm.fields.length + 1,
       });
-      toast({ title: "Alan eklendi", description: `${newField.label} — sıra ${selectedForm.fields.length + 1}` });
+      toast({ title: t("forms.toastFieldAdded"), description: t("forms.toastFieldAddedDesc", { name: newField.label, order: selectedForm.fields.length + 1 }) });
       setFieldOpen(false);
       setNewField(emptyNewField);
       reload();
       bump();
     } catch (e) {
-      toast({ title: "Alan eklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastFieldAddError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -403,7 +410,7 @@ export function FormCenterView() {
       reload();
       bump();
     } catch (e) {
-      toast({ title: "Sıra değiştirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastMoveError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -413,11 +420,11 @@ export function FormCenterView() {
     setBusy(`del-${fieldId}`);
     try {
       await apiSend(`/api/form-fields/${fieldId}`, "DELETE");
-      toast({ title: "Alan silindi", description: fieldLabel });
+      toast({ title: t("forms.toastFieldDeleted"), description: fieldLabel });
       reload();
       bump();
     } catch (e) {
-      toast({ title: "Alan silinemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastFieldDeleteError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -429,13 +436,13 @@ export function FormCenterView() {
     try {
       await apiSend(`/api/form-fields/${fieldId}`, "PUT", { correctAnswer: value || null });
       toast({
-        title: value ? `Doğru cevap: ${value}` : "Doğru cevap kaldırıldı",
-        description: value ? "Yeni gönderiler quiz puanıyla kaydedilir." : "Bu soru artık puanlanmaz.",
+        title: value ? t("forms.correctAnswerSet", { value }) : t("forms.correctAnswerCleared"),
+        description: value ? t("forms.correctAnswerSetDesc") : t("forms.correctAnswerClearedDesc"),
       });
       reload();
       bump();
     } catch (e) {
-      toast({ title: "Doğru cevap kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastCorrectAnswerError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -446,18 +453,18 @@ export function FormCenterView() {
     try {
       await apiPatch(`/api/form-submissions/${id}`, { action });
       const titles: Record<string, string> = {
-        approve: "Gönderi onaylandı", reject: "Gönderi reddedildi",
-        spam: "Spam olarak işaretlendi", pending: "İncelemeye alındı",
+        approve: t("forms.subApproved"), reject: t("forms.subRejected"),
+        spam: t("forms.subMarkedSpam"), pending: t("forms.subSetPending"),
       };
       toast({
         title: titles[action],
-        description: action === "approve" ? "Kayıt formu ise kayıt zinciri kurulur." : undefined,
+        description: action === "approve" ? t("forms.subApproveDesc") : undefined,
       });
       reloadSubs();
       reloadStats();
       bump();
     } catch (e) {
-      toast({ title: "Aksiyon başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastActionError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -470,7 +477,7 @@ export function FormCenterView() {
     try {
       setDetail(await apiGet<SubmissionDetail>(`/api/form-submissions/${id}`));
     } catch (e) {
-      toast({ title: "Detay yüklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastDetailError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
       setDetailId(null);
     } finally {
       setDetailLoading(false);
@@ -525,15 +532,15 @@ export function FormCenterView() {
       setPayOutcome(null);
       bump();
       if (res.status === "SPAM") {
-        toast({ title: "Gönderi spam şüphesiyle işaretlendi", description: `Skor ${Math.round(res.spamScore)}`, variant: "destructive" });
+        toast({ title: t("forms.toastSpamFlagged"), description: t("forms.toastSpamScore", { score: Math.round(res.spamScore) }), variant: "destructive" });
       } else {
         toast({
-          title: res.status === "APPROVED" ? "Kaydınız onaylandı" : "Başvurunuz alındı",
-          description: res.status === "PENDING" ? "Form Merkezi yanıt sekmesinden inceleyebilirsiniz." : undefined,
+          title: res.status === "APPROVED" ? t("forms.liveApprovedToast") : t("forms.livePendingToast"),
+          description: res.status === "PENDING" ? t("forms.livePendingToastDesc") : undefined,
         });
       }
     } catch (e) {
-      toast({ title: "Gönderim başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastSubmitError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -552,12 +559,12 @@ export function FormCenterView() {
       setPayOutcome(res);
       bump();
       if (res.outcome === "SUCCEEDED") {
-        toast({ title: "Ödeme başarılı", description: res.message });
+        toast({ title: t("forms.payOk"), description: res.message });
       } else {
-        toast({ title: "Ödeme başarısız", description: res.message, variant: "destructive" });
+        toast({ title: t("forms.payFail"), description: res.message, variant: "destructive" });
       }
     } catch (e) {
-      toast({ title: "Ödeme işlemi başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("forms.toastPayError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -589,7 +596,7 @@ export function FormCenterView() {
             {f.label}
             {reqStar}
           </Label>
-          {f.mobileInteractive && <Badge variant="outline" className="text-[10px]">Mobil Öge</Badge>}
+          {f.mobileInteractive && <Badge variant="outline" className="text-[10px]">{t("forms.mobileItem")}</Badge>}
         </div>
         {children}
         {f.helpText && <p className="text-xs text-muted-foreground">{f.helpText}</p>}
@@ -614,11 +621,11 @@ export function FormCenterView() {
         );
       case "EMAIL":
         return wrap(
-          <Input type="email" value={value} placeholder={f.placeholder ?? "ornek@eposta.com"} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
+          <Input type="email" value={value} placeholder={f.placeholder ?? t("forms.phEmail")} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
         );
       case "PHONE":
         return wrap(
-          <Input type="tel" value={value} placeholder={f.placeholder ?? "+90"} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
+          <Input type="tel" value={value} placeholder={f.placeholder ?? t("forms.phPhone")} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
         );
       case "DATE":
         return wrap(<Input type="date" value={value} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />);
@@ -626,7 +633,7 @@ export function FormCenterView() {
       case "QA_QUIZ":
         return wrap(
           <Select value={value} onValueChange={(v) => setAns({ ...ans, [f.id]: v })}>
-            <SelectTrigger><SelectValue placeholder="Seçin" /></SelectTrigger>
+            <SelectTrigger><SelectValue placeholder={t("forms.select")} /></SelectTrigger>
             <SelectContent>
               {opts.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
             </SelectContent>
@@ -644,7 +651,7 @@ export function FormCenterView() {
                 {o}
               </label>
             ))}
-            {opts.length === 0 && <p className="text-xs text-muted-foreground">Seçenek tanımlanmamış</p>}
+            {opts.length === 0 && <p className="text-xs text-muted-foreground">{t("forms.noOptions")}</p>}
           </div>,
         );
       case "CHECKBOX":
@@ -656,10 +663,10 @@ export function FormCenterView() {
         );
       case "COUNTRY":
         return wrap(
-          <Input value={value} placeholder="Ülke" onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
+          <Input value={value} placeholder={t("forms.phCountry")} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
         );
       case "FILE":
-        return wrap(<Input disabled placeholder="Dosya seç (önizlemede kapalı)" />);
+        return wrap(<Input disabled placeholder={t("forms.phFileDisabled")} />);
       case "RATING":
         return wrap(
           <div className="flex items-center gap-1">
@@ -667,7 +674,7 @@ export function FormCenterView() {
               <button
                 key={n}
                 type="button"
-                aria-label={`${n} yıldız`}
+                aria-label={t("forms.stars", { n })}
                 onClick={() => setAns({ ...ans, [f.id]: String(n) })}
                 className="rounded-md p-1 transition hover:bg-amber-50"
               >
@@ -696,8 +703,8 @@ export function FormCenterView() {
               ))}
             </div>
             <div className="flex justify-between text-[10px] text-muted-foreground">
-              <span>Hiç olmaz</span>
-              <span>Kesinlikle öneririm</span>
+              <span>{t("forms.npsLow")}</span>
+              <span>{t("forms.npsHigh")}</span>
             </div>
           </div>,
         );
@@ -712,7 +719,7 @@ export function FormCenterView() {
   const spamPill = (score: number) =>
     score > 0 ? (
       <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_TONE.SPAM}`}>
-        Skor {Math.round(score)}
+        {t("forms.scorePill", { score: Math.round(score) })}
       </span>
     ) : (
       <span className="text-xs text-muted-foreground">—</span>
@@ -725,10 +732,10 @@ export function FormCenterView() {
     return (
       <span
         className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${tone}`}
-        title={`Quiz başarısı %${Math.round(sub.quizScore)} — 75+ yeşil, 50+ amber, altı kırmızı`}
+        title={t("forms.quizTitle", { score: Math.round(sub.quizScore) })}
       >
         <Icons.Sigma className="size-3" />
-        Quiz %{Math.round(sub.quizScore)}
+        {t("forms.quizPill", { score: Math.round(sub.quizScore) })}
         {sub.quizCorrect != null && sub.quizTotal ? ` · ${sub.quizCorrect}/${sub.quizTotal}` : ""}
       </span>
     );
@@ -736,22 +743,39 @@ export function FormCenterView() {
 
   const npsStat = stats?.fields.find((st) => st.type === "NPS" && st.nps) ?? null;
 
+  // Faz E: sabit map'leri tLabel ile çevir (durum/tür/kaynak etiketleri)
+  const formStatusMap = Object.fromEntries(Object.entries(FORM_STATUS_MAP).map(([k]) => [k, tLabel(FORM_STATUS_MAP, k)]));
+  const regStatusMap = Object.fromEntries(Object.entries(REG_STATUS_MAP).map(([k]) => [k, tLabel(REG_STATUS_MAP, k)]));
+  const formTypeMap = Object.fromEntries(Object.entries(FORM_TYPES).map(([k]) => [k, tLabel(FORM_TYPES, k)]));
+  const fieldTypeMap = Object.fromEntries(Object.entries(FORM_FIELD_TYPES).map(([k]) => [k, tLabel(FORM_FIELD_TYPES, k)]));
+  const sourceMap = Object.fromEntries(Object.entries(SUBMISSION_SOURCES).map(([k]) => [k, tLabel(SUBMISSION_SOURCES, k)]));
+  const sensitivityMap = Object.fromEntries(Object.entries(SENSITIVITY_MAP).map(([k]) => [k, tLabel(SENSITIVITY_MAP, k)]));
+  const payMethodMap = Object.fromEntries(Object.entries(PAY_METHOD_MAP).map(([k]) => [k, tLabel(PAY_METHOD_MAP, k)]));
+  // FORM_SUBMISSION_STATUS.PENDING, taban sözlükteki status.PENDING ("Bekliyor") ile çakışıyor —
+  // TR çıktı birebir kalsın diye bu map status.* köprüsü yerine forms.* anahtarlarından kurulur
+  const subStatusMap: Record<string, string> = {
+    PENDING: t("forms.statusPending"),
+    APPROVED: t("forms.statusApproved"),
+    REJECTED: t("forms.statusRejected"),
+    SPAM: t("forms.statusSpam"),
+  };
+
   // ───────────────────────────────────────────────────────────── RENDER ─────
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Form Merkezi" desc="Kayıt formları, anketler ve mobil interaktif QA öğeleri tek merkezde tasarlanır — spam korumalı, online ödemeli">
+      <PageHeader title={t("forms.title")} desc={t("forms.desc")}>
         <Button onClick={() => { setNewForm(emptyNewForm); setCreateOpen(true); }}>
-          <Icons.Plus className="size-4" /> Yeni Form
+          <Icons.Plus className="size-4" /> {t("forms.newForm")}
         </Button>
       </PageHeader>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)} className="space-y-4">
         <TabsList className="h-auto flex-wrap">
-          <TabsTrigger value="list"><Icons.FileInput className="size-4" /> Formlar</TabsTrigger>
-          <TabsTrigger value="studio"><Icons.PenTool className="size-4" /> Tasarım Stüdyosu</TabsTrigger>
-          <TabsTrigger value="inbox"><Icons.Inbox className="size-4" /> Yanıtlar &amp; İstatistik</TabsTrigger>
-          <TabsTrigger value="live"><Icons.MonitorSmartphone className="size-4" /> Canlı Kayıt Masası</TabsTrigger>
+          <TabsTrigger value="list"><Icons.FileInput className="size-4" /> {t("forms.tabForms")}</TabsTrigger>
+          <TabsTrigger value="studio"><Icons.PenTool className="size-4" /> {t("forms.tabStudio")}</TabsTrigger>
+          <TabsTrigger value="inbox"><Icons.Inbox className="size-4" /> {t("forms.tabInbox")}</TabsTrigger>
+          <TabsTrigger value="live"><Icons.MonitorSmartphone className="size-4" /> {t("forms.tabLive")}</TabsTrigger>
         </TabsList>
 
         {/* ══ TAB 1 — FORMLAR ══════════════════════════════════════════════ */}
@@ -762,8 +786,8 @@ export function FormCenterView() {
             <ErrorState message={error} onRetry={reload} />
           ) : formList.length === 0 ? (
             <EmptyState
-              title="Henüz form yok"
-              desc="Sağ üstteki Yeni Form butonuyla kayıt formu, anket veya mobil QA ögesi oluşturun."
+              title={t("forms.emptyTitle")}
+              desc={t("forms.emptyDesc")}
             />
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -772,28 +796,28 @@ export function FormCenterView() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold">{f.name}</p>
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{f.description ?? "Açıklama yok"}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{f.description ?? t("forms.noDescription")}</p>
                     </div>
-                    <StatusBadge map={FORM_STATUS_MAP} value={f.status} />
+                    <StatusBadge map={formStatusMap} value={f.status} />
                   </div>
                   <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                    <Chip tone={TYPE_TONE[f.type] ?? "neutral"}>{label(FORM_TYPES, f.type)}</Chip>
+                    <Chip tone={TYPE_TONE[f.type] ?? "neutral"}>{tLabel(FORM_TYPES, f.type)}</Chip>
                     {f.honeypotEnabled && (
-                      <Chip tone="neutral"><Icons.ShieldCheck className="size-3" /> Spam koruması</Chip>
+                      <Chip tone="neutral"><Icons.ShieldCheck className="size-3" /> {t("forms.chipSpamProtection")}</Chip>
                     )}
                     {f.type === "REGISTRATION" && f.enableOnlinePayment && (
-                      <Chip tone="emerald"><Icons.CreditCard className="size-3" /> Online ödeme</Chip>
+                      <Chip tone="emerald"><Icons.CreditCard className="size-3" /> {t("forms.chipOnlinePayment")}</Chip>
                     )}
                     {f.isPublic && (
-                      <Chip tone="violet"><Icons.Globe className="size-3" /> Herkese açık</Chip>
+                      <Chip tone="violet"><Icons.Globe className="size-3" /> {t("forms.chipPublic")}</Chip>
                     )}
                   </div>
                   <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1">
-                      <Icons.Inbox className="size-3.5" /> {f._count?.submissions ?? 0} gönderi
+                      <Icons.Inbox className="size-3.5" /> {t("forms.submissionCount", { n: f._count?.submissions ?? 0 })}
                     </span>
                     <span className="inline-flex items-center gap-1">
-                      <Icons.List className="size-3.5" /> {f.fields.length} alan
+                      <Icons.List className="size-3.5" /> {t("forms.fieldCount", { n: f.fields.length })}
                     </span>
                   </div>
                   <Separator className="my-3" />
@@ -803,7 +827,7 @@ export function FormCenterView() {
                       variant="outline"
                       onClick={() => { setSelectedFormId(f.id); setTab("studio"); }}
                     >
-                      <Icons.PenTool className="size-3.5" /> Stüdyoda Düzenle
+                      <Icons.PenTool className="size-3.5" /> {t("forms.editInStudio")}
                     </Button>
                     <Button
                       size="sm"
@@ -812,17 +836,17 @@ export function FormCenterView() {
                       onClick={() => togglePublish(f)}
                     >
                       {f.status === "PUBLISHED"
-                        ? <><Icons.Lock className="size-3.5" /> Kapat</>
-                        : <><Icons.Upload className="size-3.5" /> Yayınla</>}
+                        ? <><Icons.Lock className="size-3.5" /> {t("forms.close")}</>
+                        : <><Icons.Upload className="size-3.5" /> {t("forms.publish")}</>}
                     </Button>
                     <div className="ml-auto flex items-center gap-1.5">
                       <Switch
                         checked={f.isPublic}
                         disabled={busy !== null}
-                        aria-label="Herkese açık erişim"
+                        aria-label={t("forms.ariaPublic")}
                         onCheckedChange={(v) => togglePublic(f, v)}
                       />
-                      <span className="text-xs text-muted-foreground">Herkese açık</span>
+                      <span className="text-xs text-muted-foreground">{t("forms.chipPublic")}</span>
                     </div>
                   </div>
                 </div>
@@ -835,20 +859,20 @@ export function FormCenterView() {
         <TabsContent value="studio" className="mt-4 space-y-4">
           {formList.length === 0 ? (
             <EmptyState
-              title="Düzenlenecek form yok"
-              desc="Önce Yeni Form ile bir form oluşturun; ardından alanları burada tasarlayın."
+              title={t("forms.studioEmptyTitle")}
+              desc={t("forms.studioEmptyDesc")}
             />
           ) : (
             <>
               <div className="flex flex-wrap items-end gap-2">
                 <div className="grid gap-1">
-                  <Label className="text-xs">Düzenlenecek form</Label>
+                  <Label className="text-xs">{t("forms.editFormLabel")}</Label>
                   <Select value={selectedFormId} onValueChange={setSelectedFormId}>
-                    <SelectTrigger className="w-64"><SelectValue placeholder="Form seçin" /></SelectTrigger>
+                    <SelectTrigger className="w-64"><SelectValue placeholder={t("forms.selectForm")} /></SelectTrigger>
                     <SelectContent>
                       {formList.map((f) => (
                         <SelectItem key={f.id} value={f.id}>
-                          {f.name} · {label(FORM_TYPES, f.type)}
+                          {f.name} · {tLabel(FORM_TYPES, f.type)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -856,8 +880,8 @@ export function FormCenterView() {
                 </div>
                 {selectedForm && (
                   <div className="flex items-center gap-1.5 pb-1">
-                    <StatusBadge map={FORM_STATUS_MAP} value={selectedForm.status} />
-                    <Chip tone={TYPE_TONE[selectedForm.type] ?? "neutral"}>{label(FORM_TYPES, selectedForm.type)}</Chip>
+                    <StatusBadge map={formStatusMap} value={selectedForm.status} />
+                    <Chip tone={TYPE_TONE[selectedForm.type] ?? "neutral"}>{tLabel(FORM_TYPES, selectedForm.type)}</Chip>
                   </div>
                 )}
               </div>
@@ -867,16 +891,16 @@ export function FormCenterView() {
                   {/* SOL — Alan listesi */}
                   <div className="min-w-0 lg:col-span-3">
                     <SectionCard
-                      title="Alanlar"
-                      desc={`${selectedForm.fields.length} alan — sıra numarasına göre gösterilir`}
+                      title={t("forms.fieldsTitle")}
+                      desc={t("forms.fieldsDesc", { n: selectedForm.fields.length })}
                       action={
                         <Button size="sm" onClick={() => { setNewField(emptyNewField); setFieldOpen(true); }}>
-                          <Icons.Plus className="size-3.5" /> Alan Ekle
+                          <Icons.Plus className="size-3.5" /> {t("forms.addField")}
                         </Button>
                       }
                     >
                       {selectedForm.fields.length === 0 ? (
-                        <EmptyState title="Bu formda henüz alan yok" desc="Alan Ekle ile ilk soruyu ekleyin." />
+                        <EmptyState title={t("forms.noFieldsTitle")} desc={t("forms.noFieldsDesc")} />
                       ) : (
                         <div className="max-h-96 space-y-2 overflow-y-auto maven-scroll pr-1">
                           {[...selectedForm.fields]
@@ -896,31 +920,31 @@ export function FormCenterView() {
                                     <span className={`truncate text-sm font-medium ${f.type === "SECTION" ? "font-semibold" : ""}`}>
                                       {f.label}
                                     </span>
-                                    <span className="text-[11px] text-muted-foreground">{label(FORM_FIELD_TYPES, f.type)}</span>
-                                    {f.required === "ALWAYS" && <Chip tone="amber">Zorunlu</Chip>}
+                                    <span className="text-[11px] text-muted-foreground">{tLabel(FORM_FIELD_TYPES, f.type)}</span>
+                                    {f.required === "ALWAYS" && <Chip tone="amber">{t("forms.required")}</Chip>}
                                     {f.required === "CONDITIONAL" && (
                                       <span className="inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700">
-                                        Koşullu
+                                        {t("forms.conditional")}
                                       </span>
                                     )}
-                                    {f.mobileInteractive && <Chip tone="teal">Mobil</Chip>}
+                                    {f.mobileInteractive && <Chip tone="teal">{t("forms.mobileChip")}</Chip>}
                                     {f.sensitivity !== "STANDARD" && (
-                                      <Chip tone="violet">{label(SENSITIVITY_MAP, f.sensitivity)}</Chip>
+                                      <Chip tone="violet">{tLabel(SENSITIVITY_MAP, f.sensitivity)}</Chip>
                                     )}
                                   </div>
                                   {f.required === "CONDITIONAL" && f.conditionField && (
                                     <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                      Koşul: {f.conditionField} = {f.conditionValue ?? "—"}
+                                      {t("forms.conditionLine", { field: f.conditionField, value: f.conditionValue ?? "—" })}
                                     </p>
                                   )}
                                   {f.type === "QA_QUIZ" && (
                                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                                       <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700">
-                                        <Icons.KeyRound className="size-3" /> Doğru cevap:
+                                        <Icons.KeyRound className="size-3" /> {t("forms.correctAnswerLabel")}
                                       </span>
                                       <Select value={f.correctAnswer ?? undefined} onValueChange={(v) => setCorrectAnswer(f.id, v)}>
                                         <SelectTrigger className="h-7 w-44 text-[11px]" disabled={busy !== null}>
-                                          <SelectValue placeholder="Seçin — puanlama kapalı" />
+                                          <SelectValue placeholder={t("forms.selectScoringOff")} />
                                         </SelectTrigger>
                                         <SelectContent>
                                           {(f.options ?? "").split("\n").map((s) => s.trim()).filter(Boolean).map((opt) => (
@@ -934,14 +958,14 @@ export function FormCenterView() {
                                 </div>
                                 <div className="flex shrink-0 items-center gap-0.5">
                                   <Button
-                                    size="icon" variant="ghost" className="size-7" aria-label="Yukarı taşı"
+                                    size="icon" variant="ghost" className="size-7" aria-label={t("forms.moveUp")}
                                     disabled={i === 0 || busy !== null}
                                     onClick={() => moveField(f.id, -1)}
                                   >
                                     <Icons.ArrowUp className="size-3.5" />
                                   </Button>
                                   <Button
-                                    size="icon" variant="ghost" className="size-7" aria-label="Aşağı taşı"
+                                    size="icon" variant="ghost" className="size-7" aria-label={t("forms.moveDown")}
                                     disabled={i === selectedForm.fields.length - 1 || busy !== null}
                                     onClick={() => moveField(f.id, 1)}
                                   >
@@ -949,7 +973,7 @@ export function FormCenterView() {
                                   </Button>
                                   <Button
                                     size="icon" variant="ghost" className="size-7 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
-                                    aria-label="Alanı sil"
+                                    aria-label={t("forms.deleteFieldAria")}
                                     disabled={busy !== null}
                                     onClick={() => deleteField(f.id, f.label)}
                                   >
@@ -965,57 +989,57 @@ export function FormCenterView() {
 
                   {/* SAĞ — Ayar panelleri */}
                   <div className="space-y-4 min-w-0 lg:col-span-2">
-                    <SectionCard title="Form Ayarları" desc="başlık, açıklama ve gönderi sonrası mesaj">
+                    <SectionCard title={t("forms.settingsTitle")} desc={t("forms.settingsDesc")}>
                       <div className="grid gap-3">
                         <div className="grid gap-1">
-                          <Label className="text-xs">Form adı</Label>
+                          <Label className="text-xs">{t("forms.formName")}</Label>
                           <Input value={settings.name} onChange={(e) => setSettings({ ...settings, name: e.target.value })} />
                         </div>
                         <div className="grid gap-1">
-                          <Label className="text-xs">Açıklama</Label>
+                          <Label className="text-xs">{t("forms.descriptionLabel")}</Label>
                           <Textarea rows={2} value={settings.description} onChange={(e) => setSettings({ ...settings, description: e.target.value })} />
                         </div>
                         <div className="grid gap-1">
-                          <Label className="text-xs">Başarı mesajı</Label>
+                          <Label className="text-xs">{t("forms.successMessageLabel")}</Label>
                           <Input
                             value={settings.successMessage}
-                            placeholder="Örn. Kaydınız alındı, teşekkür ederiz"
+                            placeholder={t("forms.phSuccessMessage")}
                             onChange={(e) => setSettings({ ...settings, successMessage: e.target.value })}
                           />
                         </div>
                         <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
-                          <Icons.Check className="size-4" /> Kaydet
+                          <Icons.Check className="size-4" /> {t("forms.save")}
                         </Button>
                       </div>
                     </SectionCard>
 
                     <SectionCard
-                      title={<span className="flex items-center gap-2"><Icons.ShieldCheck className="size-4 text-teal-600" /> Spam Koruması</span>}
-                      desc="bot gönderileri otomatik puanlanır ve inceleme kuyruğuna düşer"
+                      title={<span className="flex items-center gap-2"><Icons.ShieldCheck className="size-4 text-teal-600" /> {t("forms.spamTitle")}</span>}
+                      desc={t("forms.spamDesc")}
                     >
                       <div className="grid gap-3">
                         <div className="flex items-center justify-between gap-2">
                           <div>
-                            <p className="text-sm font-medium">Gizli alan tuzağı (honeypot)</p>
-                            <p className="text-xs text-muted-foreground">Gizli alan botları yakalar</p>
+                            <p className="text-sm font-medium">{t("forms.honeypotTitle")}</p>
+                            <p className="text-xs text-muted-foreground">{t("forms.honeypotDesc")}</p>
                           </div>
                           <Switch
                             checked={settings.honeypotEnabled}
                             disabled={busy !== null}
-                            aria-label="Honeypot"
+                            aria-label={t("forms.ariaHoneypot")}
                             onCheckedChange={(v) => setSettings({ ...settings, honeypotEnabled: v })}
                           />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <div className="grid gap-1">
-                            <Label className="text-xs">Zaman tuzağı (sn)</Label>
+                            <Label className="text-xs">{t("forms.timeTrapLabel")}</Label>
                             <Input
                               type="number" min={0} value={settings.minSubmitSeconds}
                               onChange={(e) => setSettings({ ...settings, minSubmitSeconds: e.target.value })}
                             />
                           </div>
                           <div className="grid gap-1">
-                            <Label className="text-xs">E-posta günlük limit</Label>
+                            <Label className="text-xs">{t("forms.emailLimitLabel")}</Label>
                             <Input
                               type="number" min={1} value={settings.maxPerEmailPerDay}
                               onChange={(e) => setSettings({ ...settings, maxPerEmailPerDay: e.target.value })}
@@ -1023,64 +1047,64 @@ export function FormCenterView() {
                           </div>
                         </div>
                         <div className="grid gap-1">
-                          <Label className="text-xs">Engelli alan adları (virgülle)</Label>
+                          <Label className="text-xs">{t("forms.blockedDomainsLabel")}</Label>
                           <Input
                             value={settings.blockedDomains}
-                            placeholder="spam.xyz, tempmail.xyz"
+                            placeholder={t("forms.phBlockedDomains")}
                             onChange={(e) => setSettings({ ...settings, blockedDomains: e.target.value })}
                           />
                         </div>
                         <div className="flex items-center justify-between gap-2">
                           <div>
-                            <p className="text-sm font-medium">Temiz gönderileri otomatik onayla</p>
-                            <p className="text-xs text-muted-foreground">Spam eşiği altındaki gönderiler doğrudan onaylanır</p>
+                            <p className="text-sm font-medium">{t("forms.autoApproveTitle")}</p>
+                            <p className="text-xs text-muted-foreground">{t("forms.autoApproveDesc")}</p>
                           </div>
                           <Switch
                             checked={settings.autoApprove}
                             disabled={busy !== null}
-                            aria-label="Otomatik onay"
+                            aria-label={t("forms.ariaAutoApprove")}
                             onCheckedChange={(v) => setSettings({ ...settings, autoApprove: v })}
                           />
                         </div>
                         <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
-                          <Icons.Check className="size-4" /> Kaydet
+                          <Icons.Check className="size-4" /> {t("forms.save")}
                         </Button>
                       </div>
                     </SectionCard>
 
                     {selectedForm.type === "REGISTRATION" && (
                       <SectionCard
-                        title={<span className="flex items-center gap-2"><Icons.CreditCard className="size-4 text-emerald-600" /> Online Ödeme</span>}
-                        desc="kayıt formu gönderiminde sanal POS akışı açılır"
+                        title={<span className="flex items-center gap-2"><Icons.CreditCard className="size-4 text-emerald-600" /> {t("forms.paymentTitle")}</span>}
+                        desc={t("forms.paymentDesc")}
                       >
                         <div className="grid gap-3">
                           <div className="flex items-center justify-between gap-2">
                             <div>
-                              <p className="text-sm font-medium">Online ödeme aktif</p>
-                              <p className="text-xs text-muted-foreground">Kayıt sonrası ödeme adımı gösterilir</p>
+                              <p className="text-sm font-medium">{t("forms.onlinePaymentActive")}</p>
+                              <p className="text-xs text-muted-foreground">{t("forms.paymentStepDesc")}</p>
                             </div>
                             <Switch
                               checked={settings.enableOnlinePayment}
                               disabled={busy !== null}
-                              aria-label="Online ödeme"
+                              aria-label={t("forms.ariaOnlinePayment")}
                               onCheckedChange={(v) => setSettings({ ...settings, enableOnlinePayment: v })}
                             />
                           </div>
                           <div className="grid gap-1">
-                            <Label className="text-xs">Varsayılan kategori</Label>
+                            <Label className="text-xs">{t("forms.defaultCategoryLabel")}</Label>
                             <Select
                               value={settings.defaultCategoryId || "AUTO"}
                               onValueChange={(v) => setSettings({ ...settings, defaultCategoryId: v })}
                             >
-                              <SelectTrigger><SelectValue placeholder="Kategori seçin" /></SelectTrigger>
+                              <SelectTrigger><SelectValue placeholder={t("forms.selectCategory")} /></SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="AUTO">Kategori otomatik</SelectItem>
+                                <SelectItem value="AUTO">{t("forms.categoryAuto")}</SelectItem>
                                 {categoryList.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                               </SelectContent>
                             </Select>
                           </div>
                           <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
-                            <Icons.Check className="size-4" /> Kaydet
+                            <Icons.Check className="size-4" /> {t("forms.save")}
                           </Button>
                         </div>
                       </SectionCard>
@@ -1096,45 +1120,45 @@ export function FormCenterView() {
         <TabsContent value="inbox" className="mt-4 space-y-4">
           <div className="flex flex-wrap items-end gap-2">
             <div className="grid gap-1">
-              <Label className="text-xs">Form</Label>
+              <Label className="text-xs">{t("forms.formLabel")}</Label>
               <Select value={selectedFormId} onValueChange={setSelectedFormId}>
-                <SelectTrigger className="w-60"><SelectValue placeholder="Form seçin" /></SelectTrigger>
+                <SelectTrigger className="w-60"><SelectValue placeholder={t("forms.selectForm")} /></SelectTrigger>
                 <SelectContent>
                   {formList.map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="grid gap-1">
-              <Label className="text-xs">Durum</Label>
+              <Label className="text-xs">{t("forms.statusLabel")}</Label>
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ALL">Tümü</SelectItem>
-                  {Object.entries(FORM_SUBMISSION_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  <SelectItem value="ALL">{t("forms.all")}</SelectItem>
+                  {Object.entries(subStatusMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="grid gap-1">
-              <Label className="text-xs">Kaynak</Label>
+              <Label className="text-xs">{t("forms.sourceLabel")}</Label>
               <Select value={sourceFilter} onValueChange={setSourceFilter}>
                 <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ALL">Tümü</SelectItem>
-                  {Object.entries(SUBMISSION_SOURCES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  <SelectItem value="ALL">{t("forms.all")}</SelectItem>
+                  {Object.entries(sourceMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
           </div>
 
-          <SectionCard title="Gönderiler" desc="onaylanan kayıt formu gönderileri kayıt zinciri kurar; spam gönderiler balon dışında tutulur">
+          <SectionCard title={t("forms.submissionsTitle")} desc={t("forms.submissionsDesc")}>
             {!selectedFormId ? (
-              <EmptyState title="Form seçin" desc="Yanıtları görmek için yukarıdan bir form seçin." />
+              <EmptyState title={t("forms.selectForm")} desc={t("forms.selectFormEmptyDesc")} />
             ) : subLoading ? (
               <Loading rows={4} />
             ) : subError ? (
               <ErrorState message={subError} onRetry={reloadSubs} />
             ) : subList.length === 0 ? (
-              <EmptyState title="Bu filtrede gönderi yok" desc="Canlı Kayıt Masası sekmesinden test gönderimi yapabilirsiniz." />
+              <EmptyState title={t("forms.noSubsTitle")} desc={t("forms.noSubsDesc")} />
             ) : (
               <>
                 {/* masaüstü tablo */}
@@ -1142,16 +1166,16 @@ export function FormCenterView() {
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-card">
                       <tr className="border-b text-left text-xs text-muted-foreground">
-                        <th className="py-2 pr-3 font-medium">Gönderen</th>
-                        <th className="py-2 pr-3 font-medium">Kurum</th>
-                        <th className="py-2 pr-3 font-medium">Form</th>
-                        <th className="py-2 pr-3 font-medium">Durum</th>
-                        <th className="py-2 pr-3 font-medium">Spam</th>
-                        <th className="py-2 pr-3 font-medium">Quiz</th>
-                        <th className="py-2 pr-3 font-medium">Süre</th>
-                        <th className="py-2 pr-3 font-medium">Kaynak</th>
-                        <th className="py-2 pr-3 font-medium">Tarih</th>
-                        <th className="py-2 text-right font-medium">Aksiyon</th>
+                        <th className="py-2 pr-3 font-medium">{t("forms.thRespondent")}</th>
+                        <th className="py-2 pr-3 font-medium">{t("forms.orgLabel")}</th>
+                        <th className="py-2 pr-3 font-medium">{t("forms.formLabel")}</th>
+                        <th className="py-2 pr-3 font-medium">{t("forms.statusLabel")}</th>
+                        <th className="py-2 pr-3 font-medium">{t("forms.spam")}</th>
+                        <th className="py-2 pr-3 font-medium">{t("forms.thQuiz")}</th>
+                        <th className="py-2 pr-3 font-medium">{t("forms.thDuration")}</th>
+                        <th className="py-2 pr-3 font-medium">{t("forms.sourceLabel")}</th>
+                        <th className="py-2 pr-3 font-medium">{t("forms.thDate")}</th>
+                        <th className="py-2 text-right font-medium">{t("forms.thAction")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1163,36 +1187,36 @@ export function FormCenterView() {
                           </td>
                           <td className="py-2 pr-3 text-xs">{s.organization ?? "—"}</td>
                           <td className="py-2 pr-3 text-xs">{s.form?.name ?? "—"}</td>
-                          <td className="py-2 pr-3"><StatusBadge map={FORM_SUBMISSION_STATUS} value={s.status} /></td>
+                          <td className="py-2 pr-3"><StatusBadge map={subStatusMap} value={s.status} /></td>
                           <td className="py-2 pr-3">{spamPill(s.spamScore)}</td>
                           <td className="py-2 pr-3">{quizPill(s)}</td>
-                          <td className="py-2 pr-3 text-xs tabular-nums">{s.elapsedSeconds != null ? `${Math.round(s.elapsedSeconds)} sn` : "—"}</td>
-                          <td className="py-2 pr-3 text-xs">{label(SUBMISSION_SOURCES, s.source)}</td>
+                          <td className="py-2 pr-3 text-xs tabular-nums">{s.elapsedSeconds != null ? t("forms.secondsShort", { n: Math.round(s.elapsedSeconds) }) : "—"}</td>
+                          <td className="py-2 pr-3 text-xs">{tLabel(SUBMISSION_SOURCES, s.source)}</td>
                           <td className="py-2 pr-3 text-xs text-muted-foreground">{fmtDate(s.createdAt)}</td>
                           <td className="py-2">
                             <div className="flex items-center justify-end gap-0.5">
-                              <Button size="icon" variant="ghost" className="size-7" aria-label="Detay" onClick={() => openDetail(s.id)}>
+                              <Button size="icon" variant="ghost" className="size-7" aria-label={t("forms.detail")} onClick={() => openDetail(s.id)}>
                                 <Icons.Eye className="size-3.5" />
                               </Button>
                               {s.status !== "SPAM" && (
                                 <>
                                   <Button
                                     size="icon" variant="ghost" className="size-7 text-emerald-600 hover:bg-emerald-50"
-                                    aria-label="Onayla" disabled={busy !== null || s.status === "APPROVED"}
+                                    aria-label={t("forms.approve")} disabled={busy !== null || s.status === "APPROVED"}
                                     onClick={() => submissionAction(s.id, "approve")}
                                   >
                                     <Icons.Check className="size-3.5" />
                                   </Button>
                                   <Button
                                     size="icon" variant="ghost" className="size-7 text-rose-600 hover:bg-rose-50"
-                                    aria-label="Ret" disabled={busy !== null || s.status === "REJECTED"}
+                                    aria-label={t("forms.reject")} disabled={busy !== null || s.status === "REJECTED"}
                                     onClick={() => submissionAction(s.id, "reject")}
                                   >
                                     <Icons.X className="size-3.5" />
                                   </Button>
                                   <Button
                                     size="icon" variant="ghost" className="size-7 text-amber-600 hover:bg-amber-50"
-                                    aria-label="Spam işaretle" disabled={busy !== null}
+                                    aria-label={t("forms.spamMark")} disabled={busy !== null}
                                     onClick={() => submissionAction(s.id, "spam")}
                                   >
                                     <Icons.Flag className="size-3.5" />
@@ -1205,7 +1229,7 @@ export function FormCenterView() {
                                   disabled={busy !== null}
                                   onClick={() => submissionAction(s.id, "pending")}
                                 >
-                                  <Icons.Undo2 className="size-3" /> İncelemeye Al
+                                  <Icons.Undo2 className="size-3" /> {t("forms.setReview")}
                                 </Button>
                               )}
                             </div>
@@ -1224,42 +1248,51 @@ export function FormCenterView() {
                           <p className="truncate text-sm font-medium">{s.respondentName}</p>
                           <p className="truncate text-xs text-muted-foreground">{s.respondentEmail}</p>
                         </div>
-                        <StatusBadge map={FORM_SUBMISSION_STATUS} value={s.status} />
+                        <StatusBadge map={subStatusMap} value={s.status} />
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         {s.organization && <span>{s.organization}</span>}
                         <span>{s.form?.name}</span>
                         {spamPill(s.spamScore)}
                         {quizPill(s)}
-                        <span>{s.elapsedSeconds != null ? `${Math.round(s.elapsedSeconds)} sn` : null}</span>
-                        <span>{label(SUBMISSION_SOURCES, s.source)}</span>
+                        <span>{s.elapsedSeconds != null ? t("forms.secondsShort", { n: Math.round(s.elapsedSeconds) }) : null}</span>
+                        <span>{tLabel(SUBMISSION_SOURCES, s.source)}</span>
                         <span>{fmtDate(s.createdAt)}</span>
                       </div>
                       <div className="mt-2 flex items-center gap-1.5">
                         <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => openDetail(s.id)}>
-                          <Icons.Eye className="size-3" /> Detay
+                          <Icons.Eye className="size-3" /> {t("forms.detail")}
                         </Button>
                         {s.status !== "SPAM" ? (
                           <>
                             <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-emerald-700" disabled={busy !== null} onClick={() => submissionAction(s.id, "approve")}>
-                              <Icons.Check className="size-3" /> Onayla
+                              <Icons.Check className="size-3" /> {t("forms.approve")}
                             </Button>
                             <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-rose-700" disabled={busy !== null} onClick={() => submissionAction(s.id, "reject")}>
-                              <Icons.X className="size-3" /> Ret
+                              <Icons.X className="size-3" /> {t("forms.reject")}
                             </Button>
                             <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-amber-700" disabled={busy !== null} onClick={() => submissionAction(s.id, "spam")}>
-                              <Icons.Flag className="size-3" /> Spam
+                              <Icons.Flag className="size-3" /> {t("forms.spam")}
                             </Button>
                           </>
                         ) : (
                           <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={busy !== null} onClick={() => submissionAction(s.id, "pending")}>
-                            <Icons.Undo2 className="size-3" /> İncelemeye Al
+                            <Icons.Undo2 className="size-3" /> {t("forms.setReview")}
                           </Button>
                         )}
                       </div>
                     </div>
                   ))}
                 </div>
+                {/* TASK-A F6: kesintisiz yükleme */}
+                {subMore?.hasMore && (
+                  <div className="flex items-center justify-center border-t pt-3">
+                    <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={subMore.loading} onClick={subMore.next}>
+                      {subMore.loading ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ChevronsDown className="size-3.5" />}
+                      {t("forms.loadMore")}
+                    </Button>
+                  </div>
+                )}
               </>
             )}
           </SectionCard>
@@ -1274,30 +1307,30 @@ export function FormCenterView() {
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                   <KpiCard
-                    label="Toplam Gönderi" value={stats.totals.submissions}
-                    sub={`geçerli ${stats.totals.valid} · spam ${stats.totals.spam}`}
+                    label={t("forms.kpiTotal")} value={stats.totals.submissions}
+                    sub={t("forms.kpiTotalSub", { valid: stats.totals.valid, spam: stats.totals.spam })}
                     icon={<Icons.Inbox className="size-4" />}
                   />
                   <KpiCard
-                    label="Onaylı" value={stats.totals.approved} tone="emerald"
-                    sub={`bekleyen ${stats.totals.pending} · ret ${stats.totals.rejected}`}
+                    label={t("forms.kpiApproved")} value={stats.totals.approved} tone="emerald"
+                    sub={t("forms.kpiApprovedSub", { pending: stats.totals.pending, rejected: stats.totals.rejected })}
                     icon={<Icons.Check className="size-4" />}
                   />
                   <KpiCard
-                    label="Spam Oranı" value={`${stats.totals.spamRate}%`} tone="rose"
-                    sub="spam koruması yakaladı"
+                    label={t("forms.kpiSpamRate")} value={`${stats.totals.spamRate}%`} tone="rose"
+                    sub={t("forms.kpiSpamRateSub")}
                     icon={<Icons.ShieldCheck className="size-4" />}
                   />
                   <KpiCard
-                    label="Ort. Doldurma" value={stats.totals.avgElapsedSeconds != null ? `${stats.totals.avgElapsedSeconds} sn` : "—"}
-                    tone="violet" sub="form açılma → gönderim" icon={<Icons.Timer className="size-4" />}
+                    label={t("forms.kpiFill")} value={stats.totals.avgElapsedSeconds != null ? t("forms.secondsShort", { n: stats.totals.avgElapsedSeconds }) : "—"}
+                    tone="violet" sub={t("forms.kpiFillSub")} icon={<Icons.Timer className="size-4" />}
                   />
                 </div>
 
                 <div className="grid gap-3 lg:grid-cols-3">
                   <SectionCard
-                    title="Günlük Akış"
-                    desc="son 14 gün gönderi adedi"
+                    title={t("forms.dailyTitle")}
+                    desc={t("forms.dailyDesc")}
                     className={npsStat ? "min-w-0 lg:col-span-2" : "min-w-0 lg:col-span-3"}
                   >
                     {(() => {
@@ -1308,7 +1341,7 @@ export function FormCenterView() {
                             {stats.daily.map((d) => (
                               <div
                                 key={d.date}
-                                title={`${fmtDate(d.date)} — ${d.count} gönderi`}
+                                title={t("forms.barTitle", { date: fmtDate(d.date), n: d.count })}
                                 className={`min-w-2 flex-1 rounded-t ${d.count > 0 ? "bg-teal-500/80" : "bg-muted"}`}
                                 style={{ height: `${Math.max((d.count / max) * 100, 4)}%` }}
                               />
@@ -1324,15 +1357,15 @@ export function FormCenterView() {
                   </SectionCard>
 
                   {npsStat?.nps && (
-                    <SectionCard title="NPS Skoru" desc={npsStat.label}>
+                    <SectionCard title={t("forms.npsTitle")} desc={npsStat.label}>
                       <div className="flex items-end gap-4">
                         <span className={`text-5xl font-semibold tabular-nums ${npsStat.nps.score >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                           {npsStat.nps.score}
                         </span>
                         <div className="space-y-0.5 text-xs">
-                          <p className="text-emerald-700">Promoter: {npsStat.nps.promoters}</p>
-                          <p className="text-amber-700">Pasif: {npsStat.nps.passives}</p>
-                          <p className="text-rose-700">Detractor: {npsStat.nps.detractors}</p>
+                          <p className="text-emerald-700">{t("forms.npsPromoters", { n: npsStat.nps.promoters })}</p>
+                          <p className="text-amber-700">{t("forms.npsPassives", { n: npsStat.nps.passives })}</p>
+                          <p className="text-rose-700">{t("forms.npsDetractors", { n: npsStat.nps.detractors })}</p>
                         </div>
                       </div>
                     </SectionCard>
@@ -1340,23 +1373,23 @@ export function FormCenterView() {
 
                   {stats.quiz && (
                     <SectionCard
-                      title="QA Quiz Sonuçları"
-                      desc={`${stats.quiz.questionCount} soru · ${stats.quiz.scoredCount} puanlanmış gönderi`}
+                      title={t("forms.quizResultsTitle")}
+                      desc={t("forms.quizResultsDesc", { questions: stats.quiz.questionCount, scored: stats.quiz.scoredCount })}
                       className={npsStat ? "min-w-0 lg:col-span-3" : "min-w-0 lg:col-span-2"}
                     >
                       <div className="grid gap-4 sm:grid-cols-3">
                         <div className="rounded-lg border bg-muted/20 p-3 text-center">
-                          <p className="text-xs text-muted-foreground">Ortalama Skor</p>
+                          <p className="text-xs text-muted-foreground">{t("forms.quizAvg")}</p>
                           <p className={`text-3xl font-semibold tabular-nums ${(stats.quiz.avgScore ?? 0) >= 75 ? "text-emerald-600" : (stats.quiz.avgScore ?? 0) >= 50 ? "text-amber-600" : "text-rose-600"}`}>
                             %{stats.quiz.avgScore != null ? Math.round(stats.quiz.avgScore * 10) / 10 : "—"}
                           </p>
                         </div>
                         <div className="rounded-lg border bg-muted/20 p-3 text-center">
-                          <p className="text-xs text-muted-foreground">Geçme Oranı (50+)</p>
+                          <p className="text-xs text-muted-foreground">{t("forms.quizPassRate")}</p>
                           <p className="text-3xl font-semibold tabular-nums text-teal-600">%{stats.quiz.passRate}</p>
                         </div>
                         <div className="rounded-lg border bg-muted/20 p-3">
-                          <p className="mb-1.5 text-xs text-muted-foreground">Skor Dağılımı</p>
+                          <p className="mb-1.5 text-xs text-muted-foreground">{t("forms.scoreDist")}</p>
                           <div className="space-y-1">
                             {stats.quiz.buckets.map((b) => (
                               <div key={b.label} className="flex items-center gap-2">
@@ -1379,9 +1412,9 @@ export function FormCenterView() {
                             <div key={qf.fieldId} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                               <span className="min-w-0 flex-1 truncate font-medium">{qf.label}</span>
                               <span className="text-[11px] text-muted-foreground">
-                                doğru cevap: <span className="font-medium text-emerald-700">{qf.correctAnswer ?? "—"}</span>
+                                {t("forms.correctAnswerLower")} <span className="font-medium text-emerald-700">{qf.correctAnswer ?? "—"}</span>
                               </span>
-                              <div className="flex h-1.5 w-24 overflow-hidden rounded bg-muted" title={`${qf.correctCount} doğru / ${qf.wrongCount} yanlış`}>
+                              <div className="flex h-1.5 w-24 overflow-hidden rounded bg-muted" title={t("forms.quizFieldTitle", { correct: qf.correctCount, wrong: qf.wrongCount })}>
                                 <div className="h-full bg-emerald-500" style={{ width: `${qf.correctRate}%` }} />
                                 <div className="h-full bg-rose-400" style={{ width: `${100 - qf.correctRate}%` }} />
                               </div>
@@ -1397,7 +1430,7 @@ export function FormCenterView() {
                 </div>
 
                 {stats.fields.length === 0 ? (
-                  <EmptyState title="Alan istatistiği yok" desc="Formda istatistik hesaplanabilir alan bulunmuyor." />
+                  <EmptyState title={t("forms.noFieldStatsTitle")} desc={t("forms.noFieldStatsDesc")} />
                 ) : (
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                     {stats.fields.map((st) => {
@@ -1409,12 +1442,12 @@ export function FormCenterView() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium">{st.label}</p>
-                              <p className="text-xs text-muted-foreground">{label(FORM_FIELD_TYPES, st.type)}</p>
+                              <p className="text-xs text-muted-foreground">{tLabel(FORM_FIELD_TYPES, st.type)}</p>
                             </div>
-                            {st.mobileInteractive && <Badge variant="outline" className="shrink-0">Mobil Öge</Badge>}
+                            {st.mobileInteractive && <Badge variant="outline" className="shrink-0">{t("forms.mobileItem")}</Badge>}
                           </div>
                           <p className="mt-2 text-xs text-muted-foreground">
-                            Yanıt oranı: <span className="font-semibold text-foreground">{st.responseRate}%</span> ({st.responseCount} yanıt)
+                            {t("forms.responseRate")} <span className="font-semibold text-foreground">{st.responseRate}%</span> ({t("forms.responsesCount", { n: st.responseCount })})
                           </p>
                           {isChoice && dist.length > 0 && (
                             <div className="mt-2 space-y-1.5">
@@ -1431,7 +1464,7 @@ export function FormCenterView() {
                           )}
                           {st.numeric && (
                             <p className="mt-2 text-xs">
-                              Ort <span className="font-semibold tabular-nums">{st.numeric.avg}</span>
+                              {t("forms.avgShort")} <span className="font-semibold tabular-nums">{st.numeric.avg}</span>
                               <span className="text-muted-foreground"> ({st.numeric.min}–{st.numeric.max})</span>
                             </p>
                           )}
@@ -1461,7 +1494,7 @@ export function FormCenterView() {
             <div className="grid gap-1">
               <Label className="text-xs">Yayındaki form</Label>
               <Select value={liveFormId} onValueChange={setLiveFormId}>
-                <SelectTrigger className="w-64"><SelectValue placeholder="Form seçin" /></SelectTrigger>
+                <SelectTrigger className="w-64"><SelectValue placeholder={t("forms.selectForm")} /></SelectTrigger>
                 <SelectContent>
                   {liveForms.map((f) => (
                     <SelectItem key={f.id} value={f.id}>
@@ -1685,7 +1718,7 @@ export function FormCenterView() {
           </DialogHeader>
           <div className="grid gap-3">
             <div className="grid gap-1">
-              <Label className="text-xs">Form adı</Label>
+              <Label className="text-xs">{t("forms.formName")}</Label>
               <Input value={newForm.name} onChange={(e) => setNewForm({ ...newForm, name: e.target.value })} placeholder="Örn. Online Kayıt Formu" />
             </div>
             <div className="grid gap-1">
@@ -1699,7 +1732,7 @@ export function FormCenterView() {
               <p className="text-xs text-muted-foreground">{FORM_TYPE_HINTS[newForm.type]}</p>
             </div>
             <div className="grid gap-1">
-              <Label className="text-xs">Açıklama</Label>
+              <Label className="text-xs">{t("forms.descriptionLabel")}</Label>
               <Textarea rows={2} value={newForm.description} onChange={(e) => setNewForm({ ...newForm, description: e.target.value })} />
             </div>
 
@@ -1709,28 +1742,28 @@ export function FormCenterView() {
             </p>
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-sm font-medium">Gizli alan tuzağı (honeypot)</p>
-                <p className="text-xs text-muted-foreground">Gizli alan botları yakalar</p>
+                <p className="text-sm font-medium">{t("forms.honeypotTitle")}</p>
+                <p className="text-xs text-muted-foreground">{t("forms.honeypotDesc")}</p>
               </div>
               <Switch
                 checked={newForm.honeypotEnabled}
-                aria-label="Honeypot"
+                aria-label={t("forms.ariaHoneypot")}
                 onCheckedChange={(v) => setNewForm({ ...newForm, honeypotEnabled: v })}
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
-                <Label className="text-xs">Zaman tuzağı (sn)</Label>
+                <Label className="text-xs">{t("forms.timeTrapLabel")}</Label>
                 <Input type="number" min={0} value={newForm.minSubmitSeconds} onChange={(e) => setNewForm({ ...newForm, minSubmitSeconds: e.target.value })} />
               </div>
               <div className="grid gap-1">
-                <Label className="text-xs">E-posta günlük limit</Label>
+                <Label className="text-xs">{t("forms.emailLimitLabel")}</Label>
                 <Input type="number" min={1} value={newForm.maxPerEmailPerDay} onChange={(e) => setNewForm({ ...newForm, maxPerEmailPerDay: e.target.value })} />
               </div>
             </div>
             <div className="grid gap-1">
               <Label className="text-xs">Engelli alan adları (virgülle ayır)</Label>
-              <Input value={newForm.blockedDomains} placeholder="spam.xyz, tempmail.xyz" onChange={(e) => setNewForm({ ...newForm, blockedDomains: e.target.value })} />
+              <Input value={newForm.blockedDomains} placeholder={t("forms.phBlockedDomains")} onChange={(e) => setNewForm({ ...newForm, blockedDomains: e.target.value })} />
             </div>
 
             {newForm.type === "REGISTRATION" && (
@@ -1741,33 +1774,33 @@ export function FormCenterView() {
                 </p>
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <p className="text-sm font-medium">Online ödeme aktif</p>
+                    <p className="text-sm font-medium">{t("forms.onlinePaymentActive")}</p>
                     <p className="text-xs text-muted-foreground">Kayıt sonrası sanal POS adımı gösterilir</p>
                   </div>
                   <Switch
                     checked={newForm.enableOnlinePayment}
-                    aria-label="Online ödeme"
+                    aria-label={t("forms.ariaOnlinePayment")}
                     onCheckedChange={(v) => setNewForm({ ...newForm, enableOnlinePayment: v })}
                   />
                 </div>
                 <div className="grid gap-1">
-                  <Label className="text-xs">Varsayılan kategori</Label>
+                  <Label className="text-xs">{t("forms.defaultCategoryLabel")}</Label>
                   <Select value={newForm.defaultCategoryId} onValueChange={(v) => setNewForm({ ...newForm, defaultCategoryId: v })}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="AUTO">Kategori otomatik</SelectItem>
+                      <SelectItem value="AUTO">{t("forms.categoryAuto")}</SelectItem>
                       {categoryList.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <p className="text-sm font-medium">Temiz gönderileri otomatik onayla</p>
+                    <p className="text-sm font-medium">{t("forms.autoApproveTitle")}</p>
                     <p className="text-xs text-muted-foreground">Spam eşiği altındakiler doğrudan onaylanır</p>
                   </div>
                   <Switch
                     checked={newForm.autoApprove}
-                    aria-label="Otomatik onay"
+                    aria-label={t("forms.ariaAutoApprove")}
                     onCheckedChange={(v) => setNewForm({ ...newForm, autoApprove: v })}
                   />
                 </div>

@@ -36,15 +36,14 @@ export async function GET(req: NextRequest) {
         take: 12,
       });
 
-      // portföy finansal toplamları
-      const tenantEditionIds = (await db.eventEdition.findMany({ where: { tenantId: tenant.id }, select: { id: true } })).map((e) => e.id);
-      const orders = await db.order.findMany({ where: { editionId: { in: tenantEditionIds } }, include: { payments: true, refunds: true } });
-      let portfolioNet = 0;
-      for (const o of orders) {
-        const paid = (o.payments ?? []).filter((p: { status: string }) => p.status === "SUCCEEDED").reduce((s: number, p: { amount: number }) => s + p.amount, 0);
-        const refunded = (o.refunds ?? []).filter((r: { status: string }) => r.status === "PROCESSED").reduce((s: number, r: { amount: number }) => s + r.amount, 0);
-        portfolioNet += paid - refunded;
-      }
+      // portföy finansal toplamları — P2/TASK-A F3: fetch-all-sum-in-JS yerine aggregate
+      // (Prisma optimizasyon rehberi: aggregate/groupBy/_count). portfolioNet =
+      // Σ(başarılı ödemeler) − Σ(işlenmiş iadeler) — önceki satır-döngüsüyle birebir aynı sonuç.
+      const [portfolioPaid, portfolioRefunded] = await Promise.all([
+        db.payment.aggregate({ where: { order: { edition: { tenantId: tenant.id } }, status: "SUCCEEDED" }, _sum: { amount: true } }),
+        db.refund.aggregate({ where: { order: { edition: { tenantId: tenant.id } }, status: "PROCESSED" }, _sum: { amount: true } }),
+      ]);
+      const portfolioNet = (portfolioPaid._sum.amount ?? 0) - (portfolioRefunded._sum.amount ?? 0);
 
       const recentActivity = await db.activityLog.findMany({
         where: { OR: [{ tenantId: tenant.id }, { edition: { tenantId: tenant.id } }, { AND: [{ tenantId: null }, { editionId: null }] }] },
@@ -86,10 +85,10 @@ export async function GET(req: NextRequest) {
       db.eventParticipation.groupBy({ by: ["personId"], where: { editionId } }),
       db.eventParticipation.count({ where: { editionId, attendance: "NO_SHOW" } }),
       db.registrationCategory.findMany({ where: { editionId }, include: { _count: { select: { registrations: true } } } }),
-      db.scanEvent.count({ where: { participation: { editionId } } }),
-      db.scanEvent.count({ where: { participation: { editionId }, result: "RESCAN_WARNING" } }),
-      db.scanEvent.count({ where: { participation: { editionId }, result: "DENIED" } }),
-      db.scanEvent.groupBy({ by: ["participationId"], where: { participation: { editionId }, action: "ENTRY", result: "ALLOWED" } }),
+      db.scanEvent.count({ where: { editionId } }), // TASK-A F6: denormalize editionId (index) — participation join yok
+      db.scanEvent.count({ where: { editionId, result: "RESCAN_WARNING" } }),
+      db.scanEvent.count({ where: { editionId, result: "DENIED" } }),
+      db.scanEvent.groupBy({ by: ["participationId"], where: { editionId, action: "ENTRY", result: "ALLOWED" } }),
       db.order.findMany({ where: { editionId }, select: { id: true, totalAmount: true }, orderBy: { createdAt: "asc" } }),
       db.payment.groupBy({ by: ["orderId"], where: { order: { editionId }, status: "SUCCEEDED" }, _sum: { amount: true } }),
       db.refund.groupBy({ by: ["orderId"], where: { order: { editionId }, status: "PROCESSED" }, _sum: { amount: true } }),

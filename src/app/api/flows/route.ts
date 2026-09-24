@@ -13,6 +13,7 @@ import { ActivityType } from "@/lib/api/activity";
 import { autoOfferForCategory } from "@/lib/api/waitlist-engine";
 import { toMinor } from "@/lib/money";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { issuePortalToken } from "@/lib/api/portal-tokens";
 
 type FlowBody = Record<string, unknown> & { action?: string };
 
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
       case "registration.decide": {
         const { registrationId, decision, decidedBy } = body as { registrationId: string; decision: "CONFIRMED" | "REJECTED"; decidedBy?: string };
         // G0-d: ebeveyn zinciri (kayıt → edisyon → kiracı) doğrulanır — yabancı kayıt 404
-        const target = await db.registration.findUnique({ where: { id: registrationId }, select: { editionId: true } });
+        const target = await db.registration.findUnique({ where: { id: registrationId }, select: { editionId: true, status: true } });
         if (!target) return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
         try { await verifyEditionTenant(target.editionId); } catch (e) {
           if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
@@ -43,6 +44,19 @@ export async function POST(req: NextRequest) {
           data: { status: decision, decidedAt: new Date(), decidedBy: decidedBy ?? "Kayıt Sorumlusu" },
           include: { participation: { include: { person: true, registrations: true } }, category: true },
         });
+        // TASK-A F1: onay kanalında portal erişim anahtarı çıkarılır — ham değer bu yanıtta
+        // BİR KEZ döner (onay e-postasıyla katılımcıya iletilir); sunucuda yalnız sha256
+        // hash yaşar, sonraki listeleme/portal yanıtlarında ASLA görünmez.
+        let issuedPortalToken: { token: string; expiresAt: string; scope: string } | null = null;
+        if (decision === "CONFIRMED" && target.status !== "CONFIRMED") {
+          const issued = await issuePortalToken({
+            scope: "PARTICIPANT",
+            editionId: reg.editionId,
+            personId: reg.participation.personId,
+            issuedBy: "REGISTRATION_APPROVAL",
+          });
+          issuedPortalToken = { token: issued.token, expiresAt: issued.expiresAt.toISOString(), scope: "PARTICIPANT" };
+        }
         // CONFIRMED ise sponsorship claim'i CONSUMED'a geçir (davette ayır, onayda kullan)
         if (decision === "CONFIRMED") {
           const claims = await db.entitlementClaim.findMany({ where: { registrationId } });
@@ -57,8 +71,9 @@ export async function POST(req: NextRequest) {
           // yaka kartı READY (uygun)
           await db.badgeInstance.updateMany({ where: { participationId: reg.participationId, status: "NOT_ELIGIBLE" }, data: { status: "READY" } });
         }
-        await db.activityLog.create({ data: { type: decision === "CONFIRMED" ? ActivityType.REGISTRATION_CONFIRMED : ActivityType.REGISTRATION_SAVED, editionId: reg.editionId, message: `Kayıt ${decision === "CONFIRMED" ? "onaylandı" : "reddedildi"}: ${reg.participation.person.firstName} ${reg.participation.person.lastName}`, entityType: "Registration", entityId: reg.id, actorName: decidedBy ?? "Kayıt Sorumlusu" } });
-        return NextResponse.json(reg);
+        await db.activityLog.create({ data: { type: decision === "CONFIRMED" ? ActivityType.REGISTRATION_CONFIRMED : ActivityType.REGISTRATION_SAVED, editionId: reg.editionId, message: `Kayıt ${decision === "CONFIRMED" ? "onaylandı" : "reddedildi"}: ${reg.participation.person.firstName} ${reg.participation.person.lastName}${issuedPortalToken ? " · portal erişim anahtarı düzenlendi (tek görünlük)" : ""}`, entityType: "Registration", entityId: reg.id, actorName: decidedBy ?? "Kayıt Sorumlusu" } });
+        // TASK-A F1: ham belirteç yalnız bu yanıtta — sonraki okumalarda ASLA yok (tek görünlük)
+        return NextResponse.json(issuedPortalToken ? { ...reg, issuedPortalToken } : reg);
       }
 
       // ── Kayıt iptali (etki önizlemesi: yaka kartı + hak + ödeme ayrıca) ──

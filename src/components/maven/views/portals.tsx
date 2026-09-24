@@ -42,7 +42,9 @@ type PortalOrder = {
 
 type ParticipantData = {
   edition: { id: string; name: string; startDate: string; endDate: string; venueName?: string | null; city?: string | null; seriesName?: string | null } | null;
-  person: { id: string; firstName: string; lastName: string; email?: string | null; title?: string | null; organizationName?: string | null; portalToken?: string | null };
+  // TASK-A F1: portalToken alanı kaldırıldı — belirteç yanıtlarda dolaşmaz; yönetici
+  // önizlemesi kısa ömürlü belirteci /api/portal/preview-token ile bellekte tutar
+  person: { id: string; firstName: string; lastName: string; email?: string | null; title?: string | null; organizationName?: string | null };
   participation: {
     id: string; source: string; attendance: string; notes?: string | null;
     roleAssignments: { id: string; role: string }[];
@@ -60,7 +62,8 @@ type ParticipantData = {
 
 type SponsorData = {
   edition: { id: string; name: string; startDate: string; endDate: string; venueName?: string | null; city?: string | null; seriesName?: string | null } | null;
-  organization: { id: string; name: string; type: string; city?: string | null; country?: string | null; website?: string | null; portalToken?: string | null };
+  // TASK-A F1: portalToken alanı kaldırıldı (belirteç yaşam döngüsü PortalToken tablosunda)
+  organization: { id: string; name: string; type: string; city?: string | null; country?: string | null; website?: string | null };
   agreements: {
     id: string; status: string; amount: number; currency: string; signedAt?: string | null; notes?: string | null;
     tierName?: string | null; packageName?: string | null; rightsSpec?: string | null;
@@ -303,6 +306,20 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
 
   const people = useApi(() => listEntity<ParticipationRow>("participations", { editionId, limit: "500" }), [editionId]);
 
+  // TASK-A F1: portal verisi gerçek kapıyla alınır — seçilen katılımcı için kısa ömürlü
+  // önizleme yetenek belirteci çıkarılır (yanıtta bir kez döner, yalnız bellekte yaşar);
+  // GET x-portal-token başlığıyla yapılır (URL'e yazılmaz)
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
+  useEffect(() => {
+    setPreviewToken(null);
+    if (!selectedId) return;
+    let alive = true;
+    void apiSend<{ token: string }>("/api/portal/preview-token", "POST", { editionId, personId: selectedId })
+      .then((r) => { if (alive) setPreviewToken(r.token); })
+      .catch(() => { if (alive) setPreviewToken(null); });
+    return () => { alive = false; };
+  }, [editionId, selectedId]);
+
   // varsayılan seçim: yönetim ekranından "portalda gör" deep-link'i, yoksa ilk katılımcı
   useEffect(() => {
     if (!people.data || selectedId) return;
@@ -323,8 +340,10 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
   }, [people.data, query]);
 
   const data = useApi<ParticipantData | null>(
-    () => (selectedId ? apiGet<ParticipantData>(`/api/portal/participant?editionId=${editionId}&personId=${selectedId}`) : Promise.resolve(null)),
-    [editionId, selectedId],
+    () => (selectedId && previewToken
+      ? apiGet<ParticipantData>(`/api/portal/participant?editionId=${editionId}&personId=${selectedId}`, { headers: { "x-portal-token": previewToken } })
+      : Promise.resolve(null)),
+    [editionId, selectedId, previewToken],
   );
 
   const respond = async (entryId: string, response: "ACCEPT" | "DECLINE") => {
@@ -352,8 +371,9 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
     const name = `${data.data.person.firstName} ${data.data.person.lastName}`;
     setBusy(o.id);
     try {
-      // G0-c: aksiyon portal yetenek belirteciyle imzalanır (ödeyenin belirteci)
-      const r = await apiSend<{ link: string }>("/api/portal/action", "POST", { action: "payment-link", orderId: o.id, actor: `Katılımcı Portalı — ${name}`, token: data.data.person.portalToken });
+      // G0-c: aksiyon portal yetenek belirteciyle imzalanır (ödeyenin belirteci —
+      // TASK-A F1: önizleme belirteci bellekten gönderilir, yanıttan okunmaz)
+      const r = await apiSend<{ link: string }>("/api/portal/action", "POST", { action: "payment-link", orderId: o.id, actor: `Katılımcı Portalı — ${name}`, token: previewToken });
       await navigator.clipboard?.writeText(r.link).catch(() => undefined);
       toast({ title: "Ödeme bağlantısı üretildi", description: `${r.link} — panoya kopyalandı (simülasyon)` });
       data.reload();
@@ -626,17 +646,32 @@ function SponsorPortal({ editionId, headerDesign }: { editionId: string; headerD
     setOrgId(orgs[0].id);
   }, [orgs, orgId]);
 
+  // TASK-A F1: kısa ömürlü önizleme belirteci — kurum seçimine göre çıkarılır, bellekte yaşar
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
+  useEffect(() => {
+    setPreviewToken(null);
+    if (!orgId) return;
+    let alive = true;
+    void apiSend<{ token: string }>("/api/portal/preview-token", "POST", { editionId, organizationId: orgId })
+      .then((r) => { if (alive) setPreviewToken(r.token); })
+      .catch(() => { if (alive) setPreviewToken(null); });
+    return () => { alive = false; };
+  }, [editionId, orgId]);
+
   const data = useApi<SponsorData | null>(
-    () => (orgId ? apiGet<SponsorData>(`/api/portal/sponsor?editionId=${editionId}&organizationId=${orgId}`) : Promise.resolve(null)),
-    [editionId, orgId],
+    () => (orgId && previewToken
+      ? apiGet<SponsorData>(`/api/portal/sponsor?editionId=${editionId}&organizationId=${orgId}`, { headers: { "x-portal-token": previewToken } })
+      : Promise.resolve(null)),
+    [editionId, orgId, previewToken],
   );
 
   const submitDeliverable = async (id: string, name: string) => {
     if (!data.data) return;
     setBusy(id);
     try {
-      // G0-c: aksiyon portal yetenek belirteciyle imzalanır (sözleşme kurumunun belirteci)
-      await apiSend("/api/portal/action", "POST", { action: "deliverable-submit", deliverableId: id, actor: `Sponsor Portalı — ${data.data.organization.name}`, token: data.data.organization.portalToken });
+      // G0-c: aksiyon portal yetenek belirteciyle imzalanır (sözleşme kurumunun belirteci —
+      // TASK-A F1: önizleme belirteci bellekten gönderilir)
+      await apiSend("/api/portal/action", "POST", { action: "deliverable-submit", deliverableId: id, actor: `Sponsor Portalı — ${data.data.organization.name}`, token: previewToken });
       toast({ title: "Teslim gönderildi", description: `${name} incelemeye alındı — organizasyon ekibi bildirim alır.` });
       data.reload();
     } catch (e) {
@@ -651,7 +686,7 @@ function SponsorPortal({ editionId, headerDesign }: { editionId: string; headerD
     setBusy(o.id);
     try {
       // G0-c: aksiyon portal yetenek belirteciyle imzalanır (ödeyen kurumun belirteci)
-      const r = await apiSend<{ link: string }>("/api/portal/action", "POST", { action: "payment-link", orderId: o.id, actor: `Sponsor Portalı — ${data.data.organization.name}`, token: data.data.organization.portalToken });
+      const r = await apiSend<{ link: string }>("/api/portal/action", "POST", { action: "payment-link", orderId: o.id, actor: `Sponsor Portalı — ${data.data.organization.name}`, token: previewToken });
       await navigator.clipboard?.writeText(r.link).catch(() => undefined);
       toast({ title: "Ödeme bağlantısı üretildi", description: `${r.link} — panoya kopyalandı (simülasyon)` });
       data.reload();

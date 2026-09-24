@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { registry, sanitize } from "@/lib/api/registry";
 import { applyWriteGuard, ensureInScope, GuardError } from "@/lib/api/tenant-guard";
+import { issuePortalToken } from "@/lib/api/portal-tokens";
 import { db } from "@/lib/db";
 
 type Ctx = { params: Promise<{ entity: string; id: string }> };
@@ -44,7 +45,22 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     let data = sanitize(body);
     data = await applyWriteGuard(entity, data, { isUpdate: true });
     if (config.writeTransform) data = await config.writeTransform(data, true); // S3: sır şifreleme
+    // TASK-A F1: sponsor sözleşmesi AKTİF'e geçerken (ilk geçiş) portal yetenek
+    // belirteci çıkarılır — ham değer bu yanıtta BİR KEZ döner (tek görünlük).
+    let beforeStatus: string | null = null;
+    if (entity === "sponsor-agreements" && data.status === "ACTIVE") {
+      const cur = await config.delegate.findUnique({ where: { id }, select: { status: true, editionId: true, organizationId: true } }) as { status: string; editionId: string; organizationId: string | null } | null;
+      beforeStatus = cur?.status ?? null;
+    }
     const updated = await config.delegate.update({ where: { id }, data, include: config.include });
+    let issuedPortalToken: { token: string; expiresAt: string; scope: string } | null = null;
+    if (entity === "sponsor-agreements" && data.status === "ACTIVE" && beforeStatus !== "ACTIVE") {
+      const row = updated as unknown as { editionId: string; organizationId: string | null };
+      if (row.organizationId) {
+        const issued = await issuePortalToken({ scope: "SPONSOR", editionId: row.editionId, organizationId: row.organizationId, issuedBy: "AGREEMENT_ACTIVATION" });
+        issuedPortalToken = { token: issued.token, expiresAt: issued.expiresAt.toISOString(), scope: "SPONSOR" };
+      }
+    }
     if (config.auditType) {
       await db.activityLog.create({
         data: {
@@ -56,9 +72,9 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
         },
       });
     }
-    // S3: sır içeren yanıt maskelenir
+    // S3: sır içeren yanıt maskelenir · TASK-A F1: tek görünlük belirteç eki
     const safeUpdated = config.readMask ? config.readMask(updated as Record<string, unknown>) : updated;
-    return NextResponse.json(safeUpdated);
+    return NextResponse.json(issuedPortalToken ? { ...(safeUpdated as Record<string, unknown>), issuedPortalToken } : safeUpdated);
   } catch (e) {
     if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
     console.error(`PUT /api/${entity}/${id}`, e);

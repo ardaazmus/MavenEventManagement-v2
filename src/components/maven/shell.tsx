@@ -164,7 +164,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   try { window.localStorage.setItem("maven.edition", v); } catch { /* yoksay */ }
                 }}
               >
-                <SelectTrigger className="h-9 w-[150px] gap-2 sm:w-[220px]" aria-label={t("shell.selectEditionAria")}>
+                <SelectTrigger className="h-9 w-[110px] gap-1 sm:w-[220px] sm:gap-2" aria-label={t("shell.selectEditionAria")}>
                   <SelectValue placeholder={t("shell.selectEdition")} />
                 </SelectTrigger>
                 <SelectContent>

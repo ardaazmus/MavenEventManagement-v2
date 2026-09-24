@@ -6,13 +6,15 @@ import { db } from "@/lib/db";
 import { evaluateSpam, registerSubmissionHits } from "@/lib/spam-guard";
 import { createRegistrationFromSubmission } from "@/lib/api/registration-chain";
 import { ActivityType } from "@/lib/api/activity";
-import { enforceRateLimit } from "@/lib/rate-limit";
+import { enforceRateLimit, enforceRateLimitById } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   try {
   // S3: herkese açık kayıt brute-force kapısı — 10 gönderim/10 dk/IP (spam-guard ek katman)
   const denied = enforceRateLimit(req, { key: "public-register", limit: 10, windowMs: 600_000 });
   if (denied) return denied;
+  // TASK-A F10: ÇİFT KOVA — e-posta başına AYRI kova (aynı kutudan IP değiştirerek yığılmayı engeller)
+  // (gövde okunduktan sonra — aşağıda email trim/lowercase ile deny edilir)
 
     const body = (await req.json()) as {
       formId?: string;
@@ -43,6 +45,9 @@ export async function POST(req: NextRequest) {
 
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "127.0.0.1";
     const email = respondentEmail.trim().toLowerCase();
+    // TASK-A F10: kimlik kova — 6 gönderim/10 dk/e-posta (IP kovasından BAĞIMSIZ)
+    const deniedEmail = enforceRateLimitById(req, { key: "public-register", limit: 6, windowMs: 600_000, scopeId: email });
+    if (deniedEmail) return deniedEmail;
     const answers = body.answers ?? {};
 
     // Zorunlu alan kontrolü (ALWAYS required)

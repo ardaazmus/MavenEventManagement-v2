@@ -29,6 +29,12 @@ import floorsTr from "@/i18n/_new/floors.tr.json";
 import floorsEn from "@/i18n/_new/floors.en.json";
 import integrationsTr from "@/i18n/_new/integrations.tr.json";
 import integrationsEn from "@/i18n/_new/integrations.en.json";
+import complianceTr from "@/i18n/_new/compliance.tr.json";
+import complianceEn from "@/i18n/_new/compliance.en.json";
+import portalTr from "@/i18n/_new/portal.tr.json";
+import portalEn from "@/i18n/_new/portal.en.json";
+import accommodationPlusTr from "@/i18n/_new/accommodation-plus.tr.json";
+import accommodationPlusEn from "@/i18n/_new/accommodation-plus.en.json";
 
 type Dict = Record<string, unknown>;
 
@@ -56,6 +62,9 @@ const FRAGMENTS: { tr: Dict; en: Dict }[] = [
   { tr: socialTr as Dict, en: socialEn as Dict },
   { tr: floorsTr as Dict, en: floorsEn as Dict },
   { tr: integrationsTr as Dict, en: integrationsEn as Dict },
+  { tr: portalTr as Dict, en: portalEn as Dict },
+  { tr: accommodationPlusTr as Dict, en: accommodationPlusEn as Dict },
+  { tr: complianceTr as Dict, en: complianceEn as Dict },
 ];
 
 function withFragments(base: Dict): Dict {

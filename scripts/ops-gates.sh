@@ -47,5 +47,11 @@ else
   echo "   çözme başarısız"; FAIL=$((FAIL+1))
 fi
 rm -f "$KEYFILE" "$sqlite_backup" "$RESTORED"
+echo "── [4] i18n TIRMIK KAPISI (TASK-B 29) ──"
+if node scripts/i18n-hardcoded-scan.mjs; then
+  PASS=$((PASS+1))
+else
+  echo "   sert-kodlu TR arttı — sözlük-öncelik kuralı ihlal edildi"; FAIL=$((FAIL+1))
+fi
 echo "── ÖZET: PASS=$PASS FAIL=$FAIL ──"
 exit $([ $FAIL -eq 0 ] && echo 0 || echo 1)

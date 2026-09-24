@@ -1,0 +1,876 @@
+     1→"use client";
+     2→// Konaklama — gecelik stok (§32), rezervasyon teyidi (§09-E), oda-gece metriği
+     3→// R9-d genişletmesi: occupancy/rate/gece düzenleme, no-show akışı, misafir hiyerarşisi (bağımlı kişi + refakatçi).
+     4→// R10-c genişletmesi: Otel Ekle/Düzenle diyaloğu (tüm HotelProperty alanları) + Medya Arşivi'ne bağlantılı logo/kapak yükleme.
+     5→import { useState } from "react";
+     6→import { listEntity, apiSend } from "@/lib/client";
+     7→import { useApp } from "@/lib/store";
+     8→import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
+     9→import { ACCOMMODATION_STATUS, OCCUPANCY_TYPE, RELATION_TYPE, fmtDate, fmtMoney, fmtMoneyMajor, label } from "@/lib/constants";
+    10→import { toMinor, fromMinor } from "@/lib/money";
+    11→import { Button } from "@/components/ui/button";
+    12→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+    13→import { Input } from "@/components/ui/input";
+    14→import { Label } from "@/components/ui/label";
+    15→import { Textarea } from "@/components/ui/textarea";
+    16→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    17→import { Checkbox } from "@/components/ui/checkbox";
+    18→import { Switch } from "@/components/ui/switch";
+    19→import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+    20→import { useToast } from "@/hooks/use-toast";
+    21→import * as Icons from "lucide-react";
+    22→import { cn } from "@/lib/utils";
+    23→
+    24→interface HotelRow {
+    25→  id: string; name: string; city?: string | null; district?: string | null; contactName?: string | null; contactPhone?: string | null;
+    26→  address?: string | null; email?: string | null; website?: string | null; starRating?: number | null; checkInNote?: string | null; notes?: string | null;
+    27→  logoUrl?: string | null; imageUrl?: string | null;
+    28→  roomTypes: { id: string; name: string; capacity: number; pricePerNight: number; currency: string }[];
+    29→  blocks: { id: string; name: string; releaseDate?: string | null; cancellationPolicy?: string | null; roomType: { name: string; id: string }; inventoryNights: { id: string; date: string; totalRooms: number; reservedRooms: number }[] }[];
+    30→}
+    31→interface ReservationRow {
+    32→  id: string; guestName: string; checkIn: string; checkOut: string; status: string; payerType: string; payerName?: string | null;
+    33→  occupancyType?: string | null; ratePerNight?: number; nights?: number; noShow?: boolean; noShowFee?: number;
+    34→  block?: { name: string; hotel: { name: string }; roomType: { name: string } } | null;
+    35→  primaryGuest?: { id: string; person: { id: string; firstName: string; lastName: string } } | null;
+    36→  occupancySlots: { id: string; guestName?: string | null; position: number }[];
+    37→}
+    38→interface PersonRow {
+    39→  id: string; firstName: string; lastName: string; email?: string | null; parentPersonId?: string | null; relationType?: string | null;
+    40→}
+    41→interface CompanionRow {
+    42→  id: string; participationId: string; name: string; type: string; notes?: string | null;
+    43→}
+    44→
+    45→const NO_SHOW_NOTE = "Gerçekleşmeyen konaklama ücreti faturaya no-show kalemi olarak yansır — sistemden düşme kaydıdır.";
+    46→const COMPANION_AGE = { ADULT: "Yetişkin", CHILD: "Çocuk", INFANT: "Bebek (0-2)" } as const;
+    47→
+    48→export function AccommodationView() {
+    49→  const { currentEditionId, tenant, bump, refreshKey } = useApp();
+    50→  const { toast } = useToast();
+    51→  const [busyId, setBusyId] = useState<string | null>(null);
+    52→
+    53→  const { data: hotels, error, reload, loading } = useApi<HotelRow[]>(() => listEntity<HotelRow>("hotels", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+    54→  const { data: reservations, reload: reloadRes } = useApi<ReservationRow[]>(() => listEntity<ReservationRow>("reservations", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+    55→  const { data: people, reload: reloadPeople } = useApi<PersonRow[]>(() => listEntity<PersonRow>("people", { tenantId: tenant?.id ?? undefined, limit: 500 }), [tenant?.id, refreshKey]);
+    56→
+    57→  // ── düzenleme / no-show / misafir diyaloğu durumları
+    58→  const [editRes, setEditRes] = useState<ReservationRow | null>(null);
+    59→  const [editForm, setEditForm] = useState({ occupancyType: "__none__", ratePerNight: 0, nights: 0, noShow: false, noShowFee: 0 });
+    60→  const [noShowRes, setNoShowRes] = useState<ReservationRow | null>(null);
+    61→  const [noShowFee, setNoShowFee] = useState(0);
+    62→  const [guestRes, setGuestRes] = useState<ReservationRow | null>(null);
+    63→  const [addGuestOpen, setAddGuestOpen] = useState(false);
+    64→  const [guestForm, setGuestForm] = useState({ firstName: "", lastName: "", relationType: "SPOUSE", ageType: "ADULT", makeCompanion: true, addSlot: true });
+    65→  const [busy, setBusy] = useState(false);
+    66→  const [guestTick, setGuestTick] = useState(0);
+    67→
+    68→  // ── otel ekle/düzenle: tüm HotelProperty alanları + Medya Arşivi'ne bağlantılı logo/kapak (R10-c)
+    69→  const [hotelDialog, setHotelDialog] = useState<{ target: HotelRow | null } | null>(null);
+    70→  const [hotelForm, setHotelForm] = useState({
+    71→    name: "", city: "", district: "", address: "", starRating: "__none__", checkInNote: "",
+    72→    contactName: "", contactPhone: "", email: "", website: "", notes: "", logoUrl: "", imageUrl: "",
+    73→  });
+    74→  const [hotelPending, setHotelPending] = useState<{ logo?: { dataUrl: string }; cover?: { dataUrl: string } }>({});
+    75→  const [hotelMediaBusy, setHotelMediaBusy] = useState<"logo" | "cover" | null>(null);
+    76→
+    77→  const { data: companions, reload: reloadCompanions } = useApi<CompanionRow[]>(
+    78→    () => listEntity<CompanionRow>("companions", { participationId: guestRes?.primaryGuest?.id ?? "__none__" }),
+    79→    [guestRes?.primaryGuest?.id, refreshKey, guestTick],
+    80→  );
+    81→
+    82→  const nightsOf = (r: ReservationRow) => Math.max(1, Math.round((new Date(r.checkOut).getTime() - new Date(r.checkIn).getTime()) / 86400000));
+    83→  const nightsSaved = (r: ReservationRow) => (r.nights && r.nights > 0 ? r.nights : nightsOf(r));
+    84→  const totalOf = (r: ReservationRow) => (r.ratePerNight ?? 0) * nightsSaved(r);
+    85→  const roomNightsSold = (reservations ?? []).filter((r) => ["RESERVED", "CONFIRMED", "CHECKED_IN"].includes(r.status)).reduce((s, r) => s + nightsSaved(r), 0);
+    86→  const pendingRes = (reservations ?? []).filter((r) => ["REQUESTED", "WAITLIST"].includes(r.status));
+    87→  const confirmedCount = (reservations ?? []).filter((r) => ["CONFIRMED", "CHECKED_IN"].includes(r.status)).length;
+    88→  const noShowList = (reservations ?? []).filter((r) => r.noShow);
+    89→  const noShowFeeTotal = noShowList.reduce((s, r) => s + (r.noShowFee ?? 0), 0);
+    90→  const occupancyBreakdown = (["SINGLE", "DOUBLE", "FAMILY_SHARED"] as const).map((t) => ({
+    91→    type: t,
+    92→    count: (reservations ?? []).filter((r) => r.occupancyType === t && !r.noShow && r.status !== "CANCELLED").length,
+    93→  }));
+    94→
+    95→  const confirm = async (r: ReservationRow) => {
+    96→    setBusyId(r.id);
+    97→    try {
+    98→      await apiSend("/api/flows", "POST", { action: "reservation.confirm", reservationId: r.id });
+    99→      toast({ title: "Rezervasyon teyit edildi", description: `${nightsOf(r)} oda-gece stoktan tüketildi.` });
+   100→      reload(); bump();
+   101→    } catch (e) {
+   102→      toast({ title: "Teyit engellendi", description: e instanceof Error ? e.message : "Bir gece eksikse 'teyitli' görünmez.", variant: "destructive" });
+   103→    } finally { setBusyId(null); }
+   104→  };
+   105→
+   106→  // ── rezervasyon düzenleme (occupancy / rate / gece / no-show)
+   107→  const openEdit = (r: ReservationRow) => {
+   108→    setEditForm({
+   109→      occupancyType: r.occupancyType ?? "__none__",
+   110→      ratePerNight: fromMinor(r.ratePerNight ?? 0), // F6: kuruş→₺ girdi
+   111→      nights: nightsSaved(r),
+   112→      noShow: r.noShow ?? false,
+   113→      noShowFee: fromMinor(r.noShowFee ?? 0), // F6: kuruş→₺ girdi
+   114→    });
+   115→    setEditRes(r);
+   116→  };
+   117→
+   118→  const saveEdit = async () => {
+   119→    if (!editRes) return;
+   120→    setBusy(true);
+   121→    try {
+   122→      await apiSend(`/api/reservations/${editRes.id}`, "PUT", {
+   123→        occupancyType: editForm.occupancyType === "__none__" ? null : editForm.occupancyType,
+   124→        ratePerNight: toMinor(Number(editForm.ratePerNight) || 0), // F6: ₺ girdi→kuruş
+   125→        nights: Math.max(0, Math.round(Number(editForm.nights) || 0)),
+   126→        noShow: editForm.noShow,
+   127→        noShowFee: editForm.noShow ? toMinor(Number(editForm.noShowFee) || 0) : 0, // F6: ₺→kuruş
+   128→      });
+   129→      toast({ title: "Rezervasyon güncellendi", description: `${editRes.guestName} · oda tipi/fiyat/gece kaydedildi.` });
+   130→      setEditRes(null);
+   131→      reloadRes(); bump();
+   132→    } catch (e) {
+   133→      toast({ title: "Güncellenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   134→    } finally { setBusy(false); }
+   135→  };
+   136→
+   137→  // ── no-show hızlı aksiyon (sistemden düş)
+   138→  const openNoShow = (r: ReservationRow) => {
+   139→    setNoShowFee((r.ratePerNight ?? 0) > 0 ? (r.ratePerNight ?? 0) * nightsSaved(r) : 0);
+   140→    setNoShowRes(r);
+   141→  };
+   142→
+   143→  const markNoShow = async () => {
+   144→    if (!noShowRes) return;
+   145→    setBusy(true);
+   146→    try {
+   147→      await apiSend(`/api/reservations/${noShowRes.id}`, "PUT", { noShow: true, noShowFee: toMinor(Number(noShowFee) || 0) }); // F6
+   148→      toast({ title: "No-show işaretlendi", description: `${noShowRes.guestName} sistemden düşüldü — ücret faturaya kalem olarak yansır.` });
+   149→      setNoShowRes(null);
+   150→      reloadRes(); bump();
+   151→    } catch (e) {
+   152→      toast({ title: "İşaretlenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   153→    } finally { setBusy(false); }
+   154→  };
+   155→
+   156→  // ── misafir hiyerarşisi: bağımlı kişi + refakatçi + konuk slotu
+   157→  const dependentsOf = (personId: string) => (people ?? []).filter((p) => p.parentPersonId === personId);
+   158→  const primaryDependents = guestRes?.primaryGuest ? dependentsOf(guestRes.primaryGuest.person.id) : [];
+   159→
+   160→  const openAddGuest = () => {
+   161→    setGuestForm({ firstName: "", lastName: "", relationType: "SPOUSE", ageType: "ADULT", makeCompanion: true, addSlot: true });
+   162→    setAddGuestOpen(true);
+   163→  };
+   164→
+   165→  const addGuestProfile = async () => {
+   166→    const r = guestRes;
+   167→    if (!r?.primaryGuest || !tenant?.id || !currentEditionId || !guestForm.firstName.trim() || !guestForm.lastName.trim()) return;
+   168→    setBusy(true);
+   169→    try {
+   170→      // 1) Person — self-referencing parentPersonId ile (Parent_ID kuralı)
+   171→      const person = await apiSend<{ id: string }>("/api/people", "POST", {
+   172→        tenantId: tenant.id,
+   173→        firstName: guestForm.firstName.trim(),
+   174→        lastName: guestForm.lastName.trim(),
+   175→        parentPersonId: r.primaryGuest.person.id,
+   176→        relationType: guestForm.relationType,
+   177→      });
+   178→      // 2) Katılım (bu edisyonda yoksa) — @@unique([editionId, personId]) güvencesi
+   179→      const existing = await listEntity<{ id: string }>("participations", { editionId: currentEditionId, personId: person.id });
+   180→      let participationId = existing[0]?.id ?? null;
+   181→      let participationNote = "mevcut katılım";
+   182→      if (!participationId) {
+   183→        const created = await apiSend<{ id: string }>("/api/participations", "POST", { editionId: currentEditionId, personId: person.id });
+   184→        participationId = created.id;
+   185→        participationNote = "yeni katılım";
+   186→      }
+   187→      // 3) Refakatçi kaydı (ana konuğun katılımına)
+   188→      if (guestForm.makeCompanion) {
+   189→        await apiSend("/api/companions", "POST", {
+   190→          participationId: r.primaryGuest.id,
+   191→          name: `${guestForm.firstName.trim()} ${guestForm.lastName.trim()}`,
+   192→          type: guestForm.ageType,
+   193→        });
+   194→      }
+   195→      // 4) Rezervasyon konuk slotu
+   196→      if (guestForm.addSlot && participationId) {
+   197→        await apiSend("/api/occupancy-slots", "POST", {
+   198→          reservationId: r.id,
+   199→          participationId,
+   200→          guestName: `${guestForm.firstName.trim()} ${guestForm.lastName.trim()}`,
+   201→        });
+   202→      }
+   203→      toast({
+   204→        title: "Misafir profili eklendi",
+   205→        description: `Kişi + ${participationNote}${guestForm.makeCompanion ? " + refakatçi" : ""}${guestForm.addSlot ? " + konuk slotu" : ""} kuruldu.`,
+   206→      });
+   207→      setAddGuestOpen(false);
+   208→      reloadPeople(); reloadCompanions(); reloadRes(); setGuestTick((t) => t + 1); bump();
+   209→    } catch (e) {
+   210→      toast({ title: "Misafir eklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   211→    } finally { setBusy(false); }
+   212→  };
+   213→
+   214→  const openCreateHotel = () => {
+   215→    setHotelForm({ name: "", city: "", district: "", address: "", starRating: "__none__", checkInNote: "", contactName: "", contactPhone: "", email: "", website: "", notes: "", logoUrl: "", imageUrl: "" });
+   216→    setHotelPending({});
+   217→    setHotelDialog({ target: null });
+   218→  };
+   219→
+   220→  const openEditHotel = (h: HotelRow) => {
+   221→    setHotelForm({
+   222→      name: h.name, city: h.city ?? "", district: h.district ?? "", address: h.address ?? "",
+   223→      starRating: h.starRating ? String(h.starRating) : "__none__", checkInNote: h.checkInNote ?? "",
+   224→      contactName: h.contactName ?? "", contactPhone: h.contactPhone ?? "", email: h.email ?? "",
+   225→      website: h.website ?? "", notes: h.notes ?? "", logoUrl: h.logoUrl ?? "", imageUrl: h.imageUrl ?? "",
+   226→    });
+   227→    setHotelPending({});
+   228→    setHotelDialog({ target: h });
+   229→  };
+   230→
+   231→  // Medya Arşivi → Otel Görselleri klasörüne benzersiz adla yükle + otel kaydına yaz
+   232→  const uploadHotelMedia = async (hotelId: string, kind: "logo" | "cover", dataUrl: string) => {
+   233→    const hotelName = hotelForm.name.trim() || "otel";
+   234→    const r = await apiSend<{ asset: { id: string; dataUrl: string | null } }>("/api/media/upload-linked", "POST", {
+   235→      editionId: currentEditionId,
+   236→      systemFolder: "OTEL",
+   237→      linkedType: "HOTEL",
+   238→      linkedId: hotelId,
+   239→      name: `${hotelName}-${kind === "logo" ? "logosu" : "kapak"}`,
+   240→      dataUrl,
+   241→    });
+   242→    const url = r.asset.dataUrl ?? dataUrl;
+   243→    await apiSend(`/api/hotels/${hotelId}`, "PUT", kind === "logo" ? { logoUrl: url } : { imageUrl: url });
+   244→  };
+   245→
+   246→  const onHotelMediaPick = (kind: "logo" | "cover", file: File) => {
+   247→    if (file.size > 600 * 1024) {
+   248→      toast({ title: "Dosya 600KB sınırı aşılıyor", description: "Daha küçük bir görsel seçin — arşive gömme tavanı 600KB'dir.", variant: "destructive" });
+   249→      return;
+   250→    }
+   251→    const reader = new FileReader();
+   252→    reader.onload = () => {
+   253→      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+   254→      if (!dataUrl) return;
+   255→      setHotelForm((prev) => ({ ...prev, [kind === "logo" ? "logoUrl" : "imageUrl"]: dataUrl })); // anında önizleme
+   256→      if (hotelDialog?.target) {
+   257→        // düzenleme modu: hemen yükle ve kayda yaz
+   258→        setHotelMediaBusy(kind);
+   259→        uploadHotelMedia(hotelDialog.target.id, kind, dataUrl)
+   260→          .then(() => {
+   261→            toast({ title: kind === "logo" ? "Logo yüklendi" : "Kapak görseli yüklendi", description: "Medya Arşivi → Otel Görselleri klasörüne benzersiz adla kaydedildi." });
+   262→            reload(); bump();
+   263→          })
+   264→          .catch((e) => toast({ title: "Görsel yüklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" }))
+   265→          .finally(() => setHotelMediaBusy(null));
+   266→      } else {
+   267→        // yeni otel: POST id döndükten sonra yüklenecek (saveHotel içinde)
+   268→        setHotelPending((prev) => ({ ...prev, [kind]: { dataUrl } }));
+   269→      }
+   270→    };
+   271→    reader.readAsDataURL(file);
+   272→  };
+   273→
+   274→  const saveHotel = async () => {
+   275→    if (!currentEditionId || !hotelForm.name.trim()) return;
+   276→    setBusy(true);
+   277→    try {
+   278→      // yalnızca skaler alanlar — registry include'u roomTypes/blocks döndürür, asla gönderilmez
+   279→      const scalars = {
+   280→        name: hotelForm.name.trim(),
+   281→        city: hotelForm.city.trim(),
+   282→        district: hotelForm.district.trim(),
+   283→        address: hotelForm.address.trim(),
+   284→        starRating: hotelForm.starRating === "__none__" ? null : Number(hotelForm.starRating),
+   285→        checkInNote: hotelForm.checkInNote.trim(),
+   286→        contactName: hotelForm.contactName.trim(),
+   287→        contactPhone: hotelForm.contactPhone.trim(),
+   288→        email: hotelForm.email.trim(),
+   289→        website: hotelForm.website.trim(),
+   290→        notes: hotelForm.notes.trim(),
+   291→      };
+   292→      let hotelId = hotelDialog?.target?.id ?? null;
+   293→      if (hotelId) {
+   294→        // düzenleme: görsel alanlarını da taşı ("" → null ile kaldırma desteklenir)
+   295→        await apiSend(`/api/hotels/${hotelId}`, "PUT", { ...scalars, logoUrl: hotelForm.logoUrl || null, imageUrl: hotelForm.imageUrl || null });
+   296→      } else {
+   297→        const created = await apiSend<{ id: string }>("/api/hotels", "POST", { editionId: currentEditionId, ...scalars });
+   298→        hotelId = created.id;
+   299→      }
+   300→      // bekleyen logo/kapak — yeni otelde id döndükten sonra yüklenir
+   301→      for (const kind of ["logo", "cover"] as const) {
+   302→        const pm = hotelPending[kind];
+   303→        if (pm?.dataUrl) await uploadHotelMedia(hotelId, kind, pm.dataUrl);
+   304→      }
+   305→      toast({
+   306→        title: hotelDialog?.target ? "Otel güncellendi" : "Otel eklendi",
+   307→        description: hotelDialog?.target
+   308→          ? `${scalars.name} — iletişim ve kontrat ayrıntıları kaydedildi.`
+   309→          : `${scalars.name} · logo/kapak görselleri Medya Arşivi → Otel Görselleri klasörüne bağlandı.`,
+   310→      });
+   311→      setHotelDialog(null);
+   312→      reload(); bump();
+   313→    } catch (e) {
+   314→      toast({ title: "Otel kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   315→    } finally { setBusy(false); }
+   316→  };
+   317→
+   318→  // diyaloğa gömülü medya seçici (logo / kapak)
+   319→  const renderHotelMediaPicker = (kind: "logo" | "cover") => {
+   320→    const isLogo = kind === "logo";
+   321→    const preview = isLogo ? hotelForm.logoUrl : hotelForm.imageUrl;
+   322→    const inputId = isLogo ? "hotel-logo-input" : "hotel-cover-input";
+   323→    return (
+   324→      <div className="space-y-2">
+   325→        <p className="flex items-center gap-1.5 text-xs font-semibold"><Icons.Image className="size-3.5 text-muted-foreground" /> {isLogo ? "Otel logosu" : "Kapak görseli"}</p>
+   326→        <div className="flex items-center gap-2.5">
+   327→          <span className={cn("grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg border", preview ? "bg-white" : "bg-muted")}>
+   328→            {preview ? <img src={preview} alt={isLogo ? "Logo önizleme" : "Kapak önizleme"} className={cn("size-full", isLogo ? "object-contain p-1" : "object-cover")} /> : <Icons.Building2 className="size-5 text-muted-foreground/50" />}
+   329→          </span>
+   330→          <div className="min-w-0 space-y-1">
+   331→            <label htmlFor={inputId} className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border bg-card px-2 text-[11px] font-medium transition-colors hover:bg-muted">
+   332→              {hotelMediaBusy === kind ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Upload className="size-3" />}
+   333→              {preview ? "Değiştir" : "Görsel seç"}
+   334→            </label>
+   335→            {preview && (
+   336→              <button type="button" className="block text-[10px] text-rose-600 hover:underline" onClick={() => { setHotelForm((p) => ({ ...p, [isLogo ? "logoUrl" : "imageUrl"]: "" })); setHotelPending((p) => ({ ...p, [kind]: undefined })); }}>
+   337→                Kaldır
+   338→              </button>
+   339→            )}
+   340→          </div>
+   341→        </div>
+   342→        <Input
+   343→          id={inputId}
+   344→          type="file"
+   345→          accept="image/*"
+   346→          className="hidden"
+   347→          aria-label={isLogo ? "Otel logosu yükle" : "Kapak görseli yükle"}
+   348→          onChange={(e) => { const f = e.target.files?.[0]; if (f) onHotelMediaPick(kind, f); e.target.value = ""; }}
+   349→        />
+   350→      </div>
+   351→    );
+   352→  };
+   353→
+   354→  return (
+   355→    <div className="space-y-5">
+   356→      <PageHeader title="Konaklama & Seyahat" desc="Oda stoğu gün bazlıdır — 1 oda × 3 gece = 3 oda-gece; bir gece eksikse teyit engellenir" />
+   357→
+   358→      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+   359→        <KpiCard label="Otel" value={(hotels ?? []).length} icon={<Icons.Building className="size-4" />} />
+   360→        <KpiCard label="Rezervasyon" value={(reservations ?? []).length} sub={`${pendingRes.length} teyit bekleyen`} tone="amber" icon={<Icons.BedDouble className="size-4" />} />
+   361→        <KpiCard label="Oda-Gece (satış)" value={roomNightsSold} sub="ayrılan toplam" tone="emerald" icon={<Icons.Moon className="size-4" />} />
+   362→        <KpiCard label="Bekleme Listesi" value={(reservations ?? []).filter((r) => r.status === "WAITLIST").length} tone="rose" icon={<Icons.Clock className="size-4" />} />
+   363→        <KpiCard
+   364→          label="No-Show"
+   365→          value={noShowList.length}
+   366→          sub={noShowList.length ? `${fmtMoney(noShowFeeTotal)} toplam no-show ücreti` : "gerçekleşmeyen konaklama yok"}
+   367→          tone={noShowList.length ? "rose" : "neutral"}
+   368→          icon={<Icons.UserX className="size-4" />}
+   369→        />
+   370→      </div>
+   371→
+   372→      {/* doluluk tipi dağılımı */}
+   373→      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card px-4 py-2.5 shadow-sm">
+   374→        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><Icons.BedSingle className="size-3.5" /> Doluluk tipi:</span>
+   375→        {occupancyBreakdown.map((o) => (
+   376→          <Chip key={o.type} tone={o.count ? "teal" : "neutral"}>{label(OCCUPANCY_TYPE, o.type)}: <b className="tabular-nums">{o.count}</b></Chip>
+   377→        ))}
+   378→        <span className="ml-auto text-[11px] text-muted-foreground">no-show ve iptaller dağılıma katılmaz</span>
+   379→      </div>
+   380→
+   381→      <SectionCard
+   382→        title="Oteller"
+   383→        desc="kontratlı oteller, iletişim ayrıntıları ve oda stoğu — çift tıkla düzenle"
+   384→        action={
+   385→          <Button size="sm" onClick={openCreateHotel}>
+   386→            <Icons.Hotel className="size-4" /> Otel Ekle
+   387→          </Button>
+   388→        }
+   389→      >
+   390→        {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (hotels ?? []).length === 0 ? (
+   391→          <EmptyState title="Henüz oda bloğu tanımlanmadı" desc="'Otel Ekle' ile ilk oteli ekleyin — logo, adres, ilgili kişi ve e-posta ayrıntılarıyla." />
+   392→        ) : (
+   393→          <div className="space-y-4">
+   394→            {(hotels ?? []).map((h) => (
+   395→              <div
+   396→                key={h.id}
+   397→                onDoubleClick={() => openEditHotel(h)}
+   398→                title="Çift tık: oteli düzenle"
+   399→                className="cursor-pointer overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md"
+   400→              >
+   401→                {h.imageUrl && (
+   402→                  <div className="aspect-video min-h-0 w-full overflow-hidden bg-muted">
+   403→                    <img src={h.imageUrl} alt={`${h.name} kapak görseli`} loading="lazy" className="size-full object-cover" />
+   404→                  </div>
+   405→                )}
+   406→                <div className="space-y-3 p-4">
+   407→                  <div className="flex items-start gap-3">
+   408→                    {h.logoUrl ? (
+   409→                      <img src={h.logoUrl} alt={`${h.name} logosu`} className="size-12 shrink-0 rounded-lg border bg-white object-contain p-1" />
+   410→                    ) : (
+   411→                      <span className="grid size-12 shrink-0 place-items-center rounded-lg border bg-muted text-muted-foreground"><Icons.Building className="size-5" /></span>
+   412→                    )}
+   413→                    <div className="min-w-0 flex-1">
+   414→                      <p className="truncate text-sm font-semibold">{h.name}</p>
+   415→                      <p className="truncate text-xs text-muted-foreground">{[h.district, h.city].filter(Boolean).join(" · ") || "konum belirtilmedi"}</p>
+   416→                      {h.starRating ? (
+   417→                        <p className="mt-0.5 text-xs text-amber-500" aria-label={`${h.starRating} yıldız`}>
+   418→                          {"★".repeat(h.starRating)}
+   419→                          <span className="text-muted-foreground/30">{"★".repeat(5 - h.starRating)}</span>
+   420→                        </p>
+   421→                      ) : null}
+   422→                    </div>
+   423→                    <button
+   424→                      type="button"
+   425→                      aria-label={`${h.name} otelini düzenle`}
+   426→                      onClick={() => openEditHotel(h)}
+   427→                      className="grid size-7 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+   428→                    >
+   429→                      <Icons.Pencil className="size-3.5" />
+   430→                    </button>
+   431→                  </div>
+   432→
+   433→                  {(h.address || h.checkInNote || h.contactName || h.contactPhone) && (
+   434→                    <div className="space-y-1.5">
+   435→                      {h.address && (
+   436→                        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+   437→                          <Icons.MapPin className="size-3 shrink-0" aria-hidden />
+   438→                          <span className="min-w-0 truncate" title={h.address}>{h.address}</span>
+   439→                        </p>
+   440→                      )}
+   441→                      <div className="flex flex-wrap gap-1.5">
+   442→                        {h.contactName && <Chip tone="teal"><Icons.UserRound className="mr-1 inline size-3" />{h.contactName}</Chip>}
+   443→                        {h.contactPhone && <Chip tone="teal"><Icons.Phone className="mr-1 inline size-3" />{h.contactPhone}</Chip>}
+   444→                        {h.checkInNote && <Chip tone="amber"><Icons.KeyRound className="mr-1 inline size-3" />{h.checkInNote}</Chip>}
+   445→                      </div>
+   446→                    </div>
+   447→                  )}
+   448→
+   449→                  {(h.email || h.website) && (
+   450→                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+   451→                      {h.email && (
+   452→                        <a href={`mailto:${h.email}`} className="inline-flex min-w-0 items-center gap-1 text-teal-700 hover:underline">
+   453→                          <Icons.Mail className="size-3 shrink-0" aria-hidden /><span className="truncate">{h.email}</span>
+   454→                        </a>
+   455→                      )}
+   456→                      {h.website && (
+   457→                        <a href={h.website.startsWith("http") ? h.website : `https://${h.website}`} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1 text-teal-700 hover:underline">
+   458→                          <Icons.ExternalLink className="size-3 shrink-0" aria-hidden /> web sitesi
+   459→                        </a>
+   460→                      )}
+   461→                    </div>
+   462→                  )}
+   463→
+   464→                  {h.blocks.map((b) => {
+   465→                    const total = b.inventoryNights.reduce((s, n) => s + n.totalRooms, 0);
+   466→                    const reserved = b.inventoryNights.reduce((s, n) => s + n.reservedRooms, 0);
+   467→                    return (
+   468→                      <div key={b.id} className="rounded-lg border p-3">
+   469→                        <div className="flex flex-wrap items-center justify-between gap-2">
+   470→                          <p className="text-sm font-semibold">{b.name} <span className="font-normal text-muted-foreground">· {b.roomType.name}</span></p>
+   471→                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+   472→                            <span>satılabilir {total} oda-gece · ayrılan {reserved} (%{total ? Math.round((reserved / total) * 100) : 0})</span>
+   473→                            {b.releaseDate && <Chip tone={new Date(b.releaseDate) < new Date(Date.now() + 7 * 86400000) ? "rose" : "neutral"}>release {fmtDate(b.releaseDate)}</Chip>}
+   474→                          </div>
+   475→                        </div>
+   476→                        {/* gecelik stok çizelgesi */}
+   477→                        <div className="mt-3 flex flex-wrap gap-1.5">
+   478→                          {b.inventoryNights.map((n) => {
+   479→                            const free = n.totalRooms - n.reservedRooms;
+   480→                            const pctFill = n.totalRooms ? (n.reservedRooms / n.totalRooms) * 100 : 0;
+   481→                            return (
+   482→                              <div key={n.id} className={cn("w-20 rounded-md border p-1.5 text-center text-[10px]", free === 0 ? "border-rose-300 bg-rose-50" : pctFill > 80 ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50/60")}>
+   483→                                <p className="font-semibold">{fmtDate(n.date).slice(0, 6)}</p>
+   484→                                <p className="tabular-nums font-bold text-xs">{n.reservedRooms}/{n.totalRooms}</p>
+   485→                                <p className="text-muted-foreground">{free === 0 ? "dolu" : `${free} boş`}</p>
+   486→                              </div>
+   487→                            );
+   488→                          })}
+   489→                        </div>
+   490→                      </div>
+   491→                    );
+   492→                  })}
+   493→                </div>
+   494→              </div>
+   495→            ))}
+   496→          </div>
+   497→        )}
+   498→      </SectionCard>
+   499→
+   500→      <SectionCard title="Rezervasyonlar" desc="varış/çıkış, doluluk tipi, gecelik fiyat, misafir bağlantıları — rezervasyon ile ödeyen aynı olmak zorunda değil (§35)">
+   501→        {(reservations ?? []).length === 0 ? (
+   502→          <EmptyState title="Rezervasyon yok" />
+   503→        ) : (
+   504→          <div className="maven-scroll max-h-96 space-y-2 overflow-y-auto pr-1">
+   505→            {(reservations ?? []).map((r) => {
+   506→              const total = totalOf(r);
+   507→              return (
+   508→                <div key={r.id} className={cn("flex flex-wrap items-center gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/30", r.noShow && "border-rose-200 bg-rose-50/40")}>
+   509→                  <div className="min-w-0 flex-1">
+   510→                    <p className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+   511→                      {r.guestName}
+   512→                      {r.primaryGuest && <span className="font-normal text-muted-foreground">← {r.primaryGuest.person.firstName} {r.primaryGuest.person.lastName}</span>}
+   513→                      {r.noShow && <Chip tone="rose"><Icons.UserX className="mr-0.5 inline size-3" />NO-SHOW</Chip>}
+   514→                    </p>
+   515→                    <p className="text-xs text-muted-foreground">
+   516→                      {r.block ? `${r.block.hotel.name} · ${r.block.roomType.name}` : "blok yok"} · {fmtDate(r.checkIn)} → {fmtDate(r.checkOut)} ({nightsOf(r)} gece) · ödeyen: {r.payerType}{r.payerName ? ` — ${r.payerName}` : ""}
+   517→                    </p>
+   518→                    <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-muted-foreground">
+   519→                      {r.occupancyType && <Chip tone="teal">{label(OCCUPANCY_TYPE, r.occupancyType)}</Chip>}
+   520→                      {(r.ratePerNight ?? 0) > 0 && (
+   521→                        <span className="tabular-nums">
+   522→                          {fmtMoney(r.ratePerNight)}/gece × {nightsSaved(r)} gece = <b className="text-foreground">{fmtMoney(total)}</b>
+   523→                        </span>
+   524→                      )}
+   525→                      {r.noShow && <span className="font-medium tabular-nums text-rose-600">no-show ücreti: {fmtMoney(r.noShowFee)}</span>}
+   526→                    </p>
+   527→                  </div>
+   528→                  {r.occupancySlots.length > 0 && <Chip tone="teal">{r.occupancySlots.length} konuk slotu</Chip>}
+   529→                  <StatusBadge map={ACCOMMODATION_STATUS} value={r.status} />
+   530→                  <div className="flex flex-wrap items-center gap-1.5">
+   531→                    {r.primaryGuest && (
+   532→                      <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => { setGuestRes(r); setGuestTick((t) => t + 1); }}>
+   533→                        <Icons.Users className="size-3.5" /> Konuklar
+   534→                      </Button>
+   535→                    )}
+   536→                    <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => openEdit(r)}>
+   537→                      <Icons.Pencil className="size-3.5" /> Düzenle
+   538→                    </Button>
+   539→                    {!r.noShow && (
+   540→                      <TooltipProvider delayDuration={200}>
+   541→                        <Tooltip>
+   542→                          <TooltipTrigger asChild>
+   543→                            <Button size="sm" variant="ghost" className="h-8 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => openNoShow(r)} disabled={busyId === r.id}>
+   544→                              <Icons.UserX className="size-3.5" /> No-show işaretle
+   545→                            </Button>
+   546→                          </TooltipTrigger>
+   547→                          <TooltipContent side="top" className="max-w-56 text-xs">{NO_SHOW_NOTE}</TooltipContent>
+   548→                        </Tooltip>
+   549→                      </TooltipProvider>
+   550→                    )}
+   551→                    {["REQUESTED", "WAITLIST"].includes(r.status) && r.block && (
+   552→                      <Button size="sm" onClick={() => confirm(r)} disabled={busyId === r.id}>
+   553→                        {busyId === r.id ? "Kontrol ediliyor…" : "Teyit Et"}
+   554→                      </Button>
+   555→                    )}
+   556→                  </div>
+   557→                </div>
+   558→              );
+   559→            })}
+   560→          </div>
+   561→        )}
+   562→      </SectionCard>
+   563→
+   564→      {/* Rezervasyon düzenleme diyaloğu */}
+   565→      <Dialog open={Boolean(editRes)} onOpenChange={(o) => !o && setEditRes(null)}>
+   566→        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-md">
+   567→          <DialogHeader>
+   568→            <DialogTitle>Rezervasyon Düzenle — {editRes?.guestName}</DialogTitle>
+   569→            <DialogDescription>
+   570→              {editRes?.block ? `${editRes.block.hotel.name} · ${editRes.block.roomType.name}` : "blok yok"} · {editRes && `${fmtDate(editRes.checkIn)} → ${fmtDate(editRes.checkOut)}`}
+   571→            </DialogDescription>
+   572→          </DialogHeader>
+   573→          <div className="space-y-4">
+   574→            <div className="grid gap-3 sm:grid-cols-2">
+   575→              <div className="space-y-1.5">
+   576→                <Label>Doluluk tipi</Label>
+   577→                <Select value={editForm.occupancyType} onValueChange={(v) => setEditForm({ ...editForm, occupancyType: v })}>
+   578→                  <SelectTrigger aria-label="Doluluk tipi"><SelectValue /></SelectTrigger>
+   579→                  <SelectContent>
+   580→                    <SelectItem value="__none__">Tanımsız</SelectItem>
+   581→                    {Object.entries(OCCUPANCY_TYPE).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   582→                  </SelectContent>
+   583→                </Select>
+   584→              </div>
+   585→              <div className="space-y-1.5">
+   586→                <Label htmlFor="rate-input">Gecelik fiyat (₺)</Label>
+   587→                <Input id="rate-input" type="number" min={0} step={100} value={editForm.ratePerNight} onChange={(e) => setEditForm({ ...editForm, ratePerNight: Number(e.target.value) })} className="tabular-nums" />
+   588→              </div>
+   589→              <div className="space-y-1.5">
+   590→                <div className="flex items-center justify-between">
+   591→                  <Label htmlFor="nights-input">Gece sayısı</Label>
+   592→                  {editRes && (
+   593→                    <button type="button" onClick={() => setEditForm({ ...editForm, nights: nightsOf(editRes) })} className="inline-flex items-center gap-1 text-[11px] font-medium text-teal-700 hover:underline">
+   594→                      <Icons.Calculator className="size-3" /> Geceleri hesapla
+   595→                    </button>
+   596→                  )}
+   597→                </div>
+   598→                <Input id="nights-input" type="number" min={0} value={editForm.nights} onChange={(e) => setEditForm({ ...editForm, nights: Number(e.target.value) })} className="tabular-nums" />
+   599→              </div>
+   600→              <div className="flex items-end">
+   601→                <div className="w-full rounded-lg bg-teal-500/10 px-3 py-2 text-right">
+   602→                  <p className="text-[10px] font-medium uppercase tracking-wide text-teal-700/70">hesaplanan toplam</p>
+   603→                  <p className="text-lg font-semibold tabular-nums text-teal-800">{fmtMoney(toMinor((Number(editForm.ratePerNight) || 0) * (Number(editForm.nights) || 0)))}</p>
+   604→                </div>
+   605→              </div>
+   606→            </div>
+   607→
+   608→            <div className={cn("rounded-lg border p-3 transition-colors", editForm.noShow ? "border-rose-200 bg-rose-50/50" : "bg-muted/30")}>
+   609→              <div className="flex items-center justify-between gap-2">
+   610→                <TooltipProvider delayDuration={150}>
+   611→                  <Tooltip>
+   612→                    <TooltipTrigger asChild>
+   613→                      <label htmlFor="noshow-switch" className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium">
+   614→                        <Icons.UserX className="size-3.5 text-rose-600" /> No-show (sistemden düş)
+   615→                        <Icons.Info className="size-3 text-muted-foreground" />
+   616→                      </label>
+   617→                    </TooltipTrigger>
+   618→                    <TooltipContent side="top" className="max-w-64 text-xs">{NO_SHOW_NOTE}</TooltipContent>
+   619→                  </Tooltip>
+   620→                </TooltipProvider>
+   621→                <Switch id="noshow-switch" checked={editForm.noShow} onCheckedChange={(v) => setEditForm({ ...editForm, noShow: v })} />
+   622→              </div>
+   623→              {editForm.noShow && (
+   624→                <div className="mt-2.5 space-y-1.5">
+   625→                  <Label htmlFor="noshow-fee" className="text-xs">No-show ücreti (₺)</Label>
+   626→                  <Input id="noshow-fee" type="number" min={0} step={100} value={editForm.noShowFee} onChange={(e) => setEditForm({ ...editForm, noShowFee: Number(e.target.value) })} className="tabular-nums" />
+   627→                </div>
+   628→              )}
+   629→            </div>
+   630→          </div>
+   631→          <DialogFooter>
+   632→            <Button variant="outline" onClick={() => setEditRes(null)}>Vazgeç</Button>
+   633→            <Button onClick={saveEdit} disabled={busy}>{busy ? "Kaydediliyor…" : "Kaydet"}</Button>
+   634→          </DialogFooter>
+   635→        </DialogContent>
+   636→      </Dialog>
+   637→
+   638→      {/* No-show hızlı işaretleme diyaloğu */}
+   639→      <Dialog open={Boolean(noShowRes)} onOpenChange={(o) => !o && setNoShowRes(null)}>
+   640→        <DialogContent className="sm:max-w-sm">
+   641→          <DialogHeader>
+   642→            <DialogTitle className="flex items-center gap-2"><Icons.UserX className="size-4 text-rose-600" /> No-show İşaretle</DialogTitle>
+   643→            <DialogDescription>{noShowRes?.guestName}{noShowRes ? ` · ${fmtDate(noShowRes.checkIn)} → ${fmtDate(noShowRes.checkOut)}` : ""}</DialogDescription>
+   644→          </DialogHeader>
+   645→          <div className="rounded-lg border border-rose-200 bg-rose-50/60 p-3 text-xs text-rose-800">
+   646→            {NO_SHOW_NOTE} Konuk gelmediyse rezervasyon <b>CANCELLED</b> durumuna geçmiş olmalı; bu işaret ücret kalemini üretir.
+   647→          </div>
+   648→          <div className="space-y-1.5">
+   649→            <Label htmlFor="quick-fee">Faturaya yansıyacak ücret (₺)</Label>
+   650→            <Input id="quick-fee" type="number" min={0} step={100} value={noShowFee} onChange={(e) => setNoShowFee(Number(e.target.value))} className="tabular-nums" />
+   651→            <p className="text-[11px] text-muted-foreground">Varsayılan: gecelik fiyat × gece sayısı — gerektiği gibi düşürün.</p>
+   652→          </div>
+   653→          <DialogFooter>
+   654→            <Button variant="outline" onClick={() => setNoShowRes(null)}>Vazgeç</Button>
+   655→            <Button onClick={markNoShow} disabled={busy} className="bg-rose-600 text-white hover:bg-rose-700">{busy ? "İşaretleniyor…" : "No-show İşaretle"}</Button>
+   656→          </DialogFooter>
+   657→        </DialogContent>
+   658→      </Dialog>
+   659→
+   660→      {/* Konuk bağlantıları diyaloğu — bağımlılar + refakatçiler + slotlar */}
+   661→      <Dialog open={Boolean(guestRes)} onOpenChange={(o) => { if (!o) { setGuestRes(null); setAddGuestOpen(false); } }}>
+   662→        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-md">
+   663→          <DialogHeader>
+   664→            <DialogTitle className="flex items-center gap-2"><Icons.Users className="size-4 text-teal-600" /> Konuk Bağlantıları</DialogTitle>
+   665→            <DialogDescription>
+   666→              {guestRes?.guestName}
+   667→              {guestRes?.primaryGuest && <> — ana konuk: <b>{guestRes.primaryGuest.person.firstName} {guestRes.primaryGuest.person.lastName}</b></>}
+   668→            </DialogDescription>
+   669→          </DialogHeader>
+   670→          <div className="space-y-4">
+   671→            <div>
+   672→              <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold"><Icons.UserPlus className="size-3.5 text-muted-foreground" /> Bağımlı kişiler <span className="font-normal text-muted-foreground">(Person.parentPersonId — Parent_ID kuralı)</span></p>
+   673→              {primaryDependents.length === 0 ? (
+   674→                <p className="rounded-md border border-dashed px-2.5 py-2 text-[11px] text-muted-foreground">Henüz bağımlı kişi yok — eş, çocuk, misafir profili ekleyin.</p>
+   675→              ) : (
+   676→                <div className="space-y-1">
+   677→                  {primaryDependents.map((d) => (
+   678→                    <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
+   679→                      <span className="font-medium">{d.firstName} {d.lastName}</span>
+   680→                      <Chip tone="teal">{label(RELATION_TYPE, d.relationType)}</Chip>
+   681→                    </div>
+   682→                  ))}
+   683→                </div>
+   684→              )}
+   685→            </div>
+   686→
+   687→            <div>
+   688→              <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold"><Icons.HeartHandshake className="size-3.5 text-muted-foreground" /> Refakatçiler <span className="font-normal text-muted-foreground">(Companion — §34)</span></p>
+   689→              {(companions ?? []).length === 0 ? (
+   690→                <p className="rounded-md border border-dashed px-2.5 py-2 text-[11px] text-muted-foreground">Refakatçi kaydı yok.</p>
+   691→              ) : (
+   692→                <div className="space-y-1">
+   693→                  {(companions ?? []).map((c) => (
+   694→                    <div key={c.id} className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
+   695→                      <span className="font-medium">{c.name}</span>
+   696→                      <Chip tone="amber">{COMPANION_AGE[c.type as keyof typeof COMPANION_AGE] ?? c.type}</Chip>
+   697→                    </div>
+   698→                  ))}
+   699→                </div>
+   700→              )}
+   701→            </div>
+   702→
+   703→            <div>
+   704→              <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold"><Icons.BedDouble className="size-3.5 text-muted-foreground" /> Rezervasyon konuk slotları</p>
+   705→              {(guestRes?.occupancySlots ?? []).length === 0 ? (
+   706→                <p className="rounded-md border border-dashed px-2.5 py-2 text-[11px] text-muted-foreground">Slot yok — oda paylaşımlıysa konukları ekleyin.</p>
+   707→              ) : (
+   708→                <div className="space-y-1">
+   709→                  {(guestRes?.occupancySlots ?? []).map((s) => (
+   710→                    <div key={s.id} className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
+   711→                      <span className="font-medium">{s.guestName ?? "—"}</span>
+   712→                      <span className="text-[10px] tabular-nums text-muted-foreground">#{s.position}</span>
+   713→                    </div>
+   714→                  ))}
+   715→                </div>
+   716→              )}
+   717→            </div>
+   718→          </div>
+   719→          <DialogFooter>
+   720→            <Button variant="outline" onClick={() => setGuestRes(null)}>Kapat</Button>
+   721→            {guestRes?.primaryGuest && <Button onClick={openAddGuest}><Icons.UserPlus className="size-3.5" /> Misafir profil ekle</Button>}
+   722→          </DialogFooter>
+   723→        </DialogContent>
+   724→      </Dialog>
+   725→
+   726→      {/* Misafir profil ekleme diyaloğu */}
+   727→      <Dialog open={addGuestOpen} onOpenChange={(o) => !o && setAddGuestOpen(false)}>
+   728→        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-md">
+   729→          <DialogHeader>
+   730→            <DialogTitle>Misafir Profil Ekle</DialogTitle>
+   731→            <DialogDescription>
+   732→              {guestRes?.primaryGuest && <>Ana konuk <b>{guestRes.primaryGuest.person.firstName} {guestRes.primaryGuest.person.lastName}</b> altına bağlı kişi oluşturulur — kişi + katılım zinciri otomatik kurulur.</>}
+   733→            </DialogDescription>
+   734→          </DialogHeader>
+   735→          <div className="grid gap-3 sm:grid-cols-2">
+   736→            <div className="space-y-1.5">
+   737→              <Label htmlFor="g-first">Ad</Label>
+   738→              <Input id="g-first" value={guestForm.firstName} onChange={(e) => setGuestForm({ ...guestForm, firstName: e.target.value })} />
+   739→            </div>
+   740→            <div className="space-y-1.5">
+   741→              <Label htmlFor="g-last">Soyad</Label>
+   742→              <Input id="g-last" value={guestForm.lastName} onChange={(e) => setGuestForm({ ...guestForm, lastName: e.target.value })} />
+   743→            </div>
+   744→            <div className="space-y-1.5">
+   745→              <Label>Yakınlık (relationType)</Label>
+   746→              <Select value={guestForm.relationType} onValueChange={(v) => setGuestForm({ ...guestForm, relationType: v })}>
+   747→                <SelectTrigger aria-label="Yakınlık"><SelectValue /></SelectTrigger>
+   748→                <SelectContent>
+   749→                  {Object.entries(RELATION_TYPE).filter(([k]) => k !== "SELF").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   750→                </SelectContent>
+   751→              </Select>
+   752→            </div>
+   753→            <div className="space-y-1.5">
+   754→              <Label>Refakatçi yaşı</Label>
+   755→              <Select value={guestForm.ageType} onValueChange={(v) => setGuestForm({ ...guestForm, ageType: v })}>
+   756→                <SelectTrigger aria-label="Refakatçi yaşı"><SelectValue /></SelectTrigger>
+   757→                <SelectContent>
+   758→                  {Object.entries(COMPANION_AGE).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   759→                </SelectContent>
+   760→              </Select>
+   761→            </div>
+   762→            <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2.5 sm:col-span-2">
+   763→              <div>
+   764→                <p className="text-xs font-medium">Refakatçi kaydı oluştur</p>
+   765→                <p className="text-[11px] text-muted-foreground">Ana konuğun katılımına Companion satırı eklenir (otel/kahvaltı hakları).</p>
+   766→              </div>
+   767→              <Switch checked={guestForm.makeCompanion} onCheckedChange={(v) => setGuestForm({ ...guestForm, makeCompanion: v })} aria-label="Refakatçi kaydı" />
+   768→            </div>
+   769→            <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2.5 sm:col-span-2">
+   770→              <div>
+   771→                <p className="text-xs font-medium">Rezervasyona konuk slotu ekle</p>
+   772→                <p className="text-[11px] text-muted-foreground">Odada kalacak kişiler listesine (OccupancySlot) düşer.</p>
+   773→              </div>
+   774→              <Switch checked={guestForm.addSlot} onCheckedChange={(v) => setGuestForm({ ...guestForm, addSlot: v })} aria-label="Konuk slotu" />
+   775→            </div>
+   776→            <div className="flex items-start gap-2 rounded-lg border border-dashed p-2.5 text-[11px] text-muted-foreground sm:col-span-2">
+   777→              <Icons.CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-teal-600" />
+   778→              Kişi kaydı <b>parentPersonId</b> ile ana konuğa bağlanır; bu edisyonda katılımı yoksa otomatik açılır.
+   779→            </div>
+   780→          </div>
+   781→          <DialogFooter>
+   782→            <Button variant="outline" onClick={() => setAddGuestOpen(false)}>Vazgeç</Button>
+   783→            <Button onClick={addGuestProfile} disabled={busy || !guestForm.firstName.trim() || !guestForm.lastName.trim()}>{busy ? "Ekleniyor…" : "Ekle"}</Button>
+   784→          </DialogFooter>
+   785→        </DialogContent>
+   786→      </Dialog>
+   787→
+   788→      {/* Otel ekle/düzenle diyaloğu — tüm HotelProperty alanları + bağlantılı medya (R10-c) */}
+   789→      <Dialog open={Boolean(hotelDialog)} onOpenChange={(o) => !o && setHotelDialog(null)}>
+   790→        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-lg">
+   791→          <DialogHeader>
+   792→            <DialogTitle className="flex items-center gap-2"><Icons.Hotel className="size-4 text-teal-600" /> {hotelDialog?.target ? "Otel Düzenle" : "Otel Ekle"}</DialogTitle>
+   793→            <DialogDescription>
+   794→              {hotelDialog?.target
+   795→                ? `${hotelDialog.target.name} — iletişim, adres ve kontrat ayrıntılarını güncelleyin.`
+   796→                : "Kontratlı oteli tüm ayrıntılarıyla tanımlayın; logo ve kapak görseli Medya Arşivi'ne bağlanır."}
+   797→            </DialogDescription>
+   798→          </DialogHeader>
+   799→          <div className="space-y-4">
+   800→            <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
+   801→              {renderHotelMediaPicker("logo")}
+   802→              {renderHotelMediaPicker("cover")}
+   803→              <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground sm:col-span-2">
+   804→                <Icons.Info className="mt-0.5 size-3 shrink-0" aria-hidden />
+   805→                Medya Arşivi → Otel Görselleri klasörüne benzersiz adla kaydedilir (≤600KB).
+   806→              </p>
+   807→            </div>
+   808→            <div className="grid gap-3 sm:grid-cols-2">
+   809→              <div className="space-y-1.5">
+   810→                <Label htmlFor="h-name">Otel adı *</Label>
+   811→                <Input id="h-name" value={hotelForm.name} onChange={(e) => setHotelForm({ ...hotelForm, name: e.target.value })} placeholder="örn. Hilton İstanbul Bomonti" />
+   812→              </div>
+   813→              <div className="space-y-1.5">
+   814→                <Label htmlFor="h-city">Şehir</Label>
+   815→                <Input id="h-city" value={hotelForm.city} onChange={(e) => setHotelForm({ ...hotelForm, city: e.target.value })} placeholder="İstanbul" />
+   816→              </div>
+   817→              <div className="space-y-1.5">
+   818→                <Label htmlFor="h-district">Semt / İlçe</Label>
+   819→                <Input id="h-district" value={hotelForm.district} onChange={(e) => setHotelForm({ ...hotelForm, district: e.target.value })} placeholder="Bomonti" />
+   820→              </div>
+   821→              <div className="space-y-1.5">
+   822→                <Label>Yıldız derecesi</Label>
+   823→                <Select value={hotelForm.starRating} onValueChange={(v) => setHotelForm({ ...hotelForm, starRating: v })}>
+   824→                  <SelectTrigger aria-label="Yıldız derecesi"><SelectValue /></SelectTrigger>
+   825→                  <SelectContent>
+   826→                    <SelectItem value="__none__">Belirtilmedi</SelectItem>
+   827→                    {[5, 4, 3, 2, 1].map((n) => (
+   828→                      <SelectItem key={n} value={String(n)}>
+   829→                        <span className="text-amber-500">{"★".repeat(n)}</span> ({n} yıldız)
+   830→                      </SelectItem>
+   831→                    ))}
+   832→                  </SelectContent>
+   833→                </Select>
+   834→              </div>
+   835→              <div className="space-y-1.5 sm:col-span-2">
+   836→                <Label htmlFor="h-address">Adres</Label>
+   837→                <Textarea id="h-address" rows={2} value={hotelForm.address} onChange={(e) => setHotelForm({ ...hotelForm, address: e.target.value })} placeholder="Mahalle, sokak, numara…" />
+   838→              </div>
+   839→              <div className="space-y-1.5">
+   840→                <Label htmlFor="h-contact">İlgili kişi</Label>
+   841→                <Input id="h-contact" value={hotelForm.contactName} onChange={(e) => setHotelForm({ ...hotelForm, contactName: e.target.value })} placeholder="Rezervasyon müdürü" />
+   842→              </div>
+   843→              <div className="space-y-1.5">
+   844→                <Label htmlFor="h-phone">Telefon</Label>
+   845→                <Input id="h-phone" type="tel" value={hotelForm.contactPhone} onChange={(e) => setHotelForm({ ...hotelForm, contactPhone: e.target.value })} placeholder="+90 212 000 00 00" />
+   846→              </div>
+   847→              <div className="space-y-1.5">
+   848→                <Label htmlFor="h-email">E-posta</Label>
+   849→                <Input id="h-email" type="email" value={hotelForm.email} onChange={(e) => setHotelForm({ ...hotelForm, email: e.target.value })} placeholder="rezervasyon@otel.com" />
+   850→              </div>
+   851→              <div className="space-y-1.5">
+   852→                <Label htmlFor="h-web">Web sitesi</Label>
+   853→                <Input id="h-web" value={hotelForm.website} onChange={(e) => setHotelForm({ ...hotelForm, website: e.target.value })} placeholder="https://otel.com" />
+   854→              </div>
+   855→              <div className="space-y-1.5 sm:col-span-2">
+   856→                <Label htmlFor="h-checkin">Giriş / çıkış notu</Label>
+   857→                <Input id="h-checkin" value={hotelForm.checkInNote} onChange={(e) => setHotelForm({ ...hotelForm, checkInNote: e.target.value })} placeholder="Giriş 14:00 / Çıkış 12:00" />
+   858→              </div>
+   859→              <div className="space-y-1.5 sm:col-span-2">
+   860→                <Label htmlFor="h-notes">Notlar</Label>
+   861→                <Textarea id="h-notes" rows={2} value={hotelForm.notes} onChange={(e) => setHotelForm({ ...hotelForm, notes: e.target.value })} placeholder="kontrat şartları, iptal politikası, servet…" />
+   862→              </div>
+   863→            </div>
+   864→          </div>
+   865→          <DialogFooter>
+   866→            <Button variant="outline" onClick={() => setHotelDialog(null)}>Vazgeç</Button>
+   867→            <Button onClick={saveHotel} disabled={busy || !hotelForm.name.trim()}>
+   868→              {busy ? "Kaydediliyor…" : hotelDialog?.target ? "Kaydet" : "Otel Ekle"}
+   869→            </Button>
+   870→          </DialogFooter>
+   871→        </DialogContent>
+   872→      </Dialog>
+   873→    </div>
+   874→  );
+   875→}
+   876→

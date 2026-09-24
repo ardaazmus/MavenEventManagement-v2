@@ -1,0 +1,13 @@
+{
+  "accommodation": {
+    "hMapsUrl": "Harita Bağlantısı",
+    "hMapsUrlPh": "https://maps.google.com/…",
+    "hTransport": "Ulaşım Bilgisi",
+    "hTransportPh": "Metro, otobüs, tramvay veya vale bilgisi…",
+    "hLocalPhone": "Yerel Telefon/Kod",
+    "hLocalPhonePh": "örn. +90 212 000 00 00 · Kontak kodu: 1234",
+    "hPower": "Priz/Gerilim Bilgisi",
+    "hPowerPh": "örn. 220V — Type C/F priz",
+    "hPortalFieldsHint": "Kompakt bilgi alanları — değerleri tamamen sizin girdiğiniz, konaklama kartında gösterilen bilgiler. Hiçbir alan önceden doldurulmaz."
+  }
+}

@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { requireAuthEnabled } from "@/lib/auth/gate";
 import { generateTotpSecret, otpauthUri } from "@/lib/auth/totp";
 import { encryptSecret } from "@/lib/secrets";
-import { sessionFromRequest } from "@/lib/auth/session";
+import { authPendingFromRequest } from "@/lib/auth/session";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
@@ -14,7 +14,8 @@ export async function POST(req: NextRequest) {
   const denied = enforceRateLimit(req, { key: "mfa-setup", limit: 10, windowMs: 60_000 });
   if (denied) return denied;
 
-  const session = sessionFromRequest(req);
+  // TASK-B 12: tam oturum VEYA mfa-pending onboarding belirteci kabul edilir
+  const session = authPendingFromRequest(req);
   if (!session) return NextResponse.json({ error: "Oturum gerekli" }, { status: 401 });
 
   const secret = generateTotpSecret();

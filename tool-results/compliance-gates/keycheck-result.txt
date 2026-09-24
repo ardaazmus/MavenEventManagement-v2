@@ -1,0 +1,8 @@
+keys referenced in compliance.tsx (literals + dynamic variants + modules.compliance): 159
+fragment TR leaves: 159 · fragment EN leaves: 159
+missing in TR: 0
+missing in EN: 0
+TR/EN key parity: OK
+unused fragment keys (informational): 0 → none
+RESULT: ALL-COVERED ✓
+placeholder check: OK

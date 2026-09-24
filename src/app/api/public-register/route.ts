@@ -27,6 +27,9 @@ export async function POST(req: NextRequest) {
       elapsedSeconds?: number;
       paymentMethod?: string;
       source?: string;
+      // TASK-B 14: ASGARİ RIZA — gerekli-bilgilendirme onayı (gönderim = onay kaydı) +
+      // fonksiyonel seçimli iletişim onayı (zorunlu DEĞİL). Üçüncü taraf script yoktur.
+      commsOptIn?: boolean;
     };
 
     const { formId, respondentName, respondentEmail } = body;
@@ -132,6 +135,18 @@ export async function POST(req: NextRequest) {
         chain = await createRegistrationFromSubmission(submission.id, {
           paymentSource: body.paymentMethod ?? "PAYMENT_LINK",
         });
+        // TASK-B 14: kişi düzeyinde asgari rıza kaydı — sürüm + zaman + fonksiyonel opt-in
+        const personId = (chain?.person as { id?: string } | null)?.id;
+        if (personId) {
+          await db.person.update({
+            where: { id: personId },
+            data: {
+              consentVersion: "2026-01-KVKK-PUBLIC",
+              consentAcceptedAt: new Date(),
+              commsOptIn: body.commsOptIn === true ? true : null, // seçimli — varsayılan yok
+            },
+          });
+        }
       } catch (e) {
         chainError = e instanceof Error ? e.message : "Kayıt zinciri kurulamadı";
       }

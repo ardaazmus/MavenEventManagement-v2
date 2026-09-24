@@ -444,6 +444,7 @@ export const MODULES = [
   { id: "media", label: "Medya Arşivi", icon: "FolderOpen", capability: null, group: "workspace" },
   { id: "archive", label: "Arşiv", icon: "Archive", capability: null, group: "workspace" },
   { id: "integrations", label: "API Geçidi", icon: "PlugZap", capability: null, group: "workspace" },
+  { id: "compliance", label: "Uyumluluk", icon: "ShieldCheck", capability: null, group: "workspace" },
   { id: "settings", label: "Ayarlar", icon: "Settings", capability: null, group: "workspace" },
 ] as const;
 

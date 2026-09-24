@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { requireAuthEnabled } from "@/lib/auth/gate";
 import { verifyTotp, generateRecoveryCodes } from "@/lib/auth/totp";
 import { decryptSecret } from "@/lib/secrets";
-import { sessionFromRequest } from "@/lib/auth/session";
+import { authPendingFromRequest, sessionCookieHeader, SESSION_TTL_SECONDS, MFA_PENDING_COOKIE } from "@/lib/auth/session";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
@@ -13,7 +13,8 @@ export async function POST(req: NextRequest) {
   const denied = enforceRateLimit(req, { key: "mfa-verify", limit: 10, windowMs: 60_000 });
   if (denied) return denied;
 
-  const session = sessionFromRequest(req);
+  // TASK-B 12: tam oturum VEYA mfa-pending onboarding belirteci kabul edilir
+  const session = authPendingFromRequest(req);
   if (!session) return NextResponse.json({ error: "Oturum gerekli" }, { status: 401 });
 
   try {
@@ -29,7 +30,16 @@ export async function POST(req: NextRequest) {
       where: { id: session.uid },
       data: { mfaEnabled: true, recoveryCodes: JSON.stringify(hashed) },
     });
-    return NextResponse.json({ ok: true, mfaEnabled: true, recoveryCodes: plain }); // tek seferlik gösterim
+    // TASK-B 12: onboarding tamamlandı — tam oturum ver + pending çerezini temizle
+    const nowSec = Math.floor(Date.now() / 1000);
+    const sessionCookie = sessionCookieHeader({
+      uid: session.uid, role: session.role, tenantId: session.tenantId, iat: nowSec, exp: nowSec + SESSION_TTL_SECONDS,
+    });
+    const clearPending = `${MFA_PENDING_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+    return new NextResponse(
+      JSON.stringify({ ok: true, mfaEnabled: true, recoveryCodes: plain }), // tek seferlik gösterim
+      { status: 200, headers: { "Set-Cookie": `${sessionCookie}, ${clearPending}`, "Content-Type": "application/json" } },
+    );
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "MFA doğrulama başarısız" }, { status: 500 });
   }

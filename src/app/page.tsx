@@ -48,6 +48,7 @@ const B2bView = dyn(() => import("@/components/maven/views/b2b").then((m) => ({ 
 const MediaArchiveView = dyn(() => import("@/components/maven/views/media").then((m) => ({ default: m.MediaArchiveView })));
 const ArchiveView = dyn(() => import("@/components/maven/views/archive").then((m) => ({ default: m.ArchiveView })));
 const ApiGatewayView = dyn(() => import("@/components/maven/views/integrations").then((m) => ({ default: m.ApiGatewayView })));
+const ComplianceView = dyn(() => import("@/components/maven/views/compliance").then((m) => ({ default: m.ComplianceView })));
 
 export default function Home() {
   const { module, bootstrap, currentEditionId, editions, setModule } = useApp();
@@ -121,6 +122,7 @@ function renderModule(module: string) {
     case "media": return <MediaArchiveView />;
     case "archive": return <ArchiveView />;
     case "integrations": return <ApiGatewayView />;
+    case "compliance": return <ComplianceView />;
     case "settings": return <SettingsView />;
     default: return <DashboardView />;
   }

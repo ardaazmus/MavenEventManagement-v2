@@ -96,7 +96,47 @@ export async function GET(req: NextRequest) {
       include: { series: true },
     });
 
+    // ── TASK-B 25/26: kişisel sayfa zenginleştirme ──
+    // (a) görünür portal blokları — katılımcı yüzeyi (yalnız düzenleyici içeriği, PII yok)
+    const blocks = await db.portalBlock.findMany({
+      where: { editionId, isVisible: true, audience: { in: ["PARTICIPANT", "BOTH"] } },
+      orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+      select: { id: true, type: true, title: true, payloadJson: true, order: true },
+    });
+
+    // (b) yaka kartı önizlemesi — yalnız VERİLMİŞ aile (ISSUED|PRINTED|REPRINTED);
+    // BadgeProfile'da önizleme-alanı YOK (şema denetlendi) → yalnız {id, name} ifşa edilir.
+    // Belirteç (PortalToken) bu yanıtta zaten hiçbir biçimde dolaşmaz.
+    const issuedBadge = participation?.badgeInstances.find((b) => ["ISSUED", "PRINTED", "REPRINTED"].includes(b.status));
+    const badgePreview = issuedBadge
+      ? {
+          badgeNo: issuedBadge.badgeNo,
+          status: issuedBadge.status,
+          profileName: issuedBadge.profile?.name ?? null,
+          profile: issuedBadge.profile ? { id: issuedBadge.profile.id, name: issuedBadge.profile.name } : null,
+        }
+      : null;
+
+    // (c) CV — yalnız SPEAKER/REVIEWER rolü varsa ve yalnız KENDİ kayıtları
+    // (personId = belirteç sahibi kişi; edition kapsamlı CvEntry izolasyonu)
+    const portalRoles = (participation?.roleAssignments ?? []).map((r) => r.role);
+    const cv = portalRoles.includes("SPEAKER") || portalRoles.includes("REVIEWER")
+      ? await db.cvEntry.findMany({
+          where: { personId, editionId },
+          orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+          select: { id: true, kind: true, title: true, organization: true, startDate: true, endDate: true, isCurrent: true, description: true },
+        })
+      : [];
+
+    // (d) bakiye toplamı — zaten çekilmiş siparişler üzerinden TEK reduce (ek sorgu yok)
+    const balanceTotal = orders.reduce((sum, o) => {
+      const paid = o.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
+      return sum + Math.max(0, o.totalAmount - paid);
+    }, 0);
+
     return NextResponse.json({
+      // TASK-B 25: düzenleyici kontrollü içerik blokları — üst-seviye anahtar
+      blocks,
       edition: edition
         ? { id: edition.id, name: edition.name, startDate: edition.startDate, endDate: edition.endDate, venueName: edition.venueName, city: edition.city, isPublished: edition.isPublished, seriesName: edition.series?.name ?? null }
         : null,
@@ -137,6 +177,10 @@ export async function GET(req: NextRequest) {
         categoryName: r.category?.name ?? null, categoryCode: r.category?.code ?? null,
         basePrice: r.category?.basePrice ?? 0, currency: r.category?.currency ?? "TRY",
       })),
+      // TASK-B 26: yaka kartı önizlemesi (verilmiş ise) — profil kimliği/yoksa null
+      badgePreview,
+      // TASK-B 26: CV — konuşmacı/hakem rolüne sahip kişinin kendi CV kayıtları
+      cv,
       orders: orders.map((o) => {
         const paid = o.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
         const pending = o.payments.filter((p) => p.status === "PENDING").reduce((s, p) => s + p.amount, 0);
@@ -148,6 +192,8 @@ export async function GET(req: NextRequest) {
           paid, pending, remaining: Math.max(0, o.totalAmount - paid),
         };
       }),
+      // TASK-B 26: kalan bakiye toplamı (kuruş) — başarıyla ödenmiş tutarlar düşülür
+      balanceTotal,
       waitlist: waitlist.map((w) => ({
         id: w.id, status: w.status, priority: w.priority, notes: w.notes,
         offeredAt: w.offeredAt, offerExpiresAt: w.offerExpiresAt, respondedAt: w.respondedAt,

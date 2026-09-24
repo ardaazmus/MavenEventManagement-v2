@@ -7,7 +7,7 @@ import { requireAuthEnabled } from "@/lib/auth/gate";
 import { verifyPassword } from "@/lib/auth/password";
 import { verifyTotp, hashRecoveryCode } from "@/lib/auth/totp";
 import { decryptSecret } from "@/lib/secrets";
-import { sessionCookieHeader, SESSION_TTL_SECONDS } from "@/lib/auth/session";
+import { sessionCookieHeader, SESSION_TTL_SECONDS, mfaPendingCookieHeader } from "@/lib/auth/session";
 import { enforceRateLimit, enforceRateLimitById } from "@/lib/rate-limit";
 
 const MAX_FAILED = 5;
@@ -47,6 +47,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "E-posta veya parola hatalı" }, { status: 401 });
     }
 
+    // TASK-B 12: ZORUNLU MFA — ORG_OWNER/FINANCE_MANAGER mfaEnabled=false ise oturum YOK:
+    // 5 dk'lık dar kapsamlı mfa-pending çerezi + 403 (yalnız mfa/setup|verify kabul eder)
+    if (MFA_ENFORCED_ROLES.includes(user.role) && !user.mfaEnabled) {
+      return new NextResponse(
+        JSON.stringify({
+          error: "Bu rol için iki adımlı doğrulama zorunlu — kurulum gerekli",
+          mfaSetupRequired: true,
+        }),
+        {
+          status: 403,
+          headers: {
+            "Set-Cookie": mfaPendingCookieHeader(user.id, user.role, user.tenantId),
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    }
+
     // MFA aşaması
     if (user.mfaEnabled) {
       const secret = decryptSecret(user.mfaSecretCipher);
@@ -71,7 +89,8 @@ export async function POST(req: NextRequest) {
       data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date() },
     });
 
-    const cookie = sessionCookieHeader({ uid: user.id, role: user.role, tenantId: user.tenantId, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS });
+    const nowSec = Math.floor(Date.now() / 1000);
+    const cookie = sessionCookieHeader({ uid: user.id, role: user.role, tenantId: user.tenantId, iat: nowSec, exp: nowSec + SESSION_TTL_SECONDS });
     const mfaEnforcedForRole = MFA_ENFORCED_ROLES.includes(user.role) && !user.mfaEnabled;
     return new NextResponse(
       JSON.stringify({

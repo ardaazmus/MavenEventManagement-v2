@@ -1,0 +1,13 @@
+{
+  "accommodation": {
+    "hMapsUrl": "Map Link",
+    "hMapsUrlPh": "https://maps.google.com/…",
+    "hTransport": "Transport Info",
+    "hTransportPh": "Metro, bus, tram or valet details…",
+    "hLocalPhone": "Local Phone/Code",
+    "hLocalPhonePh": "e.g. +90 212 000 00 00 · Room code: 1234",
+    "hPower": "Power/Voltage Info",
+    "hPowerPh": "e.g. 220V — Type C/F plugs",
+    "hPortalFieldsHint": "Compact info fields — everything shown here is entered by you and displayed on the accommodation card. No field is pre-filled."
+  }
+}

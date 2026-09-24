@@ -17,7 +17,12 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useLang, t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 // ─── tipler ─────────────────────────────────────────────────────────────────
@@ -40,8 +45,17 @@ type PortalOrder = {
   paid: number; pending: number; remaining: number;
 };
 
+// TASK-B 25: portal bloğu — portal yanıtı yalnız {id,type,title,payloadJson,order} döner
+// (düzenleyici CRUD yüzeyi /api/portal/blocks'tadır; API select disiplini korunur)
+type PortalBlockPublic = { id: string; type: string; title: string; payloadJson?: string | null; order: number };
+// düzenleyici yüzeyi satırı (tam kolon seti)
+type PortalBlockRow = PortalBlockPublic & { editionId: string; audience: string; isVisible: boolean; createdAt: string; updatedAt: string };
+type BlockPayload = { text?: string; url?: string; imageUrl?: string; linkLabel?: string };
+
 type ParticipantData = {
   edition: { id: string; name: string; startDate: string; endDate: string; venueName?: string | null; city?: string | null; seriesName?: string | null } | null;
+  // TASK-B 25: düzenleyici kontrollü içerik blokları (görünür + PARTICIPANT|BOTH)
+  blocks: PortalBlockPublic[];
   // TASK-A F1: portalToken alanı kaldırıldı — belirteç yanıtlarda dolaşmaz; yönetici
   // önizlemesi kısa ömürlü belirteci /api/portal/preview-token ile bellekte tutar
   person: { id: string; firstName: string; lastName: string; email?: string | null; title?: string | null; organizationName?: string | null };
@@ -57,11 +71,19 @@ type ParticipantData = {
   } | null;
   registrations: { id: string; confirmationNo: string; status: string; source: string; fundingSource: string; submittedAt?: string | null; decidedAt?: string | null; cancelReason?: string | null; notes?: string | null; categoryName?: string | null; categoryCode?: string | null; basePrice: number; currency: string }[];
   orders: PortalOrder[];
+  // TASK-B 26: yaka kartı önizlemesi — yalnız verilmış yaka kartı (ISSUED|PRINTED|REPRINTED)
+  badgePreview: { badgeNo: string; status: string; profileName?: string | null; profile?: { id: string; name: string } | null } | null;
+  // TASK-B 26: CV — konuşmacı/hakem kişinin kendi kayıtları (boş dizi = rol yok / kayıt yok)
+  cv: { id: string; kind: string; title: string; organization?: string | null; startDate?: string | null; endDate?: string | null; isCurrent: boolean; description?: string | null }[];
+  // TASK-B 26: kalan bakiye toplamı (kuruş)
+  balanceTotal: number;
   waitlist: { id: string; status: string; priority: number; notes?: string | null; offeredAt?: string | null; offerExpiresAt?: string | null; respondedAt?: string | null; categoryName: string; categoryCode?: string | null; convertedRegistrationNo?: string | null }[];
 };
 
 type SponsorData = {
   edition: { id: string; name: string; startDate: string; endDate: string; venueName?: string | null; city?: string | null; seriesName?: string | null } | null;
+  // TASK-B 25: düzenleyici kontrollü içerik blokları (görünür + SPONSOR|BOTH)
+  blocks: PortalBlockPublic[];
   // TASK-A F1: portalToken alanı kaldırıldı (belirteç yaşam döngüsü PortalToken tablosunda)
   organization: { id: string; name: string; type: string; city?: string | null; country?: string | null; website?: string | null };
   agreements: {
@@ -70,7 +92,9 @@ type SponsorData = {
     deliverables: { id: string; name: string; type: string; status: string; dueDate?: string | null; responsible?: string | null }[];
     booths: { id: string; status: string; code?: string | null; sizeSqm?: number | null; boothStatus?: string | null; price?: number | null; currency: string }[];
   }[];
-  entitlements: { id: string; label: string; type: string; granted: number; consumed: number; reserved: number; restrictions?: string | null; claims: { id: string; status: string; guestName?: string | null }[] }[];
+  entitlements: { id: string; label: string; type: string; granted: number; consumed: number; reserved: number; total: number; claimed: number; restrictions?: string | null; claims: { id: string; status: string; guestName?: string | null }[] }[];
+  // TASK-B 26: stant tahsislerinin düz listesi (sözleşme bağımsız hızlı görünüm)
+  booths: { id: string; agreementId: string; agreementStatus: string; status: string; code?: string | null; sizeSqm?: number | null; boothStatus?: string | null; price?: number | null; currency: string }[];
   orders: PortalOrder[];
   staff: { participationId: string; source: string; personName: string; personTitle?: string | null; registrationStatus?: string | null; categoryCode?: string | null; badgeStatus?: string | null }[];
 };
@@ -296,8 +320,65 @@ function PortalEmpty({ icon: I, title, desc }: { icon: typeof Icons.Inbox; title
   );
 }
 
+// ─── TASK-B 25: portal blokları ─────────────────────────────────────────────
+// payloadJson güvenli ayrıştırma — dize/nesne/dizi/sahte biçimlerde boş nesneye düşer
+function parseBlockPayload(raw?: string | null): BlockPayload {
+  if (!raw) return {};
+  try {
+    const p = JSON.parse(raw) as unknown;
+    return p && typeof p === "object" && !Array.isArray(p) ? (p as BlockPayload) : {};
+  } catch {
+    return {};
+  }
+}
+
+const BLOCK_ICON: Record<string, typeof Icons.Megaphone> = {
+  ANNOUNCEMENT: Icons.Megaphone, BANNER: Icons.RectangleHorizontal, INFO: Icons.Info,
+  LINK: Icons.Link2, CUSTOM: Icons.Sparkles,
+};
+
+// portal önizlemesindeki blok şeridi — düzenleyicinin eklediği içerik ziyaretçi görüşüyle görünür
+function PortalBlocks({ blocks }: { blocks: PortalBlockPublic[] }) {
+  if (!blocks.length) return null;
+  return (
+    <div className="space-y-2" role="region" aria-label={t("portal.previewTitle")}>
+      {blocks.map((b, i) => {
+        const I = BLOCK_ICON[b.type] ?? Icons.Info;
+        const payload = parseBlockPayload(b.payloadJson);
+        return (
+          <div
+            key={b.id}
+            className="maven-portal-enter flex items-start gap-3 rounded-xl border border-primary/20 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-3.5 shadow-sm"
+            style={{ animationDelay: `${i * 40}ms` }}
+          >
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/15 text-primary"><I className="size-4.5" aria-hidden /></span>
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-2 text-sm font-semibold">
+                <span className="truncate">{b.title}</span>
+                <Chip tone={b.type === "ANNOUNCEMENT" ? "amber" : b.type === "LINK" ? "teal" : "neutral"}>{t(`portal.typ${b.type}`)}</Chip>
+              </p>
+              {payload.text && <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{payload.text}</p>}
+              {payload.url && (
+                <a
+                  href={payload.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                >
+                  <Icons.ExternalLink className="size-3" aria-hidden /> {payload.linkLabel || t("portal.openLink")}
+                </a>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ═══ KATILIMCI PORTALI ═══════════════════════════════════════════════════════
 function ParticipantPortal({ editionId, headerDesign }: { editionId: string; headerDesign?: PortalHeaderDraft | null }) {
+  useLang(); // dil değişiminde re-render
   const { toast } = useToast();
   const now = useNow();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -456,6 +537,8 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
             />
 
             <div className="maven-portal-body space-y-4 bg-muted/20 p-4 sm:p-5">
+              {/* TASK-B 25: düzenleyici blokları — ziyaretçi görüşünün en üstünde */}
+              <PortalBlocks blocks={d.blocks} />
               {!d.participation ? (
                 <PortalEmpty icon={Icons.UserPlus} title="Bu edisyonda katılımınız bulunmuyor" desc="Kayıt formuyla başvurduğunuzda katılımınız oluşturulur ve bu ekrancan takip edebilirsiniz." />
               ) : (
@@ -534,6 +617,10 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
                     {/* ödeme kartı */}
                     <section className="maven-portal-enter rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "120ms" }}>
                       <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.Wallet className="size-4 text-primary" /> Ödemeleriniz</h4>
+                      {/* TASK-B 26: kalan bakiye toplamı — tüm siparişlerin kalanı (kuruş → görüntü) */}
+                      <p className={cn("mt-2 rounded-md px-2 py-1.5 text-xs font-medium", d.balanceTotal > 0 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700")}>
+                        {t("portal.balanceTotal")}: <b className="tabular-nums">{fmtMoney(d.balanceTotal, d.orders[0]?.currency ?? "TRY")}</b>
+                      </p>
                       <div className="mt-3"><OrderBlock orders={d.orders} onPayLink={payLink} busyId={busy} /></div>
                     </section>
 
@@ -595,6 +682,17 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
                           {d.participation.certificates.map((c) => <StatusBadge key={c.id} map={{ NOT_ELIGIBLE: "Hak yok", ELIGIBLE: "Hak kazandı", GENERATED: "Üretildi", DELIVERED: "Teslim edildi", REVOKED: "İptal" }} value={c.status} />)}
                           {d.participation.badges.length === 0 && d.participation.certificates.length === 0 && <p className="text-xs text-muted-foreground">Henüz belge üretilmedi.</p>}
                         </div>
+                        {/* TASK-B 26: yaka kartı önizlemesi — yalnız verilmış yaka kartı için */}
+                        {d.badgePreview && (
+                          <div className="mt-2.5 flex items-center gap-3 rounded-lg border border-primary/25 bg-primary/5 p-2.5">
+                            <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/15 text-primary"><Icons.IdCard className="size-4.5" aria-hidden /></span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-semibold">{d.badgePreview.profileName ?? t("portal.badgePreviewFallback")}</p>
+                              <p className="font-mono text-[10px] text-muted-foreground">{d.badgePreview.badgeNo}</p>
+                            </div>
+                            <StatusBadge map={{ NOT_ELIGIBLE: "Hak yok", READY: "Hazır", PRINTED: "Basıldı", REPRINTED: "Yeniden basıldı", ISSUED: "Verildi", VOID: "İptal" }} value={d.badgePreview.status} />
+                          </div>
+                        )}
                       </div>
                       {d.participation.claims.length > 0 && (
                         <div className="border-t pt-3">
@@ -611,6 +709,28 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
                       )}
                     </section>
                   </div>
+
+                  {/* TASK-B 26: CV — konuşmacı/hakem kişinin kendi zaman çizelgesi */}
+                  {d.cv.length > 0 && (
+                    <section className="maven-portal-enter rounded-xl border bg-card p-4 shadow-sm" aria-label={t("portal.cvTitle")}>
+                      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.ScrollText className="size-4 text-primary" /> {t("portal.cvTitle")}</h4>
+                      <ul className="maven-scroll mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+                        {d.cv.map((c) => (
+                          <li key={c.id} className="rounded-lg border bg-background/60 p-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="truncate text-xs font-medium">{c.title}</p>
+                              <Chip tone="violet">{t(`portal.cvKind.${c.kind}`)}</Chip>
+                            </div>
+                            <p className="mt-0.5 text-[10px] text-muted-foreground">
+                              {c.organization ? `${c.organization} · ` : ""}
+                              {c.startDate ? fmtDate(c.startDate) : "—"}{c.isCurrent ? ` — ${t("portal.cvCurrent")}` : c.endDate ? ` — ${fmtDate(c.endDate)}` : ""}
+                            </p>
+                            {c.description && <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{c.description}</p>}
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
                 </>
               )}
             </div>
@@ -620,8 +740,7 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
     </div>
   );
 }
-
-// ═══ SPONSOR PORTALI ═════════════════════════════════════════════════════════
+// ═══ SPONSOR PORTALI ═══════════════════════════════════════════════════════
 const DELIVERABLE_ICON: Record<string, typeof Icons.FileImage> = {
   LOGO: Icons.Image, BANNER: Icons.RectangleHorizontal, GUEST_LIST: Icons.ListOrdered,
   STAND_DESIGN: Icons.DraftingCompass, DESCRIPTION: Icons.FileText, AD: Icons.Megaphone,
@@ -630,6 +749,7 @@ const DELIVERABLE_ICON: Record<string, typeof Icons.FileImage> = {
 const SUBMITTABLE = ["NOT_STARTED", "WAITING_SPONSOR", "REJECTED"];
 
 function SponsorPortal({ editionId, headerDesign }: { editionId: string; headerDesign?: PortalHeaderDraft | null }) {
+  useLang(); // dil değişiminde re-render
   const { toast } = useToast();
   const [orgId, setOrgId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -753,6 +873,8 @@ function SponsorPortal({ editionId, headerDesign }: { editionId: string; headerD
             />
 
             <div className="maven-portal-body space-y-4 bg-muted/20 p-4 sm:p-5">
+              {/* TASK-B 25: düzenleyici blokları — ziyaretçi görüşünün en üstünde */}
+              <PortalBlocks blocks={d.blocks} />
               {d.agreements.length === 0 ? (
                 <PortalEmpty icon={Icons.FileSignature} title="Sözleşme bulunamadı" desc="Bu kurumun edisyonda aktif sponsor sözleşmesi yok." />
               ) : (
@@ -811,6 +933,8 @@ function SponsorPortal({ editionId, headerDesign }: { editionId: string; headerD
                                   <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-teal-500" /> {e.consumed} kullanıldı</span>
                                   <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-amber-400" /> {e.reserved} ayrılmış</span>
                                   <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-muted-foreground/30" /> {Math.max(0, e.granted - e.consumed - e.reserved)} boş</span>
+                                  {/* TASK-B 26: havuz özeti — kalan = total - claimed */}
+                                  <span className="inline-flex items-center gap-1 font-medium text-foreground"><Icons.Scale className="size-3" aria-hidden /> {t("portal.entRemaining")}: {Math.max(0, e.total - e.claimed)}</span>
                                 </div>
                                 {e.claims.length > 0 && (
                                   <ul className="mt-2 space-y-0.5 border-t border-dashed pt-1.5">
@@ -1037,6 +1161,211 @@ function PortalHeaderDesigner({
   );
 }
 
+// ═══ PORTAL BLOKLARI YÖNETİMİ (TASK-B 25) ═════════════════════════════════
+// Düzenleyici CRUD yüzeyi: /api/portal/blocks (liste + oluştur + görünürlük + sil).
+// Bu bölüm yalnız organizatör görünümündedir (Dış Portal modülü = yönetici ekranı).
+function PortalBlocksManager({ editionId }: { editionId: string }) {
+  useLang();
+  const { toast } = useToast();
+  const blocks = useApi<PortalBlockRow[]>(
+    () => apiGet<{ items: PortalBlockRow[] }>(`/api/portal/blocks?editionId=${editionId}`).then((r) => r.items),
+    [editionId],
+  );
+  const [dlgOpen, setDlgOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+  const emptyForm = { audience: "BOTH", type: "ANNOUNCEMENT", title: "", text: "", order: "0", isVisible: true };
+  const [form, setForm] = useState(emptyForm);
+
+  const openCreate = () => { setForm(emptyForm); setDlgOpen(true); };
+
+  const createBlock = async () => {
+    if (!form.title.trim()) return;
+    setBusy(true);
+    try {
+      await apiSend("/api/portal/blocks", "POST", {
+        editionId,
+        audience: form.audience,
+        type: form.type,
+        title: form.title.trim(),
+        payloadJson: JSON.stringify({ text: form.text.trim() }),
+        order: Math.max(0, Math.round(Number(form.order) || 0)),
+        isVisible: form.isVisible,
+      });
+      toast({ title: t("portal.createdToast"), description: t("portal.createdDesc", { title: form.title.trim() }) });
+      setDlgOpen(false);
+      blocks.reload();
+    } catch (e) {
+      toast({ title: t("portal.actionFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleVisible = async (row: PortalBlockRow) => {
+    setRowBusyId(row.id);
+    try {
+      await apiSend("/api/portal/blocks", "PATCH", { id: row.id, isVisible: !row.isVisible });
+      toast({ title: !row.isVisible ? t("portal.visibleOnToast") : t("portal.visibleOffToast"), description: row.title });
+      blocks.reload();
+    } catch (e) {
+      toast({ title: t("portal.actionFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setRowBusyId(null);
+    }
+  };
+
+  const removeBlock = async (row: PortalBlockRow) => {
+    setRowBusyId(row.id);
+    try {
+      await apiSend(`/api/portal/blocks?id=${row.id}`, "DELETE");
+      toast({ title: t("portal.deletedToast"), description: t("portal.deletedDesc", { title: row.title }) });
+      blocks.reload();
+    } catch (e) {
+      toast({ title: t("portal.actionFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setRowBusyId(null);
+    }
+  };
+
+  const items = blocks.data ?? [];
+
+  return (
+    <SectionCard
+      title={t("portal.blocksSectionTitle")}
+      desc={t("portal.blocksSectionDesc")}
+      action={
+        <div className="flex items-center gap-2">
+          <Chip tone="teal">{t("portal.blockCount", { count: items.length })}</Chip>
+          <Button size="sm" className="h-8 gap-1.5" onClick={openCreate}>
+            <Icons.Plus className="size-3.5" aria-hidden /> {t("portal.btnNewBlock")}
+          </Button>
+        </div>
+      }
+    >
+      {blocks.loading ? (
+        <Loading rows={3} />
+      ) : blocks.error ? (
+        <ErrorState message={blocks.error} onRetry={blocks.reload} />
+      ) : items.length === 0 ? (
+        <EmptyState title={t("portal.emptyTitle")} desc={t("portal.emptyDesc")} />
+      ) : (
+        <ul className="maven-scroll max-h-96 space-y-2 overflow-y-auto pr-1">
+          {items.map((b) => {
+            const I = BLOCK_ICON[b.type] ?? Icons.Info;
+            const payload = parseBlockPayload(b.payloadJson);
+            return (
+              <li
+                key={b.id}
+                className={cn(
+                  "flex flex-wrap items-center gap-3 rounded-lg border bg-background/60 p-3 transition-colors hover:bg-background",
+                  !b.isVisible && "opacity-60",
+                )}
+              >
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><I className="size-4" aria-hidden /></span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold">{b.title}</p>
+                  {payload.text && <p className="mt-0.5 line-clamp-1 text-[10px] text-muted-foreground">{payload.text}</p>}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Chip tone={b.audience === "BOTH" ? "violet" : b.audience === "SPONSOR" ? "amber" : "teal"}>{t(`portal.aud${b.audience}`)}</Chip>
+                  <Chip tone="neutral">{t(`portal.typ${b.type}`)}</Chip>
+                  <span className="rounded-md border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground" aria-label={t("portal.fldOrder")}>
+                    #{b.order}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={b.isVisible}
+                    disabled={rowBusyId === b.id}
+                    onCheckedChange={() => toggleVisible(b)}
+                    aria-label={`${t("portal.switchAria")} — ${b.title}`}
+                  />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-8 p-0 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                    disabled={rowBusyId === b.id}
+                    onClick={() => removeBlock(b)}
+                    aria-label={`${t("portal.btnDeleteAria")} — ${b.title}`}
+                  >
+                    {rowBusyId === b.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Trash2 className="size-3.5" aria-hidden />}
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* oluştur diyaloğu — payloadJson istemcide {text} nesnesi olarak yazılır */}
+      <Dialog open={dlgOpen} onOpenChange={setDlgOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Icons.LayoutList className="size-4 text-primary" /> {t("portal.dlgCreateTitle")}</DialogTitle>
+            <DialogDescription>{t("portal.dlgCreateDesc")}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="pb-audience">{t("portal.fldAudience")}</Label>
+                <Select value={form.audience} onValueChange={(v) => setForm((f) => ({ ...f, audience: v }))}>
+                  <SelectTrigger id="pb-audience"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PARTICIPANT">{t("portal.audPARTICIPANT")}</SelectItem>
+                    <SelectItem value="SPONSOR">{t("portal.audSPONSOR")}</SelectItem>
+                    <SelectItem value="BOTH">{t("portal.audBOTH")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="pb-type">{t("portal.fldType")}</Label>
+                <Select value={form.type} onValueChange={(v) => setForm((f) => ({ ...f, type: v }))}>
+                  <SelectTrigger id="pb-type"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ANNOUNCEMENT">{t("portal.typANNOUNCEMENT")}</SelectItem>
+                    <SelectItem value="BANNER">{t("portal.typBANNER")}</SelectItem>
+                    <SelectItem value="INFO">{t("portal.typINFO")}</SelectItem>
+                    <SelectItem value="LINK">{t("portal.typLINK")}</SelectItem>
+                    <SelectItem value="CUSTOM">{t("portal.typCUSTOM")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pb-title">{t("portal.fldTitle")} *</Label>
+              <Input id="pb-title" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} maxLength={120} placeholder={t("portal.fldTitlePh")} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pb-text">{t("portal.fldText")}</Label>
+              <Textarea id="pb-text" rows={3} value={form.text} onChange={(e) => setForm((f) => ({ ...f, text: e.target.value }))} placeholder={t("portal.fldTextPh")} />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="pb-order">{t("portal.fldOrder")}</Label>
+                <Input id="pb-order" type="number" min={0} step={1} value={form.order} onChange={(e) => setForm((f) => ({ ...f, order: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="pb-visible">{t("portal.fldVisible")}</Label>
+                <div className="flex h-9 items-center gap-2">
+                  <Switch id="pb-visible" checked={form.isVisible} onCheckedChange={(v) => setForm((f) => ({ ...f, isVisible: v }))} />
+                  <span className="text-[11px] text-muted-foreground">{t("portal.fldVisibleHint")}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDlgOpen(false)}>{t("portal.btnCancel")}</Button>
+            <Button onClick={createBlock} disabled={busy || !form.title.trim()}>
+              {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Plus className="size-4" aria-hidden />} {t("portal.btnCreate")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </SectionCard>
+  );
+}
+
 // ═══ MODÜL KÖKÜ ══════════════════════════════════════════════════════════════
 export function PortalsView() {
   const { currentEditionId, editions } = useApp();
@@ -1083,6 +1412,8 @@ export function PortalsView() {
       ) : (
         <div className="space-y-4">
           <PortalHeaderDesigner editionId={edition.id} editionName={edition.name} draft={headerDraft} setDraft={setHeaderDraft} />
+          {/* TASK-B 25: düzenleyici kontrollü portal blokları — her iki portal yüzeyi için */}
+          <PortalBlocksManager editionId={edition.id} />
           {tab === "participant" ? (
             <ParticipantPortal editionId={edition.id} headerDesign={headerDraft} />
           ) : (

@@ -30,9 +30,10 @@ sharp.concurrency(1);
 sharp.cache({ memory: 64, files: 20, items: 100 });
 
 const MAX_DATAURL_KB = 600;         // SQLite satırı için güvenli tavan (≤ 600KB)
-const MAX_PIXELS = 25_000_000;      // 25MP iki-kapı
+const MAX_PIXELS = 25_000_000;      // 25MP iki-kapı (unlimited ASLA — limitInputPixels her kapıda)
+const MAX_EDGE = 1920;              // TASK-B 16: uzun kenar tavanı (çıkış — kaynak muaf)
 const THUMB_SIZE = 320;             // thumb 320
-const EDITION_QUOTA_KB = 512 * 1024; // 512 MB edisyon kotası
+const EDITION_QUOTA_KB = 512 * 1024; // 512 MB edisyon kotası (aşım 413 PAYLOAD_TOO_LARGE)
 
 // magic-bytes tablosu — iddia ≠ gerçek (ilk baytlar konuşur)
 function detectMagic(buf: Buffer): { mime: string; ext: string } | null {
@@ -82,7 +83,7 @@ export async function POST(req: NextRequest) {
     const quotaAgg = await db.mediaAsset.aggregate({ where: { editionId }, _sum: { sizeKb: true } });
     const usedKb = quotaAgg._sum.sizeKb ?? 0;
     if (parsed && usedKb + parsed.sizeKb > EDITION_QUOTA_KB) {
-      return NextResponse.json({ error: `Medya kotası doldu (${Math.round(usedKb / 1024)} MB / ${EDITION_QUOTA_KB / 1024} MB) — eski varlıkları arşivleyip silin` }, { status: 429 });
+      return NextResponse.json({ error: `Medya kotası doldu (${Math.round(usedKb / 1024)} MB / ${EDITION_QUOTA_KB / 1024} MB) — eski varlıkları arşivleyip silin` }, { status: 413 }); // TASK-B 16: kota 413
     }
 
     // ── M5: magic-bytes + biçim savunmaları ──
@@ -118,17 +119,26 @@ export async function POST(req: NextRequest) {
     let thumbDataUrl: string | null = null;
 
     if (buf && detected?.mime.startsWith("image/")) {
-      // KAPI 1: metadata piksel sınırı
-      const meta = await sharp(buf, { limitInputPixels: MAX_PIXELS }).metadata().catch(() => null);
+      // KAPI 1: metadata piksel sınırı + failOn error (kesik/bozuk girdi RED — sharp docs)
+      const meta = await sharp(buf, { limitInputPixels: MAX_PIXELS, failOn: "error" })
+        .metadata().catch(() => null);
       if (!meta) return NextResponse.json({ error: "Görsel çözümlenemedi" }, { status: 415 });
       const pixels = (meta.width ?? 0) * (meta.height ?? 0);
       if (pixels > MAX_PIXELS) {
         return NextResponse.json({ error: `Görsel ${meta.width}×${meta.height} px — 25 MP tavanı aşıldı` }, { status: 413 });
       }
-      // WebP q80 — EXIF/GPS/meta temizlenir (ensureAlpha: şeffaflık korunur)
-      const webp = await sharp(buf, { limitInputPixels: MAX_PIXELS })
-        .rotate() // EXIF yönüne göre döndür (meta şerildikten sonra görüntü doğru dursun)
-        .webp({ quality: 80 })
+      // TASK-B 16: animasyonlu girdi (GIF/WebP) → İLK KARE (pages:1) — statik WebP çıkışı
+      const frameCount = meta.pages ?? 1;
+      // Fotoğraf: WebP q80 — şeffaflık YOKSA kayıplı; ALFA VARSA KAYIPSIZ (alpha lossless —
+      // kenar/kademeli saydamlık bozulması önlenir). EXIF/GPS/meta zaten şerilmez.
+      const hasAlpha = meta.hasAlpha === true;
+      let pipeline = sharp(buf, { limitInputPixels: MAX_PIXELS, pages: 1, failOn: "error" })
+        .rotate(); // EXIF yönüne göre döndür (meta şerildikten sonra görüntü doğru dursun)
+      // TASK-B 16: uzun kenar > 1920 → içe sığdır (up-scale ASLA)
+      if ((meta.width ?? 0) > MAX_EDGE || (meta.height ?? 0) > MAX_EDGE) {
+        pipeline = pipeline.resize(MAX_EDGE, MAX_EDGE, { fit: "inside", withoutEnlargement: true });
+      }
+      const webp = await (hasAlpha ? pipeline.webp({ lossless: true }) : pipeline.webp({ quality: 80 }))
         .toBuffer({ resolveWithObject: true });
       // KAPI 2: dönüşüm sonrası boyut yeniden doğrulanır
       const outPixels = webp.info.width * webp.info.height;
@@ -144,13 +154,19 @@ export async function POST(req: NextRequest) {
       if (storedSizeKb > MAX_DATAURL_KB) {
         return NextResponse.json({ error: `İşlenmiş görsel ${storedSizeKb} KB — gömme tavanı ${MAX_DATAURL_KB} KB` }, { status: 413 });
       }
-      // thumb 320 — önizleme WebP
-      const thumb = await sharp(buf, { limitInputPixels: MAX_PIXELS })
+      // thumb 320 — önizleme WebP (ilk kare; alpha → lossless)
+      const thumb = await sharp(buf, { limitInputPixels: MAX_PIXELS, pages: 1, failOn: "error" })
         .rotate()
         .resize(THUMB_SIZE, THUMB_SIZE, { fit: "inside", withoutEnlargement: true })
-        .webp({ quality: 80 })
+        .webp(hasAlpha ? { lossless: true } : { quality: 80 })
         .toBuffer();
       thumbDataUrl = `data:image/webp;base64,${thumb.toString("base64")}`;
+      // animasyonlu girdi kanıtı: kare sayısı > 1 ise kayıt notu (çıkış statik — ilk kare)
+      if (frameCount > 1) {
+        await db.activityLog.create({
+          data: { editionId, type: "OTHER", message: `Animasyonlu görsel ilk kareye indirildi (${frameCount} kare → statik WebP): ${rawName}`, entityType: "MediaAsset", actorName: "Sistem" },
+        }).catch(() => undefined);
+      }
     }
 
     // BENZERSİZ ad — her yüklemede çakışmasız

@@ -18,12 +18,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { useLang, t } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface HotelRow {
   id: string; name: string; city?: string | null; district?: string | null; contactName?: string | null; contactPhone?: string | null;
   address?: string | null; email?: string | null; website?: string | null; starRating?: number | null; checkInNote?: string | null; notes?: string | null;
+  // TASK-B 25: kompakt portal alanları — tamamı kullanıcı girişi (SIFIR hardcode)
+  mapsUrl?: string | null; transportInfo?: string | null; localPhoneCode?: string | null; powerInfo?: string | null;
   logoUrl?: string | null; imageUrl?: string | null;
   roomTypes: { id: string; name: string; capacity: number; pricePerNight: number; currency: string }[];
   blocks: { id: string; name: string; releaseDate?: string | null; cancellationPolicy?: string | null; roomType: { name: string; id: string }; inventoryNights: { id: string; date: string; totalRooms: number; reservedRooms: number }[] }[];
@@ -46,6 +49,7 @@ const NO_SHOW_NOTE = "Gerçekleşmeyen konaklama ücreti faturaya no-show kalemi
 const COMPANION_AGE = { ADULT: "Yetişkin", CHILD: "Çocuk", INFANT: "Bebek (0-2)" } as const;
 
 export function AccommodationView() {
+  useLang(); // dil değişiminde re-render (t() parça sözlükten okur)
   const { currentEditionId, tenant, bump, refreshKey } = useApp();
   const { toast } = useToast();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -70,6 +74,7 @@ export function AccommodationView() {
   const [hotelForm, setHotelForm] = useState({
     name: "", city: "", district: "", address: "", starRating: "__none__", checkInNote: "",
     contactName: "", contactPhone: "", email: "", website: "", notes: "", logoUrl: "", imageUrl: "",
+    mapsUrl: "", transportInfo: "", localPhoneCode: "", powerInfo: "",
   });
   const [hotelPending, setHotelPending] = useState<{ logo?: { dataUrl: string }; cover?: { dataUrl: string } }>({});
   const [hotelMediaBusy, setHotelMediaBusy] = useState<"logo" | "cover" | null>(null);
@@ -212,7 +217,7 @@ export function AccommodationView() {
   };
 
   const openCreateHotel = () => {
-    setHotelForm({ name: "", city: "", district: "", address: "", starRating: "__none__", checkInNote: "", contactName: "", contactPhone: "", email: "", website: "", notes: "", logoUrl: "", imageUrl: "" });
+    setHotelForm({ name: "", city: "", district: "", address: "", starRating: "__none__", checkInNote: "", contactName: "", contactPhone: "", email: "", website: "", notes: "", logoUrl: "", imageUrl: "", mapsUrl: "", transportInfo: "", localPhoneCode: "", powerInfo: "" });
     setHotelPending({});
     setHotelDialog({ target: null });
   };
@@ -223,6 +228,7 @@ export function AccommodationView() {
       starRating: h.starRating ? String(h.starRating) : "__none__", checkInNote: h.checkInNote ?? "",
       contactName: h.contactName ?? "", contactPhone: h.contactPhone ?? "", email: h.email ?? "",
       website: h.website ?? "", notes: h.notes ?? "", logoUrl: h.logoUrl ?? "", imageUrl: h.imageUrl ?? "",
+      mapsUrl: h.mapsUrl ?? "", transportInfo: h.transportInfo ?? "", localPhoneCode: h.localPhoneCode ?? "", powerInfo: h.powerInfo ?? "",
     });
     setHotelPending({});
     setHotelDialog({ target: h });
@@ -288,6 +294,11 @@ export function AccommodationView() {
         email: hotelForm.email.trim(),
         website: hotelForm.website.trim(),
         notes: hotelForm.notes.trim(),
+        // TASK-B 25: kompakt portal alanları — değerler yalnız kullanıcı girişinden gelir
+        mapsUrl: hotelForm.mapsUrl.trim(),
+        transportInfo: hotelForm.transportInfo.trim(),
+        localPhoneCode: hotelForm.localPhoneCode.trim(),
+        powerInfo: hotelForm.powerInfo.trim(),
       };
       let hotelId = hotelDialog?.target?.id ?? null;
       if (hotelId) {
@@ -856,6 +867,29 @@ export function AccommodationView() {
                 <Label htmlFor="h-checkin">Giriş / çıkış notu</Label>
                 <Input id="h-checkin" value={hotelForm.checkInNote} onChange={(e) => setHotelForm({ ...hotelForm, checkInNote: e.target.value })} placeholder="Giriş 14:00 / Çıkış 12:00" />
               </div>
+              {/* TASK-B 25: kompakt portal alanları — tamamı kullanıcı girişi, sıfır hazır değer */}
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="h-maps">{t("accommodation.hMapsUrl")}</Label>
+                <Input id="h-maps" type="url" inputMode="url" value={hotelForm.mapsUrl} onChange={(e) => setHotelForm({ ...hotelForm, mapsUrl: e.target.value })} placeholder={t("accommodation.hMapsUrlPh")} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="h-transport">{t("accommodation.hTransport")}</Label>
+                <Textarea id="h-transport" rows={2} value={hotelForm.transportInfo} onChange={(e) => setHotelForm({ ...hotelForm, transportInfo: e.target.value })} placeholder={t("accommodation.hTransportPh")} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2 sm:flex sm:items-start sm:gap-3">
+                <div className="flex-1 space-y-1.5">
+                  <Label htmlFor="h-localphone">{t("accommodation.hLocalPhone")}</Label>
+                  <Input id="h-localphone" value={hotelForm.localPhoneCode} onChange={(e) => setHotelForm({ ...hotelForm, localPhoneCode: e.target.value })} placeholder={t("accommodation.hLocalPhonePh")} />
+                </div>
+                <div className="mt-3 flex-1 space-y-1.5 sm:mt-0">
+                  <Label htmlFor="h-power">{t("accommodation.hPower")}</Label>
+                  <Input id="h-power" value={hotelForm.powerInfo} onChange={(e) => setHotelForm({ ...hotelForm, powerInfo: e.target.value })} placeholder={t("accommodation.hPowerPh")} />
+                </div>
+              </div>
+              <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground sm:col-span-2">
+                <Icons.Compass className="mt-0.5 size-3 shrink-0" aria-hidden />
+                {t("accommodation.hPortalFieldsHint")}
+              </p>
               <div className="space-y-1.5 sm:col-span-2">
                 <Label htmlFor="h-notes">Notlar</Label>
                 <Textarea id="h-notes" rows={2} value={hotelForm.notes} onChange={(e) => setHotelForm({ ...hotelForm, notes: e.target.value })} placeholder="kontrat şartları, iptal politikası, servet…" />

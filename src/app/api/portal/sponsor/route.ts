@@ -90,7 +90,28 @@ export async function GET(req: NextRequest) {
       include: { series: true },
     });
 
+    // TASK-B 25: görünür portal blokları — sponsor yüzeyi (yalnız düzenleyici içeriği)
+    const blocks = await db.portalBlock.findMany({
+      where: { editionId, isVisible: true, audience: { in: ["SPONSOR", "BOTH"] } },
+      orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+      select: { id: true, type: true, title: true, payloadJson: true, order: true },
+    });
+
+    // TASK-B 26: stant (booth) özeti — kurumun sözleşmelerine bağlı tahsislerin düz listesi
+    // (aynı veri agreements[].booths altında da yaşar; burada net anahtarla tekrar sunulur)
+    const booths = agreements.flatMap((a) =>
+      a.boothAllocations.map((b) => ({
+        id: b.id, agreementId: a.id, agreementStatus: a.status,
+        status: b.status, allocatedAt: b.allocatedAt, releasedAt: b.releasedAt,
+        code: b.boothUnit?.code ?? null, sizeSqm: b.boothUnit?.sizeSqm ?? null,
+        boothStatus: b.boothUnit?.status ?? null, price: b.boothUnit?.price ?? null,
+        currency: b.boothUnit?.currency ?? "TRY",
+      })),
+    );
+
     return NextResponse.json({
+      // TASK-B 25: düzenleyici kontrollü içerik blokları — üst-seviye anahtar
+      blocks,
       edition: edition
         ? { id: edition.id, name: edition.name, startDate: edition.startDate, endDate: edition.endDate, venueName: edition.venueName, city: edition.city, seriesName: edition.series?.name ?? null }
         : null,
@@ -114,9 +135,14 @@ export async function GET(req: NextRequest) {
           boothStatus: b.boothUnit?.status ?? null, price: b.boothUnit?.price ?? null, currency: b.boothUnit?.currency ?? "TRY",
         })),
       })),
+      // TASK-B 26: stant tahsislerinin düz listesi (sözleşme bağımsız hızlı görünüm)
+      booths,
       entitlements: entitlements.map((e) => ({
         id: e.id, label: e.label, type: e.type, source: e.source,
         granted: e.quantityGranted, consumed: e.quantityConsumed, reserved: e.quantityReserved,
+        // TASK-B 26: havuz özeti — total (kota) ve claimed (kullanılan + ayrılmış);
+        // sponsor için kalan = total - claimed
+        total: e.quantityGranted, claimed: e.quantityConsumed + e.quantityReserved,
         restrictions: e.restrictions, validUntil: e.validUntil,
         claims: e.claims.map((c) => ({ id: c.id, status: c.status, guestName: c.guestName, reservedAt: c.reservedAt, consumedAt: c.consumedAt })),
       })),

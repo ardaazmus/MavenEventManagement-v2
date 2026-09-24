@@ -8,7 +8,9 @@ export const AUTH_ENABLED = process.env.MAVEN_AUTH === "on";
 
 // Oturum denetimi — bayrak açıkken HMAC-imzalı oturum çerezi doğrulanır (fail-closed:
 // imza yok/süresi geçmiş → false). A4 lib'leri: src/lib/auth/{password,totp,session}.ts
+// TASK-B 12: mfa-pending dar kapsamlı belirteci OTURUM SAYILMAZ.
 export async function hasSession(req: NextRequest): Promise<boolean> {
   if (!AUTH_ENABLED) return true;
-  return sessionFromRequest(req) !== null;
+  const p = sessionFromRequest(req);
+  return p !== null && !p.mfaPending;
 }

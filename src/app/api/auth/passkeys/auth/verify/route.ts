@@ -42,19 +42,36 @@ export async function POST(req: NextRequest) {
     });
     if (!verification.verified) return NextResponse.json({ error: "Doğrulanamadı" }, { status: 401 });
 
-    // counter kuralı (klon tespiti)
+    // TASK-B 11 counter kuralı (simplewebauthn docs): sayaç YALNIZ iki taraf da sıfırdan
+    // farklıysa güncellenir — 0 bildiren authenticator'lar (bazı passkey sağlayıcıları)
+    // asla sahte klon şüphesine yakalanmaz ve saklanan sayaç üzerine yazılmaz.
     const newCounter = verification.authenticationInfo.newCounter;
-    if (newCounter <= passkey.counter && newCounter > 0) {
-      // şüpheli: anahtarı devre dışı bırak (güvenlik fail-closed)
+    if (newCounter > 0 && passkey.counter > 0 && newCounter <= passkey.counter) {
+      // klon şüphesi: monotonic sayaç geriledi → fail-closed, anahtar devre dışı
       await db.passkey.delete({ where: { id: passkey.id } });
       return NextResponse.json({ error: "Authenticator klon şüphesi — passkey iptal edildi" }, { status: 401 });
     }
-    await db.passkey.update({ where: { id: passkey.id }, data: { counter: newCounter, lastUsedAt: new Date() } });
+    if (newCounter > 0 && passkey.counter > 0) {
+      await db.passkey.update({ where: { id: passkey.id }, data: { counter: newCounter, lastUsedAt: new Date() } });
+    } else {
+      await db.passkey.update({ where: { id: passkey.id }, data: { lastUsedAt: new Date() } }); // sayaç değişmez
+    }
     await db.user.update({ where: { id: passkey.userId }, data: { lastLoginAt: new Date(), failedLoginCount: 0 } });
+
+    // TASK-B 12: passkey giriş başarılı ama zorunlu-MFA rolü henüz MFA kurmadıysa
+    // oturum YOK — mfa-pending onboarding çerezi ile 403 (kurulum istemi)
+    const ENFORCED = ["ORG_OWNER", "FINANCE_MANAGER"];
+    if (ENFORCED.includes(passkey.user.role) && !passkey.user.mfaEnabled) {
+      const { mfaPendingCookieHeader } = await import("@/lib/auth/session");
+      return new NextResponse(
+        JSON.stringify({ error: "Bu rol için iki adımlı doğrulama zorunlu — kurulum gerekli", mfaSetupRequired: true }),
+        { status: 403, headers: { "Set-Cookie": mfaPendingCookieHeader(passkey.userId, passkey.user.role, passkey.user.tenantId), "Content-Type": "application/json" } },
+      );
+    }
 
     const cookie = sessionCookieHeader({
       uid: passkey.userId, role: passkey.user.role, tenantId: passkey.user.tenantId,
-      exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+      iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
     });
     return new NextResponse(
       JSON.stringify({ ok: true, user: { name: passkey.user.name, role: passkey.user.role } }),

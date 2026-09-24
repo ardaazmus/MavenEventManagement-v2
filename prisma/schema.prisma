@@ -44,6 +44,9 @@ model Tenant {
   mailProviders  MailProviderConfig[]
   mailSuppressions MailSuppression[] // S3: istismar denetimi — bastırma listesi
   kvkkErasureRequests KvkkErasureRequest[] // K7: silme talepleri
+  jurisdictionProfile JurisdictionProfile? // TASK-B 19: yargı çerçevesi profili (tek-etkin)
+  documents      DocumentRecord[]     // TASK-B 20: belge sicili
+  subscription   TenantSubscription?  // TASK-B 22: abonelik (manuel ilk aşama)
 }
 
 model User {
@@ -202,6 +205,10 @@ model Person {
   // — Misafir/aile hiyerarşisi (Self-Referencing Parent_ID, kullanıcı isteği 8) —
   parentPersonId String? // bağlı olduğu ana katılımcı (aile/misafir profili)
   relationType   String? // SELF|SPOUSE|CHILD|GUEST|ASSISTANT|OTHER
+  // — TASK-B 14: asgari rıza (KVKK m.4 asgari veri) — herkese açık kayıt yüzeyi —
+  consentVersion    String?   // gösterilen aydınlatma/rıza metni sürümü
+  consentAcceptedAt DateTime? // gerekli-bilgilendirme onayı zamanı (gönderim anı)
+  commsOptIn        Boolean?  // fonksiyonel seçimli onay (iletişim) — zorunlu DEĞİL
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -312,6 +319,7 @@ model EventEdition {
   sessionMaterials SessionMaterial[]
   mediaFolders     MediaFolder[]
   mediaAssets      MediaAsset[]
+  portalBlocks     PortalBlock[] // TASK-B 25: düzenleyici kontrollü portal içerik blokları
   apiIntegrations  ApiIntegration[]
   emailTemplates   EmailTemplate[]
   badgeDesigns     BadgeDesign[]
@@ -909,6 +917,11 @@ model HotelProperty {
   website      String?
   starRating   Int?     // 1-5 yıldız
   checkInNote  String?  // giriş/çıkış saat notu (örn. "14:00 / 12:00")
+  // — TASK-B 25: kompakt portal alanları (giriş ekranından girilir; SIFIR hardcode) —
+  mapsUrl        String? // harita bağlantısı (katılımcı portalı "Yol Tarifi")
+  transportInfo  String? // ulaşım bilgisi (metro/otobüs/vale)
+  localPhoneCode String? // yerel telefon/contak kodu
+  powerInfo      String? // priz/gerilim bilgisi (220V Type-C vb.)
 
   edition     EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
   roomTypes   RoomType[]
@@ -1574,11 +1587,111 @@ model MediaAsset {
   uploadedBy  String?
   createdAt   DateTime @default(now())
 
-  edition EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  edition     EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
   folder  MediaFolder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  documents DocumentRecord[] // TASK-B 20: belge sicili bağlantısı
 
   @@index([editionId])
   @@index([folderId])
+}
+
+// ─── TASK-B 19: YARGI ÇERÇEVESİ PROFİLİ ────────────────────────────────────
+// Yasal METİNLER KODDA DEĞİL (harici kaynak) — profil yalnız operasyonel parametreleri
+// taşır. TR/EU hazır ayarları API tarafından uygulanır (legal TEXT external ilkesi).
+model JurisdictionProfile {
+  id                String   @id @default(cuid())
+  tenantId          String   @unique
+  jurisdiction      String   @default("TR")     // TR|EU|CUSTOM
+  dsrSlaDays        Int      @default(30)       // veri konusu talebi SLA (K7: 30 gün)
+  breachWindowHours Int      @default(72)       // veri ihlali bildirim penceresi
+  opLogYears        Int      @default(3)        // operasyon günlüğü saklama (K7 ile uyumlu)
+  consentVersion    String?  // etkin rıza metni sürümü (metin HARİCİ)
+  cookieStrictness  String   @default("STRICT") // STRICT|OPT_OUT — üçüncü taraf script ZATEN YOK
+  dpoMode           Boolean  @default(false)    // VK (veri sorumlusunu temsil) modu
+  transferMechanism String   @default("BOARD_AUTHORIZATION") // TR: Kurul izni | EU: SCC|ADEQUACY
+  retentionNotes    String?  // saklama özeti (serbest not — hukuk metni değil)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+// ─── TASK-B 20: BELGE SİCİLİ — sürümlü, TEK AKTİF, sha256 bütünlük ────────
+model DocumentRecord {
+  id           String   @id @default(cuid())
+  tenantId     String
+  kind         String   // AYDINLATMA|ACIK_RIZA|VERI_SAKLAMA|DST|KVKK_POLITIKA|E_FATURA|VERBIS|OTHER
+  version      Int      @default(1)
+  title        String
+  sha256       String   // içerik bütünlüğü (hex 64)
+  mediaAssetId String?  // dosya merkezi medya arşivinde
+  externalUrl  String?  // harici barındırma (göreli yol ilkesi: kullanıcı linki)
+  notes        String?
+  active       Boolean  @default(true) // (tenantId,kind) başına TEK aktif — yeni sürüm eskisini arşivler
+  supersededBy String?  // yerini alan sürümün DocumentRecord id'si
+  createdBy    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  asset  MediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, kind, active])
+}
+
+// ─── TASK-B 22: SaaS ABONELİK + FATURA (kuruş — F6 minor birim; İLK AŞAMA MANUEL) ──
+model TenantSubscription {
+  id                String    @id @default(cuid())
+  tenantId          String    @unique
+  plan              String    @default("TRIAL") // TRIAL|BASIC|PRO|ENTERPRISE
+  status            String    @default("TRIAL") // TRIAL|ACTIVE|PAST_DUE|CANCELED
+  priceMonthlyMinor Int       @default(0)      // kuruş/ay (F6 disiplini)
+  currency          String    @default("TRY")
+  periodStart       DateTime  @default(now())
+  periodEnd         DateTime?
+  trialQuotaBytes   Int       @default(524288000) // deneme kotası (512 MB) — YALNIZ soft-block
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoices TenantInvoice[]
+}
+
+model TenantInvoice {
+  id             String    @id @default(cuid())
+  subscriptionId String
+  number         String    @unique
+  amountMinor    Int       // kuruş
+  currency       String    @default("TRY")
+  status         String    @default("DRAFT") // DRAFT|ISSUED|PAID|VOID
+  issuedAt       DateTime?
+  paidAt         DateTime?
+  dueAt          DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  subscription TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+}
+
+// ─── TASK-B 25: PORTAL BLOKLARI — düzenleyici kontrollü içerik blokları ────
+model PortalBlock {
+  id          String   @id @default(cuid())
+  editionId   String
+  audience    String   @default("BOTH") // PARTICIPANT|SPONSOR|BOTH — hangi portal yüzeyi
+  type        String   @default("ANNOUNCEMENT") // ANNOUNCEMENT|BANNER|INFO|LINK|CUSTOM
+  title       String
+  payloadJson String?  // yapılandırılmış içerik { text?, url?, imageUrl?, linkLabel? }
+  order       Int      @default(0)
+  isVisible   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([editionId, isVisible])
 }
 
 // ─── GENİŞLETME DALGASI 3: API Geçidi & Entegrasyon (kullanıcı isteği 4) ───

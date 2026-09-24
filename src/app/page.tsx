@@ -19,6 +19,8 @@ import { FormCenterView } from "@/components/maven/views/form-center";
 import { AccountingView } from "@/components/maven/views/accounting";
 import { BadgeQueueView } from "@/components/maven/views/badge-queue";
 import { OnsiteView, CertificatesView, CommunicationsView, OperationsView, SettingsView } from "@/components/maven/views/onsite";
+import { SocialView } from "@/components/maven/views/social";
+import { B2bView } from "@/components/maven/views/b2b";
 import { MediaArchiveView } from "@/components/maven/views/media";
 import { ApiGatewayView } from "@/components/maven/views/integrations";
 import { Lock } from "lucide-react";
@@ -79,6 +81,8 @@ function renderModule(module: string) {
     case "registrations": return <RegistrationsView />;
     case "scientific": return <ScientificView />;
     case "program": return <ProgramView />;
+    case "social": return <SocialView />;
+    case "b2b": return <B2bView />;
     case "sponsorship": return <SponsorshipView />;
     case "floors": return <FloorsView />;
     case "accommodation": return <AccommodationView />;

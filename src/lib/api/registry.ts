@@ -510,6 +510,34 @@ export const registry: Record<string, EntityConfig> = {
     filterFields: ["editionId", "isActive"],
     orderBy: { createdAt: "desc" },
   },
+
+  // ─── Genişletme dalgası 6: Sosyal & Tur Planı + B2B Planı ──
+  "social-plans": {
+    delegate: db.socialPlan as unknown as AnyDelegate,
+    include: { announcements: { orderBy: { sentAt: "desc" }, take: 50 }, _count: { select: { announcements: true } } },
+    searchFields: ["title", "venue", "meetingPoint"],
+    filterFields: ["editionId", "kind", "type", "status", "isOfficial"],
+    orderBy: { startsAt: "asc" },
+  },
+  "social-announcements": {
+    delegate: db.socialPlanAnnouncement as unknown as AnyDelegate,
+    include: { person: { select: { id: true, firstName: true, lastName: true, email: true, company: true, photoUrl: true } } },
+    filterFields: ["planId", "personId", "channel", "response"],
+    orderBy: { sentAt: "desc" },
+  },
+  "b2b-plans": {
+    delegate: db.b2bPlan as unknown as AnyDelegate,
+    include: { assignments: { include: { person: { select: { id: true, firstName: true, lastName: true, email: true, company: true, title: true, photoUrl: true } } }, orderBy: { createdAt: "asc" } }, _count: { select: { assignments: true } } },
+    searchFields: ["subject", "venue", "location"],
+    filterFields: ["editionId", "status", "isPrivate"],
+    orderBy: { startsAt: "asc" },
+  },
+  "b2b-assignments": {
+    delegate: db.b2bAssignment as unknown as AnyDelegate,
+    include: { person: { select: { id: true, firstName: true, lastName: true, email: true, company: true, title: true, photoUrl: true } }, plan: { select: { id: true, subject: true, startsAt: true, venue: true, location: true, status: true } } },
+    filterFields: ["planId", "personId", "status", "role"],
+    orderBy: { createdAt: "asc" },
+  },
 };
 
 // ─── Yardımcı: hangi alanlar güncellenebilir (id/createdAt hariç) ──────────
@@ -523,4 +551,20 @@ export function sanitize(data: Record<string, unknown>): Record<string, unknown>
     out[k] = v === "" ? null : v;
   }
   return out;
+}
+
+// ─── Tenant otomatik doldurma ───────────────────────────────────────────────
+// Tenant-kapsamlı modellerde istemci tenantId göndermese/boş gönderse bile
+// tek kiracılı kurulumda ilk tenant ile doldurulur — aksi halde Prisma
+// "Argument `tenant` is missing" hatası yeni etkinlik/seri/kişi/kurum
+// oluşturmayı imkânsız kılar (bug: Yeni Etkinlik Oluşturulamadı).
+const TENANT_SCOPED = new Set(["event-series", "editions", "people", "organizations", "mail-providers"]);
+
+export async function withTenant(entity: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (!TENANT_SCOPED.has(entity)) return data;
+  const v = data.tenantId;
+  if (typeof v === "string" && v.trim() !== "") return data;
+  const tenant = await db.tenant.findFirst({ select: { id: true } });
+  if (!tenant) throw new Error("Kiracı (tenant) bulunamadı — önce demo verisini yükleyin");
+  return { ...data, tenantId: tenant.id };
 }

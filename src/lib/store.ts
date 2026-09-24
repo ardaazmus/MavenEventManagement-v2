@@ -43,6 +43,7 @@ interface AppState {
   bump: () => void;
   bootstrap: () => Promise<void>;
   seed: () => Promise<void>;
+  patchCapability: (editionId: string, cap: { id: string; key: string; enabled: boolean; setupNote?: string | null }) => void;
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -59,6 +60,20 @@ export const useApp = create<AppState>((set, get) => ({
   },
   setCurrentEdition: (id) => set({ currentEditionId: id }),
   bump: () => set({ refreshKey: get().refreshKey + 1 }),
+
+  // Yetenek toggle'ından sonra store'u anında düzelt — menü kilidi (hasCapability)
+  // ve Ayarlar switch'i DB ile aynı turda güncellenir (bug: toggle bağlı değildi)
+  patchCapability: (editionId, cap) => {
+    set({
+      editions: get().editions.map((e) => {
+        if (e.id !== editionId) return e;
+        const caps = e.capabilities ?? [];
+        const idx = caps.findIndex((c) => c.key === cap.key);
+        const next = idx >= 0 ? caps.map((c, i) => (i === idx ? { ...c, ...cap } : c)) : [...caps, cap];
+        return { ...e, capabilities: next };
+      }),
+    });
+  },
 
   bootstrap: async () => {
     set({ loading: true, error: null });

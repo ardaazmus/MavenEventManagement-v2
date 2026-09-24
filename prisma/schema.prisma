@@ -133,6 +133,8 @@ model Person {
   taskAssignments  Task[]
   delegationLeaders Delegation[]         @relation("DelegationLeader")
   waitlistEntries  WaitlistEntry[]
+  socialAnnouncements SocialPlanAnnouncement[]
+  b2bAssignments   B2bAssignment[]
 
   @@index([email])
   @@index([lastName])
@@ -224,6 +226,8 @@ model EventEdition {
   apiIntegrations  ApiIntegration[]
   emailTemplates   EmailTemplate[]
   badgeDesigns     BadgeDesign[]
+  socialPlans      SocialPlan[]
+  b2bPlans         B2bPlan[]
 
   @@index([status])
   @@index([startDate])
@@ -1571,4 +1575,99 @@ model BadgeDesign {
   profiles BadgeProfile[]
 
   @@index([editionId])
+}
+
+// ─── GENİŞLETME DALGASI 6: Sosyal Etkinlik & Tur Planı + B2B Planı (kullanıcı isteği: 2 yeni modül) ──
+// Sosyal Etkinlik Planı ile Tur Planı AYNI modülde birleşir (kind alanı ayırır);
+// tür çeşitliliği type alanı ile sağlanır, resmi/resmi olmayan isOfficial ile işaretlenir.
+
+model SocialPlan {
+  id           String    @id @default(cuid())
+  editionId    String
+  kind         String    @default("SOCIAL") // SOCIAL (sosyal etkinlik) | TOUR (tur planı) — birleşik modül içinde ayrım
+  type         String    @default("OTHER")  // GALA|COCKTAIL|OFFICIAL_DINNER|WELCOME_RECEPTION|CLOSING|NETWORKING|CULTURAL_TOUR|CITY_TOUR|TECHNICAL_TOUR|OTHER
+  isOfficial   Boolean   @default(false)    // Resmi (kurum/konakçı adına) plan
+  title        String
+  description  String?
+  startsAt     DateTime?
+  endsAt       DateTime?
+  venue        String?   // sosyal mekân / tur başlangıç noktası
+  meetingPoint String?   // tur buluşma noktası & saati notu
+  capacity     Int?
+  price        Float?
+  currency     String    @default("TRY")
+  status       String    @default("DRAFT") // DRAFT|ANNOUNCED|CLOSED|CANCELLED
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  edition       EventEdition              @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  announcements SocialPlanAnnouncement[]
+
+  @@index([editionId])
+  @@index([kind])
+}
+
+model SocialPlanAnnouncement {
+  id          String    @id @default(cuid())
+  planId      String
+  personId    String?
+  fullName    String?   // snapshot — kişi silinse de duyuru geçmişi kalır
+  channel     String    @default("IN_APP") // IN_APP|EMAIL|SMS|PUSH
+  message     String?
+  response    String?   // INVITED|ACCEPTED|DECLINED — mobil/portal yanıtı
+  respondedAt DateTime?
+  sentAt      DateTime  @default(now())
+
+  plan   SocialPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  person Person?    @relation(fields: [personId], references: [id], onDelete: SetNull)
+
+  @@index([planId])
+  @@index([personId])
+}
+
+// B2B Planı: kişilere atanır, kişi mobil uygulamadan kabul eder, görüş bildirir.
+// Plan kişilerin kendi özelinde kalır (isPrivate); KARŞILIKLI onay sonrası ACTIVE olur.
+
+model B2bPlan {
+  id          String    @id @default(cuid())
+  editionId   String
+  subject     String    // Konu girişi
+  description String?
+  startsAt    DateTime? // Saat girişi
+  endsAt      DateTime?
+  venue       String?   // Etkinlik yeri
+  location    String?   // Konum (masa / stand / oda / buluşma noktası)
+  isPrivate   Boolean   @default(true) // kişilerin kendi özelinde kalır
+  status      String    @default("DRAFT") // DRAFT|PENDING_APPROVAL|ACTIVE|COMPLETED|CANCELLED
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  edition     EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  assignments B2bAssignment[]
+
+  @@index([editionId])
+  @@index([status])
+}
+
+model B2bAssignment {
+  id                String    @id @default(cuid())
+  planId            String
+  personId          String
+  role              String    @default("PARTICIPANT") // HOST|GUEST|PARTICIPANT
+  status            String    @default("ASSIGNED")    // ASSIGNED|ACCEPTED|DECLINED|COMPLETED
+  organizerApproved Boolean   @default(false) // organizatör onayı
+  personApproved    Boolean   @default(false) // kişinin onayı (mobil uygulama)
+  feedback          String?   // görüş (mobil uygulamadan gelir)
+  feedbackAt        DateTime?
+  respondedAt       DateTime?
+  createdAt         DateTime  @default(now())
+
+  plan   B2bPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  person Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, personId])
+  @@index([planId])
+  @@index([personId])
 }

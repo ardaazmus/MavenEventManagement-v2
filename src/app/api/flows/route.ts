@@ -367,11 +367,66 @@ export async function POST(req: NextRequest) {
       }
 
       // ── Yetenek aç/kapa (modül menüsü §53 ile birlikte değişir) ──
+      // İki kullanım: (a) mevcut satır: capabilityId; (b) satır hiç yoksa: editionId + key ile UPSERT.
+      // (b) şart — hiç oluşturulmamış yetenek ayarlarında "yok" çipiyle kilitli kalıyordu (bug fix).
       case "capability.toggle": {
-        const { capabilityId, enabled } = body as { capabilityId: string; enabled: boolean };
-        const cap = await db.eventCapability.update({ where: { id: capabilityId }, data: { enabled } });
+        const { capabilityId, editionId, key, enabled } = body as { capabilityId?: string; editionId?: string; key?: string; enabled: boolean };
+        let cap;
+        if (capabilityId) {
+          cap = await db.eventCapability.update({ where: { id: capabilityId }, data: { enabled } });
+        } else if (editionId && key) {
+          const existing = await db.eventCapability.findUnique({ where: { editionId_key: { editionId, key } } });
+          cap = existing
+            ? await db.eventCapability.update({ where: { id: existing.id }, data: { enabled } })
+            : await db.eventCapability.create({ data: { editionId, key, enabled, setupNote: enabled ? "hazır" : "yapılacak" } });
+        } else {
+          return NextResponse.json({ error: "capabilityId ya da editionId+key gerekli" }, { status: 400 });
+        }
         await db.activityLog.create({ data: { type: ActivityType.CAPABILITY_TOGGLED, editionId: cap.editionId, message: `Yetenek ${enabled ? "açıldı" : "kapatıldı"}: ${cap.key} — menü, formlar ve raporlar birlikte değişir`, actorName: "Etkinlik Yöneticisi" } });
         return NextResponse.json(cap);
+      }
+
+      // ── B2B: kişinin mobil uygulamadan yanıtı (kabul/red + görüş) ──
+      case "b2b.respond": {
+        const { assignmentId, accepted, feedback, respondedBy } = body as { assignmentId: string; accepted: boolean; feedback?: string; respondedBy?: string };
+        const a = await db.b2bAssignment.update({
+          where: { id: assignmentId },
+          data: {
+            status: accepted ? "ACCEPTED" : "DECLINED",
+            personApproved: accepted,
+            respondedAt: new Date(),
+            feedback: feedback ?? null,
+            feedbackAt: feedback ? new Date() : null,
+          },
+          include: { person: { select: { firstName: true, lastName: true } }, plan: { include: { assignments: true } } },
+        });
+        // karşılıklı onay denetimi: herkes kabul etti VE organizatör onayı varsa plan ACTIVE olur
+        const plan = a.plan;
+        const allAccepted = plan.assignments.length > 0 && plan.assignments.every((x) => x.status === "ACCEPTED");
+        const anyApproved = plan.assignments.some((x) => x.organizerApproved);
+        if (allAccepted && anyApproved && plan.status !== "ACTIVE" && plan.status !== "COMPLETED" && plan.status !== "CANCELLED") {
+          await db.b2bPlan.update({ where: { id: plan.id }, data: { status: "ACTIVE" } });
+        } else if (plan.status === "DRAFT" && plan.assignments.some((x) => x.status === "ACCEPTED" || x.status === "DECLINED")) {
+          await db.b2bPlan.update({ where: { id: plan.id }, data: { status: "PENDING_APPROVAL" } });
+        }
+        await db.activityLog.create({ data: { type: ActivityType.TASK_SAVED, editionId: (await db.b2bPlan.findUnique({ where: { id: a.planId }, select: { editionId: true } }))?.editionId ?? null, message: `B2B yanıtı: ${a.person.firstName} ${a.person.lastName} → ${accepted ? "KABUL" : "RET"}${feedback ? ` — Görüş: ${feedback}` : ""} (${a.plan.subject})`, entityType: "B2bAssignment", entityId: a.id, actorName: respondedBy ?? "Mobil Uygulama" } });
+        return NextResponse.json({ ...JSON.parse(JSON.stringify(a)), planActivated: allAccepted && anyApproved });
+      }
+
+      // ── B2B: organizatör onayı (karşılıklı onayın diğer ayağı) ──
+      case "b2b.approve": {
+        const { assignmentId, approved } = body as { assignmentId: string; approved: boolean };
+        const a = await db.b2bAssignment.update({ where: { id: assignmentId }, data: { organizerApproved: approved }, include: { person: { select: { firstName: true, lastName: true } }, plan: { include: { assignments: true } } } });
+        const plan = a.plan;
+        const allAccepted = plan.assignments.length > 0 && plan.assignments.every((x) => x.status === "ACCEPTED");
+        const anyApproved = plan.assignments.some((x) => x.organizerApproved);
+        let activated = false;
+        if (allAccepted && anyApproved && plan.status !== "COMPLETED" && plan.status !== "CANCELLED") {
+          await db.b2bPlan.update({ where: { id: plan.id }, data: { status: "ACTIVE" } });
+          activated = true;
+        }
+        await db.activityLog.create({ data: { type: ActivityType.TASK_SAVED, message: `B2B organizatör onayı: ${a.person.firstName} ${a.person.lastName} — ${approved ? "onaylandı" : "geri alındı"} (${a.plan.subject})`, entityType: "B2bAssignment", entityId: a.id, actorName: "Etkinlik Yöneticisi" } });
+        return NextResponse.json({ ok: true, planActivated: activated });
       }
 
       default:

@@ -1,6 +1,6 @@
 // Generic collection route: /api/[entity]
 import { NextRequest, NextResponse } from "next/server";
-import { registry, sanitize } from "@/lib/api/registry";
+import { registry, sanitize, withTenant } from "@/lib/api/registry";
 import { db } from "@/lib/db";
 
 type Ctx = { params: Promise<{ entity: string }> };
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   try {
     const body = await req.json();
-    const data = sanitize(body);
+    const data = await withTenant(entity, sanitize(body));
     const created = await config.delegate.create({ data, include: config.include });
 
     if (config.auditType) {

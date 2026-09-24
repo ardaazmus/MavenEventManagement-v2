@@ -238,7 +238,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <p>© 2026 Maven Event Management — Ortak Organizasyonel Mimari v1.0 · Tenant: {tenant?.name ?? "—"}</p>
             <p className="flex items-center gap-3">
               <span className="inline-flex items-center gap-1"><Icons.Layers className="size-3.5" /> {editions.length} edisyon</span>
-              <span className="inline-flex items-center gap-1"><Icons.Users className="size-3.5" /> 74 model</span>
+              <span className="inline-flex items-center gap-1"><Icons.Users className="size-3.5" /> 78 model</span>
             </p>
           </div>
         </footer>

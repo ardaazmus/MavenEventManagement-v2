@@ -217,6 +217,69 @@ export const RESERVATION_STATUS = ACCOMMODATION_STATUS;
 export const TASK_STATUS = { BACKLOG: "Havuz", TODO: "Yapılacak", IN_PROGRESS: "Devam", REVIEW: "İnceleme", DONE: "Bitti", BLOCKED: "Engelli" } as const;
 export const TASK_PRIORITY = { LOW: "Düşük", MEDIUM: "Orta", HIGH: "Yüksek", URGENT: "Acil" } as const;
 
+// ─── Sosyal Etkinlik & Tur Planı (birleşik modül) ───────────────────────────
+
+export const SOCIAL_KINDS: Record<string, string> = {
+  SOCIAL: "Sosyal Etkinlik",
+  TOUR: "Tur Planı",
+};
+
+export const SOCIAL_PLAN_TYPES: Record<string, string> = {
+  GALA: "Gala",
+  COCKTAIL: "Kokteyl",
+  OFFICIAL_DINNER: "Resmi Yemek",
+  WELCOME_RECEPTION: "Ağırşama (Welcome)",
+  CLOSING: "Kapanış",
+  NETWORKING: "Networking",
+  CULTURAL_TOUR: "Kültür Turu",
+  CITY_TOUR: "Şehir Turu",
+  TECHNICAL_TOUR: "Teknik Gezi",
+  OTHER: "Diğer",
+};
+
+export const SOCIAL_PLAN_STATUS = {
+  DRAFT: "Taslak",
+  ANNOUNCED: "Duyuruldu",
+  CLOSED: "Kayıt Kapandı",
+  CANCELLED: "İptal",
+} as const;
+
+export const SOCIAL_ANNOUNCE_CHANNELS: Record<string, string> = {
+  IN_APP: "Uygulama İçi",
+  EMAIL: "E-posta",
+  SMS: "SMS",
+  PUSH: "Push (Mobil)",
+};
+
+export const SOCIAL_RESPONSE = {
+  INVITED: "Davet Edildi",
+  ACCEPTED: "Katılıyor",
+  DECLINED: "Katılmıyor",
+} as const;
+
+// ─── B2B Planı ──────────────────────────────────────────────────────────────
+
+export const B2B_PLAN_STATUS = {
+  DRAFT: "Taslak",
+  PENDING_APPROVAL: "Onay Bekliyor",
+  ACTIVE: "Etkin (Karşılıklı Onay)",
+  COMPLETED: "Tamamlandı",
+  CANCELLED: "İptal",
+} as const;
+
+export const B2B_ASSIGNMENT_STATUS = {
+  ASSIGNED: "Atandı",
+  ACCEPTED: "Kabul Edildi",
+  DECLINED: "Reddedildi",
+  COMPLETED: "Gerçekleşti",
+} as const;
+
+export const B2B_ROLES: Record<string, string> = {
+  HOST: "Ev Sahibi",
+  GUEST: "Misafir",
+  PARTICIPANT: "Katılımcı",
+};
+
 // ─── Yetenekler (§6) — hard-code edilen event türü YOK ──────────────────────
 
 export const CAPABILITIES = [
@@ -232,8 +295,9 @@ export const CAPABILITIES = [
   { key: "ACCESS_CONTROL", label: "Erişim", desc: "Kapılar, geçiş hakları" },
   { key: "CERTIFICATES", label: "Sertifika", desc: "Uygunluk kuralları, belge üretimi" },
   { key: "CME_CREDITS", label: "CME Kredi", desc: "Kredi defteri" },
-  { key: "TOURS", label: "Turlar", desc: "Sosyal tur programı" },
-  { key: "SOCIAL_EVENTS", label: "Sosyal Etkinlik", desc: "Gala, kokteyl" },
+  { key: "TOURS", label: "Tur Planı", desc: "Sosyal & teknik tur programı (Sosyal & Tur modülü ile birleşik)" },
+  { key: "SOCIAL_EVENTS", label: "Sosyal & Tur Planı", desc: "Gala, kokteyl, resmi yemek ve tur planları — kişilere duyurulur" },
+  { key: "B2B_MEETINGS", label: "B2B Planı", desc: "Kişiye B2B planı atama, mobil kabul, karşılıklı onay, görüş" },
   { key: "OPERATIONS", label: "Operasyon", desc: "Görev, tedarikçi, lojistik" },
   { key: "COMMUNICATIONS", label: "İletişim", desc: "Segment, kampanya, gönderim" },
 ] as const;
@@ -345,6 +409,8 @@ export const MODULES = [
   { id: "accounting", label: "Muhasebe", icon: "Calculator", capability: "REGISTRATION", group: "edition" },
   { id: "scientific", label: "Bilimsel", icon: "GraduationCap", capability: "SCIENTIFIC", group: "edition" },
   { id: "program", label: "Program", icon: "Clock", capability: "PROGRAM", group: "edition" },
+  { id: "social", label: "Sosyal & Tur Planı", icon: "PartyPopper", capability: "SOCIAL_EVENTS", group: "edition" },
+  { id: "b2b", label: "B2B Planı", icon: "Briefcase", capability: "B2B_MEETINGS", group: "edition" },
   { id: "sponsorship", label: "Sponsor & Fuar", icon: "Handshake", capability: "SPONSORSHIP", group: "edition" },
   { id: "floors", label: "Floor Studio", icon: "Map", capability: "FLOOR_PLAN", group: "edition" },
   { id: "accommodation", label: "Konaklama", icon: "BedDouble", capability: "ACCOMMODATION", group: "edition" },

@@ -1772,47 +1772,66 @@ export function OperationsView() {
 // ─── AYARLAR ────────────────────────────────────────────────────────────────
 
 export function SettingsView() {
-  const { editions, currentEditionId, bump, refreshKey } = useApp();
+  const { editions, currentEditionId, bump, refreshKey, patchCapability } = useApp();
   const { toast } = useToast();
   const edition = editions.find((e) => e.id === currentEditionId);
   const [busy, setBusy] = useState<string | null>(null);
 
   const { data: assignments } = useApi<{ id: string; role: string; organization: { name: string } }[]>(() => listEntity("org-assignments", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
 
-  const toggleCap = async (capabilityId: string, enabled: boolean) => {
-    setBusy(capabilityId);
+  // Yetenek aç/kapa: satır varsa güncelle, hiç yoksa editionId+key ile OLUŞTUR (upsert akışı).
+  // Başarılı olunca store patchCapability ile anında düzeltilir — eskiden switch bağlı değildi.
+  const toggleCap = async (key: string, capabilityId: string | undefined, enabled: boolean) => {
+    if (!currentEditionId) return;
+    const busyKey = capabilityId ?? `new-${key}`;
+    setBusy(busyKey);
     try {
-      await apiSend("/api/flows", "POST", { action: "capability.toggle", capabilityId, enabled });
+      const cap = await apiSend<{ id: string; key: string; enabled: boolean; setupNote?: string | null }>("/api/flows", "POST", { action: "capability.toggle", capabilityId, editionId: currentEditionId, key, enabled });
+      patchCapability(currentEditionId, { id: cap.id ?? busyKey.replace("new-", "cap-"), key, enabled, setupNote: cap.setupNote ?? (enabled ? "hazır" : null) });
       toast({ title: enabled ? "Yetenek açıldı" : "Yetenek kapatıldı", description: "Navigasyon, wizard, yetki, formlar ve raporlar birlikte değişir." });
       bump();
+    } catch (e) {
+      toast({ title: "Yetenek değiştirilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
     } finally { setBusy(null); }
   };
 
   if (!edition) return <EmptyState title="Edisyon seçin" />;
 
+  const enabledCount = CAPABILITIES.filter((cap) => edition.capabilities?.find((c) => c.key === cap.key && c.enabled)).length;
+
   return (
     <div className="space-y-5">
       <PageHeader title="Etkinlik Ayarları" desc="Kimlik, tarih, ekip, yayın ve modül seçimleri — kapalı yeteneğin menüsü baştan gizlenir" />
-      <SectionCard title="Yetenekler (Capabilities)" desc="Modül kartı: açılınca hangi menü/form/rapor geleceği buradan görünür (§6)">
+      <SectionCard
+        title="Yetenekler (Capabilities)"
+        desc="Modül kartı: açılınca hangi menü/form/rapor geleceği buradan görünür (§6) — switch'i değiştirmek menüyü anında açar/kapatır"
+        action={<Chip tone="teal">{enabledCount}/{CAPABILITIES.length} açık</Chip>}
+      >
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {CAPABILITIES.map((cap) => {
             const state = edition.capabilities?.find((c) => c.key === cap.key);
+            const capId = state?.id;
             return (
-              <div key={cap.key} className={cn("flex items-start justify-between gap-3 rounded-lg border p-3", !state?.enabled && "opacity-60")}>
+              <div key={cap.key} className={cn("flex items-start justify-between gap-3 rounded-lg border p-3 transition", !state?.enabled && "opacity-60", state?.enabled && "border-primary/30 bg-primary/[0.04]")}>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">{cap.label}</p>
+                  <p className="flex items-center gap-1.5 text-sm font-medium">
+                    {cap.label}
+                    {state?.enabled && <Icons.CheckCircle2 className="size-3.5 shrink-0 text-emerald-500" aria-label="açık" />}
+                  </p>
                   <p className="text-xs text-muted-foreground">{cap.desc}</p>
                   {state?.setupNote && state.setupNote !== "hazır" && <Chip tone="amber">{state.setupNote}</Chip>}
                 </div>
-                {state ? (
-                  <Switch checked={state.enabled} onCheckedChange={(v) => toggleCap(state.id, v)} disabled={busy === state.id} aria-label={`${cap.label} yeteneği`} />
-                ) : (
-                  <Chip>yok</Chip>
-                )}
+                <Switch
+                  checked={Boolean(state?.enabled)}
+                  onCheckedChange={(v) => toggleCap(cap.key, capId, v)}
+                  disabled={busy === capId || busy === `new-${cap.key}`}
+                  aria-label={`${cap.label} yeteneği`}
+                />
               </div>
             );
           })}
         </div>
+        <p className="mt-3 text-xs text-muted-foreground">Hiç oluşturulmamış yetenek için switch kapalı konumda görünür — açtığınızda kayıt otomatik oluşturulur.</p>
       </SectionCard>
 
       <SectionCard title="Kurum / Ekip Atamaları" desc="Aynı kurum çok rol alabilir; rolün görünürlüğü seçilir (§4)">

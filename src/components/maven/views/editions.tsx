@@ -4,7 +4,7 @@ import { useState } from "react";
 import { apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, PageHeader, StatusBadge, Chip } from "../bits";
-import { EDITION_STATUS, label, TEMPLATES, fmtDate } from "@/lib/constants";
+import { EDITION_STATUS, label, TEMPLATES, CAPABILITIES, fmtDate } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -34,14 +34,26 @@ export function EditionsView() {
     description: "",
     coverColor: "teal",
   });
+  // Adım 3: yetenekler BAŞTAN seçilebilir — şablon önerir, kullanıcı işaretleri açıp kapatır
+  const [selectedCaps, setSelectedCaps] = useState<string[]>(TEMPLATES.SCIENTIFIC_CONGRESS);
+
+  const applyTemplate = (template: string) => {
+    setForm({ ...form, template });
+    setSelectedCaps(TEMPLATES[template] ?? []);
+  };
+
+  const toggleCapSelected = (key: string) => {
+    setSelectedCaps((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  };
 
   const create = async () => {
     setBusy(true);
     try {
+      const tenantId = (await bootstrapData())?.tenantId;
       // seri: basitlik için yeni seri adı ile (aynı ad varsa mevcut seri kullanılır — slug çakışması yoksa)
       const seriesRes = await fetch("/api/event-series", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: form.seriesName, slug: `${form.seriesName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36).slice(-4)}`, template: form.template }),
+        body: JSON.stringify({ name: form.seriesName, slug: `${form.seriesName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36).slice(-4)}`, template: form.template, tenantId }),
       });
       const series = await seriesRes.json();
       if (!seriesRes.ok) throw new Error(series.error ?? "Seri oluşturulamadı");
@@ -58,18 +70,17 @@ export function EditionsView() {
           startDate: form.startDate ? new Date(form.startDate).toISOString() : null,
           endDate: form.endDate ? new Date(form.endDate).toISOString() : null,
           city: form.city, venueName: form.venueName, description: form.description, coverColor: form.coverColor,
-          tenantId: (await bootstrapData())?.tenantId,
+          tenantId,
         }),
       });
       const edition = await editionRes.json();
       if (!editionRes.ok) throw new Error(edition.error ?? "Edisyon oluşturulamadı");
 
-      // şablon yeteneklerini uygula (§6: seçim yalnız başlangıç modüllerini önerir)
-      const caps = TEMPLATES[form.template] ?? [];
-      for (const key of caps) {
+      // §6: seçim başlangıç yeteneklerini belirler — adım 3'te kullanıcı tarafından seçilen set uygulanır
+      for (const key of selectedCaps) {
         await apiSend("/api/capabilities", "POST", { editionId: edition.id, key, enabled: true, setupNote: "yapılacak" });
       }
-      toast({ title: "Etkinlik taslağı oluşturuldu", description: "Katılımcılar henüz göremez. Kurulum wizard'ı ile devam edin." });
+      toast({ title: "Etkinlik taslağı oluşturuldu", description: `${selectedCaps.length} yetenek açıldı. Ayarlar → Yetenekler'den her zaman değiştirebilirsiniz.` });
       setCreateOpen(false); setStep(1);
       await bootstrap();
       setCurrentEdition(edition.id);
@@ -145,7 +156,7 @@ export function EditionsView() {
             <div className="space-y-3">
               <div className="grid grid-cols-3 gap-2">
                 {Object.entries({ SCIENTIFIC_CONGRESS: "Bilimsel Kongre", TRADE_FAIR: "Fuar", CORPORATE_EVENT: "Kurumsal" }).map(([k, v]) => (
-                  <button key={k} onClick={() => setForm({ ...form, template: k })}
+                  <button key={k} onClick={() => applyTemplate(k)}
                     className={cn("rounded-lg border-2 p-3 text-center text-xs font-medium transition", form.template === k ? "border-primary bg-primary/5 text-primary" : "text-muted-foreground hover:border-primary/30")}>
                     {v}
                   </button>
@@ -170,10 +181,31 @@ export function EditionsView() {
           )}
           {step === 3 && (
             <div className="space-y-2">
-              <p className="text-sm font-medium">Önerilen başlangıç yetenekleri — {label(EDITION_STATUS, "PLANNING")} ile başlar</p>
-              <div className="flex flex-wrap gap-1.5">
-                {(TEMPLATES[form.template] ?? []).map((c) => <Chip key={c} tone="teal">{c}</Chip>)}
-                {(TEMPLATES[form.template] ?? []).length === 0 && <span className="text-xs text-muted-foreground">Boş şablon — yetenekleri sonra seçin.</span>}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium">Yetenekler — şablon önerir, siz seçersiniz ({selectedCaps.length}/{CAPABILITIES.length} seçili)</p>
+                <div className="flex gap-1">
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedCaps(CAPABILITIES.map((c) => c.key))}>Tümü</Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedCaps([])}>Temizle</Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedCaps(TEMPLATES[form.template] ?? [])}>Şablon önerisi</Button>
+                </div>
+              </div>
+              <div className="grid max-h-64 gap-1.5 overflow-y-auto sm:grid-cols-2 maven-scroll">
+                {CAPABILITIES.map((cap) => {
+                  const checked = selectedCaps.includes(cap.key);
+                  const suggested = (TEMPLATES[form.template] ?? []).includes(cap.key);
+                  return (
+                    <button key={cap.key} type="button" role="checkbox" aria-checked={checked} onClick={() => toggleCapSelected(cap.key)}
+                      className={cn("flex items-start gap-2 rounded-lg border p-2.5 text-left transition", checked ? "border-primary bg-primary/5" : "hover:border-primary/30", !checked && suggested && "border-dashed border-primary/40")}>
+                      <span className={cn("mt-0.5 grid size-4 shrink-0 place-items-center rounded border", checked ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40")}>
+                        {checked && <Icons.Check className="size-3" />}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-xs font-medium leading-tight">{cap.label}{suggested && !checked ? <span className="ml-1 text-[10px] font-normal text-muted-foreground">(öneri)</span> : null}</span>
+                        <span className="block truncate text-[10px] text-muted-foreground">{cap.desc}</span>
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
               <p className="text-xs text-muted-foreground">Önceki edisyondan kopyalanabilecekler: kategori, form, sponsor paketi, badge, bilimsel iz. Kişiler, ödeme ve check-in kopyalanmaz.</p>
             </div>

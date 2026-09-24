@@ -137,7 +137,7 @@ export async function POST() {
     });
 
     // ── Yetenekler (§6 şablonlar) ──
-    const caps1 = ["REGISTRATION", "SCIENTIFIC", "PROGRAM", "SPONSORSHIP", "EXHIBITION", "FLOOR_PLAN", "ACCOMMODATION", "BADGING", "ACCESS_CONTROL", "CERTIFICATES", "COMMUNICATIONS", "OPERATIONS", "CME_CREDITS"];
+    const caps1 = ["REGISTRATION", "SCIENTIFIC", "PROGRAM", "SPONSORSHIP", "EXHIBITION", "FLOOR_PLAN", "ACCOMMODATION", "BADGING", "ACCESS_CONTROL", "CERTIFICATES", "COMMUNICATIONS", "OPERATIONS", "CME_CREDITS", "SOCIAL_EVENTS", "TOURS", "B2B_MEETINGS"];
     for (const key of caps1) {
       await db.eventCapability.create({ data: { editionId: edition1.id, key, enabled: true, setupNote: key === "CME_CREDITS" ? "uyarı: kredi kuralı tanımlı değil" : key === "FLOOR_PLAN" ? "Floor Studio uygulamasıyla ortak kimlik (§20)" : "hazır" } });
     }

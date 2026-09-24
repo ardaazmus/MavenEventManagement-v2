@@ -1553,3 +1553,39 @@ Stage Summary:
 - 14 düzeltme maddesinin TAMAMI uygulandı; P1 güven/para/kısmi-yazım bulgularının hiçbiri açık kalmadı.
 - 38/38 hedefli+E2E test; 3/3 middleware + 7/7 auth (flag-ON canlı); tsc FULL 0; lint 0; i18n 0.
 - Dürüst kalıntılar: dev-toolkît audit bulguları + sağlayıcı/prod-yedek kanıt boşlukları (kanıt-alamama raporu üstte).
+
+---
+Task ID: CORRECTION-VERIFY (yapıştırılmış düzeltmelerin canlı yeniden-doğrulaması)
+Agent: Z.ai Code (ana ajan)
+Task: Kullanıcı "yapıştırılmış düzeltmeleri uygula" isteği — önceki turda uygulanan 14 maddelik CORRECTION-PASS'in canlı durumunu baştan kanıtla; sapma varsa kök-nedenli düzelt.
+
+Work Log:
+
+## Ortam gerçeği
+- Yüklenen dosya upload/ klasöründe YOK (aynı plan önceki turda uygulanmıştı) → plan yeniden-okuma yerine KANIT-yeniden-üretim yoluna gidildi.
+- Dev sunucu canlıydı (health 200) ama MAVEN_AUTH=off demo modunda (doğru taban).
+
+## Yeniden-doğrulama kanıtları (tümü bu turda, taze)
+- `bunx tsc --noEmit` → exit 0 (FULL)
+- `bun run lint` → 0 problem
+- `node scripts/i18n-hardcoded-scan.mjs` → 74 dosya, 0 ihlal (taban 0)
+- `bunx playwright test goldens corrections ui-corrections flow` → **38 passed / 0 failed** (20.4s)
+- Flag-ON canlı: sunucu MAVEN_AUTH=on ile yeniden başlatıldı (`authEnabled:true` health kanıtı) → `MAVEN_AUTH=on bunx playwright test middleware-boundary auth` → **10 passed / 0 failed** (3/3 middleware sınırı + 7/7 auth akışı)
+- Sunucu varsayılan demo moduna GERİ getirildi (`authEnabled:false` health kanıtı) — kullanıcı önizleme tabanı korunur.
+
+## Ders: flag-ON süitlerinin ortam sözleşmesi (önemli bulgu)
+- İlk denemede middleware-boundary + auth 2 FAIL verdi — KOD hatası DEĞİL: test sürecine verilen `MAVEN_AUTH=on` çalışan SUNUCUYU etkilemez. Middleware flag'i edge-derleme anında in-line edilir (src/middleware.ts:9-14); register route'u flag-off'ta 404 döner (requireAuthEnabled, A4 tasarımı).
+- Doğru protokol (artık sözleşme): (1) sunucuyu `MAVEN_AUTH=on` ile başlat → (2) flag-ON süitleri koş → (3) sunucuyu varsayılana (flag-off) geri getir → (4) health ile her iki modda `authEnabled` değerini kanıtla.
+- Sunucu başlatma kalıbı (sandbox'ta kalıcı olan): `(setsid nohup bun run dev </dev/null >/dev/null 2>&1 &)` + health-poll; sade `nohup ... &` arka planı tool-call bitiminde ölüyor.
+
+## Tarayıcı kanıtları (canlı, default demo sunucu)
+- `/` render: başlık "Maven Event Management — Ortak Organizasyonel Mimari"; konsol 0 hata / 0 [i18n] uyarısı.
+- Footer dinamik model sayısı: "3 edisyon · 89 model" (bootstrap=render=şema) ✓
+- Kişiler → "Kişi Ekle" diyaloğu açıldı: 13 etiket / htmlFor-input çözümlemesi + aria-describedby mevcut; **Escape diyaloğu kapatıyor** ✓ (P4.14'ün canlı teyidi)
+- İletişim görünümü: render metninde liter `{custom}/{segment}/{target}` sayacı **0** ✓
+- 390×844: scrollWidth=390=clientWidth (taşma yok); ekran görüntüleri: tool-results/verify-390.png, tool-results/verify-final-desktop.png
+
+Stage Summary:
+- 14 düzeltme maddesinin hepsi CANLI olarak yeniden kanıtlandı; KOD gerilemesi SIFIR — hiçbir dosya değiştirilmedi.
+- İlk turda görünen 2 FAIL'in kök-nedeni ortam-sözleşmesiydi (flag-ON sunucu gereksinimi); protokol belgelendi ve her iki modda health kanıtlı.
+- Kalıntılar (önceki turdan değişmedi, dürüst rapor): dev-toolkît transitif audit bulguları; sağlayıcı (iyzico/e-posta) gerçek kanıt boşluğu; prod yedek kapsam dışı; tek-örnek rate/lock tavanı.

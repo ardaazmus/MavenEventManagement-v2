@@ -45,6 +45,11 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     let data = sanitize(body);
     data = await applyWriteGuard(entity, data, { isUpdate: true });
     if (config.writeTransform) data = await config.writeTransform(data, true); // S3: sır şifreleme
+    // DÜZELTME (server-side validation): güncellemede de varlık sözleşmesi zorlanır
+    if (config.validate) {
+      const vErr = config.validate(data, true);
+      if (vErr) return NextResponse.json({ error: vErr }, { status: 400 });
+    }
     // TASK-A F1: sponsor sözleşmesi AKTİF'e geçerken (ilk geçiş) portal yetenek
     // belirteci çıkarılır — ham değer bu yanıtta BİR KEZ döner (tek görünlük).
     let beforeStatus: string | null = null;

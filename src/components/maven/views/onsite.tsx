@@ -1165,6 +1165,11 @@ export function CommunicationsView() {
   const [campaignEdit, setCampaignEdit] = useState<CampaignRow | null>(null);
   const [campaignForm, setCampaignForm] = useState(emptyCampaign);
   const [campaignBusy, setCampaignBusy] = useState(false);
+  // DÜZELTME (kampanya formu): zorunlu istemci durumu buton disabled/aria-disabled'a
+  // YANSITILIR + satır-içi hata gösterilir. Devre dışı buton güvenlik kontrolü DEĞİLDİR —
+  // saveCampaign içindeki istemci kontrolleri ve sunucu doğrulaması aynen korunur.
+  const campaignInvalid = !campaignForm.name.trim()
+    || (campaignForm.audienceMode !== "SEGMENT" && !campaignForm.customRecipients.trim());
 
   const openCampaignNew = (preselect?: Partial<typeof emptyCampaign>) => {
     setCampaignEdit(null);
@@ -1503,8 +1508,23 @@ export function CommunicationsView() {
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
-              <Label className="text-xs">{t("communications.fName")}</Label>
-              <Input value={campaignForm.name} onChange={(e) => setCampaignForm({ ...campaignForm, name: e.target.value })} placeholder={t("communications.fNamePlaceholder")} className="h-8 text-xs" />
+              <Label className="text-xs" htmlFor="campaign-name-input">{t("communications.fName")}</Label>
+              <Input
+                id="campaign-name-input"
+                value={campaignForm.name}
+                onChange={(e) => setCampaignForm({ ...campaignForm, name: e.target.value })}
+                placeholder={t("communications.fNamePlaceholder")}
+                className="h-8 text-xs"
+                aria-required="true"
+                aria-invalid={campaignInvalid && !campaignForm.name.trim() ? true : undefined}
+                aria-describedby={campaignInvalid && !campaignForm.name.trim() ? "campaign-name-error" : undefined}
+              />
+              {campaignInvalid && !campaignForm.name.trim() && (
+                <p id="campaign-name-error" role="alert" className="text-[11px] font-medium text-rose-600">{t("communications.nameRequired")}</p>
+              )}
+              {campaignInvalid && campaignForm.name.trim() && campaignForm.audienceMode !== "SEGMENT" && (
+                <p role="alert" className="text-[11px] font-medium text-rose-600">{t("communications.customEmpty")}</p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
@@ -1579,7 +1599,11 @@ export function CommunicationsView() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCampaignOpen(false)}>{t("common.cancel")}</Button>
-            <Button onClick={saveCampaign} disabled={campaignBusy}>
+            <Button
+              onClick={saveCampaign}
+              disabled={campaignBusy || campaignInvalid}
+              aria-disabled={campaignBusy || campaignInvalid}
+            >
               {campaignBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} {t("common.save")}
             </Button>
           </DialogFooter>

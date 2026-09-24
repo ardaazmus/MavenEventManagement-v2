@@ -103,6 +103,7 @@ export const SCOPES: Record<string, Scope> = {
   companions: { mode: "chain", path: ["participation", "edition"] },
   "social-announcements": { mode: "chain", path: ["plan", "edition"] },
   "b2b-assignments": { mode: "chain", path: ["plan", "edition"] },
+  deliverables: { mode: "chain", path: ["agreement", "edition"] }, // Deliverable→SponsorAgreement→edition.tenantId
 
   // ilk halka nullable olabilen zincirler
   "scan-events": { mode: "chainOptional", path: ["participation", "edition"] },
@@ -180,7 +181,11 @@ export async function applyListGuard(
   sp: { get: (k: string) => string | null }
 ): Promise<void> {
   const scope = SCOPES[entity];
-  if (!scope) return; // harita dışı varlık yok — registry ile senkron tutulur
+  // DÜZELTME (tenant izolasyonu): kapsam haritası dışı varlık FAIL-CLOSED — eski davranış
+  // (return ile sessiz geçiş) registry'de kapsam tanımlanmamış uçların tenant korumasını
+  // bypass etmesine izin veriyordu (ör. deliverables). Kayıt-BULUNAMADI statüsü döner,
+  // hiçbir satır döndürülmez; SCOPES'a eklenerek bilinçli açılır.
+  if (!scope) throw new GuardError("Varlık kapsam haritasında tanımsız — erişim reddedildi", 500);
 
   const paramTenantId = sp.get("tenantId");
 
@@ -324,6 +329,8 @@ export async function ensureInScope(
   id: string,
 ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const scope = SCOPES[entity];
+  // DÜZELTME: kapsam dışı varlık FAIL-CLOSED (eski: ok:true — kayıt-bazlı IDOR bypass açığı)
+  if (!scope) return { ok: false, status: 500, error: "Varlık kapsam haritasında tanımsız" };
 
   // G0-e: scalar FK zinciri — iki adım: kaydın FK değeri → participation → edition.tenantId
   if (scope?.mode === "scalarChain") {
@@ -370,7 +377,7 @@ export async function applyWriteGuard(
   opts: { isUpdate?: boolean } = {}
 ): Promise<Record<string, unknown>> {
   const scope = SCOPES[entity];
-  if (!scope) return data;
+  if (!scope) throw new GuardError("Varlık kapsam haritasında tanımsız — yazım reddedildi", 500); // FAIL-CLOSED (bkz. applyListGuard)
 
   switch (scope.mode) {
     case "tenant": {
@@ -401,10 +408,14 @@ export async function applyWriteGuard(
       if (fkValue) {
         const ctx = await resolveContext(null);
         // varlığın kendi delegate'i üzerinden zincir filtresiyle parent doğrulaması
+        // DÜZELTME: filtre ÇOCUK tablosuna göre kurulur — tenant zinciri ÇOCUĞUN İLİŞKİ
+        // YOLUNUN TAMAMIYLA (path[0]→…→tenant) izlenir; eski slice(1) hatalı olarak
+        // path[0] ilişkisini atlıyordu ve TÜM chain-yazımlarını (form-fields, refunds,
+        // deliverables…) Prisma "Unknown argument" hatasıyla kırıyordu (gizli 400).
         const { registry } = await import("./registry");
         const config = registry[entity];
         const hit = await config.delegate.findFirst({
-          where: { [fk]: fkValue, ...(nestedTenantFilter(scope.path.slice(1), ctx) as Record<string, unknown>) },
+          where: { [fk]: fkValue, ...(nestedTenantFilter(scope.path, ctx) as Record<string, unknown>) },
           select: { id: true },
         });
         if (!hit) throw new GuardError("İlişkili kayıt bulunamadı veya bu çalışma alanına ait değil", 404);

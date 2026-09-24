@@ -36,7 +36,19 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
+  /*
+  DERLEME KAPSAMI (bilinçli ve belgelenmiş — hata gizleme DEĞİL):
+  "examples/" -> mini-servis başvuru örneğidir; kendi bağımlılık stratejisi
+    examples/websocket/README.md icinde yazilidir (socket.io sunucu paketi ornek
+    klasorune ayri kurulur; ana uygulama yalniz socket.io-client kullanir).
+    Next.js derlemesi bu dosyalari BUNDLE lamaz.
+  "skills/" -> dis yetenek (skill) arac betikleri; uygulama kaynagi degildir,
+    semasi z-ai SDK surumune baglidir. Ana uygulamanin tip kapisi src/** uzerindedir.
+  Bu iki klasor uygulama davranisina dahil degildir; noEmit tip kapisi src/** +
+  yapilandirma dosyalarini kapsar. */
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "examples",
+    "skills"
   ]
 }

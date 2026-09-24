@@ -1051,22 +1051,34 @@ export function PeopleView() {
               <DialogDescription>{t("people.person.dialogDesc")}</DialogDescription>
             </DialogHeader>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div><Label>{t("people.lblFirstName")}</Label><Input value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} /></div>
-              <div><Label>{t("people.lblLastName")}</Label><Input value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} /></div>
-              <div className="sm:col-span-2"><Label>{t("people.lblEmail")}</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-              <div><Label>{t("people.lblPhone")}</Label><Input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
-              <div><Label>{t("people.lblCity")}</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
-              <div><Label>{t("people.lblCompany")}</Label><Input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} /></div>
-              <div><Label>{t("people.lblTitle")}</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
-              <div><Label>{t("people.lblCountry")}</Label><Input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} /></div>
               <div>
-                <Label>{t("people.lblLinkedin")}</Label>
-                <Input value={form.linkedin} onChange={(e) => setForm({ ...form, linkedin: e.target.value })} placeholder="linkedin.com/in/…" />
+                  <Label htmlFor="person-firstName">{t("people.lblFirstName")}</Label>
+                  <Input id="person-firstName" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} aria-required="true" aria-invalid={!form.firstName.trim() ? true : undefined} aria-describedby={!form.firstName.trim() ? "person-firstName-error" : undefined} />
+                  {!form.firstName.trim() && <p id="person-firstName-error" className="mt-1 text-[11px] font-medium text-rose-600" role="alert">{t("people.person.fieldRequired")}</p>}
+                </div>
+              <div>
+                  <Label htmlFor="person-lastName">{t("people.lblLastName")}</Label>
+                  <Input id="person-lastName" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} aria-required="true" aria-invalid={!form.lastName.trim() ? true : undefined} aria-describedby={!form.lastName.trim() ? "person-lastName-error" : undefined} />
+                  {!form.lastName.trim() && <p id="person-lastName-error" className="mt-1 text-[11px] font-medium text-rose-600" role="alert">{t("people.person.fieldRequired")}</p>}
+                </div>
+              <div className="sm:col-span-2">
+                  <Label htmlFor="person-email">{t("people.lblEmail")}</Label>
+                  <Input id="person-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} aria-invalid={!!form.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email) ? true : undefined} aria-describedby={!!form.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email) ? "person-email-error" : undefined} />
+                  {!!form.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email) && <p id="person-email-error" className="mt-1 text-[11px] font-medium text-rose-600" role="alert">{t("people.person.emailInvalid")}</p>}
+                </div>
+              <div><Label htmlFor="person-phone">{t("people.lblPhone")}</Label><Input id="person-phone" type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+              <div><Label htmlFor="person-city">{t("people.lblCity")}</Label><Input id="person-city" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
+              <div><Label htmlFor="person-company">{t("people.lblCompany")}</Label><Input id="person-company" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} /></div>
+              <div><Label htmlFor="person-title">{t("people.lblTitle")}</Label><Input id="person-title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
+              <div><Label htmlFor="person-country">{t("people.lblCountry")}</Label><Input id="person-country" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} /></div>
+              <div>
+                <Label htmlFor="person-linkedin">{t("people.lblLinkedin")}</Label>
+                <Input id="person-linkedin" value={form.linkedin} onChange={(e) => setForm({ ...form, linkedin: e.target.value })} placeholder="linkedin.com/in/…" />
               </div>
               <div>
-                <Label>{t("people.lblStatus")}</Label>
+                <Label htmlFor="person-status">{t("people.lblStatus")}</Label>
                 <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="person-status" className="mt-1"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="ACTIVE">{t("people.statusActive")}</SelectItem>
                     <SelectItem value="PASSIVE">{t("people.statusPassive")}</SelectItem>
@@ -1074,8 +1086,8 @@ export function PeopleView() {
                 </Select>
               </div>
               <div className="sm:col-span-2">
-                <Label>{t("people.lblBio")}</Label>
-                <Textarea rows={2} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} placeholder={t("people.person.bioPh")} />
+                <Label htmlFor="person-bio">{t("people.lblBio")}</Label>
+                <Textarea id="person-bio" rows={2} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} placeholder={t("people.person.bioPh")} />
               </div>
               {/* R10-a: kişi fotoğrafı — benzersiz adla Medya Arşivi → Kişi Fotoğrafları klasörüne */}
               {editingPerson ? (

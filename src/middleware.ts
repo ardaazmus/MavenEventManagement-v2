@@ -17,25 +17,35 @@ const IS_PROD = process.env.NODE_ENV === "production";
 const SESSION_COOKIE = IS_PROD ? "__Host-maven.session" : "maven.session";
 
 // Kimliksiz BY-DESIGN açık yüzeyler (kendi kapılarıyla korunur):
-//  auth/* (kendi akışları), public* (vitrin/kayıt), health (izleme), portal/* (yetenek
-//  belirteci), scan (QR-kapılı cihaz), kvkk/erasure (public giriş), seed (prod-dışı),
-//  saas/provision (super-admin anahtarı), payments/iyzico/callback (sağlayıcı çağrısı),
-//  integrations/hook/* (inbound belirteç).
-const PUBLIC_PREFIXES = [
-  "/api/auth/",
-  "/api/public",
-  "/api/health",
-  "/api/portal/",
-  "/api/scan",
-  "/api/kvkk/erasure",
-  "/api/seed",
-  "/api/saas/provision",
-  "/api/payments/iyzico/callback",
-  "/api/integrations/hook/",
+//  auth/* (kendi akışları), public/* (vitrin), public-register, health (izleme),
+//  portal/* (yetenek belirteci), scan (QR-kapılı cihaz), kvkk/erasure (public giriş),
+//  seed (prod-dışı), saas/provision (super-admin anahtarı),
+//  payments/iyzico/callback (sağlayıcı çağrısı), integrations/hook/* (inbound belirteç).
+// DÜZELTME (public-path boundary): geniş startsWith kuralı "/api/healthXYZ" veya
+// "/api/scanXYZ" gibi İSTİSMAR yollarını da açık sayıyordu. Kural artık segment-
+// sınırlıdır: exact eşleşir VEYA prefix "/" ile biter + sonrası segmentbaşlangıcıdır.
+// "/api/public" öneki "/api/publicity"yi, "/api/health" öneki "/api/healthXYZ"yi KAPSAMAZ.
+type PublicRule = { exact?: string; prefix?: string };
+const PUBLIC_RULES: PublicRule[] = [
+  { prefix: "/api/auth/" },
+  { exact: "/api/public-register" },
+  { prefix: "/api/public/" },
+  { exact: "/api/health" },
+  { prefix: "/api/portal/" },
+  { exact: "/api/scan" },
+  { exact: "/api/kvkk/erasure" },
+  { exact: "/api/seed" },
+  { exact: "/api/saas/provision" },
+  { exact: "/api/payments/iyzico/callback" },
+  { prefix: "/api/integrations/hook/" },
 ];
 
 function isPublic(pathname: string): boolean {
-  return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p));
+  return PUBLIC_RULES.some((r) => {
+    if (r.exact !== undefined) return pathname === r.exact;
+    if (r.prefix !== undefined) return pathname === r.prefix || pathname.startsWith(r.prefix.endsWith("/") ? r.prefix : `${r.prefix}/`);
+    return false;
+  });
 }
 
 export async function middleware(req: NextRequest) {

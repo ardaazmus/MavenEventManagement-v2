@@ -1,6 +1,13 @@
 // /api/bootstrap — SPA ilk yüklemesi: tenant, edisyonlar, sayaçlar
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+
+// DÜZELTME (dinamik model metrikü): footer'daki sabit "79" yerine TEK yetkili
+// kayıt olan Prisma datamodel'inden (DMMF) türetilir — şema değişince metrik otomatik güncellenir.
+function authoritativeModelCount(): number {
+  return Prisma.dmmf.datamodel.models.length;
+}
 
 export async function GET() {
   try {
@@ -26,7 +33,7 @@ export async function GET() {
       db.activityLog.findMany({ where: { tenantId: tenant.id }, orderBy: { createdAt: "desc" }, take: 12 }),
     ]);
 
-    return NextResponse.json({ tenant, editions, peopleCount, recentActivity });
+    return NextResponse.json({ tenant, editions, peopleCount, recentActivity, modelCount: authoritativeModelCount() });
   } catch (e) {
     console.error("GET /api/bootstrap", e);
     return NextResponse.json({ error: "Başlangıç verisi alınamadı" }, { status: 500 });

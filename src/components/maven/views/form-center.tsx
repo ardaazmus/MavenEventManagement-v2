@@ -75,11 +75,13 @@ interface FormStats {
   quiz?: QuizStats | null;
 }
 interface RegisterResult {
-  submissionId: string; status: string; spamScore: number; spamReasons: string[]; chainError?: string | null;
+  // Public DTO — izin listeli: submissionId/status/quiz özeti + kayıt/sipariş/ödeme referansı.
+  // spamScore/spamReasons/chainError BİLİNÇLİ YOK (anti-spam keşif sinyali + iç hata sızmasi yasak).
+  submissionId: string; status: string;
   quizScore?: number | null; quizCorrect?: number | null; quizTotal?: number | null;
-  registration?: { id: string; confirmationNo: string; status: string } | null;
-  order?: { id: string; orderNo: string; totalAmount: number; currency: string } | null;
-  payment?: { id: string; amount: number; currency: string; status: string } | null;
+  registration?: { confirmationNo: string | null; status: string | null } | null;
+  order?: { orderNo: string | null; status: string | null; totalAmount: number | null; currency: string | null } | null;
+  payment?: { id: string; status: string } | null;
 }
 interface PayProcessResult { outcome: string; message: string; payment?: { id: string; status: string; reference?: string | null } }
 interface CategoryRow { id: string; name: string }
@@ -532,7 +534,9 @@ export function FormCenterView() {
       setPayOutcome(null);
       bump();
       if (res.status === "SPAM") {
-        toast({ title: t("forms.toastSpamFlagged"), description: t("forms.toastSpamScore", { score: Math.round(res.spamScore) }), variant: "destructive" });
+        // DÜZELTME: skor/gerekçe public DTO'dan bilinçli çıkarıldı (keşif sinyali yasak) —
+        // ayrıntılı puan yalnız yönetim gelen-kutusunda görüntülenir.
+        toast({ title: t("forms.toastSpamFlagged"), variant: "destructive" });
       } else {
         toast({
           title: res.status === "APPROVED" ? t("forms.liveApprovedToast") : t("forms.livePendingToast"),
@@ -1595,12 +1599,7 @@ export function FormCenterView() {
                         <p className="flex items-center gap-2 font-semibold">
                           <Icons.ShieldAlert className="size-4" /> Spam şüphesi — gönderi incelemeye alındı
                         </p>
-                        <p className="mt-1 text-xs">Skor: {Math.round(liveResult.spamScore)}</p>
-                        {liveResult.spamReasons.length > 0 && (
-                          <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs">
-                            {liveResult.spamReasons.map((r, i) => <li key={i}>{r}</li>)}
-                          </ul>
-                        )}
+                        <p className="mt-1 text-xs">Detaylı puan/ gerekçe listesi yalnız yönetim ekranında görüntülenir.</p>
                       </div>
                     ) : (
                       <div className={`rounded-lg border p-4 text-sm ${liveResult.status === "APPROVED" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
@@ -1617,10 +1616,6 @@ export function FormCenterView() {
                         )}
                       </div>
                     )}
-                    {liveResult.chainError && (
-                      <p className="text-xs text-rose-600">Kayıt zinciri uyarısı: {liveResult.chainError}</p>
-                    )}
-
                     {/* QA quiz anında puan — doğru cevabı işaretlenmiş sorular için */}
                     {liveResult.quizScore != null && liveResult.status !== "SPAM" && (
                       <div className="rounded-lg border border-teal-200 bg-teal-50/60 p-3 text-sm text-teal-800">
@@ -1639,7 +1634,8 @@ export function FormCenterView() {
                           <Icons.CreditCard className="size-4" /> Online Ödeme
                         </p>
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                          Tutar: <span className="font-semibold text-foreground">{fmtMoney(liveResult.payment.amount, liveResult.payment.currency ?? "TRY")}</span>
+                          {/* DÜZELTME: tutar ödeme nesnesinden değil, çağırana ait SİPARİŞ özetinden okunur (public DTO) */}
+                          Tutar: <span className="font-semibold text-foreground">{liveResult.order ? fmtMoney(liveResult.order.totalAmount ?? 0, liveResult.order.currency ?? "TRY") : "—"}</span>
                           {liveResult.order && <> · Sipariş {liveResult.order.orderNo}</>}
                         </p>
                         {payOutcome?.outcome === "FAILED" && (

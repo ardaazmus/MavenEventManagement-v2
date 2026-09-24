@@ -41,6 +41,7 @@ export interface TenantLite {
 interface AppState {
   tenant: TenantLite | null;
   editions: EditionLite[];
+  modelCount: number; // DÜZELTME: footer model metriği bootstrap'tan türetilir (sabit 79 değil)
   currentEditionId: string | null;
   module: string;
   refreshKey: number;
@@ -57,6 +58,7 @@ interface AppState {
 export const useApp = create<AppState>((set, get) => ({
   tenant: null,
   editions: [],
+  modelCount: 0,
   currentEditionId: null,
   module: "dashboard",
   refreshKey: 0,
@@ -89,7 +91,7 @@ export const useApp = create<AppState>((set, get) => ({
       const res = await fetch("/api/bootstrap", { cache: "no-store" });
       const data = await res.json();
       if (!data.tenant) {
-        set({ tenant: null, editions: [], loading: false });
+        set({ tenant: null, editions: [], modelCount: 0, loading: false });
         return;
       }
       const editions: EditionLite[] = data.editions ?? [];
@@ -105,7 +107,7 @@ export const useApp = create<AppState>((set, get) => ({
         editions[0]?.id ??
         null;
       const persistedModule = typeof window !== "undefined" ? window.localStorage.getItem("maven.module") : null;
-      set({ tenant: data.tenant, editions, currentEditionId: current, module: persistedModule ?? "dashboard", loading: false });
+      set({ tenant: data.tenant, editions, modelCount: typeof data.modelCount === "number" ? data.modelCount : 0, currentEditionId: current, module: persistedModule ?? "dashboard", loading: false });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "Bağlantı hatası", loading: false });
     }

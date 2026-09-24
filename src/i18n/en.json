@@ -689,7 +689,9 @@
       "parentLabel": "Linked main person (optional)",
       "noParent": "— No main person —",
       "relationHint": "Spouse, child, guest or assistant — shown on companion badges.",
-      "dblClickTip": "Double click: edit the person — all person fields in one dialog"
+      "dblClickTip": "Double click: edit the person — all person fields in one dialog",
+      "fieldRequired": "This field is required",
+      "emailInvalid": "Enter a valid email address"
     },
     "merge": {
       "sameSide": "Source and target cannot be the same.",
@@ -1165,7 +1167,7 @@
     "testBtn": "Send Test",
     "campaignDlgDesc": "Target segment → template → test → live send",
     "createCampaign": "Create Campaign",
-    "segmentCustom": "custom list: {custom} · segment: {segment} · target {target}"
+    "segmentCustom": " · custom list: {count} people"
   },
   "operations": {
     "title": "Tasks are module-based — tasks of a disabled capability are hidden from the start",
@@ -1567,7 +1569,7 @@
     "honeypotTitle": "Hidden field trap (honeypot)",
     "honeypotDesc": "The hidden field catches bots",
     "ariaHoneypot": "Hidden field trap",
-    "phBlockedDomains": "e.g. Your registration has been received, thank you",
+    "phBlockedDomains": "e.g. spamsite.com, junkmail.com",
     "autoApproveTitle": "Auto-approve",
     "autoApproveDesc": "Submissions below the spam threshold are approved automatically",
     "ariaAutoApprove": "Auto-approve",

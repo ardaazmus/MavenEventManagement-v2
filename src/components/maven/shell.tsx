@@ -108,7 +108,7 @@ function currentEditionOf() {
 }
 
 export function Shell({ children }: { children: React.ReactNode }) {
-  const { tenant, editions, currentEditionId, setCurrentEdition, module, loading, error, bootstrap, seed } = useApp();
+  const { tenant, editions, currentEditionId, setCurrentEdition, module, loading, error, bootstrap, seed, modelCount } = useApp();
   const { lang, setLang: setUiLang } = useLang();
   const edition = editions.find((e) => e.id === currentEditionId);
   const activeModule = MODULES.find((m) => m.id === module);
@@ -259,7 +259,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <p>© 2026 Maven Event Management — Ortak Organizasyonel Mimari v1.0 · Tenant: {tenant?.name ?? "—"}</p>
             <p className="flex items-center gap-3">
               <span className="inline-flex items-center gap-1"><Icons.Layers className="size-3.5" /> {editions.length} {t("shell.footerEditions")}</span>
-              <span className="inline-flex items-center gap-1"><Icons.Users className="size-3.5" /> 79 {t("shell.footerModels")}</span>
+              <span className="inline-flex items-center gap-1"><Icons.Users className="size-3.5" /> {modelCount} {t("shell.footerModels")}</span>
             </p>
           </div>
         </footer>

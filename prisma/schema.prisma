@@ -602,7 +602,7 @@ model FormSubmission {
   id              String   @id @default(cuid())
   formId          String
   editionId       String
-  registrationId  String?  // REGISTRATION türünde onaylanınca oluşan kayıt
+  registrationId  String?  @unique // REGISTRATION türünde onaylanınca oluşan kayıt — @unique = zincir idempotency anahtarı (aynı gönderiye ikinci zincir KURULAMAZ)
   respondentName  String
   respondentEmail String
   phone           String?
@@ -817,14 +817,18 @@ model Refund {
   id        String    @id @default(cuid())
   orderId   String
   paymentId String?
-  amount    Int
+  amount    Int       // MINOR UNIT (kuruş) — pozitif, sonlu, tam sayı; major-unit float KABUL edilmez
+  currency  String    @default("TRY") // sipariş para birimiyle AYNI olmalı (uyuşmazlık 400)
   reason    String?
   status    String    @default("REQUESTED") // REQUESTED|APPROVED|REJECTED|PROCESSED
   requestedBy String?
+  idempotencyKey String? // aynı siparişte aynı anahtar = İKİNCİ finansal hareket oluşmaz; farklı yük = 409
   processedAt DateTime?
   createdAt DateTime  @default(now())
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, idempotencyKey]) // idempotent iade: anahtar çakışması P2002 → mevcut iade döner
 }
 
 // ─── FAZ 7: SPONSORSHIP (§13-14, §49-51) — Tier hard-code YOK ──────────────

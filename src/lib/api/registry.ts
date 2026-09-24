@@ -29,6 +29,9 @@ export interface EntityConfig {
   // S3: sır koruma — okumada maskeleme (password sızması yasak), yazmada şifreleme
   readMask?: (row: Record<string, unknown>) => Record<string, unknown>;
   writeTransform?: (data: Record<string, unknown>, isUpdate: boolean) => Promise<Record<string, unknown>> | Record<string, unknown>;
+  // DÜZELTME (server-side validation): varlık-bazlı yazım sözleşmesi — null döner (geçerli)
+  // ya da hata mesajı döner (400). UI devre dışı butonu güvenlik kontrolü DEĞİLDİR.
+  validate?: (data: Record<string, unknown>, isUpdate: boolean) => string | null;
 }
 
 export const registry: Record<string, EntityConfig> = {
@@ -69,6 +72,31 @@ export const registry: Record<string, EntityConfig> = {
     orderBy: { startDate: "desc" },
     auditType: ActivityType.EDITION_SAVED,
     auditMessage: (d) => `Etkinlik güncellendi: ${d.name ?? ""}`,
+    // DÜZELTME (etkinlik tarih sözleşmesi): startDate ZORUNLU geçerli tarih; endDate
+    // SEÇİMLİ — verilirse startDate'den önce OLAMAZ. update'te yalnız tarih anahtarları
+    // gönderildiyse denetlenir (kısmi güncellemelerde mevcut değerle çapraz kontrol).
+    validate: (data, isUpdate) => {
+      const readDate = (v: unknown): Date | null => {
+        if (v == null) return null;
+        const d = new Date(String(v));
+        return Number.isNaN(d.getTime()) ? null : d;
+      };
+      if (!isUpdate) {
+        if (data.startDate == null) return "startDate zorunludur";
+        const s = readDate(data.startDate);
+        if (!s) return "startDate geçersiz bir tarih";
+        const e = readDate(data.endDate);
+        if (data.endDate != null && !e) return "endDate geçersiz bir tarih";
+        if (e && e < s) return "endDate başlangıçtan önce olamaz";
+      } else if ("startDate" in data || "endDate" in data) {
+        const s = readDate(data.startDate);
+        const e = readDate(data.endDate);
+        if (data.startDate != null && !s) return "startDate geçersiz bir tarih";
+        if (data.endDate != null && !e) return "endDate geçersiz bir tarih";
+        if (s && e && e < s) return "endDate başlangıçtan önce olamaz";
+      }
+      return null;
+    },
   },
   capabilities: {
     delegate: db.eventCapability as unknown as AnyDelegate,

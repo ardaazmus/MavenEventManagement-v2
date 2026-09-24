@@ -689,7 +689,9 @@
       "parentLabel": "Bağlı olduğu ana kişi (opsiyonel)",
       "noParent": "— Ana kişi yok —",
       "relationHint": "Eş, çocuk, misafir veya asistan — refakatçi yaka kartlarında gösterilir.",
-      "dblClickTip": "Çift tıkla: kişiyi düzenle — tüm kişi alanları tek diyaloğda"
+      "dblClickTip": "Çift tıkla: kişiyi düzenle — tüm kişi alanları tek diyaloğda",
+      "fieldRequired": "Bu alan zorunludur",
+      "emailInvalid": "Geçerli bir e-posta girin"
     },
     "merge": {
       "sameSide": "Kaynak ve hedef aynı olamaz.",
@@ -1135,7 +1137,7 @@
     "createCampaign": "Kampanya Oluştur",
     "sendBtn": "Gönder",
     "segmentLine": "Segment: {segment} · hedef {target}",
-    "segmentCustom": "özel liste: {custom} · segment: {segment} · hedef {target}",
+    "segmentCustom": " · özel liste: {count} kişi",
     "testedNote": "Test gönderimi yapıldı: {name} — kutusunu kontrol edin",
     "newTemplate": "Yeni Şablon",
     "noTemplate": "Şablon yok",
@@ -1567,7 +1569,7 @@
     "honeypotTitle": "Gizli alan tuzağı (honeypot)",
     "honeypotDesc": "Gizli alan botları yakalar",
     "ariaHoneypot": "Gizli alan tuzağı",
-    "phBlockedDomains": "Örn. Kaydınız alındı, teşekkür ederiz",
+    "phBlockedDomains": "Örn. spamsite.com, junkmail.com",
     "autoApproveTitle": "Otomatik onay",
     "autoApproveDesc": "Spam eşiği altındaki gönderiler doğrudan onaylanır",
     "ariaAutoApprove": "Otomatik onay",

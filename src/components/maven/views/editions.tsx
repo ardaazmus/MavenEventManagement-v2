@@ -56,6 +56,22 @@ export function EditionsView() {
   // Adım 3: yetenekler BAŞTAN seçilebilir — şablon önerir, kullanıcı işaretleri açıp kapatır
   const [selectedCaps, setSelectedCaps] = useState<string[]>(TEMPLATES.SCIENTIFIC_CONGRESS);
 
+  // DÜZELTME (sihirbaz doğrulaması): tarih sözleşmesi — startDate ZORUNLU geçerli tarih;
+  // endDate SEÇİMLİ (verilirse başlangıçtan önce OLAMAZ). Hatalı adım ilerleyemez,
+  // create() boş/null/geçersiz tarih ASLA göndermez; aynı kural sunucuda registry
+  // validateCreate ile zorlanır (UI devre dışı butonu güvenlik kontrolü değildir).
+  const wizardDateError = (() => {
+    if (!form.startDate) return "Başlama tarihi zorunludur";
+    const s = new Date(form.startDate);
+    if (Number.isNaN(s.getTime())) return "Başlama tarihi geçersiz";
+    if (form.endDate) {
+      const e = new Date(form.endDate);
+      if (Number.isNaN(e.getTime())) return "Bitiş tarihi geçersiz";
+      if (e < s) return "Bitiş tarihi başlangıçtan önce olamaz";
+    }
+    return null;
+  })();
+
   // G1: yayın akışı — denetim → engel diyaloğu → edition.publish (engel varken kilitli)
   const [publishTarget, setPublishTarget] = useState<EditionRow | null>(null);
   const [publishChecks, setPublishChecks] = useState<PublishChecks | null>(null);
@@ -110,6 +126,11 @@ export function EditionsView() {
   };
 
   const create = async () => {
+    // DÜZELTME: geçersiz/eksik tarihle POST ASLA yapılmaz — sunucu da aynı kuralı zorlar
+    if (wizardDateError) {
+      toast({ title: wizardDateError, variant: "destructive" });
+      return;
+    }
     setBusy(true);
     try {
       const tenantId = (await bootstrapData())?.tenantId;
@@ -130,7 +151,7 @@ export function EditionsView() {
           seriesId: series.id,
           template: form.template,
           status: "PLANNING",
-          startDate: form.startDate ? new Date(form.startDate).toISOString() : null,
+          startDate: new Date(form.startDate).toISOString(), // zorunlu — yukarıda doğrulandı, null gönderilmez
           endDate: form.endDate ? new Date(form.endDate).toISOString() : null,
           city: form.city, venueName: form.venueName, description: form.description, coverColor: form.coverColor,
           tenantId,
@@ -318,11 +339,16 @@ export function EditionsView() {
           )}
           {step === 2 && (
             <div className="grid gap-3 sm:grid-cols-2">
-              <div><Label>Başlama Tarihi</Label><Input type="date" value={form.startDate} onChange={(ev) => setForm({ ...form, startDate: ev.target.value })} className="mt-1" /></div>
-              <div><Label>Bitiş Tarihi</Label><Input type="date" value={form.endDate} onChange={(ev) => setForm({ ...form, endDate: ev.target.value })} className="mt-1" /></div>
-              <div><Label>Şehir</Label><Input value={form.city} onChange={(ev) => setForm({ ...form, city: ev.target.value })} className="mt-1" /></div>
-              <div><Label>Mekân</Label><Input value={form.venueName} onChange={(ev) => setForm({ ...form, venueName: ev.target.value })} className="mt-1" /></div>
-              <p className="sm:col-span-2 text-xs text-muted-foreground">Bitiş başlangıçtan sonra olmalı; tarih değişimi program ve otel uyarısı üretir.</p>
+              <div><Label htmlFor="editions-wizard-start">Başlama Tarihi</Label><Input id="editions-wizard-start" type="date" aria-required="true" aria-invalid={wizardDateError ? true : undefined} aria-describedby={wizardDateError ? "editions-wizard-date-error" : undefined} value={form.startDate} onChange={(ev) => setForm({ ...form, startDate: ev.target.value })} className="mt-1" /></div>
+              <div><Label htmlFor="editions-wizard-end">Bitiş Tarihi</Label><Input id="editions-wizard-end" type="date" aria-invalid={wizardDateError ? true : undefined} aria-describedby={wizardDateError ? "editions-wizard-date-error" : undefined} value={form.endDate} onChange={(ev) => setForm({ ...form, endDate: ev.target.value })} className="mt-1" /></div>
+              <div><Label htmlFor="editions-wizard-city">Şehir</Label><Input id="editions-wizard-city" value={form.city} onChange={(ev) => setForm({ ...form, city: ev.target.value })} className="mt-1" /></div>
+              <div><Label htmlFor="editions-wizard-venue">Mekân</Label><Input id="editions-wizard-venue" value={form.venueName} onChange={(ev) => setForm({ ...form, venueName: ev.target.value })} className="mt-1" /></div>
+              {wizardDateError && (
+                <p id="editions-wizard-date-error" role="alert" className="sm:col-span-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700">
+                  {wizardDateError}
+                </p>
+              )}
+              <p className="sm:col-span-2 text-xs text-muted-foreground">Başlama tarihi zorunludur; bitiş seçimli — verilirse başlangıçtan sonra olmalı. Tarih değişimi program ve otel uyarısı üretir.</p>
             </div>
           )}
           {step === 3 && (
@@ -360,9 +386,12 @@ export function EditionsView() {
           <DialogFooter className="flex items-center justify-between">
             <Button variant="ghost" disabled={step === 1} onClick={() => setStep(step - 1)}>Geri</Button>
             {step < 3 ? (
-              <Button onClick={() => setStep(step + 1)}>Devam et</Button>
+              <Button
+                onClick={() => setStep(step + 1)}
+                disabled={step === 2 && !!wizardDateError} // DÜZELTME: geçersiz tarihle adım ilerlemez
+              >Devam et</Button>
             ) : (
-              <Button onClick={create} disabled={busy || !form.seriesName}>{busy ? "Oluşturuluyor…" : t("editions.createDraft")}</Button>
+              <Button onClick={create} disabled={busy || !form.seriesName || !!wizardDateError}>{busy ? "Oluşturuluyor…" : t("editions.createDraft")}</Button>
             )}
           </DialogFooter>
         </DialogContent>

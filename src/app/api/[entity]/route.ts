@@ -124,6 +124,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       throw e;
     }
     if (config.writeTransform) data = await config.writeTransform(data, false); // S3: sır şifreleme
+    // DÜZELTME (server-side validation): varlık sözleşmesi (ör. editions tarih kuralı) —
+    // UI devre dışı butonuna güvenilmez; sunucu 400 ile reddeder.
+    if (config.validate) {
+      const vErr = config.validate(data, false);
+      if (vErr) return NextResponse.json({ error: vErr }, { status: 400 });
+    }
     const created = await config.delegate.create({ data, include: config.include });
     // S3: sır içeren yanıt maskelenir
     const safeCreated = config.readMask ? config.readMask(created as Record<string, unknown>) : created;

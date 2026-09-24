@@ -1469,3 +1469,87 @@ Stage Summary:
 - Dil-dışı davranış değişikliği SIFIR: seed parite golden 4/4, API sözleşmeleri dokunulmadı.
 - Bilinen ara-durum: yeni bağlanan 8 view (media/dashboard/editions/finance/sponsorship/badge-queue/registrations/cme-report) yalnız ihlal satırlarında t() taşıyor — TAM view dönüşümü sonraki parti işi (portals.tsx'te ~70 mesaj, diğerlerinde benzer ölçek işaretli).
 - scripts/i18n-merge.mjs kalıcı kapı: parça ekleyen ajan artık bunu çalıştırıp bake edebilir.
+
+---
+Task ID: CORRECTION-PASS (kontrollü düzeltme turu — tek implementasyon isteği)
+Agent: Z.ai Code (ana ajan)
+Task: Kanıt-bazlı düzeltme turu — tenant izolasyonu, public DTO, para bütünlüğü, atomic zincir, middleware sınırı, rate-limit güven modeli, ops kapıları, tsc pass, UI/veri doğruluğu, erişilebilirlik. Ürün kapsamı GENİŞLETİLMEDİ.
+
+Work Log:
+
+## P1.1 — deliverables tenant izolasyonu ✓
+- SCOPES'a `deliverables: { mode: "chain", path: ["agreement", "edition"] }` eklendi (registry 75/75 eşleşti).
+- FAIL-CLOSED: applyListGuard/applyWriteGuard/ensureInScope kapsam-dışı varlıkta artık 500 döner (eski: sessiz bypass).
+- GİZLİ HATA KEŞFEDİLDİ+DÜZELTİLDİ: write-guard chain dalı `nestedTenantFilter(scope.path.slice(1))` kullanıyordu — filtre ÇOCUK tabloya göre kurulmalı; slice(1) TÜM chain-yazımlarını (form-fields, refunds, deliverables…) Prisma "Unknown argument" 400 ile kırıyordu. Tam `scope.path` ile düzeltildi (POST /api/form-fields kanıtı: 400→201).
+- Kanıt: corrections.spec 7 senaryo — tenantsiz istek bağlam-kapsamlı (satır sahipliği doğrulanır), bogus tenant 404, foreign-edition 404, sahte id 404, foreign FK 404, meşru CRUD 201+200.
+
+## P1.2 — public-register DTO ✓
+- İzin listeli sabit yanıt: { submissionId, status, quizScore/Correct/Total, registration{confirmationNo,status}, order{orderNo,status,totalAmount,currency}, payment{id,status} }.
+- spamScore/spamReasons (anti-spam keşif sinyali) + chainError + ham ORM nesneleri BİLİNÇLİ KALDIRILDI; iç hata mesajı sızmaz (500 generic + sunucu logu).
+- Tüketici güncellendi: form-center RegisterResult tipi + SPAM dalı + Online Ödeme tutarı order özetinden okunur.
+- Kanıt: DTO izin-anahtar kümesi + 12 duyarlı anahtar absence iddiası + iç içe şema iddiaları (test).
+
+## P1.3 — iade para bütünlüğü ✓
+- Şema: Refund.currency + Refund.idempotencyKey + @@unique([orderId, idempotencyKey]) (additive db push).
+- finance.refund yeniden yazıldı: amountMinor pozitif/safe-integer (major 'amount' parametresi 400), reason zorunlu, currency siparişle AYNI, over-refund 409 (kayıt yazılmaz), bakiye kontrolü+iade+order recalc TEK tx, idempotencyKey: aynı yük→mevcut kayıt, farklı yük→409; catch-herhangi-hata→defter kontrolü (P2002 + tx zaman aşımı dahil).
+- Süreç-içi per-order kilit (src/lib/tx-lock.ts): SQLite BUSY_SNAPSHOT kök-nedeni; tek-örnek tavanı belgelendi. CANLI: 3 eşzamanlı iade → 3×201, 1 satır.
+- Kanıt: 7 geçersiz tutar 400, gerekçe 400, kur uyuşmazlığı 400, over-refund 409+0-kayıt, idempotency (201/201/409, 1 satır), eşzamanlılık, bakiye-değişmedi.
+
+## P1.4 — atomic registration chain ✓
+- Zincir TEK db.$transaction içinde (Person→Participation→Registration→Order/Line/PENDING Payment→submission bağlantısı→audit); herhangi bir adım düşerse TAM geri alma.
+- FormSubmission.registrationId @unique = idempotency anahtarı (push öncesi çift-satırlar: 0 doğrulandı); retry sözleşmesi: same submissionId → existing; yarış kaybı → P2002 → kalıcı zincir okunur.
+- public-register: chain hatası artık 2xx+chainError DEĞİL — açık 500 güvenli mesajla; gönderi PENDING kalır, admin onayı zinciri idempotent tamamlar.
+- Kanıt: duplicate retry satır-artışı YOK; eşzamanlı onay (2×PATCH) → tek zincir, kısmi satır yok.
+
+## P1.5 — middleware public-path boundary ✓
+- PUBLIC_PREFIXES → PUBLIC_RULES {exact|prefix} segment-sınırlı eşleşme; /api/healthXYZ, /api/scanXYZ, /api/publicity, /api/portalXYZ, /api/seed/deep-path artık 401 (flag-on canlı kanıt 3/3).
+
+## P1.6 — rate-limit güven modeli ✓
+- clientIp EN SAĞ XFF değeri (güvenilir gateway SONA ekler; sahte ilk değer kimlik olamaz) + MAVEN_TRUST_PROXY=off anahtarı (başlıklar hiç okunmaz) + tek-örnek/restart/fail-closed kararları dosya başında belgelendi. public-register submitIp/spam-guard aynı yardımcıyı kullanır.
+- CANLI: 30 istek XFF "9.9.9.9, 7.7.7.7" → kova dolar; XFF "8.8.8.8, 7.7.7.7" (farklı sahte-ilk, AYNI son) → 429; yeni son değer → kova-dışı ✓
+
+## P1.7 — ops kapıları ✓
+- dep-audit çıkış kodu doğrudan yakalanır: bulgu VEYA ağ hatası → FAIL (eski: tail-exit 0 → daima PASS).
+- Yedek: dosya-kopyası → SQLite VACUUM INTO (WAL-tutarlı anlık görüntü) + integrity_check=ok + AES şifreleme + geri yükleme + Prisma okuma doğrulaması (tenant:1, editions:3). "Prod kapsam iddiası DEĞİL" notu.
+- Sonuç: PASS=3 FAIL=1 — audit bulguları ARTIK dürüstçe raporlanır (aşağıda).
+
+## P2.8 — tsc full pass ✓
+- tsconfig exclude: examples + skills (tsconfig içinde yorumlu kapsam sözleşmesi) + examples/websocket/README.md (bağımsız mini-servis başvurusu; socket.io paketi oraya ayrı kurulur). Hata gizleme değil, belgelenmiş derleme-scope.
+- KULLANILMAYAN savunmasız doğrudan bağımlılıklar kaldırıldı (src/scripts'te 0 import): next-intl, next-auth; uuid in-range 11.1.1'e güncellendi. Lockfile tutarlı.
+- SONUÇ: `bunx tsc --noEmit` exit 0; lint 0; audit kalan bulgular dev-toolkît/transitif (brace-expansion[eslint zinciri, override risksiz yol yok], lodash/ajv/defu/deepmerge-ts[@humanfs/z-ai SDK zinciri]) — prod kod yoluna sahip değil, ops-gates fail-closed raporlar.
+
+## P3 — UI/veri doğruluğu ✓
+- shell footer: sabit "79" → /api/bootstrap.modelCount (Prisma DMMF = yetkili kayıt); test: render=bootstrap=şema (89=89=89).
+- Form Merkezi phBlockedDomains: başarı-mesajı örneği → gerçek alan-adı örneği (tr/en + parça ×2).
+- Etkinlik sihirbazı: startDate ZORUNLU geçerli, endDate seçimli (verilirse ≥ start); adım 2 engellenir + role=alert; create() null/geçersiz tarih ASLA göndermez; sunucu: registry.validate + [entity] POST/PUT kancası (400).
+- Kampanya diyaloğu: Kaydet disabled/aria-disabled + satır-içi hata (nameRequired/customEmpty) + aria-invalid/describedby; sunucu doğrulaması korundu.
+- İletişim: segmentCustom sözleşmesi {custom}→{count} (4 sözlük dosyası); render kanıtı: "Segment: tüm kişiler · hedef 12 · özel liste: 3 kişi", liter sayacı 0.
+
+## P4.14 — erişilebilirlik ✓
+- Kişi diyaloğu 10 alan htmlFor/id eşleşti (people.person.fieldRequired/emailInvalid sözlükte ×2 dil); soyad-boş → aria-invalid + role=alert; e-posta biçim denetimi + aria.
+- Kanıt (ağaç+klavye): getByLabel tam-etiket çözümü 10/10, aria-invalid iddiası, Escape kapatır, 390×844 taşma ≤0.
+
+## DEĞİŞEN DOSYALAR (tam liste)
+src/lib/api/tenant-guard.ts · src/lib/api/registry.ts · src/lib/api/registration-chain.ts · src/lib/tx-lock.ts (YENİ) · src/lib/rate-limit.ts · src/app/api/public-register/route.ts · src/app/api/flows/route.ts · "src/app/api/[entity]/route.ts" · "src/app/api/[entity]/[id]/route.ts" · src/app/api/bootstrap/route.ts · src/middleware.ts · src/components/maven/shell.tsx · src/lib/store.ts · src/components/maven/views/form-center.tsx · src/components/maven/views/editions.tsx · src/components/maven/views/onsite.tsx · src/components/maven/views/people.tsx · prisma/schema.prisma · tsconfig.json · package.json (+bun.lock) · scripts/ops-gates.sh · examples/websocket/README.md (YENİ) · src/i18n/{tr,en}.json + _new/{forms,onsite,people}.{tr,en}.json · tests/corrections.spec.ts (YENİ) · tests/ui-corrections.spec.ts (YENİ) · tests/middleware-boundary.spec.ts (YENİ)
+
+## KOMUTLAR + SONUÇLAR
+- bunx tsc --noEmit → exit 0 (FULL — examples/skills belgelenmiş kapsam dışı)
+- bun run lint → 0 problem
+- node scripts/i18n-hardcoded-scan.mjs → 74 dosya, 0 ihlal (taban 0)
+- bunx playwright test goldens+corrections+ui-corrections+flow → 38 passed / 0 failed
+- MAVEN_AUTH=on: middleware-boundary 3 passed + auth 7 passed (bayrak-açık oturum zinciri CANLI)
+- bash scripts/ops-gates.sh → PASS=3 FAIL=1 (audit bulguları dürüst — PASS sayılmaz)
+- agent-browser: konsol 0 hata/0 [i18n]; footer "89 model"; İletişim render liter 0; 390px sw=cw=390; ekran görüntüleri tool-results/corr-*.png
+
+## KALAN RİSK / BLOKE (dürüst rapor)
+- BLOCKED/AUTH_DISABLED: MAVEN_AUTH=off ana koşuda auth.spec 7 skip — yetkilendirme kapsamı SAYILMAZ; flag-ON koşusu ayrıca 7/7 CANLI yapıldı (üstte).
+- GERÇEK SAĞLAYICI KANITI YOK: iyzico sandbox/gerçek e-posta/gerçek üretim yetkilendirmesi bu turda KANITLANMADI (yalnız sözleşme + kapılar test edildi).
+- PROD YEDEK: ops-gates yerel tatbiktir — prod yedekleme altyapısı kapsamı iddia edilmez.
+- dep-audit bulguları AÇIK: transitif dev-toolkît zincirleri (brace-expansion→eslint; lodash/ajv/defu/deepmerge-ts→SDK/zincirleri). Prod runtime yolu yok; güncelleme ayrı değişiklik talebi gerektirir (bu turun blast-radius'u dışında).
+- Tek-örnek tavanları belgelendi: rate kovaları + tx-lock süreç-içi (çoklu-örnek kurulumda paylaşılan depo gerekir).
+- Kutu 4GB: dev sunucu bu tur 3 kez OOM ile öldü; testler her yeniden başlatma sonrası koşuldu (kanıtlar taze süreçte).
+
+Stage Summary:
+- 14 düzeltme maddesinin TAMAMI uygulandı; P1 güven/para/kısmi-yazım bulgularının hiçbiri açık kalmadı.
+- 38/38 hedefli+E2E test; 3/3 middleware + 7/7 auth (flag-ON canlı); tsc FULL 0; lint 0; i18n 0.
+- Dürüst kalıntılar: dev-toolkît audit bulguları + sağlayıcı/prod-yedek kanıt boşlukları (kanıt-alamama raporu üstte).

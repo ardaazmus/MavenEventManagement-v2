@@ -13,6 +13,7 @@ import { ActivityType } from "@/lib/api/activity";
 import { autoOfferForCategory } from "@/lib/api/waitlist-engine";
 import { toMinor } from "@/lib/money";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { withLock } from "@/lib/tx-lock";
 import { issuePortalToken } from "@/lib/api/portal-tokens";
 
 type FlowBody = Record<string, unknown> & { action?: string };
@@ -186,19 +187,106 @@ export async function POST(req: NextRequest) {
       }
 
       // ── İade talebi/onayı (iade ≠ iptal; hak iadesi ayrı adım) ──
+      // DÜZELTME (money integrity): amount = MINOR UNIT (kuruş) pozitif/sonlu/TAM SAYI —
+      // major-unit float, ondalıklı, NaN, Infinity, 0, negatif KABUL edilmez (toMinor
+      // çağrısı çağırıcıya aittir; uç nokta belirsiz ölçek kabul etmez).
+      // Sözleşme: amountMinor + currency (siparişle AYNI) + reason (denetim) zorunlu;
+      // idempotencyKey verildiğinde aynı anahtar ikinci finansal hareket OLUŞTURMAZ
+      // (aynı yük → mevcut iade; farklı yük → 409). Bakiye kontrolü + iade yazımı +
+      // sipariş yeniden hesabı TEK transaction'da — toplam iade tahsilatı ASLA aşamaz.
       case "finance.refund": {
-        const { orderId, amount, reason, requestedBy } = body as { orderId: string; amount: number; reason?: string; requestedBy?: string };
+        const { orderId, amountMinor, amount, currency, reason, requestedBy, idempotencyKey, paymentId } = body as {
+          orderId: string; amountMinor?: number; amount?: number; currency?: string; reason?: string; requestedBy?: string; idempotencyKey?: string; paymentId?: string;
+        };
+        if (amount !== undefined) {
+          return NextResponse.json({ error: "Belirsiz major-unit 'amount' kabul edilmez — kuruş cinsinden tam sayı 'amountMinor' gönderin" }, { status: 400 });
+        }
+        if (typeof amountMinor !== "number" || !Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+          return NextResponse.json({ error: "İade tutarı pozitif tam sayı (kuruş) olmalı — ondalıklı/NaN/Infinity/0/negatif kabul edilmez" }, { status: 400 });
+        }
+        if (!reason || !reason.trim()) {
+          return NextResponse.json({ error: "İade için gerekçe zorunludur (denetim kaydı)" }, { status: 400 });
+        }
         // G0-d: iade siparişin ebeveyn edisyonu bağlama doğrulanır
-        const orderCtx = await db.order.findUnique({ where: { id: orderId }, select: { editionId: true } });
-        if (!orderCtx) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
-        try { await verifyEditionTenant(orderCtx.editionId); } catch (e) {
+        const refundOrderCtx = await db.order.findUnique({ where: { id: orderId }, select: { editionId: true } });
+        if (!refundOrderCtx) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
+        try { await verifyEditionTenant(refundOrderCtx.editionId); } catch (e) {
           if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
           throw e;
         }
-        const refund = await db.refund.create({ data: { orderId, amount, reason, status: "PROCESSED", requestedBy, processedAt: new Date() } });
-        await recalcOrder(orderId);
-        await db.activityLog.create({ data: { type: ActivityType.REFUND_SAVED, message: `İade işlendi: ${amount} — ${reason ?? ""}`, entityType: "Refund", entityId: refund.id, actorName: requestedBy ?? "Finans Sorumlusu" } });
-        return NextResponse.json(refund, { status: 201 });
+
+        try {
+          // DÜZELTME (eşzamanlılık): aynı sipariş iadeleri süreç-içi kilitte SERİ işlenir
+          // (SQLite BUSY_SNAPSHOT kök-nedeni — bkz. tx-lock.ts); unique kısıt yine de invariant.
+          const refund = await withLock(`order:${orderId}`, () => db.$transaction(async (tx) => {
+            const order = await tx.order.findUnique({ where: { id: orderId }, include: { payments: true, refunds: true } });
+            if (!order) throw new GuardError("Sipariş bulunamadı", 404);
+            if (order.status === "CANCELLED") throw new GuardError("İptal edilmiş siparişe iade yapılamaz", 409);
+            if (currency && currency !== order.currency) {
+              throw new GuardError(`Para birimi uyuşmuyor — sipariş ${order.currency}`, 400);
+            }
+            const paidTotal = order.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
+            const refundedTotal = order.refunds.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + r.amount, 0);
+            const refundable = paidTotal - refundedTotal;
+            if (amountMinor > refundable) {
+              throw new GuardError(`İade tutarı iade edilebilir bakiyeyi aşıyor — kalan: ${refundable} kuruş`, 409);
+            }
+            // Idempotency — anahtar mevcutsa çakışma analizi
+            if (idempotencyKey) {
+              const existing = order.refunds.find((r) => r.idempotencyKey === idempotencyKey);
+              if (existing) {
+                const samePayload = existing.amount === amountMinor
+                  && (currency ?? order.currency) === (existing.currency ?? order.currency)
+                  && (existing.reason ?? "") === reason;
+                if (!samePayload) throw new GuardError("Bu idempotencyKey farklı bir iade yüküyle kullanılmış", 409);
+                return existing; // aynı yük → ikinci hareket OLUŞMAZ
+              }
+            }
+            const created = await tx.refund.create({
+              data: {
+                orderId,
+                paymentId: paymentId ?? null,
+                amount: amountMinor,
+                currency: currency ?? order.currency,
+                reason,
+                status: "PROCESSED",
+                requestedBy,
+                idempotencyKey: idempotencyKey ?? null,
+                processedAt: new Date(),
+              },
+            });
+            // recalcOrder birebir — tx bağlamında (ayrı bağlantı kullanmamak için)
+            const fresh = await tx.order.findUnique({ where: { id: orderId }, include: { lines: true, payments: true, refunds: true } });
+            if (fresh) {
+              const linesTotal = fresh.lines.reduce((s, l) => s + l.total, 0) || fresh.totalAmount;
+              const paid = fresh.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
+              const refunded = fresh.refunds.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + r.amount, 0);
+              const balance = linesTotal - paid + refunded;
+              const status = fresh.status === "CANCELLED" ? "CANCELLED" : balance <= 0 ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "OPEN";
+              await tx.order.update({ where: { id: orderId }, data: { totalAmount: linesTotal, status } });
+            }
+            await tx.activityLog.create({
+              data: { type: ActivityType.REFUND_SAVED, editionId: order.editionId, message: `İade işlendi: ${amountMinor} ${order.currency} — ${reason}`, entityType: "Refund", entityId: created.id, actorName: requestedBy ?? "Finans Sorumlusu" },
+            });
+            return created;
+          }, { timeout: 20_000, maxWait: 10_000 }));
+          return NextResponse.json(refund, { status: 201 });
+        } catch (e) {
+          // Idempotent-retry sözleşmesi: ANAHTARLA gelen herhangi bir başarısızlıkta
+          // (P2002 unique yarışı, tx kilidi/zaman aşımı vb.) önce defter kontrol edilir —
+          // aynı anahtarla kalıcı bir iade VARSA o döndürülür (ikinci hareket oluşmaz);
+          // yoksa gerçek hata yeniden fırlatılır.
+          if (idempotencyKey && e instanceof Error) {
+            const existing = await db.refund.findFirst({ where: { orderId, idempotencyKey } });
+            if (existing) {
+              const samePayload = existing.amount === amountMinor && (existing.reason ?? "") === reason;
+              if (!samePayload) return NextResponse.json({ error: "Bu idempotencyKey farklı bir iade yüküyle kullanılmış" }, { status: 409 });
+              return NextResponse.json(existing, { status: 201 });
+            }
+          }
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
       }
 
       // ── Stand tahsisi (SponsorAgreement → Entitlement → Allocation → A24) ──

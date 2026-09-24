@@ -3,22 +3,41 @@
 //             finance.manualPayment, finance.refund, booth.allocate,
 //             reservation.confirm, certificate.generate, edition.publish,
 //             person.merge, invitation.respond
+// G0-d: tüm aksiyonlar kiracı bağlamından geçer — her id girişinin ebeveyn zinciri
+// (kayıt→edisyon, hak→edisyon, sipariş→edisyon…) doğrulanır; kişi/e-posta araması
+// kiracı kapsamlıdır. Tek kiracılı davranış değişmez (seed zincirleri yeşil kalır).
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveContext, verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 import { autoOfferForCategory } from "@/lib/api/waitlist-engine";
+import { toMinor } from "@/lib/money";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 type FlowBody = Record<string, unknown> & { action?: string };
 
 export async function POST(req: NextRequest) {
   try {
+    // S3: iş akışı istismar kapısı — 60 istek/dk/IP
+    const denied = enforceRateLimit(req, { key: "flows", limit: 60, windowMs: 60_000 });
+    if (denied) return denied;
+
     const body = (await req.json()) as FlowBody;
     const action = body.action;
+    // G0-d: aksiyon bağlamı tek noktadan çözülür (bağlam yok → 400)
+    const ctx = await resolveContext(null);
 
     switch (action) {
       // ── Kayıt onay/red (Kayıt sorumlusu) ──
       case "registration.decide": {
         const { registrationId, decision, decidedBy } = body as { registrationId: string; decision: "CONFIRMED" | "REJECTED"; decidedBy?: string };
+        // G0-d: ebeveyn zinciri (kayıt → edisyon → kiracı) doğrulanır — yabancı kayıt 404
+        const target = await db.registration.findUnique({ where: { id: registrationId }, select: { editionId: true } });
+        if (!target) return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
+        try { await verifyEditionTenant(target.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
         const reg = await db.registration.update({
           where: { id: registrationId },
           data: { status: decision, decidedAt: new Date(), decidedBy: decidedBy ?? "Kayıt Sorumlusu" },
@@ -45,6 +64,13 @@ export async function POST(req: NextRequest) {
       // ── Kayıt iptali (etki önizlemesi: yaka kartı + hak + ödeme ayrıca) ──
       case "registration.cancel": {
         const { registrationId, reason } = body as { registrationId: string; reason?: string };
+        // G0-d: iptal edilen kaydın ebeveyn edisyonu bağlama doğrulanır
+        const target = await db.registration.findUnique({ where: { id: registrationId }, select: { editionId: true } });
+        if (!target) return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
+        try { await verifyEditionTenant(target.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
         const reg = await db.registration.update({
           where: { id: registrationId },
           data: { status: "CANCELLED", cancelReason: reason ?? "Yönetici iptali" },
@@ -79,12 +105,17 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: `Kalan hak yok (${ent.quantityConsumed}/${ent.quantityGranted} kullanıldı, ${ent.quantityReserved} ayrılmış)` }, { status: 409 });
         }
         if (!ent.editionId) return NextResponse.json({ error: "Etkinlik bağlantısı yok" }, { status: 400 });
+        // G0-d: hak havuzunun edisyonu bağlama doğrulanır
+        try { await verifyEditionTenant(ent.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
 
-        // 1) Person: e-posta güçlü işaret — aynı e-posta varsa o kişi kullanılır
-        let person = await db.person.findFirst({ where: { email, tenantId: { not: "" } } });
+        // 1) Person: e-posta güçlü işaret — KİRACI KAPSAMLI arama (G0-d: çapraz-kiracı eşleşme kapatıldı);
+        //    aynı e-posta bağlam kiracısında varsa o kişi kullanılır
+        let person = await db.person.findFirst({ where: { email, tenantId: ctx } });
         if (!person) {
-          const tenant = await db.tenant.findFirst();
-          person = await db.person.create({ data: { tenantId: tenant!.id, firstName, lastName, email, company: company ?? ent.ownerOrganization?.name } });
+          person = await db.person.create({ data: { tenantId: ctx, firstName, lastName, email, company: company ?? ent.ownerOrganization?.name } });
         }
 
         // 2) Participation (sponsor portal kaynağı)
@@ -121,10 +152,18 @@ export async function POST(req: NextRequest) {
       case "finance.manualPayment": {
         const { orderId, amount, currency = "TRY", reference, enteredBy, reason } = body as { orderId: string; amount: number; currency?: string; reference?: string; enteredBy?: string; reason?: string };
         if (!amount || amount <= 0) return NextResponse.json({ error: "Tutar zorunlu" }, { status: 400 });
+        const amountMinor = toMinor(amount); // F6: UI ₺ gönderir, DB kuruş tutar
         if (!reason) return NextResponse.json({ error: "Manuel teyit için gerekçe zorunlu (denetim)" }, { status: 400 });
+        // G0-d: siparişin ebeveyn edisyonu bağlama doğrulanır
+        const orderCtx = await db.order.findUnique({ where: { id: orderId }, select: { editionId: true } });
+        if (!orderCtx) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
+        try { await verifyEditionTenant(orderCtx.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
 
         const payment = await db.payment.create({
-          data: { orderId, amount, currency, source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference, enteredBy: enteredBy ?? "Finans Sorumlusu", reason, approvedBy: (amount ?? 0) > 50000 ? "Tenant Sahibi" : undefined, paidAt: new Date() },
+          data: { orderId, amount: amountMinor, currency, source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference, enteredBy: enteredBy ?? "Finans Sorumlusu", reason, approvedBy: (amount ?? 0) > 5_000_000 ? "Tenant Sahibi" : undefined, paidAt: new Date() }, // F6: ₺50.000 = 5M kuruş
         });
         await recalcOrder(orderId);
         await db.activityLog.create({ data: { type: ActivityType.PAYMENT_RECEIVED, message: `Manuel tahsilat: ${amount} ${currency} — ${reason}`, entityType: "Payment", entityId: payment.id, actorName: enteredBy ?? "Finans Sorumlusu" } });
@@ -134,6 +173,13 @@ export async function POST(req: NextRequest) {
       // ── İade talebi/onayı (iade ≠ iptal; hak iadesi ayrı adım) ──
       case "finance.refund": {
         const { orderId, amount, reason, requestedBy } = body as { orderId: string; amount: number; reason?: string; requestedBy?: string };
+        // G0-d: iade siparişin ebeveyn edisyonu bağlama doğrulanır
+        const orderCtx = await db.order.findUnique({ where: { id: orderId }, select: { editionId: true } });
+        if (!orderCtx) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
+        try { await verifyEditionTenant(orderCtx.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
         const refund = await db.refund.create({ data: { orderId, amount, reason, status: "PROCESSED", requestedBy, processedAt: new Date() } });
         await recalcOrder(orderId);
         await db.activityLog.create({ data: { type: ActivityType.REFUND_SAVED, message: `İade işlendi: ${amount} — ${reason ?? ""}`, entityType: "Refund", entityId: refund.id, actorName: requestedBy ?? "Finans Sorumlusu" } });
@@ -145,6 +191,11 @@ export async function POST(req: NextRequest) {
         const { boothUnitId, agreementId, organizationId } = body as { boothUnitId: string; agreementId?: string; organizationId?: string };
         const booth = await db.boothUnit.findUnique({ where: { id: boothUnitId } });
         if (!booth) return NextResponse.json({ error: "Stant bulunamadı" }, { status: 404 });
+        // G0-d: stantın edisyonu bağlama doğrulanır
+        try { await verifyEditionTenant(booth.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
         if (!["AVAILABLE", "HELD", "OPTION", "RELEASED"].includes(booth.status)) {
           return NextResponse.json({ error: `Stant ${booth.status} durumunda — tahsis edilemez` }, { status: 409 });
         }
@@ -164,6 +215,11 @@ export async function POST(req: NextRequest) {
         const { reservationId } = body as { reservationId: string };
         const res = await db.reservation.findUnique({ where: { id: reservationId }, include: { block: { include: { inventoryNights: true } } } });
         if (!res) return NextResponse.json({ error: "Rezervasyon bulunamadı" }, { status: 404 });
+        // G0-d: rezervasyonun edisyonu bağlama doğrulanır
+        try { await verifyEditionTenant(res.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
         if (!res.block) return NextResponse.json({ error: "Oda bloğu bağlantısı yok" }, { status: 400 });
 
         const nights: Date[] = [];
@@ -196,6 +252,11 @@ export async function POST(req: NextRequest) {
         const def = await db.certificateDefinition.findUnique({ where: { id: definitionId }, include: { issues: { include: { participation: { include: { registrations: true, scanEvents: true } } } } } });
         if (!def) return NextResponse.json({ error: "Kural bulunamadı" }, { status: 404 });
         if (!def.editionId) return NextResponse.json({ error: "Etkinlik yok" }, { status: 400 });
+        // G0-d: sertifika kuralının edisyonu bağlama doğrulanır
+        try { await verifyEditionTenant(def.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
 
         const participations = await db.eventParticipation.findMany({ where: { editionId: def.editionId }, include: { registrations: true, scanEvents: true, roleAssignments: true } });
         let eligible = 0;
@@ -220,6 +281,11 @@ export async function POST(req: NextRequest) {
       // ── Etkinlik yayınla (yayın denetimini geçmek zorunda) ──
       case "edition.publish": {
         const { editionId } = body as { editionId: string };
+        // G0-d: yayınlanan edisyon bağlama doğrulanır (yabancı edisyon 404)
+        try { await verifyEditionTenant(editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
         const dashRes = await fetch(`${req.nextUrl.origin}/api/dashboard?editionId=${editionId}`);
         const dash = await dashRes.json();
         if (dash.checks?.blockers?.length > 0) {
@@ -243,6 +309,15 @@ export async function POST(req: NextRequest) {
         };
         if (!sourceId || !targetId || sourceId === targetId) return NextResponse.json({ error: "Geçersiz birleştirme" }, { status: 400 });
         if (sourceId === targetId) return NextResponse.json({ error: "Kaynak ve hedef aynı olamaz" }, { status: 400 });
+
+        // G0-d: iki taraf da bağlam kiracısına ait olmalı (çapraz-kiracı birleştirme 404)
+        const mergeParties = await db.person.findMany({
+          where: { id: { in: [sourceId, targetId] } },
+          select: { id: true, tenantId: true },
+        });
+        if (mergeParties.length !== 2 || mergeParties.some((p) => p.tenantId !== ctx)) {
+          return NextResponse.json({ error: "Kişi bulunamadı" }, { status: 404 });
+        }
 
         const result = await db.$transaction(async (tx) => {
           const [source, target] = await Promise.all([
@@ -361,6 +436,13 @@ export async function POST(req: NextRequest) {
       // ── LCV yanıtı (gelecek → kayıt yolu, gelmeyecek → hakkı bırakma kuralı) ──
       case "invitation.respond": {
         const { invitationId, response } = body as { invitationId: string; response: "COMING" | "NOT_COMING" };
+        // G0-d: davetin edisyonu bağlama doğrulanır
+        const invTarget = await db.invitation.findUnique({ where: { id: invitationId }, select: { editionId: true } });
+        if (!invTarget) return NextResponse.json({ error: "Davet bulunamadı" }, { status: 404 });
+        try { await verifyEditionTenant(invTarget.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
         const inv = await db.invitation.update({ where: { id: invitationId }, data: { status: response, respondedAt: new Date() } });
         await db.activityLog.create({ data: { type: ActivityType.INVITATION_SENT, editionId: inv.editionId, message: `Davet yanıtı: ${inv.fullName} → ${response === "COMING" ? "Gelecek" : "Gelmeyecek"}`, entityType: "Invitation", entityId: inv.id, actorName: "LCV" } });
         return NextResponse.json(inv);
@@ -373,8 +455,20 @@ export async function POST(req: NextRequest) {
         const { capabilityId, editionId, key, enabled } = body as { capabilityId?: string; editionId?: string; key?: string; enabled: boolean };
         let cap;
         if (capabilityId) {
+          // G0-d: mevcut satırın edisyonu bağlama doğrulanır
+          const existing = await db.eventCapability.findUnique({ where: { id: capabilityId } });
+          if (!existing) return NextResponse.json({ error: "Yetenek bulunamadı" }, { status: 404 });
+          try { await verifyEditionTenant(existing.editionId); } catch (e) {
+            if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+            throw e;
+          }
           cap = await db.eventCapability.update({ where: { id: capabilityId }, data: { enabled } });
         } else if (editionId && key) {
+          // G0-d: hedef edisyon bağlama doğrulanır
+          try { await verifyEditionTenant(editionId); } catch (e) {
+            if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+            throw e;
+          }
           const existing = await db.eventCapability.findUnique({ where: { editionId_key: { editionId, key } } });
           cap = existing
             ? await db.eventCapability.update({ where: { id: existing.id }, data: { enabled } })
@@ -389,6 +483,13 @@ export async function POST(req: NextRequest) {
       // ── B2B: kişinin mobil uygulamadan yanıtı (kabul/red + görüş) ──
       case "b2b.respond": {
         const { assignmentId, accepted, feedback, respondedBy } = body as { assignmentId: string; accepted: boolean; feedback?: string; respondedBy?: string };
+        // G0-d: atamanın plan edisyonu bağlama doğrulanır
+        const bTarget = await db.b2bAssignment.findUnique({ where: { id: assignmentId }, select: { plan: { select: { editionId: true } } } });
+        if (!bTarget) return NextResponse.json({ error: "Atama bulunamadı" }, { status: 404 });
+        try { await verifyEditionTenant(bTarget.plan.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
         const a = await db.b2bAssignment.update({
           where: { id: assignmentId },
           data: {
@@ -416,6 +517,13 @@ export async function POST(req: NextRequest) {
       // ── B2B: organizatör onayı (karşılıklı onayın diğer ayağı) ──
       case "b2b.approve": {
         const { assignmentId, approved } = body as { assignmentId: string; approved: boolean };
+        // G0-d: organizatör onayı plan edisyonu üzerinden doğrulanır
+        const bTarget = await db.b2bAssignment.findUnique({ where: { id: assignmentId }, select: { plan: { select: { editionId: true } } } });
+        if (!bTarget) return NextResponse.json({ error: "Atama bulunamadı" }, { status: 404 });
+        try { await verifyEditionTenant(bTarget.plan.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
         const a = await db.b2bAssignment.update({ where: { id: assignmentId }, data: { organizerApproved: approved }, include: { person: { select: { firstName: true, lastName: true } }, plan: { include: { assignments: true } } } });
         const plan = a.plan;
         const allAccepted = plan.assignments.length > 0 && plan.assignments.every((x) => x.status === "ACCEPTED");
@@ -446,7 +554,7 @@ async function recalcOrder(orderId: string) {
   const paid = order.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
   const refunded = order.refunds.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + r.amount, 0);
   const balance = linesTotal - paid + refunded;
-  const status = order.status === "CANCELLED" ? "CANCELLED" : balance <= 0.01 ? "PAID" : paid > 0.01 ? "PARTIALLY_PAID" : "OPEN";
+  const status = order.status === "CANCELLED" ? "CANCELLED" : balance <= 0 ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "OPEN" // F6: kuruş tamlığı;
   await db.order.update({ where: { id: orderId }, data: { totalAmount: linesTotal, status } });
 }
 

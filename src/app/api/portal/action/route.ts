@@ -1,23 +1,44 @@
 // Dış portal aksiyonları — portal kullanıcısının (sponsor/katılımcı) Maven'e
 // gönderdiği işlemler. Mimari ilke: dış portal ayrı uygulama, ortak kimlik;
 // aksiyonlar Maven tarafındaki iş kurallarıyla çalışır ve aktiviteye düşer.
+// G0-c: bu uç public-by-design olduğundan blanket kiracı bağlamı uygulanMAZ —
+// her aksiyon, sahibine (teslim → sözleşme kurumu; sipariş → ödeyen) bağlı
+// YETENEK BELİRTECİNE (portalToken) doğrulanır. Bilinmeyen/sahte belirteç → 404.
+// TODO-auth: portallar gerçek oturuma geçtiğinde belirteç oturum kapsamına taşınır.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ActivityType } from "@/lib/api/activity";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 // Teslim gönderilebilir durumlar: sponsor henüz göndermedi veya düzeltme istendi
 const SUBMITTABLE = ["NOT_STARTED", "WAITING_SPONSOR", "REJECTED"];
 
+// belirteç biçimi: pt_<en az 24 hex> — kaba biçim denetimi (sahte belirteç erkenden düşer)
+function plausibleToken(t: unknown): t is string {
+  return typeof t === "string" && /^pt_[0-9a-f]{24,64}$/.test(t);
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { action?: string } & Record<string, unknown>;
-    const { action } = body;
+  // S3: yetenek belirteci brute-force kapısı — 30 deneme/dk/IP
+  const denied = enforceRateLimit(req, { key: "portal-action", limit: 30, windowMs: 60_000 });
+  if (denied) return denied;
+
+    const body = (await req.json()) as { action?: string; token?: unknown } & Record<string, unknown>;
+    const { action, token } = body;
+    if (!plausibleToken(token)) {
+      return NextResponse.json({ error: "Erişim belirteci geçersiz" }, { status: 404 }); // varlık ifşa edilmez
+    }
 
     // ── Sponsor portalı: teslim gönderimi ──────────────────────────────
     if (action === "deliverable-submit") {
       const { deliverableId, actor } = body as { deliverableId: string; actor?: string };
       const d = await db.deliverable.findUnique({ where: { id: deliverableId }, include: { agreement: { include: { organization: true, edition: true } } } });
       if (!d) return NextResponse.json({ error: "Teslim bulunamadı" }, { status: 404 });
+      // G0-c: belirteç, teslimin SAHİBİ olan sözleşme kurumunun belirteci olmalı
+      if (!d.agreement?.organization?.portalToken || d.agreement.organization.portalToken !== token) {
+        return NextResponse.json({ error: "Teslim bulunamadı" }, { status: 404 });
+      }
       if (!SUBMITTABLE.includes(d.status)) {
         return NextResponse.json({ error: `Teslim ${d.status} durumunda — gönderim uygun değil` }, { status: 409 });
       }
@@ -37,8 +58,23 @@ export async function POST(req: NextRequest) {
     // ── Katılımcı/sponsor portalı: ödeme bağlantısı üretimi (simülasyon) ──
     if (action === "payment-link") {
       const { orderId, actor } = body as { orderId: string; actor?: string };
-      const order = await db.order.findUnique({ where: { id: orderId }, include: { payments: true, edition: true } });
+      const order = await db.order.findUnique({
+        where: { id: orderId },
+        include: {
+          payments: true, edition: true, buyerOrganization: true,
+          lines: { include: { participation: { include: { person: true } } }, take: 1 },
+        },
+      });
       if (!order) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
+      // G0-c: belirteç, siparişin ÖDEYENİNE (kurumsal alıcı ya da satır katılımcısı) bağlı olmalı
+      const payerTokens = [
+        order.buyerOrganization?.portalToken ?? null,
+        order.buyerPersonId ? (await db.person.findUnique({ where: { id: order.buyerPersonId }, select: { portalToken: true } }))?.portalToken ?? null : null,
+        order.lines[0]?.participation?.person?.portalToken ?? null,
+      ].filter((t): t is string => typeof t === "string" && t.length > 0);
+      if (!payerTokens.includes(token)) {
+        return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
+      }
       if (order.status === "CANCELLED") return NextResponse.json({ error: "İptal edilmiş siparişe ödeme bağlantısı üretilemez" }, { status: 409 });
       const succeeded = order.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
       const remaining = Math.max(0, order.totalAmount - succeeded);

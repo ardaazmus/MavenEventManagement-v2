@@ -7,6 +7,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
 import { db } from "@/lib/db";
+import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
+import { AUTH_ENABLED, hasSession } from "@/lib/auth-flag";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { ensureSystemFolders, slugifyName } from "@/lib/media-system";
 
 export const runtime = "nodejs";
@@ -23,8 +26,25 @@ function safeDir(name: string): string {
 
 export async function GET(req: NextRequest) {
   try {
+  // S3: toplu indirme istismarı kapısı — 10 indirme/dk/IP
+  const dlDenied = enforceRateLimit(req, { key: "media-export", limit: 10, windowMs: 60_000 });
+  if (dlDenied) return dlDenied;
+
+    // G0-f: auth bayrağı açıkken oturum zorunlu — katılımcı fotoğrafları KVKK kapsamında PII'dir
+    if (AUTH_ENABLED && !(await hasSession(req))) {
+      return NextResponse.json({ error: "Oturum gerekli" }, { status: 401 });
+    }
+
     const editionId = req.nextUrl.searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 422 });
+
+    // G0-b: medya arşivi PII taşır — edisyon bağlamına doğrulanır (bogus/yabancı → 404)
+    try {
+      await resolveEditionContext(editionId, { required: true });
+    } catch (e) {
+      if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
+    }
 
     const edition = await db.eventEdition.findUnique({
       where: { id: editionId },

@@ -42,7 +42,7 @@ type PortalOrder = {
 
 type ParticipantData = {
   edition: { id: string; name: string; startDate: string; endDate: string; venueName?: string | null; city?: string | null; seriesName?: string | null } | null;
-  person: { id: string; firstName: string; lastName: string; email?: string | null; title?: string | null; organizationName?: string | null };
+  person: { id: string; firstName: string; lastName: string; email?: string | null; title?: string | null; organizationName?: string | null; portalToken?: string | null };
   participation: {
     id: string; source: string; attendance: string; notes?: string | null;
     roleAssignments: { id: string; role: string }[];
@@ -60,7 +60,7 @@ type ParticipantData = {
 
 type SponsorData = {
   edition: { id: string; name: string; startDate: string; endDate: string; venueName?: string | null; city?: string | null; seriesName?: string | null } | null;
-  organization: { id: string; name: string; type: string; city?: string | null; country?: string | null; website?: string | null };
+  organization: { id: string; name: string; type: string; city?: string | null; country?: string | null; website?: string | null; portalToken?: string | null };
   agreements: {
     id: string; status: string; amount: number; currency: string; signedAt?: string | null; notes?: string | null;
     tierName?: string | null; packageName?: string | null; rightsSpec?: string | null;
@@ -352,7 +352,8 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
     const name = `${data.data.person.firstName} ${data.data.person.lastName}`;
     setBusy(o.id);
     try {
-      const r = await apiSend<{ link: string }>("/api/portal/action", "POST", { action: "payment-link", orderId: o.id, actor: `Katılımcı Portalı — ${name}` });
+      // G0-c: aksiyon portal yetenek belirteciyle imzalanır (ödeyenin belirteci)
+      const r = await apiSend<{ link: string }>("/api/portal/action", "POST", { action: "payment-link", orderId: o.id, actor: `Katılımcı Portalı — ${name}`, token: data.data.person.portalToken });
       await navigator.clipboard?.writeText(r.link).catch(() => undefined);
       toast({ title: "Ödeme bağlantısı üretildi", description: `${r.link} — panoya kopyalandı (simülasyon)` });
       data.reload();
@@ -634,7 +635,8 @@ function SponsorPortal({ editionId, headerDesign }: { editionId: string; headerD
     if (!data.data) return;
     setBusy(id);
     try {
-      await apiSend("/api/portal/action", "POST", { action: "deliverable-submit", deliverableId: id, actor: `Sponsor Portalı — ${data.data.organization.name}` });
+      // G0-c: aksiyon portal yetenek belirteciyle imzalanır (sözleşme kurumunun belirteci)
+      await apiSend("/api/portal/action", "POST", { action: "deliverable-submit", deliverableId: id, actor: `Sponsor Portalı — ${data.data.organization.name}`, token: data.data.organization.portalToken });
       toast({ title: "Teslim gönderildi", description: `${name} incelemeye alındı — organizasyon ekibi bildirim alır.` });
       data.reload();
     } catch (e) {
@@ -648,7 +650,8 @@ function SponsorPortal({ editionId, headerDesign }: { editionId: string; headerD
     if (!data.data) return;
     setBusy(o.id);
     try {
-      const r = await apiSend<{ link: string }>("/api/portal/action", "POST", { action: "payment-link", orderId: o.id, actor: `Sponsor Portalı — ${data.data.organization.name}` });
+      // G0-c: aksiyon portal yetenek belirteciyle imzalanır (ödeyen kurumun belirteci)
+      const r = await apiSend<{ link: string }>("/api/portal/action", "POST", { action: "payment-link", orderId: o.id, actor: `Sponsor Portalı — ${data.data.organization.name}`, token: data.data.organization.portalToken });
       await navigator.clipboard?.writeText(r.link).catch(() => undefined);
       toast({ title: "Ödeme bağlantısı üretildi", description: `${r.link} — panoya kopyalandı (simülasyon)` });
       data.reload();

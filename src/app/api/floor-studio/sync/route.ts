@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 import { buildPlanSnapshot } from "@/lib/api/floor";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,13 @@ export async function GET(req: NextRequest) {
   const editionId = req.nextUrl.searchParams.get("editionId");
   if (!editionId) {
     return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+  }
+  // G0-b: salon planı bağlama doğrulanır — bogus/yabancı edisyon 404
+  try {
+    await resolveEditionContext(editionId, { required: true });
+  } catch (e) {
+    if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
   }
   const snapshot = await buildPlanSnapshot(editionId);
   if (!snapshot.edition) {
@@ -43,6 +51,14 @@ export async function POST(req: NextRequest) {
   const { editionId, source = "floor-studio-app", changes = [], statusChanges = [] } = body;
   if (!editionId) {
     return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+  }
+
+  // G0-b: push senkronu hedef edisyonu bağlama doğrular — yabancı edisyona yazım 404
+  try {
+    await resolveEditionContext(editionId, { required: true });
+  } catch (e) {
+    if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+    throw e;
   }
 
   // tüm booth'lar bu edisyona ait mi? (ortak kimlik bütünlüğü — §20)

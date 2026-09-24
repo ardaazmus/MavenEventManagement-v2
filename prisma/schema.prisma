@@ -42,6 +42,8 @@ model Tenant {
   activityLogs   ActivityLog[]
   apiIntegrations ApiIntegration[]
   mailProviders  MailProviderConfig[]
+  mailSuppressions MailSuppression[] // S3: istismar denetimi — bastırma listesi
+  kvkkErasureRequests KvkkErasureRequest[] // K7: silme talepleri
 }
 
 model User {
@@ -51,9 +53,81 @@ model User {
   name      String
   role      String   @default("ORG_ADMIN") // §48: ORG_OWNER|ORG_ADMIN|EVENT_MANAGER|FINANCE_MANAGER|REGISTRATION_MANAGER|SPONSORSHIP_MANAGER|SCIENTIFIC_MANAGER|PROGRAM_MANAGER|ONSITE_MANAGER
   status    String   @default("ACTIVE")
+  // — A4: kimlik doğrulama altyapısı (flag-off; MAVEN_AUTH=on ile devreye girer) —
+  passwordHash   String?  // argon2id (m=19456,t=2,p=1) — plaintext ASLA saklanmaz/yazılmaz
+  mfaSecretCipher String? // TOTP secret (AES-256-GCM cipher; secrets.ts ile)
+  mfaEnabled     Boolean  @default(false)
+  recoveryCodes  String?  // JSON: [{ hash, usedAt|null }] — kurtarma faktörü (tek kullanımlık, hash'li)
+  failedLoginCount Int    @default(0)
+  lockedUntil    DateTime?
+  lastLoginAt    DateTime?
+  // — A4: asgari rıza (KVKK) —
+  consentVersion   String?
+  consentAcceptedAt DateTime?
   createdAt DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  passkeys      Passkey[]
+  oauthAccounts OAuthAccount[]
+}
+
+// A4: WebAuthn passkey — opaque userId (cuid) dışa ifşa edilmez; challenge tek kullanımlık;
+// counter monoton artar (klonlama tespiti); rpID ortam-öncelikli (MAVEN_RPID → apex).
+model Passkey {
+  id          String   @id @default(cuid())
+  userId      String
+  credentialId String  @unique
+  publicKey   String   // base64 (COSE)
+  counter     Int      @default(0)
+  transports  String?  // CSV: internal|hybrid|usb|nfc|ble
+  name        String?
+  aaguid      String?
+  createdAt   DateTime @default(now())
+  lastUsedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// A4: OAuth bağlantı tablosu — YALNIZ şema (not: bağlayıcı akış A4 kapsamı dışı,
+// sağlayıcı sözleşmeleri netleşince eklenecek; stub endpoint YOK).
+model OAuthAccount {
+  id                String   @id @default(cuid())
+  userId            String
+  provider          String   // GOOGLE|MICROSOFT|LINKEDIN (bkz. not)
+  providerAccountId String
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+
+// K7: KVKK silme talebi (madde 7/11) — 30 gün SLA; anonimleştirme (tombstone):
+// katılım/finans geçmişi yasal saklama için KALIR, kimlik alanları anonimleşir.
+// Yasal saklama yükümlülüğü olan talep REJECTED + gerekçe ile reddedilir (legal hold).
+// İşlem günlüğü ActivityLog'da 3 yıl saklanır; 6 aydan eski açık talep sweep ile kapatılır.
+model KvkkErasureRequest {
+  id          String    @id @default(cuid())
+  tenantId    String
+  email       String    // talep sahibi başvuru adresi (doğrulama: kayıtla eşleşme)
+  personId    String?   // eşleşen kişi (doğrulama sonrası)
+  status      String    @default("PENDING") // PENDING|VERIFIED|COMPLETED|REJECTED
+  note        String?   // talepçinin açıklaması
+  rejectReason String?  // legal-hold gerekçesi (reddedildiyse)
+  verifiedAt  DateTime?
+  completedAt DateTime?
+  handledBy   String?
+  requestedAt DateTime @default(now())
+  dueAt       DateTime  // requestedAt + 30 gün (SLA)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([status])
 }
 
 model Organization {
@@ -76,6 +150,8 @@ model Organization {
   address      String? // fiziksel adres
   description  String? // genel açıklama/bilgi
   locationNote String? // Salon/Fuar alanı/Otel konum + QR notu
+  // — Portal yetenek belirteci (G0-c): sponsor portalı aksiyonları bu belirtece bağlanır —
+  portalToken  String? @unique
 
   tenant          Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contacts        OrganizationContact[]
@@ -120,6 +196,9 @@ model Person {
   linkedin    String?
   status      String   @default("ACTIVE") // ACTIVE|PASSIVE|MERGED
   mergedIntoId String? // kişi tekilleştirme: önerili + onaylı birleştirme
+  // — Portal yetenek belirteci (G0-c): dış portal aksiyonları bu belirtece bağlanır —
+  // TODO-auth: gerçek portal oturumu geldiğinde belirteç oturum kapsamına taşınır
+  portalToken String?  @unique
   // — Misafir/aile hiyerarşisi (Self-Referencing Parent_ID, kullanıcı isteği 8) —
   parentPersonId String? // bağlı olduğu ana katılımcı (aile/misafir profili)
   relationType   String? // SELF|SPOUSE|CHILD|GUEST|ASSISTANT|OTHER
@@ -356,7 +435,7 @@ model RegistrationCategory {
   editionId        String
   name             String  // Regular|Student|Member|Invited Speaker|Sponsor Guest|Press|VIP|Staff|Accompanying Person...
   code             String
-  basePrice        Float   @default(0)
+  basePrice        Int     @default(0) // F6: kuruş
   currency         String  @default("TRY")
   requiresApproval Boolean @default(false)
   capacity         Int?    // null = sınırsız
@@ -547,7 +626,7 @@ model Expense {
   category      String   @default("OTHER") // FIELD_EXPENSE|VENDOR|LOGISTICS|MARKETING|VENUE|TECH|CATERING|STAFF_TRAVEL|OTHER
   title         String
   description   String?
-  amount        Float    @default(0)
+  amount        Int      @default(0) // F6: kuruş
   currency      String   @default("TRY")
   vendor        String?
   incurredAt    DateTime @default(now()) // harcama tarihi (sahada anlık)
@@ -569,7 +648,7 @@ model Expense {
 
 // ─── FAZ 6-C: MUHASEBE — manuel gelir kalemleri (Expense aynası) ────────────
 // Online ödeme (Payment) dışındaki gelirler: sponsorluk, kayıt, satış, hibe...
-// amount Float BİLİNÇLİ — kuruş migrasyonu ayrı görev.
+// F6: amount Int (kuruş) — migrasyon tamamlandı.
 
 model Income {
   id          String   @id @default(cuid())
@@ -578,7 +657,7 @@ model Income {
   category    String   @default("DIGER") // SPONSORLUK|KAYIT|SATIS|HIBE|DIGER
   title       String
   description String?
-  amount      Float    @default(0)
+  amount      Int      @default(0) // F6: kuruş
   currency    String   @default("TRY")
   method      String   @default("BANK_TRANSFER") // ONLINE_CARD|BANK_TRANSFER|POS|CASH|PAYMENT_LINK|MANUAL_EXTERNAL
   payer       String?  // ödeyen (kurum/kişi adı)
@@ -605,7 +684,7 @@ model CatalogItem {
   category    String  @default("TICKET") // TICKET|ADDON|SERVICE|TOUR|GALA|TRANSFER
   name        String
   description String?
-  price       Float   @default(0)
+  price       Int     @default(0) // F6: kuruş
   currency    String  @default("TRY")
   quantity    Int?    // null = sınırsız
   availableFor String @default("ALL") // ALL|SPONSOR|SPEAKER|VIP|STAFF
@@ -670,7 +749,7 @@ model Order {
   buyerPersonId String?
   payerName     String?  // siparişi ödeyen ≠ satırların katılımcıları (Kimlik kuralı 4)
   currency      String   @default("TRY")
-  totalAmount   Float    @default(0)
+  totalAmount   Int      @default(0) // F6: kuruş
   status        String   @default("OPEN") // OPEN|PARTIALLY_PAID|PAID|CANCELLED
   notes         String?
   createdAt     DateTime @default(now())
@@ -693,8 +772,8 @@ model OrderLine {
   catalogItemId   String?
   description  String
   quantity     Int     @default(1)
-  unitPrice    Float   @default(0)
-  total        Float   @default(0)
+  unitPrice    Int     @default(0) // F6: kuruş
+  total        Int     @default(0) // F6: kuruş
 
   order        Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
   participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
@@ -705,7 +784,7 @@ model OrderLine {
 model Payment {
   id         String    @id @default(cuid())
   orderId    String
-  amount     Float
+  amount     Int
   currency   String    @default("TRY")
   source     String    @default("ONLINE_CARD") // §37: ONLINE_CARD|BANK_TRANSFER|POS|CASH|PAYMENT_LINK|MANUAL_EXTERNAL
   status     String    @default("PENDING") // PENDING|SUCCEEDED|FAILED
@@ -719,13 +798,14 @@ model Payment {
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
+  @@index([orderId, status]) // P2: sipariş-başına tahsilat toplamı (dashboard/accounting aggregate)
 }
 
 model Refund {
   id        String    @id @default(cuid())
   orderId   String
   paymentId String?
-  amount    Float
+  amount    Int
   reason    String?
   status    String    @default("REQUESTED") // REQUESTED|APPROVED|REJECTED|PROCESSED
   requestedBy String?
@@ -743,7 +823,7 @@ model SponsorTierDefinition {
   name         String  // her etkinlikte özelleştirilebilir: Gold|Naming|Lunch Sponsor...
   displayOrder Int     @default(0)
   capacity     Int?    // maksimum sponsor sayısı
-  price        Float   @default(0)
+  price        Int     @default(0) // F6: kuruş
   currency     String  @default("TRY")
   brandingRules String?
 
@@ -757,7 +837,7 @@ model SponsorPackage {
   editionId   String
   tierId      String?
   name        String  // "Gold Sponsorship 2027"
-  price       Float   @default(0)
+  price       Int     @default(0) // F6: kuruş
   currency    String  @default("TRY")
   description String?
   rightsSpec  String? // paket hak özeti: "20x Ücretsiz Kayıt, 1x 12m² Stant..."
@@ -773,7 +853,7 @@ model SponsorAgreement {
   organizationId String
   packageId     String?
   tierId        String?
-  amount        Float     @default(0)
+  amount        Int       @default(0) // F6: kuruş
   currency      String    @default("TRY")
   status        String    @default("PROSPECT") // PROSPECT|NEGOTIATION|CONTRACTED|ACTIVE|COMPLETED|CANCELLED
   signedAt      DateTime?
@@ -838,7 +918,7 @@ model RoomType {
   hotelId       String
   name          String  // Single|Double|Suite
   capacity      Int     @default(2)
-  pricePerNight Float   @default(0)
+  pricePerNight Int     @default(0) // F6: kuruş
   currency      String  @default("TRY")
 
   hotel        HotelProperty  @relation(fields: [hotelId], references: [id], onDelete: Cascade)
@@ -889,10 +969,10 @@ model Reservation {
   status         String    @default("REQUESTED") // §10 Konaklama: NOT_REQUESTED|REQUESTED|WAITLIST|RESERVED|CONFIRMED|CHECKED_IN|CHECKED_OUT|CANCELLED
   // — Konaklama operasyon detayları (kullanıcı isteği 8) —
   occupancyType  String?   // SINGLE|DOUBLE|FAMILY_SHARED
-  ratePerNight   Float     @default(0) // hangi fiyattan
+  ratePerNight   Int     @default(0) // F6: kuruş // hangi fiyattan
   nights         Int       @default(0) // kaç gece
   noShow         Boolean   @default(false) // gerçekleşmeyen konaklama — sistemden düşme
-  noShowFee      Float     @default(0)
+  noShowFee      Int     @default(0) // F6: kuruş
   notes          String?
   createdAt      DateTime  @default(now())
 
@@ -1164,6 +1244,7 @@ model ScanEvent {
 
   @@index([scannedAt])
   @@index([participationId])
+  @@index([participationId, action, result]) // P2: kapı tekrar-tarama denetimi (hız-yol sorgusu)
 }
 
 // ─── FAZ 13: CERTIFICATES (§43) ────────────────────────────────────────────
@@ -1220,7 +1301,7 @@ model BoothUnit {
   sizeSqm       Float     @default(12)
   type          String    @default("SHELL_SCHEME") // SHELL_SCHEME|SPACE_ONLY|CUSTOM
   status        String    @default("AVAILABLE") // §21: AVAILABLE|HELD|OPTION|RESERVED|CONTRACTED|BLOCKED|OCCUPIED|RELEASED
-  price         Float     @default(0)
+  price         Int       @default(0) // F6: kuruş
   currency      String    @default("TRY")
   optionExpiresAt DateTime? // ABC Ltd. OPTION expires_at örneği
 
@@ -1373,6 +1454,7 @@ model ActivityLog {
   edition EventEdition? @relation(fields: [editionId], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
+  @@index([editionId, createdAt]) // P2: bildirim/recent-activity akışı (edisyon filtresi + tarih sırası)
 }
 
 // ─── GENİŞLETME DALGASI 1: Custom Rol Motoru + CV (kullanıcı isteği 1) ─────
@@ -1476,6 +1558,9 @@ model MediaAsset {
   sizeKb      Int?
   externalUrl String?  // dış bağlantı
   dataUrl     String?  // küçük dosyalar için base64 (≤ 400KB)
+  thumbDataUrl String? // M5: 320px WebP önizleme (raster görseller; kaynak meta veriler temizlenmiş)
+  widthPx     Int?     // M5: piksel denetimi (25MP iki-kapı)
+  heightPx    Int?
   tags        String?  // virgülle
   notes       String?
   linkedType  String?  // PERSON|ORGANIZATION|SUBMISSION|SESSION|BOOTH|BADGE_DESIGN|CERTIFICATE
@@ -1569,7 +1654,8 @@ model MailProviderConfig {
   host      String?
   port      Int?
   username  String?
-  password  String?  // UI'da maskelenir
+  password  String?  // DEPRECATED (S3): düz metin saklanmaz — yalnız eski kayıtlar için; API'den MASKELİ döner
+  passwordCipher String? // S3: AES-256-GCM şifreli kimlik bilgisi (MAVEN_SECRET_KEY ile) — at-rest koruma
   fromEmail String
   fromName  String?
   replyTo   String?
@@ -1583,6 +1669,22 @@ model MailProviderConfig {
   tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   campaigns Campaign[]
 
+  @@index([tenantId])
+}
+
+// S3: Mail istismarı denetimi — abonelikten çıkma/sıkıntı/şikayet listesi;
+// gönderim motoru bu listedeki adreslere ASLA gönderim yapmaz (KVKK güvenli çıkış).
+model MailSuppression {
+  id        String   @id @default(cuid())
+  tenantId  String
+  email     String
+  reason    String   @default("MANUAL") // UNSUBSCRIBE|BOUNCE|COMPLAINT|MANUAL
+  note      String?
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
   @@index([tenantId])
 }
 
@@ -1633,7 +1735,7 @@ model SocialPlan {
   venue        String?   // sosyal mekân / tur başlangıç noktası
   meetingPoint String?   // tur buluşma noktası & saati notu
   capacity     Int?
-  price        Float?
+  price        Int? // F6: kuruş
   currency     String    @default("TRY")
   status       String    @default("DRAFT") // DRAFT|ANNOUNCED|CLOSED|CANCELLED
   notes        String?

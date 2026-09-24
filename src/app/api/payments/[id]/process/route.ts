@@ -4,6 +4,7 @@
 // SUCCEEDED → order bakiyesi yeniden hesaplanır (OPEN / PARTIALLY_PAID / PAID) + aktivite günlüğü.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { ensureInScope } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 
 type Params = { params: Promise<{ id: string }> };
@@ -17,6 +18,11 @@ export async function POST(req: NextRequest, { params }: Params) {
       expiry?: string;
       cvc?: string;
     };
+
+    // G0-a: ödeme işlemi zinciri (order → edition) üzerinden kapsam kontrolü —
+    // başka kiracının sipariş ödemesi işlenemez (IDOR 404)
+    const scoped = await ensureInScope("payments", id);
+    if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
 
     const payment = await db.payment.findUnique({ where: { id }, include: { order: true } });
     if (!payment) return NextResponse.json({ error: "Ödeme bulunamadı" }, { status: 404 });

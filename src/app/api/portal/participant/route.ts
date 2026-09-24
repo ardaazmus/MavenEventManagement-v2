@@ -78,6 +78,8 @@ export async function GET(req: NextRequest) {
       person: {
         id: person.id, firstName: person.firstName, lastName: person.lastName,
         email: person.email, title: person.title, organizationName: person.company,
+        // G0-c: portal simülasyonu aksiyonlarda bu belirteci gönderir (TODO-auth: gerçek portal oturumunda sunucu oturumundan türetilir)
+        portalToken: person.portalToken,
       },
       participation: participation
         ? {

@@ -4,6 +4,7 @@
 // Dönen rapor: satır sayısı, oluşturulan/güncellenen oturumlar, kişi eşleştirme dökümü
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveContext, verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 
 // basit CSV/TSV ayrıştırıcı — tırnaklı alanları destekler
@@ -80,6 +81,14 @@ export async function POST(req: NextRequest) {
     if (!editionId || !body.csvText?.trim()) {
       return NextResponse.json({ error: "editionId ve csvText zorunlu" }, { status: 400 });
     }
+    // G0-b: içe aktarım kişi/oturum YAZAR — hedef edisyon bağlama doğrulanır
+    try {
+      await verifyEditionTenant(editionId);
+    } catch (e) {
+      if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
+    }
+    const ctx = await resolveContext(null); // kişi eşleştirmesi kiracı kapsamında yapılır (G0-d)
     const edition = await db.eventEdition.findUnique({ where: { id: editionId } });
     if (!edition) return NextResponse.json({ error: "Edisyon bulunamadı" }, { status: 404 });
 
@@ -111,12 +120,12 @@ export async function POST(req: NextRequest) {
         const parts = fullName.split(/\s+/).filter(Boolean);
         const firstName = parts[0] ?? fullName;
         const lastName = parts.slice(1).join(" ") || "—";
-        let person = email ? await db.person.findFirst({ where: { email } }) : null;
+        let person = email ? await db.person.findFirst({ where: { email, tenantId: ctx } }) : null;
         let result = "";
         if (person) { result = "E-posta ile eşleşti"; report.personsMatched++; }
         else {
           person = await db.person.findFirst({
-            where: { firstName: firstName, lastName: lastName, status: { not: "MERGED" } },
+            where: { firstName: firstName, lastName: lastName, status: { not: "MERGED" }, tenantId: ctx },
           });
           if (person) { result = "Ad soyad ile eşleşti"; report.personsMatched++; }
           else if (body.createMissingPersons !== false) {
@@ -166,13 +175,13 @@ export async function POST(req: NextRequest) {
         let matchedPerson: { id: string; firstName: string; lastName: string } | null = null;
         let matchResult = "Konuşmacı belirtilmedi";
         if (speakerEmail || speakerName) {
-          matchedPerson = speakerEmail ? await db.person.findFirst({ where: { email: speakerEmail } }) : null;
+          matchedPerson = speakerEmail ? await db.person.findFirst({ where: { email: speakerEmail, tenantId: ctx } }) : null;
           if (matchedPerson) matchResult = "E-posta ile eşleşti";
           if (!matchedPerson && speakerName) {
             const parts = speakerName.split(/\s+/).filter(Boolean);
             const fn = parts[0] ?? speakerName; const ln = parts.slice(1).join(" ") || "—";
             matchedPerson = await db.person.findFirst({
-              where: { firstName: fn, lastName: ln, status: { not: "MERGED" } },
+              where: { firstName: fn, lastName: ln, status: { not: "MERGED" }, tenantId: ctx },
             });
             matchResult = matchedPerson ? "Ad soyad ile eşleşti" : (body.createMissingPersons ? "Yeni kişi oluşturulacak" : "Eşleşmedi");
             if (!matchedPerson && body.createMissingPersons && !body.dryRun) {

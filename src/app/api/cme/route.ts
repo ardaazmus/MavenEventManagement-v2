@@ -5,6 +5,7 @@
 // Kredi kazanma kuralı: SESSION_ENTRY taraması geçerli (ALLOWED / RESCAN_WARNING) → oturumun cmeCredits'i kişiye yazılır.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveEditionContext, verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 
 const VALID_RESULTS = ["ALLOWED", "RESCAN_WARNING"];
@@ -13,6 +14,14 @@ export async function GET(req: NextRequest) {
   try {
     const editionId = new URL(req.url).searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+
+    // G0-b: CME defteri kişi bazlı gerçek taşır — edisyon bağlamına doğrulanır
+    try {
+      await resolveEditionContext(editionId, { required: true });
+    } catch (e) {
+      if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
+    }
 
     // 1) Oturumlar — kredi editörü tablosu + katılım sayısı
     const sessions = await db.programSession.findMany({
@@ -124,6 +133,15 @@ export async function POST(req: NextRequest) {
       if (credits == null || Number.isNaN(credits) || credits < 0 || credits > 99) {
         return NextResponse.json({ error: "Kredi 0–99 arasında olmalı" }, { status: 400 });
       }
+      // G0-b: oturumun ebeveyn edisyonu bağlama doğrulanır (yabancı oturum 404)
+      const target = await db.programSession.findUnique({ where: { id: sessionId }, select: { editionId: true } });
+      if (!target) return NextResponse.json({ error: "Oturum bulunamadı" }, { status: 404 });
+      try {
+        await verifyEditionTenant(target.editionId);
+      } catch (e) {
+        if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+        throw e;
+      }
       const session = await db.programSession.update({
         where: { id: sessionId },
         data: { cmeCredits: Math.round(credits * 100) / 100 },
@@ -146,6 +164,13 @@ export async function POST(req: NextRequest) {
       const { defaults, editionId } = body;
       if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
       if (!defaults || typeof defaults !== "object") return NextResponse.json({ error: "defaults gerekli" }, { status: 400 });
+      // G0-b: toplu güncelleme hedef edisyonu bağlama doğrulanır
+      try {
+        await verifyEditionTenant(editionId);
+      } catch (e) {
+        if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+        throw e;
+      }
       let updated = 0;
       const applied: string[] = [];
       for (const [type, credits] of Object.entries(defaults)) {

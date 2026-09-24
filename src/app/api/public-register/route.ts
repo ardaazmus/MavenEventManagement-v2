@@ -6,9 +6,14 @@ import { db } from "@/lib/db";
 import { evaluateSpam, registerSubmissionHits } from "@/lib/spam-guard";
 import { createRegistrationFromSubmission } from "@/lib/api/registration-chain";
 import { ActivityType } from "@/lib/api/activity";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   try {
+  // S3: herkese açık kayıt brute-force kapısı — 10 gönderim/10 dk/IP (spam-guard ek katman)
+  const denied = enforceRateLimit(req, { key: "public-register", limit: 10, windowMs: 600_000 });
+  if (denied) return denied;
+
     const body = (await req.json()) as {
       formId?: string;
       respondentName?: string;

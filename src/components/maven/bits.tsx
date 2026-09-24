@@ -123,10 +123,21 @@ export function Loading({ rows = 3 }: { rows?: number }) {
 }
 
 // basit veri çekme kancası — refreshKey ile global yenileme
-export function useApi<T>(loader: () => Promise<T>, deps: unknown[]): { data: T | null; error: string | null; reload: () => void; loading: boolean } {
+// P2: useApi — append modu opsiyonel: loader imleç alır ve { items, nextCursor } döndürür;
+// more.next() sonraki sayfayı MEVCUT listeye EKLER (10k satır erişilebilirliği imleçle yürür).
+export function useApi<T>(
+  loader: (cursor?: string) => Promise<T>,
+  deps: unknown[],
+  opts?: { append?: boolean },
+): {
+  data: T | null; error: string | null; reload: () => void; loading: boolean;
+  more?: { loading: boolean; hasMore: boolean; next: () => void };
+} {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [moreLoading, setMoreLoading] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const reload = () => setTick((t) => t + 1);
 
@@ -135,8 +146,14 @@ export function useApi<T>(loader: () => Promise<T>, deps: unknown[]): { data: T 
     const run = async () => {
       setLoading(true);
       try {
-        const d = await loader();
-        if (alive) { setData(d); setError(null); }
+        const d = await loader(undefined);
+        if (alive) {
+          setData(d);
+          setError(null);
+          // append modda imleç ilk sayfadan alınır (sıfırlanır)
+          const nc = (d as { nextCursor?: string | null } | null)?.nextCursor ?? null;
+          if (opts?.append) setCursor(nc);
+        }
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : "Hata");
       } finally {
@@ -147,7 +164,32 @@ export function useApi<T>(loader: () => Promise<T>, deps: unknown[]): { data: T 
     return () => { alive = false; };
   }, [...deps, tick]);
 
-  return { data, error, reload, loading };
+  const next = () => {
+    if (!opts?.append || moreLoading || !cursor) return;
+    setMoreLoading(true);
+    void (async () => {
+      try {
+        const page = await loader(cursor);
+        const p = page as { items?: unknown[]; nextCursor?: string | null };
+        setCursor(p.nextCursor ?? null);
+        setData((prev) => {
+          if (prev == null) return page;
+          const prevItems = (prev as { items?: unknown[] }).items ?? [];
+          return { ...prev, items: [...prevItems, ...(p.items ?? [])] } as T;
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Hata");
+      } finally {
+        setMoreLoading(false);
+      }
+    })();
+  };
+
+  const more = opts?.append
+    ? { loading: moreLoading, hasMore: cursor != null, next }
+    : undefined;
+
+  return { data, error, reload, loading, more };
 }
 
 export function PageHeader({ title, desc, children }: { title: string; desc?: string; children?: ReactNode }) {

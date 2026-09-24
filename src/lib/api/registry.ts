@@ -3,6 +3,7 @@
 // Entity registry: isim → prisma delegate + include + arama alanları + audit.
 
 import { db } from "@/lib/db";
+import { encryptSecret } from "@/lib/secrets";
 import { ActivityType } from "./activity";
 
 type AnyDelegate = {
@@ -19,11 +20,15 @@ export interface EntityConfig {
   delegate: AnyDelegate;
   include?: Record<string, unknown>;
   searchFields?: string[];          // serbest metin arama alanları (contains)
+  relationSearch?: (q: string) => Record<string, unknown>; // ilişki-uzanan serbest arama (P2: registrations vb.)
   filterFields?: string[];          // ?field=value eşitlik filtreleri
   defaultWhere?: Record<string, unknown>; // tüm listeye uygulanan taban filtre (ör. MERGED kişileri gizle)
   orderBy?: Record<string, "asc" | "desc">;
   auditType?: string;               // aktivite günlüğü tipi
   auditMessage?: (data: Record<string, unknown>, action: "create" | "update" | "delete") => string;
+  // S3: sır koruma — okumada maskeleme (password sızması yasak), yazmada şifreleme
+  readMask?: (row: Record<string, unknown>) => Record<string, unknown>;
+  writeTransform?: (data: Record<string, unknown>, isUpdate: boolean) => Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
 export const registry: Record<string, EntityConfig> = {
@@ -108,6 +113,18 @@ export const registry: Record<string, EntityConfig> = {
       category: true,
       entitlementClaims: { include: { entitlement: true } },
     },
+    // P2: searchFields YOK — q serbest araması ilişki-uzanan alanlarda çözülür:
+    // teyit no (skaler) + kategori ad/kod (scalar ilişki) + katılımcı ad/soyad/e-posta (nested ilişki)
+    relationSearch: (q: string) => ({
+      OR: [
+        { confirmationNo: { contains: q } },
+        { category: { is: { name: { contains: q } } } },
+        { category: { is: { code: { contains: q } } } },
+        { participation: { is: { person: { is: { firstName: { contains: q } } } } } },
+        { participation: { is: { person: { is: { lastName: { contains: q } } } } } },
+        { participation: { is: { person: { is: { email: { contains: q } } } } } },
+      ],
+    }),
     filterFields: ["editionId", "status", "categoryId", "source", "fundingSource"],
     orderBy: { createdAt: "desc" },
     auditType: ActivityType.REGISTRATION_SAVED,
@@ -520,6 +537,26 @@ export const registry: Record<string, EntityConfig> = {
     delegate: db.mailProviderConfig as unknown as AnyDelegate,
     filterFields: ["tenantId", "kind", "status"],
     orderBy: { createdAt: "desc" },
+    // S3: kimlik bilgisi asla düz metin sızmaz — password/passwordCipher MASKELİ döner
+    readMask: (row: Record<string, unknown>) => {
+      const hasCredential = Boolean(row.password || row.passwordCipher);
+      const { password: _pw, passwordCipher: _pc, ...safe } = row;
+      void _pw; void _pc;
+      return { ...safe, hasPassword: hasCredential };
+    },
+    // S3: yazmada body.password şifrelenip passwordCipher'a taşınır; düz metin hiç yazılmaz
+    writeTransform: (data: Record<string, unknown>, isUpdate: boolean) => {
+      const out = { ...data };
+      const pw = typeof out.password === "string" ? out.password.trim() : "";
+      delete out.password;
+      if (pw) {
+        out.passwordCipher = encryptSecret(pw);
+      } else if (isUpdate && out.clearPassword === true) {
+        out.passwordCipher = null;
+      }
+      delete out.clearPassword;
+      return out;
+    },
   },
   "badge-designs": {
     delegate: db.badgeDesign as unknown as AnyDelegate,

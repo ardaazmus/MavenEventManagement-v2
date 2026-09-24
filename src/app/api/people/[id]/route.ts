@@ -1,14 +1,19 @@
 // /api/people/[id] — Person 360 (§54): tüm modüllerin gerçeklerini birleştiren GET
 // + PUT kişi güncellemesi (R10-a): dedicated route generic /api/[entity]/[id]
 // yolunu gölgeler; PUT eksik olduğundan kişi düzenleme 405'e düşüyordu.
+// G0-a: özel rota da generic desenle AYNI kapsam kontrolünden geçer — başka kiracının
+// kişisine id ile erişim/güncelleme 404 (IDOR kapanır; kanıt: tam 360 + vcard sızdırıyordu).
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { sanitize } from "@/lib/api/registry";
+import { ensureInScope } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await ctx.params;
+    const scoped = await ensureInScope("people", id);
+    if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
     const person = await db.person.findUnique({
       where: { id },
       include: {
@@ -41,6 +46,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   try {
+    const scoped = await ensureInScope("people", id);
+    if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
     const body = await req.json();
     const data = sanitize(body);
     const updated = await db.person.update({ where: { id }, data });

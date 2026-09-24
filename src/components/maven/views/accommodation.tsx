@@ -6,7 +6,8 @@ import { useState } from "react";
 import { listEntity, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
-import { ACCOMMODATION_STATUS, OCCUPANCY_TYPE, RELATION_TYPE, fmtDate, fmtMoney, label } from "@/lib/constants";
+import { ACCOMMODATION_STATUS, OCCUPANCY_TYPE, RELATION_TYPE, fmtDate, fmtMoney, fmtMoneyMajor, label } from "@/lib/constants";
+import { toMinor, fromMinor } from "@/lib/money";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -106,10 +107,10 @@ export function AccommodationView() {
   const openEdit = (r: ReservationRow) => {
     setEditForm({
       occupancyType: r.occupancyType ?? "__none__",
-      ratePerNight: r.ratePerNight ?? 0,
+      ratePerNight: fromMinor(r.ratePerNight ?? 0), // F6: kuruş→₺ girdi
       nights: nightsSaved(r),
       noShow: r.noShow ?? false,
-      noShowFee: r.noShowFee ?? 0,
+      noShowFee: fromMinor(r.noShowFee ?? 0), // F6: kuruş→₺ girdi
     });
     setEditRes(r);
   };
@@ -120,10 +121,10 @@ export function AccommodationView() {
     try {
       await apiSend(`/api/reservations/${editRes.id}`, "PUT", {
         occupancyType: editForm.occupancyType === "__none__" ? null : editForm.occupancyType,
-        ratePerNight: Number(editForm.ratePerNight) || 0,
+        ratePerNight: toMinor(Number(editForm.ratePerNight) || 0), // F6: ₺ girdi→kuruş
         nights: Math.max(0, Math.round(Number(editForm.nights) || 0)),
         noShow: editForm.noShow,
-        noShowFee: editForm.noShow ? Number(editForm.noShowFee) || 0 : 0,
+        noShowFee: editForm.noShow ? toMinor(Number(editForm.noShowFee) || 0) : 0, // F6: ₺→kuruş
       });
       toast({ title: "Rezervasyon güncellendi", description: `${editRes.guestName} · oda tipi/fiyat/gece kaydedildi.` });
       setEditRes(null);
@@ -143,7 +144,7 @@ export function AccommodationView() {
     if (!noShowRes) return;
     setBusy(true);
     try {
-      await apiSend(`/api/reservations/${noShowRes.id}`, "PUT", { noShow: true, noShowFee: Number(noShowFee) || 0 });
+      await apiSend(`/api/reservations/${noShowRes.id}`, "PUT", { noShow: true, noShowFee: toMinor(Number(noShowFee) || 0) }); // F6
       toast({ title: "No-show işaretlendi", description: `${noShowRes.guestName} sistemden düşüldü — ücret faturaya kalem olarak yansır.` });
       setNoShowRes(null);
       reloadRes(); bump();
@@ -599,7 +600,7 @@ export function AccommodationView() {
               <div className="flex items-end">
                 <div className="w-full rounded-lg bg-teal-500/10 px-3 py-2 text-right">
                   <p className="text-[10px] font-medium uppercase tracking-wide text-teal-700/70">hesaplanan toplam</p>
-                  <p className="text-lg font-semibold tabular-nums text-teal-800">{fmtMoney((Number(editForm.ratePerNight) || 0) * (Number(editForm.nights) || 0))}</p>
+                  <p className="text-lg font-semibold tabular-nums text-teal-800">{fmtMoney(toMinor((Number(editForm.ratePerNight) || 0) * (Number(editForm.nights) || 0)))}</p>
                 </div>
               </div>
             </div>

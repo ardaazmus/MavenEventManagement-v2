@@ -5,6 +5,7 @@
 // Dönen: gelir/gider/net özeti, kaynak & kategori kırılımları, açık alacaklar, 30 günlük seri, birleşik defter
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 
 const INCOME_EXPENSE_STATUSES = ["APPROVED", "PAID", "REIMBURSED"]; // giderde gerçekleşen sayılanlar
 
@@ -13,6 +14,14 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const editionId = searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+
+    // G0-b: edisyon kiracı bağlamına doğrulanır — bogus/yabancı edisyon 404 (önceden 200-empty idi)
+    try {
+      await resolveEditionContext(editionId, { required: true });
+    } catch (e) {
+      if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
+    }
 
     const [orders, payments, expenses, incomes] = await Promise.all([
       db.order.findMany({

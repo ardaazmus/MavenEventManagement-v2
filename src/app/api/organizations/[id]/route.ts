@@ -1,10 +1,14 @@
 // /api/organizations/[id] — Kurum 360 (§55)
+// G0-a: özel rota da kapsam kontrolünden geçer — başka kiracının kurumu 404.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { ensureInScope } from "@/lib/api/tenant-guard";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await ctx.params;
+    const scoped = await ensureInScope("organizations", id);
+    if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
     const org = await db.organization.findUnique({
       where: { id },
       include: {

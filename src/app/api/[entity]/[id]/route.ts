@@ -1,35 +1,16 @@
 // Generic item route: /api/[entity]/[id]
-// Faz A: tek kayıt işlemleri de kiracı kapsamına alınır — başka kiracının kaydına
-// id ile erişim 404 döner (IDOR koruması).
+// Faz A + G0-a: tek kayıt işlemleri kiracı kapsamına alınır — başka kiracının kaydına
+// id ile erişim 404 döner (IDOR koruması). ensureInScope artık tenant-guard'ta ortak:
+// özel rotalar (people/[id], form-submissions/[id], payments/[id]/process…) aynı fonksiyonu kullanır.
 import { NextRequest, NextResponse } from "next/server";
 import { registry, sanitize } from "@/lib/api/registry";
-import { applyWriteGuard, resolveContext, tenantIdOf, tenantSelectFor, GuardError } from "@/lib/api/tenant-guard";
+import { applyWriteGuard, ensureInScope, GuardError } from "@/lib/api/tenant-guard";
 import { db } from "@/lib/db";
 
 type Ctx = { params: Promise<{ entity: string; id: string }> };
 
 function notFound(msg = "Bilinmeyen varlık") {
   return NextResponse.json({ error: msg }, { status: 404 });
-}
-
-// kaydı kiracı select'iyle çek, bağlamla karşılaştır (null = bağsız, izinli)
-async function ensureInScope(entity: string, id: string): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
-  const config = registry[entity];
-  const select = tenantSelectFor(entity);
-  if (!config || !select) return { ok: true }; // kapsam haritası dışı — kurallı varlıklar haritalıdır
-  if (entity === "tenants") {
-    const ctx = await resolveContext(null);
-    if (id !== ctx) return { ok: false, status: 404, error: "Kayıt bulunamadı" };
-    return { ok: true };
-  }
-  const record = await config.delegate.findFirst({ where: { id }, ...(select as Record<string, unknown>) });
-  if (!record) return { ok: false, status: 404, error: "Kayıt bulunamadı" };
-  const owner = tenantIdOf(entity, record);
-  if (owner) {
-    const ctx = await resolveContext(null);
-    if (owner !== ctx) return { ok: false, status: 404, error: "Kayıt bulunamadı" };
-  }
-  return { ok: true };
 }
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
@@ -41,7 +22,9 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
     if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
     const item = await config.delegate.findUnique({ where: { id }, include: config.include });
     if (!item) return notFound("Kayıt bulunamadı");
-    return NextResponse.json(item);
+    // S3: sır içeren yanıt maskelenir
+    const safeItem = config.readMask ? config.readMask(item as Record<string, unknown>) : item;
+    return NextResponse.json(safeItem);
   } catch (e) {
     if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
     console.error(`GET /api/${entity}/${id}`, e);
@@ -60,6 +43,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     const body = await req.json();
     let data = sanitize(body);
     data = await applyWriteGuard(entity, data, { isUpdate: true });
+    if (config.writeTransform) data = await config.writeTransform(data, true); // S3: sır şifreleme
     const updated = await config.delegate.update({ where: { id }, data, include: config.include });
     if (config.auditType) {
       await db.activityLog.create({
@@ -72,7 +56,9 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
         },
       });
     }
-    return NextResponse.json(updated);
+    // S3: sır içeren yanıt maskelenir
+    const safeUpdated = config.readMask ? config.readMask(updated as Record<string, unknown>) : updated;
+    return NextResponse.json(safeUpdated);
   } catch (e) {
     if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
     console.error(`PUT /api/${entity}/${id}`, e);

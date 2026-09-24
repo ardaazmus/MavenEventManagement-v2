@@ -7,6 +7,7 @@
 // Birleştirme her zaman /api/flows { action: "person.merge" } ile onaylı yapılır (öneri ≠ birleştirme).
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
 
 function norm(s: string | null | undefined): string {
   return (s ?? "").toLocaleLowerCase("tr-TR").replace(/\s+/g, " ").trim();
@@ -18,8 +19,10 @@ function normPhone(s: string | null | undefined): string {
 
 export async function GET(req: NextRequest) {
   try {
+    // G0-b: tarama bağlam kiracısıyla sınırlandırılır — başka kiracının adayları listelenmez
+    const ctx = await resolveContext(null);
     const persons = await db.person.findMany({
-      where: { status: { not: "MERGED" }, mergedIntoId: null },
+      where: { status: { not: "MERGED" }, mergedIntoId: null, tenantId: ctx },
       select: { id: true, firstName: true, lastName: true, email: true, phone: true, title: true, company: true, city: true, status: true, createdAt: true },
       orderBy: { createdAt: "asc" },
     });
@@ -99,6 +102,7 @@ export async function GET(req: NextRequest) {
       reasonLabels: { EMAIL: "Aynı e-posta", NAME_PHONE: "Aynı ad + telefon", NAME_ORG: "Aynı ad + kurum" },
     });
   } catch (e) {
+    if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
     console.error("GET /api/people/duplicates", e);
     return NextResponse.json({ error: "Mükerrer taraması başarısız" }, { status: 500 });
   }

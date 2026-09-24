@@ -4,6 +4,7 @@
 // gider fiş/onay durumu, açık alacak yaşlandırması (0-30/31-60/60+), son 6 ay dönem özeti.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 
 const REALIZED_EXPENSE = ["APPROVED", "PAID", "REIMBURSED"];
 
@@ -11,6 +12,14 @@ export async function GET(req: NextRequest) {
   try {
     const editionId = new URL(req.url).searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+
+    // G0-b: mutabakat finansal gerçek taşır — edisyon bağlamına doğrulanır (yabancı → 404)
+    try {
+      await resolveEditionContext(editionId, { required: true });
+    } catch (e) {
+      if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
+    }
 
     const [orders, expenses, refunds] = await Promise.all([
       db.order.findMany({
@@ -36,7 +45,7 @@ export async function GET(req: NextRequest) {
       const processedRefunds = o.refunds.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + r.amount, 0);
       const payer = o.buyerOrganization?.name ?? o.payerName ?? o.orderNo;
 
-      if (o.status !== "CANCELLED" && Math.abs(linesTotal - o.totalAmount) > 0.01) {
+      if (o.status !== "CANCELLED" && Math.abs(linesTotal - o.totalAmount) > 0) { // F6: kuruş tamlığı
         mismatches.push({
           orderNo: o.orderNo, payer,
           issue: "Sipariş tutarı ≠ kalem toplamı",
@@ -44,7 +53,7 @@ export async function GET(req: NextRequest) {
         });
       }
       const netPaid = succeeded - processedRefunds;
-      if (o.status === "PAID" && netPaid + 0.01 < o.totalAmount) {
+      if (o.status === "PAID" && netPaid < o.totalAmount) { // F6: kuruş
         mismatches.push({
           orderNo: o.orderNo, payer,
           issue: "Durum PAID ama tahsilat toplamı yetersiz",

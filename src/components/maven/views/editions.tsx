@@ -15,6 +15,23 @@ import { useToast } from "@/hooks/use-toast";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// G1: yayın denetimi sözleşmesi — /api/dashboard checks bloğu
+type PublishChecks = {
+  blockers: { key: string; message: string; severity: "BLOCKER" | "WARNING" }[];
+  warnings: { key: string; message: string; severity: "BLOCKER" | "WARNING" }[];
+  score: number;
+  total: number;
+  pct: number;
+};
+
+type EditionRow = {
+  id: string; name: string; status: string; isPublished: boolean;
+  startDate?: string | null; endDate?: string | null; city?: string | null;
+  series?: { name: string } | null;
+  capabilities?: { id: string; key: string; enabled: boolean }[];
+  _count?: { registrations?: number; participations?: number; sponsorAgreements?: number; sessions?: number; tasks?: number };
+};
+
 export function EditionsView() {
   const { editions, currentEditionId, setCurrentEdition, setModule, bump, bootstrap } = useApp();
   const { toast } = useToast();
@@ -36,6 +53,50 @@ export function EditionsView() {
   });
   // Adım 3: yetenekler BAŞTAN seçilebilir — şablon önerir, kullanıcı işaretleri açıp kapatır
   const [selectedCaps, setSelectedCaps] = useState<string[]>(TEMPLATES.SCIENTIFIC_CONGRESS);
+
+  // G1: yayın akışı — denetim → engel diyaloğu → edition.publish (engel varken kilitli)
+  const [publishTarget, setPublishTarget] = useState<EditionRow | null>(null);
+  const [publishChecks, setPublishChecks] = useState<PublishChecks | null>(null);
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [publishLoading, setPublishLoading] = useState(false);
+
+  const openPublish = async (e: EditionRow) => {
+    setPublishTarget(e);
+    setPublishChecks(null);
+    setPublishLoading(true);
+    try {
+      const res = await fetch(`/api/dashboard?editionId=${e.id}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Denetim alınamadı");
+      setPublishChecks(data.checks ?? { blockers: [], warnings: [], score: 8, total: 8, pct: 100 });
+    } catch (err) {
+      toast({ title: "Yayın denetimi alınamadı", description: err instanceof Error ? err.message : "Hata", variant: "destructive" });
+      setPublishTarget(null);
+    } finally {
+      setPublishLoading(false);
+    }
+  };
+
+  const doPublish = async () => {
+    if (!publishTarget) return;
+    setPublishBusy(true);
+    try {
+      const r = await apiSend<{ name: string }>("/api/flows", "POST", { action: "edition.publish", editionId: publishTarget.id });
+      toast({ title: "Etkinlik yayınlandı", description: `${r.name} — kayıt bağlantısı açıldı, katılımcılar görebilir.` });
+      setPublishTarget(null);
+      await bootstrap();
+      bump();
+    } catch (e) {
+      // 409: sunucu engel listesi döndürür — diyaloğu güncel tut
+      try {
+        const parsed = JSON.parse((e as Error).message);
+        if (parsed?.checks) setPublishChecks(parsed.checks);
+      } catch { /* mesaj olduğu gibi */ }
+      toast({ title: "Yayın engellendi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally {
+      setPublishBusy(false);
+    }
+  };
 
   const applyTemplate = (template: string) => {
     setForm({ ...form, template });
@@ -135,6 +196,16 @@ export function EditionsView() {
                 <Button size="sm" variant={currentEditionId === e.id ? "secondary" : "outline"} onClick={() => { setCurrentEdition(e.id); setModule("dashboard"); }}>
                   {currentEditionId === e.id ? "Açık — Dashboard" : "Edisyona geç"}
                 </Button>
+                {/* G1: yayın butonu — mevcut edition.publish akışı; engel varken kilitli + gerekçe */}
+                {!e.isPublished ? (
+                  <Button size="sm" variant="default" onClick={() => openPublish(e)}>
+                    <Icons.Rocket className="size-4" /> Yayınla
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="ghost" disabled>
+                    <Icons.BadgeCheck className="size-4" /> Yayında
+                  </Button>
+                )}
                 <Button size="sm" variant="ghost" onClick={() => { setCurrentEdition(e.id); setModule("settings"); }}>
                   <Icons.Settings className="size-4" /> Ayarlar
                 </Button>
@@ -143,6 +214,79 @@ export function EditionsView() {
           ))}
         </div>
       )}
+
+      {/* G1: Yayın denetim diyaloğu — engelleyici varken kilit + gerekçe; temizse onay */}
+      <Dialog open={!!publishTarget} onOpenChange={(o) => !o && setPublishTarget(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Icons.Rocket className="size-4 text-primary" /> Etkinliği Yayınla — {publishTarget?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Yayın öncesi hazırlık denetimi (8/8) çalışır. Engelleyici varken yayın kilitlidir; uyarılar yayına engel değildir.
+            </DialogDescription>
+          </DialogHeader>
+
+          {publishLoading || !publishChecks ? (
+            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+              <Icons.Loader2 className="size-4 animate-spin" /> Hazırlık denetimi çalışıyor…
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                  <div className={cn("h-full rounded-full transition-all", publishChecks.blockers.length > 0 ? "bg-red-500" : "bg-emerald-500")} style={{ width: `${Math.max(6, publishChecks.pct)}%` }} />
+                </div>
+                <span className="text-xs font-semibold text-muted-foreground">{publishChecks.score}/{publishChecks.total}</span>
+              </div>
+
+              {publishChecks.blockers.length > 0 ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-900/50 dark:bg-red-950/30">
+                  <p className="flex items-center gap-1.5 text-xs font-semibold text-red-700 dark:text-red-300">
+                    <Icons.Lock className="size-3.5" /> Yayın kilitli — {publishChecks.blockers.length} engelleyici:
+                  </p>
+                  <ul className="mt-1.5 space-y-1">
+                    {publishChecks.blockers.map((b) => (
+                      <li key={b.key} className="flex items-start gap-1.5 text-xs text-red-700 dark:text-red-200">
+                        <Icons.OctagonAlert className="mt-0.5 size-3 shrink-0" /> {b.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs font-medium text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+                  <Icons.ShieldCheck className="size-4" /> Denetim temiz — yayınlanmaya hazır.
+                </div>
+              )}
+
+              {publishChecks.warnings.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+                  <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                    <Icons.TriangleAlert className="size-3.5" /> {publishChecks.warnings.length} uyarı:
+                  </p>
+                  <ul className="mt-1.5 space-y-1">
+                    {publishChecks.warnings.map((w) => (
+                      <li key={w.key} className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-200">
+                        <Icons.Info className="mt-0.5 size-3 shrink-0" /> {w.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPublishTarget(null)}>Vazgeç</Button>
+            <Button
+              onClick={doPublish}
+              disabled={publishBusy || publishLoading || !publishChecks || publishChecks.blockers.length > 0}
+            >
+              {publishBusy ? "Yayınlanıyor…" : publishChecks?.blockers.length ? "Kilitli — engelleri çöz" : "Yayınla ve bağlantıyı aç"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Kurulum sihirbazı (özet) — §05: 9 adımın ilk 3'ü + şablon */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

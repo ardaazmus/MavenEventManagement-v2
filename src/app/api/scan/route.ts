@@ -1,4 +1,8 @@
 // /api/scan — Onsite tarama motoru (§42, §07 Onsite kontrol)
+// Kapsam kararı (G0-b): scan bilinçli olarak edition-bağlam denetiminin DIŞINDA tutulur —
+// kapı/işlem taraması QR'la kapılanır (kapı görevlisi fiziksel yaka kartı kanıtını taşır);
+// bağlam yerine credential→participation→edition zinciri zaten taramanın konusudur.
+// TODO-auth (A4): cihaz oturumu geldiğinde operatör bağlamı burada eklenir.
 // Kurallar:
 // - İlk geçerli ENTRY → katılım CHECKED_IN; tekrar tarama RESCAN_WARNING, geçmiş silinmez
 // - Geçersiz yaka kartı/iptal → DENIED + manuel istisna gerekçesi
@@ -6,9 +10,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ActivityType } from "@/lib/api/activity";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   try {
+  // S3: kapı/cihaz taraması brute-force kapısı — 120 tarama/dk/IP (QR denemesi istismarı)
+  const denied = enforceRateLimit(req, { key: "scan", limit: 120, windowMs: 60_000 });
+  if (denied) return denied;
+
     const body = await req.json();
     const { code, door = "MAIN_DOOR", sessionId, action = "ENTRY", forceReason } = body as {
       code: string; door?: string; sessionId?: string; action?: string; forceReason?: string;
@@ -101,26 +110,35 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // ilk geçerli etkinlik girişi → attendance CHECKED_IN
-    if (!isSessionScan && !isRescan && action === "ENTRY") {
-      await db.eventParticipation.update({ where: { id: participation.id }, data: { attendance: "CHECKED_IN" } });
-    }
-    if (action === "EXIT" && !isSessionScan) {
-      await db.eventParticipation.update({ where: { id: participation.id }, data: { attendance: "CHECKED_OUT" } });
+    // P2 hız-yolu: create + TEK update — attendance zaten bellekte; sadece değişim varsa yazılır
+    // (eski akış her girişte koşulsuz update atıyordu). EXIT/ENTRY birbirini dışlar, tek ifade hesaplanır.
+    let nextAttendance: string | null = null;
+    if (!isSessionScan && !isRescan && action === "ENTRY") nextAttendance = "CHECKED_IN";
+    else if (action === "EXIT" && !isSessionScan) nextAttendance = "CHECKED_OUT";
+    const attendanceChanged = nextAttendance !== null && nextAttendance !== participation.attendance;
+    if (nextAttendance !== null && attendanceChanged) {
+      await db.eventParticipation.update({ where: { id: participation.id }, data: { attendance: nextAttendance } });
     }
 
-    await db.activityLog.create({
-      data: {
-        type: ActivityType.SCAN_ALLOWED,
-        editionId: participation.editionId,
-        message: isRescan
-          ? `Tekrar tarama: ${person.firstName} ${person.lastName} (${isSessionScan ? "Oturum" : door})`
-          : `Giriş kaydedildi: ${person.firstName} ${person.lastName} (${isSessionScan ? "Oturum" : door})`,
-        entityType: "ScanEvent",
-        entityId: scan.id,
-        actorName: "Kapı Görevlisi",
-      },
-    });
+    // P2: tarama-başına aktivite günlüğü → periyodik toplulaştırma — her tarama günlüğe düşmez;
+    // durum değişimi (ilk giriş/çıkış) ve tekrar tarama anında yazılır, normal akışta 25'te bir özet yazılır.
+    const editionScanCount = await db.scanEvent.count({ where: { participation: { editionId: participation.editionId } } });
+    if (attendanceChanged || isRescan || editionScanCount % 25 === 0) {
+      await db.activityLog.create({
+        data: {
+          type: isRescan ? ActivityType.SCAN_ALLOWED : attendanceChanged ? ActivityType.SCAN_ALLOWED : ActivityType.SCAN_SAVED,
+          editionId: participation.editionId,
+          message: isRescan
+            ? `Tekrar tarama: ${person.firstName} ${person.lastName} (${isSessionScan ? "Oturum" : door})`
+            : attendanceChanged
+              ? `Giriş kaydedildi: ${person.firstName} ${person.lastName} (${isSessionScan ? "Oturum" : door})`
+              : `Saha özeti: ${editionScanCount}. tarama — ${person.firstName} ${person.lastName} (${isSessionScan ? "Oturum" : door})`,
+          entityType: "ScanEvent",
+          entityId: scan.id,
+          actorName: "Kapı Görevlisi",
+        },
+      });
+    }
 
     return NextResponse.json({
       result: isRescan ? "RESCAN_WARNING" : "ALLOWED",

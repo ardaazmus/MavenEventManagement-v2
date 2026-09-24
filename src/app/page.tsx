@@ -1,30 +1,53 @@
 "use client";
 // Maven Event Management — tek sayfa uygulama (SPA)
+// P2: modül parçalama — ağır modüller next/dynamic ile ilk boyamadan çıkarılır
+// (form-center, portals, media, floors, onsite, badges en ağır paketler); dashboard + editions
+// statik kalır (ilk boyama hedefi). Yüklenme anında hafif iskelet gösterilir.
 import { useEffect } from "react";
+import dynamic from "next/dynamic";
 import { useApp, hasCapability } from "@/lib/store";
 import { MODULES } from "@/lib/constants";
 import { Shell } from "@/components/maven/shell";
 import { EmptyState } from "@/components/maven/bits";
 import { DashboardView } from "@/components/maven/views/dashboard";
 import { EditionsView } from "@/components/maven/views/editions";
-import { PeopleView, OrganizationsView } from "@/components/maven/views/people";
-import { RegistrationsView } from "@/components/maven/views/registrations";
-import { ScientificView, ProgramView } from "@/components/maven/views/scientific";
-import { SponsorshipView } from "@/components/maven/views/sponsorship";
-import { FloorsView } from "@/components/maven/views/floors";
-import { PortalsView } from "@/components/maven/views/portals";
-import { AccommodationView } from "@/components/maven/views/accommodation";
-import { FinanceView } from "@/components/maven/views/finance";
-import { FormCenterView } from "@/components/maven/views/form-center";
-import { AccountingView } from "@/components/maven/views/accounting";
-import { BadgeQueueView } from "@/components/maven/views/badge-queue";
-import { OnsiteView, CertificatesView, CommunicationsView, OperationsView, SettingsView } from "@/components/maven/views/onsite";
-import { SocialView } from "@/components/maven/views/social";
-import { B2bView } from "@/components/maven/views/b2b";
-import { MediaArchiveView } from "@/components/maven/views/media";
-import { ArchiveView } from "@/components/maven/views/archive";
-import { ApiGatewayView } from "@/components/maven/views/integrations";
-import { Lock } from "lucide-react";
+import { Loader2, Lock } from "lucide-react";
+
+const ModuleSkeleton = () => (
+  <div className="grid min-h-[50vh] place-items-center text-muted-foreground" role="status" aria-label="Modül yükleniyor">
+    <div className="flex flex-col items-center gap-2">
+      <Loader2 className="size-6 animate-spin text-primary" />
+      <p className="text-xs">Modül yükleniyor…</p>
+    </div>
+  </div>
+);
+
+const dyn = (load: () => Promise<{ default: React.ComponentType }>) =>
+  dynamic(load, { loading: ModuleSkeleton, ssr: false });
+
+const PeopleView = dyn(() => import("@/components/maven/views/people").then((m) => ({ default: m.PeopleView })));
+const OrganizationsView = dyn(() => import("@/components/maven/views/people").then((m) => ({ default: m.OrganizationsView })));
+const RegistrationsView = dyn(() => import("@/components/maven/views/registrations").then((m) => ({ default: m.RegistrationsView })));
+const ScientificView = dyn(() => import("@/components/maven/views/scientific").then((m) => ({ default: m.ScientificView })));
+const ProgramView = dyn(() => import("@/components/maven/views/scientific").then((m) => ({ default: m.ProgramView })));
+const SponsorshipView = dyn(() => import("@/components/maven/views/sponsorship").then((m) => ({ default: m.SponsorshipView })));
+const FloorsView = dyn(() => import("@/components/maven/views/floors").then((m) => ({ default: m.FloorsView })));
+const PortalsView = dyn(() => import("@/components/maven/views/portals").then((m) => ({ default: m.PortalsView })));
+const AccommodationView = dyn(() => import("@/components/maven/views/accommodation").then((m) => ({ default: m.AccommodationView })));
+const FinanceView = dyn(() => import("@/components/maven/views/finance").then((m) => ({ default: m.FinanceView })));
+const FormCenterView = dyn(() => import("@/components/maven/views/form-center").then((m) => ({ default: m.FormCenterView })));
+const AccountingView = dyn(() => import("@/components/maven/views/accounting").then((m) => ({ default: m.AccountingView })));
+const BadgeQueueView = dyn(() => import("@/components/maven/views/badge-queue").then((m) => ({ default: m.BadgeQueueView })));
+const OnsiteView = dyn(() => import("@/components/maven/views/onsite").then((m) => ({ default: m.OnsiteView })));
+const CertificatesView = dyn(() => import("@/components/maven/views/onsite").then((m) => ({ default: m.CertificatesView })));
+const CommunicationsView = dyn(() => import("@/components/maven/views/onsite").then((m) => ({ default: m.CommunicationsView })));
+const OperationsView = dyn(() => import("@/components/maven/views/onsite").then((m) => ({ default: m.OperationsView })));
+const SettingsView = dyn(() => import("@/components/maven/views/onsite").then((m) => ({ default: m.SettingsView })));
+const SocialView = dyn(() => import("@/components/maven/views/social").then((m) => ({ default: m.SocialView })));
+const B2bView = dyn(() => import("@/components/maven/views/b2b").then((m) => ({ default: m.B2bView })));
+const MediaArchiveView = dyn(() => import("@/components/maven/views/media").then((m) => ({ default: m.MediaArchiveView })));
+const ArchiveView = dyn(() => import("@/components/maven/views/archive").then((m) => ({ default: m.ArchiveView })));
+const ApiGatewayView = dyn(() => import("@/components/maven/views/integrations").then((m) => ({ default: m.ApiGatewayView })));
 
 export default function Home() {
   const { module, bootstrap, currentEditionId, editions, setModule } = useApp();

@@ -3,13 +3,28 @@
 // POST aksiyonları: add | offer | auto-offer | respond | cancel
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 import { autoOfferForCategory, expireStaleOffers, seatStatsForCategory, convertOfferToRegistration } from "@/lib/api/waitlist-engine";
+
+// G0-b: waitlist kişisel veri + teklif motoru taşır — editionId/ebeveyn zinciri bağlama doğrulanır
+async function guard(e: unknown): Promise<NextResponse | null> {
+  if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+  return null;
+}
 
 export async function GET(req: NextRequest) {
   try {
     const editionId = req.nextUrl.searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+
+    try {
+      await verifyEditionTenant(editionId);
+    } catch (e) {
+      const ge = await guard(e);
+      if (ge) return ge;
+      throw e;
+    }
 
     await expireStaleOffers(editionId);
 
@@ -72,6 +87,14 @@ export async function POST(req: NextRequest) {
         const { editionId, personId, categoryId, priority, notes } = body as { editionId: string; personId: string; categoryId?: string | null; priority?: number; notes?: string };
         if (!editionId || !personId) return NextResponse.json({ error: "editionId ve personId zorunlu" }, { status: 400 });
 
+        // G0-b: hedef edisyon bağlama doğrulanır
+        try {
+          await verifyEditionTenant(editionId);
+        } catch (e) {
+          const ge = await guard(e);
+          if (ge) return ge;
+          throw e;
+        }
         const person = await db.person.findUnique({ where: { id: personId } });
         if (!person) return NextResponse.json({ error: "Kişi bulunamadı" }, { status: 404 });
 
@@ -112,6 +135,14 @@ export async function POST(req: NextRequest) {
         const { entryId } = body as { entryId: string };
         const entry = await db.waitlistEntry.findUnique({ where: { id: entryId } });
         if (!entry) return NextResponse.json({ error: "Giriş bulunamadı" }, { status: 404 });
+        // G0-b: girişin edisyonu bağlama doğrulanır (yabancı liste girişi 404)
+        try {
+          await verifyEditionTenant(entry.editionId);
+        } catch (e) {
+          const ge = await guard(e);
+          if (ge) return ge;
+          throw e;
+        }
         if (entry.status !== "WAITING") return NextResponse.json({ error: `Giriş ${entry.status} durumunda — teklif verilemez` }, { status: 409 });
         if (entry.categoryId) {
           const stats = await seatStatsForCategory(entry.categoryId);
@@ -134,6 +165,13 @@ export async function POST(req: NextRequest) {
       case "auto-offer": {
         const { editionId, categoryId } = body as { editionId: string; categoryId?: string };
         if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+        try {
+          await verifyEditionTenant(editionId);
+        } catch (e) {
+          const ge = await guard(e);
+          if (ge) return ge;
+          throw e;
+        }
         const results: { categoryId: string; offered: { entryId: string; personName: string; priority: number }[] }[] = [];
         if (categoryId) {
           results.push({ categoryId, offered: await autoOfferForCategory(editionId, categoryId) });
@@ -154,6 +192,14 @@ export async function POST(req: NextRequest) {
         const { entryId, response, actor } = body as { entryId: string; response: "ACCEPT" | "DECLINE"; actor?: string };
         const entry = await db.waitlistEntry.findUnique({ where: { id: entryId } });
         if (!entry) return NextResponse.json({ error: "Giriş bulunamadı" }, { status: 404 });
+        // G0-b: teklif yanıtı girişin edisyonu üzerinden doğrulanır
+        try {
+          await verifyEditionTenant(entry.editionId);
+        } catch (e) {
+          const ge = await guard(e);
+          if (ge) return ge;
+          throw e;
+        }
         if (entry.status !== "OFFERED") return NextResponse.json({ error: `Giriş ${entry.status} durumunda — yanıtlama uygun değil` }, { status: 409 });
 
         if (response === "ACCEPT") {
@@ -178,6 +224,14 @@ export async function POST(req: NextRequest) {
         const { entryId, reason } = body as { entryId: string; reason?: string };
         const entry = await db.waitlistEntry.findUnique({ where: { id: entryId } });
         if (!entry) return NextResponse.json({ error: "Giriş bulunamadı" }, { status: 404 });
+        // G0-b: çıkarma girişin edisyonu üzerinden doğrulanır
+        try {
+          await verifyEditionTenant(entry.editionId);
+        } catch (e) {
+          const ge = await guard(e);
+          if (ge) return ge;
+          throw e;
+        }
         if (!["WAITING", "OFFERED"].includes(entry.status)) return NextResponse.json({ error: `Giriş ${entry.status} durumunda — çıkarılamaz` }, { status: 409 });
         const updated = await db.waitlistEntry.update({ where: { id: entryId }, data: { status: "CANCELLED", notes: reason ?? entry.notes } });
         // teklifli giriş çıkarıldıysa koltuk serbest — sıradakine geç

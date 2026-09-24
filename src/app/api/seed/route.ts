@@ -4,11 +4,14 @@
 // DETAY İLKESİ (kullanıcı): her demo kaydı TAM girişli olur — eksik verili
 // kayıt tutulmaz; kişi fotoğrafları, kurum logoları, otel görselleri medya
 // klasörüne BENZERSİZ adla eklenir.
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import type { Person } from "@prisma/client";
 import { createRegistrationFromSubmission } from "@/lib/api/registration-chain";
 import { ensureSystemFolders } from "@/lib/media-system";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { encryptSecret } from "@/lib/secrets";
+import { toMinor } from "@/lib/money";
 
 const D = (offsetDays: number, h = 9, m = 0) => {
   const d = new Date();
@@ -27,7 +30,16 @@ const logoSvg = (name: string, color: string) =>
 const coverSvg = (title: string, c1: string, c2: string) =>
   svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#${c1}"/><stop offset="1" stop-color="#${c2}"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><text x="32" y="64" font-family="Arial" font-size="30" font-weight="bold" fill="#ffffffe6">${title}</text><path d="M0 300 Q160 240 320 300 T640 300 V360 H0 Z" fill="#ffffff33"/><path d="M0 320 Q160 270 320 320 T640 320 V360 H0 Z" fill="#ffffff22"/></svg>`);
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  // S3: seed çağrısı istismar kapısı — 5 çağrı/dk/IP (üretimde rota zaten 404)
+  const denied = enforceRateLimit(req, { key: "seed", limit: 5, windowMs: 60_000 });
+  if (denied) return denied;
+
+  // G0-f: demo veri yükleyici üretimde HARD-DISABLED — tüm demo veriyi siler;
+  // prod derlemede 404 (varlığı bile ifşa edilmez), allowlist'e ASLA eklenmez.
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Sayfa bulunamadı" }, { status: 404 });
+  }
   try {
     await wipe();
 
@@ -191,13 +203,13 @@ export async function POST() {
     });
 
     // ── Kayıt kategorileri ──
-    const catRegular = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Kongre Katılımı", code: "REG", basePrice: 5000, capacity: 800, paymentInstruction: "Havale/EFT: Maven Etkinlik Çözümleri · TR33 0006 ... — açıklamaya kayıt no yazın", order: 0 } });
-    const catStudent = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Öğrenci", code: "STU", basePrice: 1500, requiresApproval: true, capacity: 200, paymentInstruction: "Öğrenci belgesi onayı sonrası ödeme bağlantısı e-posta ile gönderilir", order: 1 } });
+    const catRegular = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Kongre Katılımı", code: "REG", basePrice: toMinor(5000), capacity: 800, paymentInstruction: "Havale/EFT: Maven Etkinlik Çözümleri · TR33 0006 ... — açıklamaya kayıt no yazın", order: 0 } });
+    const catStudent = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Öğrenci", code: "STU", basePrice: toMinor(1500), requiresApproval: true, capacity: 200, paymentInstruction: "Öğrenci belgesi onayı sonrası ödeme bağlantısı e-posta ile gönderilir", order: 1 } });
     const catSpeaker = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Davetli Konuşmacı", code: "SPK", basePrice: 0, order: 2 } });
     const catExhibitor = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Fuarcı Personeli", code: "EXH", basePrice: 0, order: 3 } });
     const catVip = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "VIP", code: "VIP", basePrice: 0, capacity: 1, order: 4 } });
     const catPress = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Basın", code: "PRS", basePrice: 0, order: 5 } });
-    const catAccomp = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Refakatçi", code: "ACC", basePrice: 2000, paymentInstruction: "Refakatçi kayıtları ana katılımcı siparişine eklenir", order: 6 } });
+    const catAccomp = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Refakatçi", code: "ACC", basePrice: toMinor(2000), paymentInstruction: "Refakatçi kayıtları ana katılımcı siparişine eklenir", order: 6 } });
 
     // ── Katılımlar & Kayıtlar (çok eksenli) ──
     type Row = [string, string, string, string, string, string, string | null, string | null];
@@ -299,24 +311,24 @@ export async function POST() {
     }
 
     // ── Sponsorluk (§13-15) ──
-    const tierGold = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Gold Sponsor", displayOrder: 1, capacity: 5, price: 500000, brandingRules: "Ana sahneye logo, program kitabı arka kapak" } });
-    const tierSilver = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Silver Sponsor", displayOrder: 2, capacity: 10, price: 250000 } });
-    const tierBronze = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Bronz Sponsor", displayOrder: 3, capacity: 15, price: 100000 } });
+    const tierGold = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Gold Sponsor", displayOrder: 1, capacity: 5, price: toMinor(500000), brandingRules: "Ana sahneye logo, program kitabı arka kapak" } });
+    const tierSilver = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Silver Sponsor", displayOrder: 2, capacity: 10, price: toMinor(250000) } });
+    const tierBronze = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Bronz Sponsor", displayOrder: 3, capacity: 15, price: toMinor(100000) } });
     const tierMedia = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Medya Sponsoru", displayOrder: 4, capacity: 2, price: 0 } });
 
     const pkgGold = await db.sponsorPackage.create({
       data: {
-        editionId: edition1.id, tierId: tierGold.id, name: "Gold Sponsorship 2026", price: 500000,
+        editionId: edition1.id, tierId: tierGold.id, name: "Gold Sponsorship 2026", price: toMinor(500000),
         rightsSpec: "20× Ücretsiz Kayıt · 5× Fuarcı Personeli · 1× 12m² Stant · 1× Konuşma Slotu · 2× Gala Davetiyesi · Web Sitesi Logosu",
       },
     });
-    const pkgSilver = await db.sponsorPackage.create({ data: { editionId: edition1.id, tierId: tierSilver.id, name: "Silver Sponsorship 2026", price: 250000, rightsSpec: "10× Ücretsiz Kayıt · 1× Stant Opsiyonu · Program İlanı" } });
+    const pkgSilver = await db.sponsorPackage.create({ data: { editionId: edition1.id, tierId: tierSilver.id, name: "Silver Sponsorship 2026", price: toMinor(250000), rightsSpec: "10× Ücretsiz Kayıt · 1× Stant Opsiyonu · Program İlanı" } });
 
     const agrAbc = await db.sponsorAgreement.create({
-      data: { editionId: edition1.id, organizationId: abcPharma.id, packageId: pkgGold.id, tierId: tierGold.id, amount: 500000, status: "ACTIVE", signedAt: D(-90, 14) },
+      data: { editionId: edition1.id, organizationId: abcPharma.id, packageId: pkgGold.id, tierId: tierGold.id, amount: toMinor(500000), status: "ACTIVE", signedAt: D(-90, 14) },
     });
     const agrBeta = await db.sponsorAgreement.create({
-      data: { editionId: edition1.id, organizationId: beta.id, packageId: pkgSilver.id, tierId: tierSilver.id, amount: 250000, status: "CONTRACTED", signedAt: D(-60, 11) },
+      data: { editionId: edition1.id, organizationId: beta.id, packageId: pkgSilver.id, tierId: tierSilver.id, amount: toMinor(250000), status: "CONTRACTED", signedAt: D(-60, 11) },
     });
     await db.sponsorAgreement.create({ data: { editionId: edition1.id, organizationId: media.id, tierId: tierMedia.id, amount: 0, status: "PROSPECT" } });
 
@@ -783,71 +795,71 @@ export async function POST() {
     // ── Muhasebe: ek/saha harcamaları (kullanıcı isteği: kayıt muhasebesiyle entegre) ──
     await db.expense.createMany({
       data: [
-        { editionId: edition1.id, code: "GSN-2026-001", category: "FIELD_EXPENSE", title: "Kapı A yedek barkod okuyucu (acil alım)", description: "Tarama cihazı arızası — fuar günü sabah acil satın alma", amount: 4200, vendor: "Nokta Bilişim", incurredAt: D(0, 8, 30), spentBy: "Mert Şahin", paymentMethod: "CASH", status: "APPROVED", receiptNo: "FTR-1181", approvedBy: "Burak Demir" },
-        { editionId: edition1.id, code: "GSN-2026-002", category: "CATERING", title: "Ek kahve molası — Salon B", description: "Oturum yoğunluğu nedeniyle ikram sifarişi artırıldı", amount: 6800, vendor: "Lezzet Catering", incurredAt: D(-1, 14), spentBy: "Kerem Aksoy", paymentMethod: "COMPANY_CARD", status: "PENDING_RECEIPT" },
-        { editionId: edition1.id, code: "GSN-2026-003", category: "LOGISTICS", title: "Poster panosu kargo (Ankara → İstanbul)", amount: 2350, vendor: "Yurtiçi Kargo", incurredAt: D(-4), spentBy: "Selin Öztürk", paymentMethod: "BANK_TRANSFER", status: "PAID", receiptNo: "FTR-0972" },
-        { editionId: edition1.id, code: "GSN-2026-004", category: "TECH", title: "Yedek mikrofon seti kiralama", description: "Ana salon yedek ekipman — 3 günlük kiralama", amount: 9800, vendor: "Ses Sistemleri A.Ş.", incurredAt: D(-2), spentBy: "Mert Şahin", paymentMethod: "BANK_TRANSFER", status: "APPROVED", receiptNo: "FTR-1043", approvedBy: "Burak Demir" },
-        { editionId: edition1.id, code: "GSN-2026-005", category: "STAFF_TRAVEL", title: "Görevli havalimanı transferi (taksi)", description: "Yusuf B. — gece vardiyası dönüşü", amount: 1250, incurredAt: D(-1, 23, 30), spentBy: "Yusuf Bilgin", paymentMethod: "PERSONAL_REIMBURSE", status: "REIMBURSED", approvedBy: "Elif Kaya" },
-        { editionId: edition1.id, code: "GSN-2026-006", category: "MARKETING", title: "Canlı yayın kurgu ek paketi", description: "Sosyal medya canlı yayın destek paketi (teklif aşaması)", amount: 15000, vendor: "Medya Prodüksiyon", incurredAt: D(1), paymentMethod: "BANK_TRANSFER", status: "PLANNED" },
-        { editionId: edition1.id, code: "GSN-2026-007", category: "FIELD_EXPENSE", title: "Fuar alanı ek elektrik panosu bağlantısı", description: "Stand yoğunluğu — panosuz ek hat çekimi, sahada nakit ödeme", amount: 5400, vendor: "ICC Teknik Servis", incurredAt: D(0, 11), spentBy: "Kerem Aksoy", paymentMethod: "CASH", status: "APPROVED", receiptNo: "MAKBUZ-77", approvedBy: "Mert Şahin" },
-        { editionId: edition1.id, code: "GSN-2026-008", category: "OTHER", title: "Kayıt masası ek matbaa baskısı", description: "Beklenmedik yoğun kayıt — ek program kitabı baskısı", amount: 3100, vendor: "Anadolu Matbaa", incurredAt: D(-1, 9), spentBy: "Leyla Güneş", paymentMethod: "COMPANY_CARD", status: "PENDING_RECEIPT" },
+        { editionId: edition1.id, code: "GSN-2026-001", category: "FIELD_EXPENSE", title: "Kapı A yedek barkod okuyucu (acil alım)", description: "Tarama cihazı arızası — fuar günü sabah acil satın alma", amount: toMinor(4200), vendor: "Nokta Bilişim", incurredAt: D(0, 8, 30), spentBy: "Mert Şahin", paymentMethod: "CASH", status: "APPROVED", receiptNo: "FTR-1181", approvedBy: "Burak Demir" },
+        { editionId: edition1.id, code: "GSN-2026-002", category: "CATERING", title: "Ek kahve molası — Salon B", description: "Oturum yoğunluğu nedeniyle ikram sifarişi artırıldı", amount: toMinor(6800), vendor: "Lezzet Catering", incurredAt: D(-1, 14), spentBy: "Kerem Aksoy", paymentMethod: "COMPANY_CARD", status: "PENDING_RECEIPT" },
+        { editionId: edition1.id, code: "GSN-2026-003", category: "LOGISTICS", title: "Poster panosu kargo (Ankara → İstanbul)", amount: toMinor(2350), vendor: "Yurtiçi Kargo", incurredAt: D(-4), spentBy: "Selin Öztürk", paymentMethod: "BANK_TRANSFER", status: "PAID", receiptNo: "FTR-0972" },
+        { editionId: edition1.id, code: "GSN-2026-004", category: "TECH", title: "Yedek mikrofon seti kiralama", description: "Ana salon yedek ekipman — 3 günlük kiralama", amount: toMinor(9800), vendor: "Ses Sistemleri A.Ş.", incurredAt: D(-2), spentBy: "Mert Şahin", paymentMethod: "BANK_TRANSFER", status: "APPROVED", receiptNo: "FTR-1043", approvedBy: "Burak Demir" },
+        { editionId: edition1.id, code: "GSN-2026-005", category: "STAFF_TRAVEL", title: "Görevli havalimanı transferi (taksi)", description: "Yusuf B. — gece vardiyası dönüşü", amount: toMinor(1250), incurredAt: D(-1, 23, 30), spentBy: "Yusuf Bilgin", paymentMethod: "PERSONAL_REIMBURSE", status: "REIMBURSED", approvedBy: "Elif Kaya" },
+        { editionId: edition1.id, code: "GSN-2026-006", category: "MARKETING", title: "Canlı yayın kurgu ek paketi", description: "Sosyal medya canlı yayın destek paketi (teklif aşaması)", amount: toMinor(15000), vendor: "Medya Prodüksiyon", incurredAt: D(1), paymentMethod: "BANK_TRANSFER", status: "PLANNED" },
+        { editionId: edition1.id, code: "GSN-2026-007", category: "FIELD_EXPENSE", title: "Fuar alanı ek elektrik panosu bağlantısı", description: "Stand yoğunluğu — panosuz ek hat çekimi, sahada nakit ödeme", amount: toMinor(5400), vendor: "ICC Teknik Servis", incurredAt: D(0, 11), spentBy: "Kerem Aksoy", paymentMethod: "CASH", status: "APPROVED", receiptNo: "MAKBUZ-77", approvedBy: "Mert Şahin" },
+        { editionId: edition1.id, code: "GSN-2026-008", category: "OTHER", title: "Kayıt masası ek matbaa baskısı", description: "Beklenmedik yoğun kayıt — ek program kitabı baskısı", amount: toMinor(3100), vendor: "Anadolu Matbaa", incurredAt: D(-1, 9), spentBy: "Leyla Güneş", paymentMethod: "COMPANY_CARD", status: "PENDING_RECEIPT" },
       ],
     });
 
     // ── Muhasebe: manuel gelir kalemleri (Faz B — Expense aynası) ──
     await db.income.createMany({
       data: [
-        { editionId: edition1.id, code: "GLR-2026-001", category: "SPONSORLUK", title: "Ana sponsorluk paketi — 1. taksit", description: "Platinum paket sözleşme bedelinin ilk yarısı", amount: 150000, method: "BANK_TRANSFER", payer: "ABC Pharma", incomeDate: D(-10), status: "RECEIVED", receiptNo: "HV-77240", approvedBy: "Burak Demir" },
-        { editionId: edition1.id, code: "GLR-2026-002", category: "SPONSORLUK", title: "Lansman alanı sponsorluğu", description: "Fuaye lansman ekranı — tek seferlik", amount: 45000, method: "BANK_TRANSFER", payer: "Nokta Bilişim", incomeDate: D(-6), status: "RECEIVED", receiptNo: "HV-77301", approvedBy: "Burak Demir" },
-        { editionId: edition1.id, code: "GLR-2026-003", category: "KAYIT", title: "Kurumsal grup kaydı — Delta Üniversitesi", description: "Online ödeme dışı gelen kurumsal kayıt bedeli", amount: 18000, method: "BANK_TRANSFER", payer: "Delta Üniversitesi", incomeDate: D(-3), status: "RECEIVED", receiptNo: "HV-77355", approvedBy: "Elif Kaya" },
-        { editionId: edition1.id, code: "GLR-2026-004", category: "SATIS", title: "Program kitabı ilan satışı", description: "Baskı program kitabı iç sayfa ilanları", amount: 22000, method: "MANUAL_EXTERNAL", payer: "Anadolu Matbaa", incomeDate: D(-1), status: "APPROVED", approvedBy: "Elif Kaya" },
-        { editionId: edition1.id, code: "GLR-2026-005", category: "HIBE", title: "Meslek birliği bilimsel hibesi", description: "Kongre bilimsel içeriği destek hibesi — dekont bekliyor", amount: 30000, method: "BANK_TRANSFER", payer: "Radyoloji Derneği", incomeDate: D(0), status: "PENDING_RECEIPT" },
-        { editionId: edition1.id, code: "GLR-2026-006", category: "SPONSORLUK", title: "Kapanış kokteyl sponsorluğu", description: "3. gün kapanış kokteyl ikramları — teklif aşaması", amount: 25000, method: "MANUAL_EXTERNAL", payer: "Lezzet Catering", incomeDate: D(2), status: "PLANNED" },
-        { editionId: edition2.id, code: "GLR-2027-001", category: "SPONSORLUK", title: "Fuar alanı ana sponsorluk — ön anlaşma", description: "TechDays 2027 ana sponsorluk görüşmesi", amount: 200000, method: "MANUAL_EXTERNAL", payer: "Nokta Bilişim", incomeDate: D(1), status: "PLANNED" },
+        { editionId: edition1.id, code: "GLR-2026-001", category: "SPONSORLUK", title: "Ana sponsorluk paketi — 1. taksit", description: "Platinum paket sözleşme bedelinin ilk yarısı", amount: toMinor(150000), method: "BANK_TRANSFER", payer: "ABC Pharma", incomeDate: D(-10), status: "RECEIVED", receiptNo: "HV-77240", approvedBy: "Burak Demir" },
+        { editionId: edition1.id, code: "GLR-2026-002", category: "SPONSORLUK", title: "Lansman alanı sponsorluğu", description: "Fuaye lansman ekranı — tek seferlik", amount: toMinor(45000), method: "BANK_TRANSFER", payer: "Nokta Bilişim", incomeDate: D(-6), status: "RECEIVED", receiptNo: "HV-77301", approvedBy: "Burak Demir" },
+        { editionId: edition1.id, code: "GLR-2026-003", category: "KAYIT", title: "Kurumsal grup kaydı — Delta Üniversitesi", description: "Online ödeme dışı gelen kurumsal kayıt bedeli", amount: toMinor(18000), method: "BANK_TRANSFER", payer: "Delta Üniversitesi", incomeDate: D(-3), status: "RECEIVED", receiptNo: "HV-77355", approvedBy: "Elif Kaya" },
+        { editionId: edition1.id, code: "GLR-2026-004", category: "SATIS", title: "Program kitabı ilan satışı", description: "Baskı program kitabı iç sayfa ilanları", amount: toMinor(22000), method: "MANUAL_EXTERNAL", payer: "Anadolu Matbaa", incomeDate: D(-1), status: "APPROVED", approvedBy: "Elif Kaya" },
+        { editionId: edition1.id, code: "GLR-2026-005", category: "HIBE", title: "Meslek birliği bilimsel hibesi", description: "Kongre bilimsel içeriği destek hibesi — dekont bekliyor", amount: toMinor(30000), method: "BANK_TRANSFER", payer: "Radyoloji Derneği", incomeDate: D(0), status: "PENDING_RECEIPT" },
+        { editionId: edition1.id, code: "GLR-2026-006", category: "SPONSORLUK", title: "Kapanış kokteyl sponsorluğu", description: "3. gün kapanış kokteyl ikramları — teklif aşaması", amount: toMinor(25000), method: "MANUAL_EXTERNAL", payer: "Lezzet Catering", incomeDate: D(2), status: "PLANNED" },
+        { editionId: edition2.id, code: "GLR-2027-001", category: "SPONSORLUK", title: "Fuar alanı ana sponsorluk — ön anlaşma", description: "TechDays 2027 ana sponsorluk görüşmesi", amount: toMinor(200000), method: "MANUAL_EXTERNAL", payer: "Nokta Bilişim", incomeDate: D(1), status: "PLANNED" },
       ],
     });
 
     // ── Katalog / ek hizmetler ──
     await db.catalogItem.createMany({
       data: [
-        { editionId: edition1.id, category: "GALA", name: "Gala Yemeği", description: "3. gün akşam gala yemeği", price: 2500, quantity: 300 },
-        { editionId: edition1.id, category: "TOUR", name: "Teknik Gezi — Marmaray", price: 1000, quantity: 60, availableFor: "ALL" },
-        { editionId: edition1.id, category: "ADDON", name: "Ek Atölye: HDD Güvenlik", price: 750, quantity: 40 },
-        { editionId: edition1.id, category: "SERVICE", name: "Stand Ekstra Elektrik", price: 1500, availableFor: "SPONSOR" },
+        { editionId: edition1.id, category: "GALA", name: "Gala Yemeği", description: "3. gün akşam gala yemeği", price: toMinor(2500), quantity: 300 },
+        { editionId: edition1.id, category: "TOUR", name: "Teknik Gezi — Marmaray", price: toMinor(1000), quantity: 60, availableFor: "ALL" },
+        { editionId: edition1.id, category: "ADDON", name: "Ek Atölye: HDD Güvenlik", price: toMinor(750), quantity: 40 },
+        { editionId: edition1.id, category: "SERVICE", name: "Stand Ekstra Elektrik", price: toMinor(1500), availableFor: "SPONSOR" },
       ],
     });
 
     // ── Sipariş & Ödeme (§36-39) ──
-    const o1 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0001", buyerPersonId: P.Mustafa.id, payerName: "Mustafa Koç", totalAmount: 5000, status: "PAID" } });
-    await db.orderLine.create({ data: { orderId: o1.id, participationId: participationMap.get("Mustafa")!.participationId, registrationId: participationMap.get("Mustafa")!.registrationId, description: "Kongre Katılımı — Erken Kayıt", quantity: 1, unitPrice: 5000, total: 5000 } });
-    await db.payment.create({ data: { orderId: o1.id, amount: 5000, source: "ONLINE_CARD", status: "SUCCEEDED", reference: "PAY-99112", paidAt: D(-12, 14) } });
+    const o1 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0001", buyerPersonId: P.Mustafa.id, payerName: "Mustafa Koç", totalAmount: toMinor(5000), status: "PAID" } });
+    await db.orderLine.create({ data: { orderId: o1.id, participationId: participationMap.get("Mustafa")!.participationId, registrationId: participationMap.get("Mustafa")!.registrationId, description: "Kongre Katılımı — Erken Kayıt", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
+    await db.payment.create({ data: { orderId: o1.id, amount: toMinor(5000), source: "ONLINE_CARD", status: "SUCCEEDED", reference: "PAY-99112", paidAt: D(-12, 14) } });
 
-    const o2 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0002", buyerOrganizationId: uni.id, payerName: "Delta Üniversitesi", totalAmount: 20000, status: "PARTIALLY_PAID" } });
-    await db.orderLine.create({ data: { orderId: o2.id, participationId: participationMap.get("Ayşe")!.participationId, registrationId: participationMap.get("Ayşe")!.registrationId, description: "Kongre Katılımı × 3 (kurumsal)", quantity: 3, unitPrice: 5000, total: 15000 } });
-    await db.orderLine.create({ data: { orderId: o2.id, participationId: participationMap.get("Vildan")!.participationId, registrationId: participationMap.get("Vildan")!.registrationId, description: "Refakatçi Kaydı", quantity: 1, unitPrice: 2000, total: 2000 } });
-    await db.orderLine.create({ data: { orderId: o2.id, description: "Gala Yemeği × 3", catalogItemId: null, quantity: 3, unitPrice: 1000, total: 3000 } });
-    await db.payment.create({ data: { orderId: o2.id, amount: 12000, source: "BANK_TRANSFER", status: "SUCCEEDED", reference: "HV-77231", paidAt: D(-8) } });
+    const o2 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0002", buyerOrganizationId: uni.id, payerName: "Delta Üniversitesi", totalAmount: toMinor(20000), status: "PARTIALLY_PAID" } });
+    await db.orderLine.create({ data: { orderId: o2.id, participationId: participationMap.get("Ayşe")!.participationId, registrationId: participationMap.get("Ayşe")!.registrationId, description: "Kongre Katılımı × 3 (kurumsal)", quantity: 3, unitPrice: toMinor(5000), total: toMinor(15000) } });
+    await db.orderLine.create({ data: { orderId: o2.id, participationId: participationMap.get("Vildan")!.participationId, registrationId: participationMap.get("Vildan")!.registrationId, description: "Refakatçi Kaydı", quantity: 1, unitPrice: toMinor(2000), total: toMinor(2000) } });
+    await db.orderLine.create({ data: { orderId: o2.id, description: "Gala Yemeği × 3", catalogItemId: null, quantity: 3, unitPrice: toMinor(1000), total: toMinor(3000) } });
+    await db.payment.create({ data: { orderId: o2.id, amount: toMinor(12000), source: "BANK_TRANSFER", status: "SUCCEEDED", reference: "HV-77231", paidAt: D(-8) } });
 
-    const o3 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0003", buyerPersonId: P.Barış.id, payerName: "Barış Tekin", totalAmount: 5000, status: "OPEN" } });
-    await db.orderLine.create({ data: { orderId: o3.id, participationId: participationMap.get("Barış")!.participationId, registrationId: participationMap.get("Barış")!.registrationId, description: "Kongre Katılımı", quantity: 1, unitPrice: 5000, total: 5000 } });
+    const o3 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0003", buyerPersonId: P.Barış.id, payerName: "Barış Tekin", totalAmount: toMinor(5000), status: "OPEN" } });
+    await db.orderLine.create({ data: { orderId: o3.id, participationId: participationMap.get("Barış")!.participationId, registrationId: participationMap.get("Barış")!.registrationId, description: "Kongre Katılımı", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
 
-    const o4 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0004", buyerOrganizationId: abcPharma.id, payerName: "ABC Pharma", totalAmount: 12000, status: "PARTIALLY_PAID" } });
-    await db.orderLine.create({ data: { orderId: o4.id, description: "Stand Ekstra Elektrik × 2", quantity: 2, unitPrice: 1500, total: 3000 } });
-    await db.orderLine.create({ data: { orderId: o4.id, description: "Gala Davetiyesi (hak dışı) × 6", quantity: 6, unitPrice: 1500, total: 9000 } });
-    await db.payment.create({ data: { orderId: o4.id, amount: 8000, source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference: "SF-2231", enteredBy: "Zeynep Arslan", reason: "Kurum faturası havale ile ödendi", paidAt: D(-6) } });
-    await db.refund.create({ data: { orderId: o4.id, amount: 2000, reason: "İptal edilen gala davetiyesi × 2", status: "PROCESSED", requestedBy: "Zeynep Arslan", processedAt: D(-4) } });
-    await db.refund.create({ data: { orderId: o4.id, amount: 500, reason: "Kalem düzeltme bekliyor", status: "REQUESTED" } });
+    const o4 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0004", buyerOrganizationId: abcPharma.id, payerName: "ABC Pharma", totalAmount: toMinor(12000), status: "PARTIALLY_PAID" } });
+    await db.orderLine.create({ data: { orderId: o4.id, description: "Stand Ekstra Elektrik × 2", quantity: 2, unitPrice: toMinor(1500), total: toMinor(3000) } });
+    await db.orderLine.create({ data: { orderId: o4.id, description: "Gala Davetiyesi (hak dışı) × 6", quantity: 6, unitPrice: toMinor(1500), total: toMinor(9000) } });
+    await db.payment.create({ data: { orderId: o4.id, amount: toMinor(8000), source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference: "SF-2231", enteredBy: "Zeynep Arslan", reason: "Kurum faturası havale ile ödendi", paidAt: D(-6) } });
+    await db.refund.create({ data: { orderId: o4.id, amount: toMinor(2000), reason: "İptal edilen gala davetiyesi × 2", status: "PROCESSED", requestedBy: "Zeynep Arslan", processedAt: D(-4) } });
+    await db.refund.create({ data: { orderId: o4.id, amount: toMinor(500), reason: "Kalem düzeltme bekliyor", status: "REQUESTED" } });
 
-    const o5 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0005", buyerPersonId: P.Onur.id, payerName: "Onur Erdem", totalAmount: 6000, status: "PAID" } });
-    await db.orderLine.create({ data: { orderId: o5.id, participationId: participationMap.get("Onur")!.participationId, registrationId: participationMap.get("Onur")!.registrationId, description: "Kongre Katılımı", quantity: 1, unitPrice: 5000, total: 5000 } });
-    await db.orderLine.create({ data: { orderId: o5.id, description: "Teknik Gezi — Marmaray", quantity: 1, unitPrice: 1000, total: 1000 } });
-    await db.payment.create({ data: { orderId: o5.id, amount: 6000, source: "POS", status: "SUCCEEDED", paidAt: D(-2, 10) } });
+    const o5 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0005", buyerPersonId: P.Onur.id, payerName: "Onur Erdem", totalAmount: toMinor(6000), status: "PAID" } });
+    await db.orderLine.create({ data: { orderId: o5.id, participationId: participationMap.get("Onur")!.participationId, registrationId: participationMap.get("Onur")!.registrationId, description: "Kongre Katılımı", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
+    await db.orderLine.create({ data: { orderId: o5.id, description: "Teknik Gezi — Marmaray", quantity: 1, unitPrice: toMinor(1000), total: toMinor(1000) } });
+    await db.payment.create({ data: { orderId: o5.id, amount: toMinor(6000), source: "POS", status: "SUCCEEDED", paidAt: D(-2, 10) } });
 
-    const o6 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0006", buyerPersonId: P.Gizem.id, payerName: "Gizem Bulut", totalAmount: 5000, status: "PARTIALLY_PAID" } });
-    await db.orderLine.create({ data: { orderId: o6.id, participationId: participationMap.get("Gizem")!.participationId, registrationId: participationMap.get("Gizem")!.registrationId, description: "Kongre Katılımı — grup", quantity: 1, unitPrice: 5000, total: 5000 } });
-    await db.payment.create({ data: { orderId: o6.id, amount: 2000, source: "PAYMENT_LINK", status: "SUCCEEDED", paidAt: D(-1, 9) } });
-    await db.payment.create({ data: { orderId: o2.id, amount: 2000, source: "MANUAL_EXTERNAL", status: "PENDING", enteredBy: "Kaan Yıldız", reason: "Muhasebe ekstresi beklemede" } });
-    await db.payment.create({ data: { orderId: o3.id, amount: 5000, source: "ONLINE_CARD", status: "FAILED", reference: "PAY-99377" } });
+    const o6 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0006", buyerPersonId: P.Gizem.id, payerName: "Gizem Bulut", totalAmount: toMinor(5000), status: "PARTIALLY_PAID" } });
+    await db.orderLine.create({ data: { orderId: o6.id, participationId: participationMap.get("Gizem")!.participationId, registrationId: participationMap.get("Gizem")!.registrationId, description: "Kongre Katılımı — grup", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
+    await db.payment.create({ data: { orderId: o6.id, amount: toMinor(2000), source: "PAYMENT_LINK", status: "SUCCEEDED", paidAt: D(-1, 9) } });
+    await db.payment.create({ data: { orderId: o2.id, amount: toMinor(2000), source: "MANUAL_EXTERNAL", status: "PENDING", enteredBy: "Kaan Yıldız", reason: "Muhasebe ekstresi beklemede" } });
+    await db.payment.create({ data: { orderId: o3.id, amount: toMinor(5000), source: "ONLINE_CARD", status: "FAILED", reference: "PAY-99377" } });
 
     // ── LCV (davetler) ──
     await db.invitation.createMany({
@@ -1152,7 +1164,7 @@ export async function POST() {
     });
     await db.mailProviderConfig.createMany({
       data: [
-        { tenantId: tenant.id, name: "Şirket SMTP (Firma Sunucu)", kind: "SMTP", host: "smtp.maven-demo.example", port: 587, username: "etkinlik@maven-demo.example", password: "***", fromEmail: "etkinlik@maven-demo.example", fromName: "Maven Etkinlik", replyTo: "destek@maven-demo.example", dailyLimit: 2000, isDefault: true, status: "ACTIVE" },
+        { tenantId: tenant.id, name: "Şirket SMTP (Firma Sunucu)", kind: "SMTP", host: "smtp.maven-demo.example", port: 587, username: "etkinlik@maven-demo.example", passwordCipher: encryptSecret("***"), fromEmail: "etkinlik@maven-demo.example", fromName: "Maven Etkinlik", replyTo: "destek@maven-demo.example", dailyLimit: 2000, isDefault: true, status: "ACTIVE" },
         { tenantId: tenant.id, name: "Mailjet — Toplu Gönderim", kind: "MAILJET", fromEmail: "bulten@maven-demo.example", fromName: "Maven Bülten", dailyLimit: 12000, status: "ACTIVE" },
       ],
     });
@@ -1184,10 +1196,10 @@ export async function POST() {
     // (8) Konaklama — occupancy/rate/no-show örneği + aile misafiri (Person self-ref)
     await db.reservation.update({
       where: { id: res1.id },
-      data: { occupancyType: "DOUBLE", ratePerNight: 4200, nights: 3 },
+      data: { occupancyType: "DOUBLE", ratePerNight: toMinor(4200), nights: 3 },
     });
     const resCancel = await db.reservation.findFirst({ where: { editionId: edition1.id, status: "CANCELLED" } });
-    if (resCancel) await db.reservation.update({ where: { id: resCancel.id }, data: { noShow: true, noShowFee: 1500 } });
+    if (resCancel) await db.reservation.update({ where: { id: resCancel.id }, data: { noShow: true, noShowFee: toMinor(1500) } });
     const parentMustafa = participationMap.get("Mustafa");
     if (parentMustafa) {
       const parent = await db.eventParticipation.findUnique({ where: { id: parentMustafa.participationId }, include: { person: true } });
@@ -1273,6 +1285,14 @@ export async function POST() {
 
     // yetim claim temizliği (LATER ile oluşturulanları sil)
     await db.entitlementClaim.deleteMany({ where: { entitlementId: "LATER" } });
+
+    // G0-c: portal yetenek belirteçleri — tüm kurum/kişilere benzersiz belirteç provision edilir
+    // (idempotent: yalnız belirteci olmayan satırlar doldurulur)
+    const token = () => `pt_${crypto.randomUUID().replace(/-/g, "")}`; // 32 hex
+    const orgsNoToken = await db.organization.findMany({ where: { portalToken: null }, select: { id: true } });
+    for (const o of orgsNoToken) await db.organization.update({ where: { id: o.id }, data: { portalToken: token() } });
+    const peopleNoToken = await db.person.findMany({ where: { portalToken: null }, select: { id: true } });
+    for (const p of peopleNoToken) await db.person.update({ where: { id: p.id }, data: { portalToken: token() } });
 
     const counts = {
       people: await db.person.count(),

@@ -4,12 +4,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { createRegistrationFromSubmission, cancelRegistrationOfSubmission, type ChainResult } from "@/lib/api/registration-chain";
+import { ensureInScope } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
+  // G0-a: gönderi yanıtları kişisel veri taşır — kapsam dışı 404
+  const scoped = await ensureInScope("form-submissions", id);
+  if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
   const submission = await db.formSubmission.findUnique({
     where: { id },
     include: {
@@ -26,6 +30,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
     const { action, notes } = (await req.json()) as { action?: string; notes?: string };
+    // G0-a: aksiyon zinciri (onay → kayıt zinciri) kiracı kapsamı dışına taşamaz
+    const scoped = await ensureInScope("form-submissions", id);
+    if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
     const submission = await db.formSubmission.findUnique({
       where: { id },
       include: { form: true },
@@ -104,6 +111,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id } = await params;
+  const scoped = await ensureInScope("form-submissions", id);
+  if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
   await db.formSubmission.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }

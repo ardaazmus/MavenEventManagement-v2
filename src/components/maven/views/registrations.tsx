@@ -161,7 +161,7 @@ export function RegistrationsView() {
                 key={c.id}
                 label={c.name}
                 value={`${c._count?.registrations ?? 0}${c.capacity ? ` / ${c.capacity}` : ""}`}
-                sub={c.basePrice > 0 ? `${c.basePrice.toLocaleString("tr-TR")} ${c.currency}` : "ücretsiz"}
+                sub={c.basePrice > 0 ? `${(c.basePrice / 100).toLocaleString("tr-TR")} ${c.currency}` : "ücretsiz"} // F6: kuruş→₺
                 tone={c.requiresApproval ? "amber" : "teal"}
               />
             ))}
@@ -403,7 +403,7 @@ export function RegistrationsView() {
                     <SelectContent className="maven-scroll max-h-64">
                       <SelectItem value="none">— Kategori yok —</SelectItem>
                       {(categories ?? []).map((c) => (
-                        <SelectItem key={c.id} value={c.id}>{c.name} · {c.basePrice > 0 ? `${c.basePrice.toLocaleString("tr-TR")} ${c.currency}` : "ücretsiz"}</SelectItem>
+                        <SelectItem key={c.id} value={c.id}>{c.name} · {c.basePrice > 0 ? `${(c.basePrice / 100).toLocaleString("tr-TR")} ${c.currency}` : "ücretsiz"}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

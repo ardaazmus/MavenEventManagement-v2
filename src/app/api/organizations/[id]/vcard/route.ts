@@ -5,11 +5,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import QRCode from "qrcode";
 import { db } from "@/lib/db";
+import { ensureInScope } from "@/lib/api/tenant-guard";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const format = new URL(req.url).searchParams.get("format") ?? "json";
+
+    // G0-a: kurum vcard/iletişim bilgisi kişisel veri taşır — kapsam dışı 404
+    const scoped = await ensureInScope("organizations", id);
+    if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
 
     const org = await db.organization.findUnique({
       where: { id },

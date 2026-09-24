@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import QRCode from "qrcode";
 import { db } from "@/lib/db";
+import { ensureInScope } from "@/lib/api/tenant-guard";
 
 function buildVCard(p: {
   firstName: string; lastName: string; title?: string | null; company?: string | null;
@@ -37,6 +38,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params;
     const format = new URL(req.url).searchParams.get("format") ?? "json";
+
+    // G0-a: vcard kişisel veri taşır — kapsam dışı/başka kiracı kişi 404
+    const scoped = await ensureInScope("people", id);
+    if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
 
     const person = await db.person.findUnique({
       where: { id },

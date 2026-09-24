@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { listEntity, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
-import { EXPENSE_STATUS, EXPENSE_CATEGORY, EXPENSE_PAYMENT_METHOD, INCOME_STATUS, INCOME_CATEGORY, INCOME_METHOD, PAYMENT_METHODS, STATUS_TONE, label, fmtDate, fmtDateTime, fmtMoney } from "@/lib/constants";
+import { EXPENSE_STATUS, EXPENSE_CATEGORY, EXPENSE_PAYMENT_METHOD, INCOME_STATUS, INCOME_CATEGORY, INCOME_METHOD, PAYMENT_METHODS, STATUS_TONE, label, fmtDate, fmtDateTime, fmtMoney, fmtMoneyMajor } from "@/lib/constants";
+import { toMinor } from "@/lib/money";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -366,7 +367,7 @@ export function AccountingView() {
         category: form.category,
         title: form.title.trim(),
         description: form.description,
-        amount: Number(form.amount),
+        amount: toMinor(Number(form.amount) || 0), // F6: ₺ girdi → kuruş
         currency: form.currency,
         vendor: form.vendor,
         spentBy: form.spentBy,
@@ -376,7 +377,7 @@ export function AccountingView() {
         receiptNo: form.receiptNo,
         notes: form.notes,
       });
-      toast({ title: t("accounting.expenseSaved"), description: `${form.title.trim()} — ${fmtMoney(Number(form.amount), form.currency)} ${t("accounting.expenseSavedToLedger")}` });
+      toast({ title: t("accounting.expenseSaved"), description: `${form.title.trim()} — ${fmtMoneyMajor(Number(form.amount), form.currency)} ${t("accounting.expenseSavedToLedger")}` });
       setNewOpen(false);
       setForm(EMPTY_EXPENSE_FORM);
       refreshAll();
@@ -397,7 +398,7 @@ export function AccountingView() {
         category: "FIELD_EXPENSE",
         title: quick.title.trim(),
         description: "Sahada anlık harcama — fiş sonradan eklenebilir.",
-        amount: Number(quick.amount),
+        amount: toMinor(Number(quick.amount) || 0),
         currency: "TRY",
         spentBy: quick.spentBy,
         paymentMethod: quick.paymentMethod,
@@ -405,7 +406,7 @@ export function AccountingView() {
         status: "APPROVED",
         approvedBy: "Saha Onayı",
       });
-      toast({ title: t("accounting.quickExpenseSaved"), description: `${quick.title.trim()} — ${fmtMoney(Number(quick.amount))}` });
+      toast({ title: t("accounting.quickExpenseSaved"), description: `${quick.title.trim()} — ${fmtMoneyMajor(Number(quick.amount))}` });
       setQuickOpen(false);
       setQuick(EMPTY_QUICK_FORM);
       refreshAll();
@@ -439,7 +440,7 @@ export function AccountingView() {
         category: incForm.category,
         title: incForm.title.trim(),
         description: incForm.description,
-        amount: Number(incForm.amount),
+        amount: toMinor(Number(incForm.amount) || 0),
         currency: incForm.currency,
         method: incForm.method,
         payer: incForm.payer,
@@ -451,7 +452,7 @@ export function AccountingView() {
       });
       toast({
         title: t("accounting.incomeSaved"),
-        description: `${incForm.title.trim()} — ${fmtMoney(Number(incForm.amount), incForm.currency)} ${t("accounting.incomeSavedToLedger")}`,
+        description: `${incForm.title.trim()} — ${fmtMoneyMajor(Number(incForm.amount), incForm.currency)} ${t("accounting.incomeSavedToLedger")}`,
       });
       setIncOpen(false);
       setIncForm(EMPTY_INCOME_FORM);
@@ -473,7 +474,7 @@ export function AccountingView() {
         category: incQuick.category,
         title: incQuick.title.trim(),
         description: "Hızlı tahsilat — anında deftere işlendi.",
-        amount: Number(incQuick.amount),
+        amount: toMinor(Number(incQuick.amount) || 0),
         currency: "TRY",
         method: incQuick.method,
         payer: incQuick.payer,
@@ -481,7 +482,7 @@ export function AccountingView() {
         status: "RECEIVED",
         approvedBy: "Hızlı Tahsilat",
       });
-      toast({ title: t("accounting.quickIncomeSaved"), description: `${incQuick.title.trim()} — ${fmtMoney(Number(incQuick.amount))}` });
+      toast({ title: t("accounting.quickIncomeSaved"), description: `${incQuick.title.trim()} — ${fmtMoneyMajor(Number(incQuick.amount))}` });
       setIncQuickOpen(false);
       setIncQuick(EMPTY_QUICK_INCOME);
       refreshAll();

@@ -2,6 +2,7 @@
 // GET /api/form-stats?formId=... → gönderi özeti + alan bazlı dağılım + NPS skoru + günlük akış
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
 
 type Params = Promise<{ formId?: string }>;
 
@@ -17,17 +18,29 @@ function parseMulti(answer: string | null | undefined): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  const { formId } = (await ParamsGrab(req)) as { formId?: string };
-  if (!formId) return NextResponse.json({ error: "formId zorunlu" }, { status: 400 });
+  try {
+    const { formId } = (await ParamsGrab(req)) as { formId?: string };
+    if (!formId) return NextResponse.json({ error: "formId zorunlu" }, { status: 400 });
 
-  const form = await db.formDefinition.findUnique({
-    where: { id: formId },
-    include: {
-      fields: { orderBy: { order: "asc" } },
-      submissions: { include: { answers: true } },
-    },
-  });
-  if (!form) return NextResponse.json({ error: "Form bulunamadı" }, { status: 404 });
+    // G0-b: form istatistikleri gönderi verisi taşır — formun edisyonu bağlama doğrulanır
+    const ctx = await resolveContext(null);
+    const formCtx = await db.formDefinition.findUnique({
+      where: { id: formId },
+      select: { editionId: true, edition: { select: { tenantId: true } } },
+    });
+    if (!formCtx) return NextResponse.json({ error: "Form bulunamadı" }, { status: 404 });
+    if (formCtx.edition && formCtx.edition.tenantId !== ctx) {
+      return NextResponse.json({ error: "Form bulunamadı" }, { status: 404 });
+    }
+
+    const form = await db.formDefinition.findUnique({
+      where: { id: formId },
+      include: {
+        fields: { orderBy: { order: "asc" } },
+        submissions: { include: { answers: true } },
+      },
+    });
+    if (!form) return NextResponse.json({ error: "Form bulunamadı" }, { status: 404 });
 
   const submissions = form.submissions;
   const valid = submissions.filter((s) => s.status !== "SPAM");
@@ -175,6 +188,11 @@ export async function GET(req: NextRequest) {
     fields: fieldStats,
     quiz,
   });
+  } catch (e) {
+    if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+    console.error("GET /api/form-stats", e);
+    return NextResponse.json({ error: "Form istatistikleri alınamadı" }, { status: 500 });
+  }
 }
 
 async function ParamsGrab(req: NextRequest): Promise<Params> {

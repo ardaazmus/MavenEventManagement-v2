@@ -318,7 +318,7 @@ export function SocialView() {
                     <Chip tone={isTour ? "teal" : "amber"}><span className="inline-flex items-center gap-1">{isTour ? <Icons.Bus className="size-3" /> : <Icons.PartyPopper className="size-3" />}{label(SOCIAL_KINDS, p.kind)}</span></Chip>
                     {p.isOfficial && <Chip tone="violet"><span className="inline-flex items-center gap-1"><Icons.Landmark className="size-3" />Resmi</span></Chip>}
                     {p.capacity != null && <Chip>{p.capacity} kişi kapasite</Chip>}
-                    {p.price != null && <Chip tone="emerald">{p.price.toLocaleString("tr-TR")} {p.currency}</Chip>}
+                    {p.price != null && /* F6: kuruş→₺ */ (<Chip tone="emerald">{(p.price / 100).toLocaleString("tr-TR")} {p.currency}</Chip>)}
                     {anns.length > 0 && <Chip>{anns.length} duyuru{accepted > 0 ? ` · ${accepted} katılıyor` : ""}</Chip>}
                   </div>
                   <div className="mt-2 space-y-1 text-xs text-muted-foreground">

@@ -4,6 +4,7 @@
 //   csv  → kişi defteri CSV (BOM'lu, Excel uyumlu; Content-Disposition ile indirilir)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 
 const VALID_RESULTS = ["ALLOWED", "RESCAN_WARNING"];
 
@@ -13,6 +14,14 @@ export async function GET(req: NextRequest) {
     const editionId = sp.get("editionId");
     const format = sp.get("format") ?? "json";
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+
+    // G0-b: resmî rapor kişi verisi taşır — edisyon bağlamına doğrulanır (yabancı → 404)
+    try {
+      await resolveEditionContext(editionId, { required: true });
+    } catch (e) {
+      if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
+    }
 
     const edition = await db.eventEdition.findUnique({
       where: { id: editionId },

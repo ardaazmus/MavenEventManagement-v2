@@ -1,6 +1,8 @@
 // Generic collection route: /api/[entity]
 // Faz A: tüm listeleme/oluşturma istekleri Tenant Guard'dan geçer —
 // tenant/edition kapsamı otomatik uygulanır, bağlam çözülemeyen istek 400 alır.
+// P2: cursor pagination — opak base64 [...sortValues, id]; tüm orderBys benzersiz-olmayan
+// olduğundan composite keyset zorunlu (id son halka). Yanıt yalnız devam varsa nextCursor ekler.
 import { NextRequest, NextResponse } from "next/server";
 import { registry, sanitize, withTenant } from "@/lib/api/registry";
 import { applyListGuard, applyWriteGuard, GuardError } from "@/lib/api/tenant-guard";
@@ -15,6 +17,19 @@ function notFound() {
 function guardError(e: unknown) {
   if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
   return null;
+}
+
+// keyset koşulu: [v1..vn] imleci için sözlüksel karşılaştırma
+// (k1 > v1) VEYA (k1 = v1 VE k2 > v2) VEYA ... — asc:gt / desc:lt
+function keysetWhere(order: [string, "asc" | "desc"][], values: unknown[]): Record<string, unknown> {
+  const or: Record<string, unknown>[] = [];
+  for (let i = 0; i < order.length; i++) {
+    const clause: Record<string, unknown> = {};
+    for (let j = 0; j < i; j++) clause[order[j][0]] = values[j];
+    clause[order[i][0]] = { [order[i][1] === "asc" ? "gt" : "lt"]: values[i] };
+    or.push(clause);
+  }
+  return { OR: or };
 }
 
 export async function GET(req: NextRequest, ctx: Ctx) {
@@ -34,6 +49,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const q = sp.get("q");
   if (q && config.searchFields?.length) {
     where.OR = config.searchFields.map((f) => ({ [f]: { contains: q } }));
+  } else if (q && config.relationSearch) {
+    // P2: ilişki-uzanan serbest arama (ör. registrations: teyit no + kategori + kişi adı)
+    Object.assign(where, config.relationSearch(q));
   }
 
   const limit = Math.min(parseInt(sp.get("limit") ?? "200"), 500);
@@ -47,14 +65,43 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ error: "Kiracı izolasyonu uygulanamadı" }, { status: 500 });
   }
 
+  // P2: composite keyset — orderBy (registry) + id son halka (tümü benzersiz-olmayan)
+  const order = [
+    ...(Object.entries(config.orderBy ?? {}) as [string, "asc" | "desc"][]),
+    ["id", "asc"] as [string, "asc" | "desc"],
+  ];
+  const orderByArg = order.map(([k, d]) => ({ [k]: d }));
+
+  const cursorRaw = sp.get("cursor");
+  let cursorValues: unknown[] | null = null;
+  if (cursorRaw) {
+    try {
+      const arr = JSON.parse(Buffer.from(cursorRaw, "base64url").toString("utf8")) as unknown;
+      if (!Array.isArray(arr) || arr.length !== order.length) throw new Error("biçim");
+      cursorValues = arr;
+    } catch {
+      return NextResponse.json({ error: "Geçersiz cursor" }, { status: 400 });
+    }
+  }
+
   try {
-    const items = await config.delegate.findMany({
-      where,
+    const items = (await config.delegate.findMany({
+      where: cursorValues ? { AND: [where, keysetWhere(order, cursorValues)] } : where,
       include: config.include,
-      orderBy: config.orderBy,
-      take: limit,
-    });
-    return NextResponse.json({ items });
+      orderBy: orderByArg as Record<string, "asc" | "desc">[],
+      take: limit + 1, // bir fazlası: devam var mı?
+    })) as { id: string }[];
+
+    let nextCursor: string | null = null;
+    if (items.length > limit) {
+      items.pop();
+      const last = items[items.length - 1] as Record<string, unknown>;
+      const sortValues = order.slice(0, -1).map(([k]) => last[k]);
+      nextCursor = Buffer.from(JSON.stringify([...sortValues, last.id]), "utf8").toString("base64url");
+    }
+    // S3: sır içeren satırlar maskelenir (readMask)
+    const safeItems = config.readMask ? (items as Record<string, unknown>[]).map(config.readMask) : items;
+    return NextResponse.json(nextCursor ? { items: safeItems, nextCursor } : { items: safeItems });
   } catch (e) {
     console.error(`GET /api/${entity}`, e);
     return NextResponse.json({ error: "Liste alınamadı" }, { status: 500 });
@@ -76,7 +123,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       if (ge) return ge;
       throw e;
     }
+    if (config.writeTransform) data = await config.writeTransform(data, false); // S3: sır şifreleme
     const created = await config.delegate.create({ data, include: config.include });
+    // S3: sır içeren yanıt maskelenir
+    const safeCreated = config.readMask ? config.readMask(created as Record<string, unknown>) : created;
 
     if (config.auditType) {
       await db.activityLog.create({
@@ -89,7 +139,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         },
       });
     }
-    return NextResponse.json(created, { status: 201 });
+    return NextResponse.json(safeCreated, { status: 201 });
   } catch (e) {
     console.error(`POST /api/${entity}`, e);
     const msg = e instanceof Error && e.message.includes("Unique constraint") ? "Bu kayıt zaten mevcut (benzersiz alan çakışması)" : "Kayıt oluşturulamadı";

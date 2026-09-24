@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import QRCode from "qrcode";
 import { db } from "@/lib/db";
+import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 import { BADGE_FONTS } from "@/lib/constants";
 
 interface DesignElement {
@@ -22,8 +23,19 @@ export async function POST(req: NextRequest) {
     if (!body.editionId || !body.designId || !body.participationIds?.length) {
       return NextResponse.json({ error: "editionId, designId ve participationIds zorunlu" }, { status: 400 });
     }
+    // G0-b: baskı sayfası kişisel veri basar — edisyon + tasarım bağlamı doğrulanır
+    try {
+      await resolveEditionContext(body.editionId, { required: true });
+    } catch (e) {
+      if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
+    }
     const design = await db.badgeDesign.findUnique({ where: { id: body.designId } });
     if (!design) return NextResponse.json({ error: "Tasarım bulunamadı" }, { status: 404 });
+    if (design.editionId !== body.editionId) {
+      // tasarım başka edisyona/kiraciya ait — varlık ifşa edilmez
+      return NextResponse.json({ error: "Tasarım bulunamadı" }, { status: 404 });
+    }
 
     const edition = await db.eventEdition.findUnique({ where: { id: body.editionId }, include: { series: true } });
     if (!edition) return NextResponse.json({ error: "Edisyon bulunamadı" }, { status: 404 });

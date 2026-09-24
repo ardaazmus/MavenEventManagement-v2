@@ -3,6 +3,7 @@
 // Canlı akış live-bus (socket.io) üzerinden gelir; bu uç ilk yükleme + yoklama yedeğidir.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 import { moduleFor, severityFor } from "@/lib/api/notification-meta";
 
 export async function GET(req: NextRequest) {
@@ -11,8 +12,15 @@ export async function GET(req: NextRequest) {
     const limitParam = Number(req.nextUrl.searchParams.get("limit") ?? 25);
     const limit = Number.isFinite(limitParam) && limitParam > 0 && limitParam <= 100 ? limitParam : 25;
 
+    // G0-b: bildirimler bağlamı çözer — edisyon verilmişse kiracıya doğrulanır (yabancı → 404);
+    // edisyonsuz istek bağlam kiracısının olaylarıyla sınırlandırılır (tüm-kiracılar akışı kapatıldı)
+    const { tenantId: ctx, editionId: ed } = await resolveEditionContext(editionId);
+    const where = ed
+      ? { editionId: ed }
+      : { OR: [{ tenantId: ctx }, { edition: { tenantId: ctx } }, { AND: [{ tenantId: null }, { editionId: null }] }] };
+
     const items = await db.activityLog.findMany({
-      where: editionId ? { editionId } : {},
+      where,
       orderBy: { createdAt: "desc" },
       take: limit,
     });
@@ -30,6 +38,7 @@ export async function GET(req: NextRequest) {
       })),
     });
   } catch (e) {
+    if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
     console.error("GET /api/notifications", e);
     return NextResponse.json({ error: "Bildirimler okunamadı" }, { status: 500 });
   }

@@ -1,0 +1,464 @@
+     1→// /api/flows — İş akışları (domain event güdümlü, §46-47)
+     2→// Aksiyonlar: registration.decide, registration.cancel, sponsor.guest,
+     3→//             finance.manualPayment, finance.refund, booth.allocate,
+     4→//             reservation.confirm, certificate.generate, edition.publish,
+     5→//             person.merge, invitation.respond
+     6→import { NextRequest, NextResponse } from "next/server";
+     7→import { db } from "@/lib/db";
+     8→import { ActivityType } from "@/lib/api/activity";
+     9→import { autoOfferForCategory } from "@/lib/api/waitlist-engine";
+    10→
+    11→type FlowBody = Record<string, unknown> & { action?: string };
+    12→
+    13→export async function POST(req: NextRequest) {
+    14→  try {
+    15→    const body = (await req.json()) as FlowBody;
+    16→    const action = body.action;
+    17→
+    18→    switch (action) {
+    19→      // ── Kayıt onay/red (Kayıt sorumlusu) ──
+    20→      case "registration.decide": {
+    21→        const { registrationId, decision, decidedBy } = body as { registrationId: string; decision: "CONFIRMED" | "REJECTED"; decidedBy?: string };
+    22→        const reg = await db.registration.update({
+    23→          where: { id: registrationId },
+    24→          data: { status: decision, decidedAt: new Date(), decidedBy: decidedBy ?? "Kayıt Sorumlusu" },
+    25→          include: { participation: { include: { person: true, registrations: true } }, category: true },
+    26→        });
+    27→        // CONFIRMED ise sponsorship claim'i CONSUMED'a geçir (davette ayır, onayda kullan)
+    28→        if (decision === "CONFIRMED") {
+    29→          const claims = await db.entitlementClaim.findMany({ where: { registrationId } });
+    30→          for (const c of claims) {
+    31→            if (c.status === "RESERVED") {
+    32→              await db.entitlementClaim.update({ where: { id: c.id }, data: { status: "CONSUMED", consumedAt: new Date() } });
+    33→            }
+    34→            if (c.entitlementId) {
+    35→              await recomputeEntitlement(c.entitlementId);
+    36→            }
+    37→          }
+    38→          // yaka kartı READY (uygun)
+    39→          await db.badgeInstance.updateMany({ where: { participationId: reg.participationId, status: "NOT_ELIGIBLE" }, data: { status: "READY" } });
+    40→        }
+    41→        await db.activityLog.create({ data: { type: decision === "CONFIRMED" ? ActivityType.REGISTRATION_CONFIRMED : ActivityType.REGISTRATION_SAVED, editionId: reg.editionId, message: `Kayıt ${decision === "CONFIRMED" ? "onaylandı" : "reddedildi"}: ${reg.participation.person.firstName} ${reg.participation.person.lastName}`, entityType: "Registration", entityId: reg.id, actorName: decidedBy ?? "Kayıt Sorumlusu" } });
+    42→        return NextResponse.json(reg);
+    43→      }
+    44→
+    45→      // ── Kayıt iptali (etki önizlemesi: yaka kartı + hak + ödeme ayrıca) ──
+    46→      case "registration.cancel": {
+    47→        const { registrationId, reason } = body as { registrationId: string; reason?: string };
+    48→        const reg = await db.registration.update({
+    49→          where: { id: registrationId },
+    50→          data: { status: "CANCELLED", cancelReason: reason ?? "Yönetici iptali" },
+    51→          include: { participation: { include: { person: true } } },
+    52→        });
+    53→        // iptal → haklar geri yüklenir (politikaya bağlı; varsayılan: geri ver)
+    54→        const claims = await db.entitlementClaim.findMany({ where: { registrationId, status: { in: ["RESERVED", "CONSUMED"] } } });
+    55→        for (const c of claims) {
+    56→          await db.entitlementClaim.update({ where: { id: c.id }, data: { status: "RELEASED", releasedAt: new Date() } });
+    57→          if (c.entitlementId) await recomputeEntitlement(c.entitlementId);
+    58→        }
+    59→        await db.badgeInstance.updateMany({ where: { participationId: reg.participationId, status: { in: ["READY", "ISSUED", "PRINTED"] } }, data: { status: "VOID", voidReason: `Kayıt iptali: ${reason ?? ""}` } });
+    60→        await db.activityLog.create({ data: { type: ActivityType.REGISTRATION_CANCELLED, editionId: reg.editionId, message: `Kayıt iptal edildi: ${reg.participation.person.firstName} ${reg.participation.person.lastName} — yaka kartı ve haklar etkilenir`, entityType: "Registration", entityId: reg.id, actorName: "Yönetici" } });
+    61→        // koltuk boşaldı → bekleme listesindeki sıradakine otomatik teklif (§12)
+    62→        const chainedOffers = reg.categoryId ? await autoOfferForCategory(reg.editionId, reg.categoryId) : [];
+    63→        if (chainedOffers.length > 0) {
+    64→          await db.activityLog.create({ data: { type: ActivityType.REGISTRATION_SAVED, editionId: reg.editionId, message: `İptal sonrası koltuk için bekleme listesinden ${chainedOffers.length} teklif gönderildi: ${chainedOffers.map((o) => o.personName).join(", ")}`, actorName: "Bekleme Motoru" } });
+    65→        }
+    66→        return NextResponse.json({ ...JSON.parse(JSON.stringify(reg)), waitlistOffered: chainedOffers });
+    67→      }
+    68→
+    69→      // ── Sponsor misafiri ekle (09-C: Person→Participation→Registration→Claim) ──
+    70→      case "sponsor.guest": {
+    71→        const { entitlementId, firstName, lastName, email, company, category } = body as {
+    72→          entitlementId: string; firstName: string; lastName: string; email: string; company?: string; category?: string;
+    73→        };
+    74→        const ent = await db.entitlement.findUnique({ where: { id: entitlementId }, include: { ownerOrganization: true } });
+    75→        if (!ent) return NextResponse.json({ error: "Hak havuzu bulunamadı" }, { status: 404 });
+    76→
+    77→        const used = ent.quantityConsumed + ent.quantityReserved;
+    78→        if (used >= ent.quantityGranted) {
+    79→          return NextResponse.json({ error: `Kalan hak yok (${ent.quantityConsumed}/${ent.quantityGranted} kullanıldı, ${ent.quantityReserved} ayrılmış)` }, { status: 409 });
+    80→        }
+    81→        if (!ent.editionId) return NextResponse.json({ error: "Etkinlik bağlantısı yok" }, { status: 400 });
+    82→
+    83→        // 1) Person: e-posta güçlü işaret — aynı e-posta varsa o kişi kullanılır
+    84→        let person = await db.person.findFirst({ where: { email, tenantId: { not: "" } } });
+    85→        if (!person) {
+    86→          const tenant = await db.tenant.findFirst();
+    87→          person = await db.person.create({ data: { tenantId: tenant!.id, firstName, lastName, email, company: company ?? ent.ownerOrganization?.name } });
+    88→        }
+    89→
+    90→        // 2) Participation (sponsor portal kaynağı)
+    91→        const participation = await db.eventParticipation.upsert({
+    92→          where: { editionId_personId: { editionId: ent.editionId, personId: person.id } },
+    93→          create: { editionId: ent.editionId, personId: person.id, source: "SPONSOR_PORTAL" },
+    94→          update: { source: "SPONSOR_PORTAL" },
+    95→        });
+    96→
+    97→        // 3) Registration — SPONSOR_ENTITLEMENT funding; ücretsiz (NOT_REQUIRED ödeme ekseni)
+    98→        const registration = await db.registration.create({
+    99→          data: {
+   100→            editionId: ent.editionId,
+   101→            participationId: participation.id,
+   102→            source: "SPONSOR_PORTAL",
+   103→            fundingSource: "SPONSOR_ENTITLEMENT",
+   104→            status: "PENDING_APPROVAL",
+   105→            submittedAt: new Date(),
+   106→            notes: `Sponsor misafiri — ${ent.ownerOrganization?.name ?? ""} (${ent.label})`,
+   107→          },
+   108→        });
+   109→
+   110→        // 4) Claim: RESERVED (davette ayır, onayda kullanılır)
+   111→        const claim = await db.entitlementClaim.create({
+   112→          data: { entitlementId: ent.id, participationId: participation.id, registrationId: registration.id, status: "RESERVED", guestName: `${firstName} ${lastName}` },
+   113→        });
+   114→        await recomputeEntitlement(ent.id);
+   115→
+   116→        await db.activityLog.create({ data: { type: ActivityType.CLAIM_SAVED, editionId: ent.editionId, message: `Sponsor misafiri ayrıldı: ${firstName} ${lastName} → ${ent.label} (#${used + 1})`, entityType: "EntitlementClaim", entityId: claim.id, actorName: "Sponsor Portalı" } });
+   117→        return NextResponse.json({ claim, registration, participation }, { status: 201 });
+   118→      }
+   119→
+   120→      // ── Manuel ödeme teyidi (§38: doğrudan status değiştirme YASAK) ──
+   121→      case "finance.manualPayment": {
+   122→        const { orderId, amount, currency = "TRY", reference, enteredBy, reason } = body as { orderId: string; amount: number; currency?: string; reference?: string; enteredBy?: string; reason?: string };
+   123→        if (!amount || amount <= 0) return NextResponse.json({ error: "Tutar zorunlu" }, { status: 400 });
+   124→        if (!reason) return NextResponse.json({ error: "Manuel teyit için gerekçe zorunlu (denetim)" }, { status: 400 });
+   125→
+   126→        const payment = await db.payment.create({
+   127→          data: { orderId, amount, currency, source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference, enteredBy: enteredBy ?? "Finans Sorumlusu", reason, approvedBy: (amount ?? 0) > 50000 ? "Tenant Sahibi" : undefined, paidAt: new Date() },
+   128→        });
+   129→        await recalcOrder(orderId);
+   130→        await db.activityLog.create({ data: { type: ActivityType.PAYMENT_RECEIVED, message: `Manuel tahsilat: ${amount} ${currency} — ${reason}`, entityType: "Payment", entityId: payment.id, actorName: enteredBy ?? "Finans Sorumlusu" } });
+   131→        return NextResponse.json(payment, { status: 201 });
+   132→      }
+   133→
+   134→      // ── İade talebi/onayı (iade ≠ iptal; hak iadesi ayrı adım) ──
+   135→      case "finance.refund": {
+   136→        const { orderId, amount, reason, requestedBy } = body as { orderId: string; amount: number; reason?: string; requestedBy?: string };
+   137→        const refund = await db.refund.create({ data: { orderId, amount, reason, status: "PROCESSED", requestedBy, processedAt: new Date() } });
+   138→        await recalcOrder(orderId);
+   139→        await db.activityLog.create({ data: { type: ActivityType.REFUND_SAVED, message: `İade işlendi: ${amount} — ${reason ?? ""}`, entityType: "Refund", entityId: refund.id, actorName: requestedBy ?? "Finans Sorumlusu" } });
+   140→        return NextResponse.json(refund, { status: 201 });
+   141→      }
+   142→
+   143→      // ── Stand tahsisi (SponsorAgreement → Entitlement → Allocation → A24) ──
+   144→      case "booth.allocate": {
+   145→        const { boothUnitId, agreementId, organizationId } = body as { boothUnitId: string; agreementId?: string; organizationId?: string };
+   146→        const booth = await db.boothUnit.findUnique({ where: { id: boothUnitId } });
+   147→        if (!booth) return NextResponse.json({ error: "Stant bulunamadı" }, { status: 404 });
+   148→        if (!["AVAILABLE", "HELD", "OPTION", "RELEASED"].includes(booth.status)) {
+   149→          return NextResponse.json({ error: `Stant ${booth.status} durumunda — tahsis edilemez` }, { status: 409 });
+   150→        }
+   151→        const alloc = await db.boothAllocation.upsert({
+   152→          where: { boothUnitId },
+   153→          create: { boothUnitId, agreementId, organizationId, status: "RESERVED" },
+   154→          update: { agreementId, organizationId, status: "RESERVED" },
+   155→          include: { boothUnit: true, organization: true, agreement: true },
+   156→        });
+   157→        await db.boothUnit.update({ where: { id: boothUnitId }, data: { status: "RESERVED" } });
+   158→        await db.activityLog.create({ data: { type: ActivityType.BOOTH_ALLOCATED, editionId: booth.editionId, message: `Stand tahsis edildi: ${booth.code} (${booth.sizeSqm} m²)`, entityType: "BoothAllocation", entityId: alloc.id, actorName: "Sponsorluk Yöneticisi" } });
+   159→        return NextResponse.json(alloc, { status: 201 });
+   160→      }
+   161→
+   162→      // ── Rezervasyon teyidi — her gece stok kontrolü (§09-E) ──
+   163→      case "reservation.confirm": {
+   164→        const { reservationId } = body as { reservationId: string };
+   165→        const res = await db.reservation.findUnique({ where: { id: reservationId }, include: { block: { include: { inventoryNights: true } } } });
+   166→        if (!res) return NextResponse.json({ error: "Rezervasyon bulunamadı" }, { status: 404 });
+   167→        if (!res.block) return NextResponse.json({ error: "Oda bloğu bağlantısı yok" }, { status: 400 });
+   168→
+   169→        const nights: Date[] = [];
+   170→        const cur = new Date(res.checkIn);
+   171→        while (cur < res.checkOut) { nights.push(new Date(cur)); cur.setDate(cur.getDate() + 1); }
+   172→
+   173→        // bir gece eksikse teyit görünmez (§09-E)
+   174→        const missing: string[] = [];
+   175→        for (const n of nights) {
+   176→          const inv = res.block.inventoryNights.find((i) => sameDay(i.date, n));
+   177→          if (!inv) { missing.push(n.toLocaleDateString("tr-TR")); continue; }
+   178→          if (inv.reservedRooms + 1 > inv.totalRooms) { missing.push(`${n.toLocaleDateString("tr-TR")} (stok yok)`); }
+   179→        }
+   180→        if (missing.length > 0) {
+   181→          return NextResponse.json({ error: `Teyit engellendi — şu gecelerde stok yetersiz: ${missing.join(", ")}` }, { status: 409 });
+   182→        }
+   183→        // stok tüket
+   184→        for (const n of nights) {
+   185→          const inv = res.block.inventoryNights.find((i) => sameDay(i.date, n))!;
+   186→          await db.inventoryNight.update({ where: { id: inv.id }, data: { reservedRooms: inv.reservedRooms + 1 } });
+   187→        }
+   188→        const updated = await db.reservation.update({ where: { id: reservationId }, data: { status: "CONFIRMED" }, include: { block: { include: { hotel: true, roomType: true } } } });
+   189→        await db.activityLog.create({ data: { type: ActivityType.RESERVATION_SAVED, editionId: res.editionId, message: `Rezervasyon teyit edildi: ${res.guestName} — ${nights.length} oda-gece tüketildi`, entityType: "Reservation", entityId: res.id, actorName: "Otel Sorumlusu" } });
+   190→        return NextResponse.json(updated);
+   191→      }
+   192→
+   193→      // ── Sertifika üretimi (uygunluk kuralı kontrolü, §43) ──
+   194→      case "certificate.generate": {
+   195→        const { definitionId } = body as { definitionId: string };
+   196→        const def = await db.certificateDefinition.findUnique({ where: { id: definitionId }, include: { issues: { include: { participation: { include: { registrations: true, scanEvents: true } } } } } });
+   197→        if (!def) return NextResponse.json({ error: "Kural bulunamadı" }, { status: 404 });
+   198→        if (!def.editionId) return NextResponse.json({ error: "Etkinlik yok" }, { status: 400 });
+   199→
+   200→        const participations = await db.eventParticipation.findMany({ where: { editionId: def.editionId }, include: { registrations: true, scanEvents: true, roleAssignments: true } });
+   201→        let eligible = 0;
+   202→        for (const p of participations) {
+   203→          const reg = p.registrations?.[0];
+   204→          const checkedIn = p.scanEvents?.some((s) => s.action === "ENTRY" && s.result === "ALLOWED");
+   205→          const isEligible = reg?.status === "CONFIRMED" && (def.type === "SPEAKER" ? p.roleAssignments?.some((r) => r.role === "SPEAKER") : Boolean(checkedIn));
+   206→          const existing = def.issues.find((i) => i.participationId === p.id);
+   207→          const note = isEligible ? "Uygunluk koşulları sağlandı" : `Eksik: ${reg?.status !== "CONFIRMED" ? "onaylı kayıt yok" : ""} ${!checkedIn && def.type !== "SPEAKER" ? "geçerli giriş yok" : ""}`.trim();
+   208→          if (existing) {
+   209→            if (existing.status === "REVOKED") continue; // geri alma katılımı silmez, yeniden değerlendirme açık
+   210→            await db.certificateIssue.update({ where: { id: existing.id }, data: { status: isEligible ? "GENERATED" : "NOT_ELIGIBLE", generatedAt: isEligible ? new Date() : null, eligibilityNote: note } });
+   211→          } else {
+   212→            await db.certificateIssue.create({ data: { definitionId: def.id, participationId: p.id, status: isEligible ? "GENERATED" : "NOT_ELIGIBLE", generatedAt: isEligible ? new Date() : null, eligibilityNote: note } });
+   213→          }
+   214→          if (isEligible) eligible++;
+   215→        }
+   216→        await db.activityLog.create({ data: { type: ActivityType.CERT_ISSUE_SAVED, editionId: def.editionId, message: `Sertifika üretimi: ${def.name} — ${eligible} uygun belge oluşturuldu`, entityType: "CertificateDefinition", entityId: def.id, actorName: "Belge Sorumlusu" } });
+   217→        return NextResponse.json({ ok: true, eligible });
+   218→      }
+   219→
+   220→      // ── Etkinlik yayınla (yayın denetimini geçmek zorunda) ──
+   221→      case "edition.publish": {
+   222→        const { editionId } = body as { editionId: string };
+   223→        const dashRes = await fetch(`${req.nextUrl.origin}/api/dashboard?editionId=${editionId}`);
+   224→        const dash = await dashRes.json();
+   225→        if (dash.checks?.blockers?.length > 0) {
+   226→          return NextResponse.json({ error: `Yayın engellendi: ${dash.checks.blockers[0].message}`, checks: dash.checks }, { status: 409 });
+   227→        }
+   228→        const edition = await db.eventEdition.update({ where: { id: editionId }, data: { isPublished: true, status: "REGISTRATION" } });
+   229→        await db.activityLog.create({ data: { type: ActivityType.EDITION_PUBLISHED, tenantId: edition.tenantId, editionId, message: `Etkinlik yayınlandı: ${edition.name} — kayıt bağlantısı açık`, actorName: "Etkinlik Yöneticisi" } });
+   230→        return NextResponse.json(edition);
+   231→      }
+   232→
+   233→      // ── Kişi birleştirme (çakışma çözümlü, tek işlemde — Kimlik kuralı 2) ──
+   234→      // Aynı edisyonda iki katılım @@unique([editionId, personId]) yüzünden taşınamaz:
+   235→      // resolutions[editionId] = "target" | "source" kazanan katılımı seçer; kaybeden katılımın
+   236→      // tüm geçmişi (kayıtlar, yaka kartları, taramalar, haklar, program, konaklama…) kazanan tarafına
+   237→      // taşınır ve boşalan katılım silinir — geçmiş silinmez, sahibi değişir.
+   238→      case "person.merge": {
+   239→        const { sourceId, targetId, resolutions, fillProfile } = body as {
+   240→          sourceId: string; targetId: string;
+   241→          resolutions?: Record<string, "target" | "source">;
+   242→          fillProfile?: boolean;
+   243→        };
+   244→        if (!sourceId || !targetId || sourceId === targetId) return NextResponse.json({ error: "Geçersiz birleştirme" }, { status: 400 });
+   245→        if (sourceId === targetId) return NextResponse.json({ error: "Kaynak ve hedef aynı olamaz" }, { status: 400 });
+   246→
+   247→        const result = await db.$transaction(async (tx) => {
+   248→          const [source, target] = await Promise.all([
+   249→            tx.person.findUnique({ where: { id: sourceId } }),
+   250→            tx.person.findUnique({ where: { id: targetId } }),
+   251→          ]);
+   252→          if (!source || !target) throw new Error("Kişi bulunamadı");
+   253→          if (source.status === "MERGED" || target.status === "MERGED") throw new Error("Birleştirilmiş kayıt tekrar birleştirilemez");
+   254→
+   255→          const srcParts = await tx.eventParticipation.findMany({ where: { personId: sourceId } });
+   256→          const tgtParts = await tx.eventParticipation.findMany({ where: { personId: targetId } });
+   257→          const tgtByEdition = new Map(tgtParts.map((p) => [p.editionId, p]));
+   258→
+   259→          let mergedRegistrations = 0;
+   260→          let resolvedEditions = 0;
+   261→
+   262→          // ── edisyon çakışmaları: kazanan katılıma geçmiş taşı, kaybedeni boşalt-sil ──
+   263→          for (const srcPart of srcParts) {
+   264→            const tgtPart = tgtByEdition.get(srcPart.editionId);
+   265→            if (!tgtPart) continue; // çakışmasız — aşağıda toplu taşınacak
+   266→            const winner: "target" | "source" = resolutions?.[srcPart.editionId] ?? "target";
+   267→            const keep = winner === "target" ? tgtPart : srcPart;
+   268→            const drop = winner === "target" ? srcPart : tgtPart;
+   269→
+   270→            // kaybeden katılımın çocuklarını kazanan katılıma taşı (geçmiş korunur)
+   271→            const movedRegs = await tx.registration.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   272→            mergedRegistrations += movedRegs.count;
+   273→            await tx.eventProfileSnapshot.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   274→            await tx.badgeInstance.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   275→            await tx.credential.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   276→            await tx.scanEvent.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   277→            await tx.entitlementClaim.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   278→            await tx.programAssignment.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   279→            await tx.reservation.updateMany({ where: { primaryGuestParticipationId: drop.id }, data: { primaryGuestParticipationId: keep.id } });
+   280→            await tx.occupancySlot.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   281→            await tx.companion.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   282→            await tx.orderLine.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   283→            await tx.formAnswer.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   284→            await tx.waitlistEntry.updateMany({ where: { participationId: drop.id }, data: { participationId: keep.id } });
+   285→
+   286→            // benzersiz kısıtlı çocuklar: hedefte aynı kayıt varsa kaybeden silinir, yoksa taşınır
+   287→            const srcCerts = await tx.certificateIssue.findMany({ where: { participationId: drop.id } });
+   288→            for (const ci of srcCerts) {
+   289→              const dup = await tx.certificateIssue.findUnique({ where: { definitionId_participationId: { definitionId: ci.definitionId, participationId: keep.id } } });
+   290→              if (dup) await tx.certificateIssue.delete({ where: { id: ci.id } });
+   291→              else await tx.certificateIssue.update({ where: { id: ci.id }, data: { participationId: keep.id } });
+   292→            }
+   293→            const srcMembers = await tx.delegationMember.findMany({ where: { participationId: drop.id } });
+   294→            for (const dm of srcMembers) {
+   295→              const dup = await tx.delegationMember.findUnique({ where: { delegationId_participationId: { delegationId: dm.delegationId, participationId: keep.id } } });
+   296→              if (dup) await tx.delegationMember.delete({ where: { id: dm.id } });
+   297→              else await tx.delegationMember.update({ where: { id: dm.id }, data: { participationId: keep.id } });
+   298→            }
+   299→            // roller: aynı rol hedefte zaten varsa kopya oluşturma
+   300→            const keepRoles = await tx.eventRoleAssignment.findMany({ where: { participationId: keep.id }, select: { role: true } });
+   301→            const keepRoleSet = new Set(keepRoles.map((r) => r.role));
+   302→            const srcRoles = await tx.eventRoleAssignment.findMany({ where: { participationId: drop.id } });
+   303→            for (const ra of srcRoles) {
+   304→              if (keepRoleSet.has(ra.role)) await tx.eventRoleAssignment.delete({ where: { id: ra.id } });
+   305→              else await tx.eventRoleAssignment.update({ where: { id: ra.id }, data: { participationId: keep.id } });
+   306→            }
+   307→
+   308→            // oda arkadaşı istekleri: taraf olunan katılımlar kazananı göstersin
+   309→            await tx.roommateRequest.updateMany({ where: { requesterParticipationId: drop.id }, data: { requesterParticipationId: keep.id } });
+   310→            await tx.roommateRequest.updateMany({ where: { targetParticipationId: drop.id }, data: { targetParticipationId: keep.id } });
+   311→
+   312→            // boşalan katılım silinir — tüm çocukları taşındı, geçmiş kaybı yok
+   313→            await tx.eventParticipation.delete({ where: { id: drop.id } });
+   314→            resolvedEditions += 1;
+   315→          }
+   316→
+   317→          // ── kişi-düzeyi taşımalar (artık çakışma yok) ──
+   318→          await tx.eventParticipation.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+   319→          await tx.submission.updateMany({ where: { submitterId: sourceId }, data: { submitterId: targetId } });
+   320→          await tx.reviewAssignment.updateMany({ where: { reviewerId: sourceId }, data: { reviewerId: targetId } });
+   321→          await tx.scanEvent.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+   322→          await tx.task.updateMany({ where: { assigneeId: sourceId }, data: { assigneeId: targetId } });
+   323→          await tx.organizationContact.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+   324→          await tx.delegation.updateMany({ where: { leaderId: sourceId }, data: { leaderId: targetId } });
+   325→          await tx.waitlistEntry.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+   326→          await tx.programAssignment.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+   327→
+   328→          // yazarlıklar: aynı bildiride çift yazarlık satırı oluşmasın
+   329→          const srcAuthorships = await tx.authorship.findMany({ where: { personId: sourceId } });
+   330→          for (const au of srcAuthorships) {
+   331→            const dup = await tx.authorship.findFirst({ where: { submissionId: au.submissionId, personId: targetId } });
+   332→            if (dup) await tx.authorship.update({ where: { id: au.id }, data: { personId: null } }); // isimli harici yazar olarak kalır
+   333→            else await tx.authorship.update({ where: { id: au.id }, data: { personId: targetId } });
+   334→          }
+   335→
+   336→          // profil: boş hedef alanları kaynaktan doldur (çakışanlar hedefte kalır — seçim kullanıcıda)
+   337→          if (fillProfile !== false) {
+   338→            const fill: Record<string, string> = {};
+   339→            for (const f of ["email", "phone", "title", "company", "city", "country", "bio"] as const) {
+   340→              if (!target[f] && source[f]) fill[f] = source[f] as string;
+   341→            }
+   342→            if (Object.keys(fill).length > 0) {
+   343→              await tx.person.update({ where: { id: targetId }, data: fill });
+   344→            }
+   345→          }
+   346→
+   347→          await tx.person.update({ where: { id: sourceId }, data: { status: "MERGED", mergedIntoId: targetId } });
+   348→          await tx.activityLog.create({
+   349→            data: {
+   350→              type: ActivityType.PERSON_MERGED,
+   351→              message: `Kişi birleştirildi: ${source.firstName} ${source.lastName} → ${target.firstName} ${target.lastName} · ${mergedRegistrations} kayıt taşındı${resolvedEditions > 0 ? ` · ${resolvedEditions} edisyonda çakışma çözüldü` : ""} (geçmiş korundu)`,
+   352→              actorName: "Operasyon",
+   353→            },
+   354→          });
+   355→          return { mergedRegistrations, resolvedEditions };
+   356→        });
+   357→
+   358→        return NextResponse.json({ ok: true, ...result });
+   359→      }
+   360→
+   361→      // ── LCV yanıtı (gelecek → kayıt yolu, gelmeyecek → hakkı bırakma kuralı) ──
+   362→      case "invitation.respond": {
+   363→        const { invitationId, response } = body as { invitationId: string; response: "COMING" | "NOT_COMING" };
+   364→        const inv = await db.invitation.update({ where: { id: invitationId }, data: { status: response, respondedAt: new Date() } });
+   365→        await db.activityLog.create({ data: { type: ActivityType.INVITATION_SENT, editionId: inv.editionId, message: `Davet yanıtı: ${inv.fullName} → ${response === "COMING" ? "Gelecek" : "Gelmeyecek"}`, entityType: "Invitation", entityId: inv.id, actorName: "LCV" } });
+   366→        return NextResponse.json(inv);
+   367→      }
+   368→
+   369→      // ── Yetenek aç/kapa (modül menüsü §53 ile birlikte değişir) ──
+   370→      // İki kullanım: (a) mevcut satır: capabilityId; (b) satır hiç yoksa: editionId + key ile UPSERT.
+   371→      // (b) şart — hiç oluşturulmamış yetenek ayarlarında "yok" çipiyle kilitli kalıyordu (bug fix).
+   372→      case "capability.toggle": {
+   373→        const { capabilityId, editionId, key, enabled } = body as { capabilityId?: string; editionId?: string; key?: string; enabled: boolean };
+   374→        let cap;
+   375→        if (capabilityId) {
+   376→          cap = await db.eventCapability.update({ where: { id: capabilityId }, data: { enabled } });
+   377→        } else if (editionId && key) {
+   378→          const existing = await db.eventCapability.findUnique({ where: { editionId_key: { editionId, key } } });
+   379→          cap = existing
+   380→            ? await db.eventCapability.update({ where: { id: existing.id }, data: { enabled } })
+   381→            : await db.eventCapability.create({ data: { editionId, key, enabled, setupNote: enabled ? "hazır" : "yapılacak" } });
+   382→        } else {
+   383→          return NextResponse.json({ error: "capabilityId ya da editionId+key gerekli" }, { status: 400 });
+   384→        }
+   385→        await db.activityLog.create({ data: { type: ActivityType.CAPABILITY_TOGGLED, editionId: cap.editionId, message: `Yetenek ${enabled ? "açıldı" : "kapatıldı"}: ${cap.key} — menü, formlar ve raporlar birlikte değişir`, actorName: "Etkinlik Yöneticisi" } });
+   386→        return NextResponse.json(cap);
+   387→      }
+   388→
+   389→      // ── B2B: kişinin mobil uygulamadan yanıtı (kabul/red + görüş) ──
+   390→      case "b2b.respond": {
+   391→        const { assignmentId, accepted, feedback, respondedBy } = body as { assignmentId: string; accepted: boolean; feedback?: string; respondedBy?: string };
+   392→        const a = await db.b2bAssignment.update({
+   393→          where: { id: assignmentId },
+   394→          data: {
+   395→            status: accepted ? "ACCEPTED" : "DECLINED",
+   396→            personApproved: accepted,
+   397→            respondedAt: new Date(),
+   398→            feedback: feedback ?? null,
+   399→            feedbackAt: feedback ? new Date() : null,
+   400→          },
+   401→          include: { person: { select: { firstName: true, lastName: true } }, plan: { include: { assignments: true } } },
+   402→        });
+   403→        // karşılıklı onay denetimi: herkes kabul etti VE organizatör onayı varsa plan ACTIVE olur
+   404→        const plan = a.plan;
+   405→        const allAccepted = plan.assignments.length > 0 && plan.assignments.every((x) => x.status === "ACCEPTED");
+   406→        const anyApproved = plan.assignments.some((x) => x.organizerApproved);
+   407→        if (allAccepted && anyApproved && plan.status !== "ACTIVE" && plan.status !== "COMPLETED" && plan.status !== "CANCELLED") {
+   408→          await db.b2bPlan.update({ where: { id: plan.id }, data: { status: "ACTIVE" } });
+   409→        } else if (plan.status === "DRAFT" && plan.assignments.some((x) => x.status === "ACCEPTED" || x.status === "DECLINED")) {
+   410→          await db.b2bPlan.update({ where: { id: plan.id }, data: { status: "PENDING_APPROVAL" } });
+   411→        }
+   412→        await db.activityLog.create({ data: { type: ActivityType.TASK_SAVED, editionId: (await db.b2bPlan.findUnique({ where: { id: a.planId }, select: { editionId: true } }))?.editionId ?? null, message: `B2B yanıtı: ${a.person.firstName} ${a.person.lastName} → ${accepted ? "KABUL" : "RET"}${feedback ? ` — Görüş: ${feedback}` : ""} (${a.plan.subject})`, entityType: "B2bAssignment", entityId: a.id, actorName: respondedBy ?? "Mobil Uygulama" } });
+   413→        return NextResponse.json({ ...JSON.parse(JSON.stringify(a)), planActivated: allAccepted && anyApproved });
+   414→      }
+   415→
+   416→      // ── B2B: organizatör onayı (karşılıklı onayın diğer ayağı) ──
+   417→      case "b2b.approve": {
+   418→        const { assignmentId, approved } = body as { assignmentId: string; approved: boolean };
+   419→        const a = await db.b2bAssignment.update({ where: { id: assignmentId }, data: { organizerApproved: approved }, include: { person: { select: { firstName: true, lastName: true } }, plan: { include: { assignments: true } } } });
+   420→        const plan = a.plan;
+   421→        const allAccepted = plan.assignments.length > 0 && plan.assignments.every((x) => x.status === "ACCEPTED");
+   422→        const anyApproved = plan.assignments.some((x) => x.organizerApproved);
+   423→        let activated = false;
+   424→        if (allAccepted && anyApproved && plan.status !== "COMPLETED" && plan.status !== "CANCELLED") {
+   425→          await db.b2bPlan.update({ where: { id: plan.id }, data: { status: "ACTIVE" } });
+   426→          activated = true;
+   427→        }
+   428→        await db.activityLog.create({ data: { type: ActivityType.TASK_SAVED, message: `B2B organizatör onayı: ${a.person.firstName} ${a.person.lastName} — ${approved ? "onaylandı" : "geri alındı"} (${a.plan.subject})`, entityType: "B2bAssignment", entityId: a.id, actorName: "Etkinlik Yöneticisi" } });
+   429→        return NextResponse.json({ ok: true, planActivated: activated });
+   430→      }
+   431→
+   432→      default:
+   433→        return NextResponse.json({ error: `Bilinmeyen aksiyon: ${action}` }, { status: 400 });
+   434→    }
+   435→  } catch (e) {
+   436→    console.error("POST /api/flows", e);
+   437→    const msg = e instanceof Error ? e.message : "Akış işlenemedi";
+   438→    return NextResponse.json({ error: msg }, { status: 500 });
+   439→  }
+   440→}
+   441→
+   442→async function recalcOrder(orderId: string) {
+   443→  const order = await db.order.findUnique({ where: { id: orderId }, include: { lines: true, payments: true, refunds: true } });
+   444→  if (!order) return;
+   445→  const linesTotal = order.lines.reduce((s, l) => s + l.total, 0) || order.totalAmount;
+   446→  const paid = order.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
+   447→  const refunded = order.refunds.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + r.amount, 0);
+   448→  const balance = linesTotal - paid + refunded;
+   449→  const status = order.status === "CANCELLED" ? "CANCELLED" : balance <= 0.01 ? "PAID" : paid > 0.01 ? "PARTIALLY_PAID" : "OPEN";
+   450→  await db.order.update({ where: { id: orderId }, data: { totalAmount: linesTotal, status } });
+   451→}
+   452→
+   453→async function recomputeEntitlement(entitlementId: string) {
+   454→  const ent = await db.entitlement.findUnique({ where: { id: entitlementId }, include: { claims: true } });
+   455→  if (!ent) return;
+   456→  const consumed = ent.claims.filter((c) => c.status === "CONSUMED").length;
+   457→  const reserved = ent.claims.filter((c) => c.status === "RESERVED").length;
+   458→  await db.entitlement.update({ where: { id: entitlementId }, data: { quantityConsumed: consumed, quantityReserved: reserved } });
+   459→}
+   460→
+   461→function sameDay(a: Date, b: Date): boolean {
+   462→  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+   463→}
+   464→

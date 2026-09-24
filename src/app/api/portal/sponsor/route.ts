@@ -73,6 +73,8 @@ export async function GET(req: NextRequest) {
       organization: {
         id: organization.id, name: organization.name, type: organization.type,
         city: organization.city, country: organization.country, website: organization.website,
+        // G0-c: portal simülasyonu aksiyonlarda bu belirteci gönderir (TODO-auth: gerçek portal oturumunda sunucu oturumundan türetilir)
+        portalToken: organization.portalToken,
       },
       agreements: agreements.map((a) => ({
         id: a.id, status: a.status, amount: a.amount, currency: a.currency,

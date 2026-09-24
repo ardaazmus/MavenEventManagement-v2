@@ -5,6 +5,7 @@
 //   • profil alanları: boş olanlar kaynaktan doldurulur, çakışanlar vurgulanır
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
 
 const PROFILE_FIELDS = ["email", "phone", "title", "company", "city", "country", "bio"] as const;
 
@@ -17,11 +18,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "sourceId ve targetId farklı olmalı" }, { status: 400 });
     }
 
+    // G0-b: birleştirme önizlemesi iki kişinin gerçeklerini karşılaştırır —
+    // her iki taraf da bağlam kiracısına ait olmalı (yabancı id → 404, varlık ifşa edilmez)
+    const ctx = await resolveContext(null);
     const [source, target] = await Promise.all([
       db.person.findUnique({ where: { id: sourceId } }),
       db.person.findUnique({ where: { id: targetId } }),
     ]);
     if (!source || !target) return NextResponse.json({ error: "Kişi bulunamadı" }, { status: 404 });
+    if (source.tenantId !== ctx || target.tenantId !== ctx) {
+      return NextResponse.json({ error: "Kişi bulunamadı" }, { status: 404 });
+    }
     if (source.status === "MERGED" || target.status === "MERGED") {
       return NextResponse.json({ error: "Birleştirilmiş kayıt tekrar birleştirilemez" }, { status: 409 });
     }
@@ -106,6 +113,7 @@ export async function GET(req: NextRequest) {
       loserBadges,
     });
   } catch (e) {
+    if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
     console.error("GET /api/people/merge-preview", e);
     return NextResponse.json({ error: "Birleştirme önizlemesi alınamadı" }, { status: 500 });
   }

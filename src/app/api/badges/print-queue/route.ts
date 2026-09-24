@@ -4,6 +4,7 @@
 //   PRINT: READY → PRINTED (printedAt) · ISSUE: PRINTED → ISSUED (issuedAt) · REPRINT: basılı → REPRINTED
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveContext, verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 
 const INCLUDE = {
@@ -21,6 +22,14 @@ export async function GET(req: NextRequest) {
   try {
     const editionId = new URL(req.url).searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+
+    // G0-b: baskı kuyruğu kişisel veri taşır — edisyon bağlamına doğrulanır
+    try {
+      await verifyEditionTenant(editionId);
+    } catch (e) {
+      if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
+    }
 
     const participations = await db.eventParticipation.findMany({
       where: { editionId },
@@ -99,6 +108,14 @@ export async function POST(req: NextRequest) {
       where: { id: { in: ids } },
       include: { profile: true, participation: { include: { person: true, edition: true } } },
     });
+    if (badges.length === 0) return NextResponse.json({ error: "Yaka kartı bulunamadı" }, { status: 404 });
+
+    // G0-b: seçili kartların ebeveyn edisyonu bağlama doğrulanır — yabancı kiracının
+    // kartına toplu baskı/teslim aksiyonu 404 (IDOR)
+    const ctx = await resolveContext(null);
+    if (badges.some((b) => b.participation?.edition?.tenantId !== ctx)) {
+      return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
+    }
 
     const results: { id: string; ok: boolean; message?: string }[] = [];
     const now = new Date();

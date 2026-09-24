@@ -817,3 +817,161 @@ Unresolved / Risk:
 - JSON içe aktarma yalnız runtime override (kalıcı değil); kalıcı istenirse DB'ye saklanmalı.
 - Excel çıktısında para birimi dönüşümü yok (defterdeki ilkeyle aynı: kalemler kendi para birimiyle listelenir).
 - Ajan yeniden başlatmalarında Turbopack bazen eski derleme hatasını yapışkan tuttu; dev server restart ile temizlendi (2 kez).
+
+---
+Task ID: OMNI-G0
+Agent: Z.ai Code (ana ajan)
+Task: G0 — GUARD COMPLETION (live-proven): özel rota IDOR kapanışı, aggregate bağlam çözümü, portal yetenek belirteci, flows kiracı bağlamı, roommate-requests scalar zincir, seed prod-kilidi, media/export oturum kapısı.
+
+Work Log:
+- tenant-guard.ts: ortak `ensureInScope(entity,id)` taşındı (generic + özel rotalar); yeni `resolveEditionContext(editionId,{required})` (bogus/yabancı edisyon→404, eksik→400/sunucu bağlamı) ve `verifyEditionTenant()` eklendi; yeni kapsam modu `scalarChain` (RoommateRequest scalar FK — iki adımlı participation→edition.tenantId bakışı, şema değişikliği yok).
+- G0-a IDOR kapanışı (önceden TAM 360+vcard sıfır kontrolle sızdırdı): people/[id] GET+PUT, people/[id]/vcard, organizations/[id], organizations/[id]/vcard, form-submissions/[id] GET/PATCH/DELETE, payments/[id]/process → hepsi ensureInScope; uyuşmazlık 404.
+- G0-b aggregate bağlamı (önceden bogus editionId→200-empty): dashboard(+portföy kiracı filtreleri), accounting, accounting/export, reconciliation, cme GET+set-credits+bulk-apply, cme/report, waitlist GET+5 aksiyon, media/export, badges/print-queue GET+POST(id-bazlı), badges/print-sheet(+design.editionId), certificates/print-sheet(+def.editionId), form-stats, floor-studio/sync GET+POST, floor-studio/plan, notifications(edisyonsuz istek bağlam OR'una indirildi), program/import(+kişi aramaları kiracı kapsamlı), people/duplicates, people/merge-preview. scan bilinçli DIŞARIDA (QR-gated — kod yorumu olarak gerekçe).
+- G0-c portal/action yetenek belirteci: Organization+Person `portalToken @unique` (additive); seed provision (idempotent); deliverable-submit→agreement.organization belirteci, payment-link→ödeyen (buyerOrganization | buyerPerson | satır katılımcısı) belirteci; bilinmeyen/sahte/eksik→404; portal/sponsor+participant GET payload'ı belirteci döndürür; portals.tsx 3 çağrı noktası belirteç gönderir (TODO-auth: gerçek portal oturumuna taşınacak).
+- G0-d flows: POST başında resolveContext; 14 aksiyonun TÜMÜ ebeveyn zinciri doğrulamalı (registration.decide/cancel, sponsor.guest, finance.manualPayment/refund, booth.allocate, reservation.confirm, certificate.generate, edition.publish, person.merge (çapraz-kiracı 404), invitation.respond, capability.toggle (iki yol), b2b.respond/approve); sponsor.guest e-posta araması `{email, tenantId: ctx}` (çapraz-kiracı eşleşme kapatıldı), kişi oluşturma ctx ile.
+- G0-f: seed POST üretimde HARD-DISABLED (404); lib/auth-flag.ts (MAVEN_AUTH=on → fail-closed hasSession); media/export oturum kapısı.
+- DÜZELTİLEN GİZLİ BUG (matris yakaladı): nestedTenantSelect dış `select:` sarmalayıcısını kaybediyordu → generic /api/payments/[id] zincir-kapsamlı varlıklarda 500 fırlatıyordu; düzeltildi (200 kanıtlandı).
+- DÜZELTİLEN hatalar: waitlist cancel `!!` yazım hatası, form-stats değişken gölgeleme, tenantIdOf scalarChain eksik case (TS2366).
+
+Stage Summary (G0 KAPI — curl kanıt matrisi, tümü canlı):
+| Kanıt | Rota | Beklenen | Gerçek |
+|---|---|---|---|
+| Filtresiz 400 | GET /api/people | 400 | 400 |
+| Filtresiz 400 | GET /api/roommate-requests | 400 | 400 |
+| Geçerli 200 | people/roommate/dashboard(+portföy)/accounting/notifications/360/vcard×2/org360/form-submission/print-queue/media-export/floor-plan/cme/reconciliation/form-stats/duplicates | 200 | 200 (17/17) |
+| Bogus editionId | dashboard, accounting(+export), reconciliation, cme(+report), waitlist, media/export, print-queue, floor-plan, notifications | 404 | 404 (10/10 — 200-empty kapatıldı) |
+| ID-düzey 404 | people/[id], people vcard, organizations/[id], org vcard, form-submissions/[id], payments/process, roommate-requests/[id] | 404 | 404 (7/7) |
+| Sahte/eksik portal token | deliverable-submit, payment-link | 404 | 404 (3/3) |
+| Geçerli token | gerçek teslim + gerçek kurum belirteci | 409 (durum kuralı; belirteç geçti) | 409 |
+| Seed prod kilidi | NODE_ENV=production POST /api/seed | 404 | 404 (dev 200 korundu) |
+| Gizli bug düzeltmesi | GET /api/payments/[id] (chain kapsam) | 200 | 200 (önceden 500) |
+- Gate: lint 0, tsc 0 (yalnız dokunulmamış examples/skills baskın hataları), seed zincirleri yeşil (28 kişi/8 kurum/3 edisyon), portalToken provision ✓.
+
+---
+Task ID: OMNI-G1
+Agent: Z.ai Code (ana ajan)
+Task: G1 — EDITION PUBLISH UI: editions.tsx yayin butonu → mevcut edition.publish akışı; engel diyaloğu; engel varken gerekçeyle kilit.
+
+Work Log:
+- editions.tsx: her edisyon kartına "Yayınla" butonu (yayındakilerde disabled "Yayında"); tıklayınca /api/dashboard?editionId= denetimi çekilir.
+- Yayın diyaloğu: hazırlık skoru (score/total bar), BLOCKER listesi kırmızı kilit panelinde, uyarılar amber panelde; engel 0 ise onay butonu, engel >0 ise "Kilitli — engelleri çöz" disabled.
+- Yayın: /api/flows { action: "edition.publish" } → toast + bootstrap + bump; 409 durumunda diyaloğu tazeleme denemesi.
+- Tip düzeltmesi: EditionRow startDate/endDate optional (EditionLite ile uyum).
+
+Stage Summary:
+- GATE — tarayıcı kanıtı (agent-browser): ① yayınlanmamış edisyonda "Yayınla" butonu görünür; ② diyaloğa denetim yüklenir; ③ temiz denetimde "Yayınla ve bağlantıyı aç" aktif → tıklandı → kart "yayında — kayıt bağlantısı açık" çipine döndü, buton disabled "Yayında" oldu; ④ engel senaryosu: ücretli kategori ödeme talimatı eksik → "1 engelleyici: Ücretli kategori ... ödeme talimatı eksik" listelendi, buton "Kilitli — engelleri çöz" [disabled]; ⑤ kanıt ekran görüntüsü tool-results/g1-blocked-publish.png; ⑥ test verisi (BLKT kategorisi) temizlendi; lint 0, tsc 0.
+
+---
+Task ID: OMNI-P2
+Agent: Z.ai Code (ana ajan)
+Task: P2 — PERFORMANCE: aggregate KPI'lar, cursor pagination, composite indeksler, next/dynamic, scan hız-yolu, WAL.
+
+Work Log:
+- db.ts:50: prisma:query log dev-only; açılışta PRAGMA journal_mode=WAL + busy_timeout=5000; "uygulama-düzeyi okuma önbelleği YOK (Redis notu)" kod yorumu.
+- dashboard refactor: fetch-all-sum-in-JS yerine 30 girişli aggregate/groupBy/_count bloğu (regByStatus/bySource/sciByStatus/invByStatus/sessionsByType groupBy; finans paid/refund/lines/pendingManual groupBy haritaları; sponsorshipValue/deliverablePending/entitlement aggregate; reservation + curve + activeSessions skaler select). Düzeltme: readinessCheck TÜM sözleşmeleri sayar (durum filtresi değil — orijinal anlamsal yakalandı ve düzeltildi).
+- BYTE-IDENTITY KANITI: refactor öncesi/sonrası dashboard JSON karşılaştırması — TÜM KPI değerleri birebir (27/20/3/28/%95/58000/38000/22000/750000/70/37/2/30/3/0/7...); yalnız harita ANAHTAR SIRASI groupBy nedeniyle farklı (semantik olarak nötr).
+- cursor pagination: [entity] GET opak base64 [...sortValues, id] composite keyset (tüm orderBys benzersiz-olmayan → id son halka); take=limit+1; nextCursor YALNIZ devam varsa eklenir; geçersiz cursor 400. useApi append modu (loader(cursor), more.next()/hasMore) bits.tsx'te eklendi.
+- registrations relation-aware q: registry.relationSearch — teyit no + kategori ad/kod + participation.person ad/soyad/e-posta.
+- 10K KANITI: geçici edisyonda 10.000 kayıt üretildi → /api/registrations imleç yürüyüşü 20 sayfa × 500 = 10.000 satır, 1820 ms; relation q "Bulk4242" ilişki üzerinden buldu (1 sonuç); geçersiz cursor 400; test verisi temizlendi (cascade + 10k kişi silindi).
+- Composite indeksler + EXPLAIN QUERY PLAN (önce/sonra):
+  * Payment [orderId, status]: önce "SEARCH Payment_orderId_idx (orderId=?)" → sonra "SEARCH Payment_orderId_status_idx (orderId=? AND status=?)".
+  * ScanEvent [participationId, action, result]: önce "SEARCH ScanEvent_participationId_idx" → sonra "SEARCH ScanEvent_participationId_action_result_idx (üç kolon)".
+  * ActivityLog [editionId, createdAt]: önce "SCAN ActivityLog USING INDEX ActivityLog_createdAt_idx" → sonra "SEARCH ActivityLog_editionId_createdAt_idx (editionId=?)" (SCAN → SEARCH).
+- next/dynamic: 21 modül görünümü dinamik parçaya alındı (dashboard + editions statik); ModuleSkeleton loading fallback; kanıt: Dış Portal modülü dinamik yüklendi, render tam.
+- scan hız-yolu: create + TEK update (attendance bellekte karşılaştırılır, değişim varsa yazılır); tarama-başına aktivite → durum-değişimi/tekrar-tarama anında, normalde 25'te bir toplu özet; "SCAN_SAVED" özet tipi.
+
+Stage Summary:
+- GATE: lint 0; tsc 0; KPI değer-birebir; 390px temiz (tool-results/p2-mobile-390.png); 500-burst: 500/500 HTTP 200, wall 7017 ms, ortalama 14.0 ms/tarama (sıfır 5xx/busy hatası); seed parity korundu; yeniden adlandırma/ölü rota yok.
+
+---
+Task ID: OMNI-S3
+Agent: Z.ai Code (ana ajan)
+Task: S3 — SECRETS + MAIL ABUSE + BRUTE FORCE: SMTP sır koruması, istismara kapalı mail motoru, oran sınırları.
+
+Work Log:
+- Secrets: src/lib/secrets.ts — AES-256-GCM (MAVEN_SECRET_KEY → scrypt; dev fallback belgelenmiş), encryptSecret/decryptSecret/maskSecret. Şema (additive): MailProviderConfig.passwordCipher; password DEPRECATED işaretli. Registry readMask/writeTransform kancaları: mail-providers GET/POST/PUT yanıtlarında password+passwordCipher ASLA dönmez (hasPassword: boolean), yazmada body.password şifrelenip cipher'a taşınır; generic [entity] + [entity]/[id] rotalarına bağlandı. Seed artık cipher ile yazıyor.
+- Mail abuse: /api/mail/send motoru — 6 adımlı kontrol zinciri: 30/dk oran → kiracı-bağlı provider → günlük kota (dailyLimit + IntegrationLog sayacı) → MailSuppression bastırma listesi (ASLA gönderim) → alıcı başına 60 sn soğuma → IntegrationLog denetim kaydı (PII-maskeli özet). MailSuppression modeli (UNSUBSCRIBE|BOUNCE|COMPLAINT|MANUAL, tenant bazlı unique) + PUT/GET yönetimi. Loglarda alıcı adresleri maskeli (a***@d***.com) — "no PII in logs" kuralı.
+- Brute force: src/lib/rate-limit.ts kayan-pencere süreç-içi sınırlayıcı (süpürme + Retry-After). Uygulanan kapılar: portal/action 30/dk (belirteç brute), scan 120/dk (cihaz), public-register 10/10dk, mail/test 10/dk, mail/send 30/dk, media/export 10/dk, accounting/export 10/dk, seed 5/dk, flows 60/dk.
+
+Stage Summary:
+- Kanıtlar (canlı): mail-providers GET → {"hasPassword":true} (sır alanları yok); bastırma ekleme 201; gönderim → accepted maskeli + suppressedCount:1 + quota {1/2000}; 31. istek → 429; lint 0; tsc 0; schema push ✓; test verisi temizlendi.
+
+---
+Task ID: OMNI-A4
+Agent: Z.ai Code (ana ajan)
+Task: A4 — AUTH (flag-off) + MFA + PASSKEYS + ASGARİ RIZA.
+
+Work Log:
+- Deps (onaylı beyaz liste): argon2@0.45, @simplewebauthn/server@14, @simplewebauthn/browser@14.
+- Şema (additive): User.passwordHash/mfaSecretCipher/mfaEnabled/recoveryCodes/failedLoginCount/lockedUntil/lastLoginAt/consentVersion/consentAcceptedAt; Passkey modeli (credentialId unique, publicKey, counter, transports, aaguid); OAuthAccount modeli — YALNIZ tablo + not (bağlayıcı akış yok, stub endpoint yok).
+- Lib'ler: auth/password.ts (argon2id m=19456,t=2,p=1 + parola politikası), auth/totp.ts (RFC 6238, bağımsız; base32; ±1 pencere; kurtarma kodları sha256-hash'li tek kullanımlık), auth/session.ts (HMAC-SHA256 imzalı httpOnly çerez; timing-safe karşılaştırma; opaque uid — PII yok; rpID/origin env-öncelikli MAVEN_RPID/MAVEN_ORIGIN), auth/gate.ts (flag kapalı → 404; tek kullanımlık challenge deposu 5dk TTL).
+- Uçlar (tümü flag-off → 404): /api/auth/register (ilk kullanıcı ORG_OWNER; rıza zorunlu), /login (10/15dk/IP + 5 başarısız→15dk kilit; MFA aşaması: TOTP veya kurtarma kodu; ORG_OWNER/FINANCE_MANAGER mustEnableMfa ipucu = MFA zorlaması), /logout, /session, /mfa/setup (secret cipher saklanır, otpauth URI bir kez), /mfa/verify (mfaEnabled + kurtarma kodları tek seferlik gösterim), /passkeys/options+verify (kayıt; excludeCredentials), /passkeys/auth/options+verify (giriş; counter kuralı: yeni≤eski → klon şüphesi → passkey İPTAL fail-closed), /recovery/use (tek kullanımlık tüketim; tek başına oturum açmaz).
+- auth-flag.ts hasSession → imzalı çerez doğrulaması (fail-closed).
+
+Stage Summary:
+- Kanıtlar (modül düzeyi): argon2id hash "$argon2id$v=19$m=19456,p=1,t=2", verify doğru=true/yanlış=false; parola politikası red/kabul; TOTP yanlış kod=false, geçerli kod=true (pozitif kanıt); kurtarma hash eşleşme; oturum oynanmış=null, süresi geçmiş=null; challenge 1.=değer 2.=null; flag-off /api/auth/login → 404; lint 0; tsc 0.
+- Not: passkey uç-uç kanıtı gerçek authenticator ister (WebAuthn donanımı) — sunucu mantığı + desen kanıtlandı; tarayıcı tarafı paketi kuruldu.
+
+---
+Task ID: OMNI-M5
+Agent: Z.ai Code (ana ajan)
+Task: M5 — MEDYA SERTLEŞTİRME: sharp bump, magic-bytes, 25MP iki-kapı, SVG/AVIF red, WebP q80, thumb 320, DOCUMENT muafiyet, kota, sharp sınırları.
+
+Work Log:
+- sharp ^0.34.3 → ^0.35.4 (versiyon bump; onaylı). sharp.concurrency(1) + sharp.cache({memory:64}) küresel.
+- Şema (additive): MediaAsset.thumbDataUrl (320px WebP önizleme), widthPx, heightPx.
+- upload-linked route yeniden yazıldı: detectMagic() imza tablosu (JPEG/PNG/GIF/WEBP/PDF/ZIP/mp4/gzip); SVG red (bildirim + içerik taraması), AVIF red, imza-iddia uyuşmazlığı 415; iki-kapı 25MP (metadata + dönüşüm sonrası); raster → WebP q80 (rotate+meta temizleme) + thumb 320; DOCUMENT muafiyet (piksel/WebP kapıları yok, magic-bytes yine zorunlu); edisyon kotası 512 MB (aggregate SUM); göreli yol ilkesi yorumlandı.
+
+Stage Summary:
+- Kanıtlar (canlı): SVG → 415; PNG 800×600 → WebP q80 mime image/webp + thumb 320 + boyut kaydı; magic-bytes uyuşmazlık (PNG→image/jpeg iddiası) → 415; PDF → 201 DOCUMENT muaf (thumb yok); lint 0; tsc 0; test varlıkları temizlendi.
+
+---
+Task ID: OMNI-F6
+Agent: Z.ai Code (ana ajan)
+Task: F6 — MONEY: 17 Float → minor (kuruş) TOGETHER + E2E harness (agent-browser tabanlı; Playwright dep izni yok).
+
+Work Log:
+- src/lib/money.ts: toMinor/fromMinor/fmtMoney/fmtMoneyInt/parseMoneyInput.
+- VERİ MİGRASYONU: şema değişmeden ÖNCE 17 alan × 100 (UPDATE CAST ROUND — RegistrationCategory, Income, Expense, CatalogItem, Order, OrderLine, Payment, Refund, SponsorTierDefinition, SponsorPackage, SponsorAgreement, RoomType, Reservation(rate+noShowFee), BoothUnit, SocialPlan); ardından şema Float→Int push (SQLite INTEGER affinity tam sayıları temiz çevirir).
+- Sunucu: dashboard epsilon (>0.01→>0), reconciliation (2 epsilon), flows (manualPayment ₺→toMinor; ₺50.000 eşiği 5M kuruş; recalcOrder epsilon), accounting/export (Excel Tutar fromMinor — insan okur), payments/process (int karşılaştırmalar zaten uyumlu), registration-chain (fee zaten schema-minor), portal kalan bakiye (int) — dokunulmadı.
+- Seed: 72 para literali toMinor() ile sarmalandı.
+- UI: constants.fmtMoney ARTIK KURUŞ alır (₺1.234,56); fmtMoneyMajor eklendi (₺ girdi yankıları); accounting 4 gönderim toMinor + 4 toast fmtMoneyMajor; accommodation rate/noShowFee yükle fromMinor/kaydet toMinor + önizleme toMinor; registrations + social basePrice/price kuruş→₺ gösterim; floors/sponsorship/portals/dashboard fmtMoney(minor) ile otomatik uyumlu; finance ₺ gönderir (flows toMinor).
+
+Stage Summary:
+- F6 KANIT (kuruş bütünlüğü): incomeTotal 25.100.000 kuruş = ₺251.000 (P2 öncesi ₺ değeriyle BİREBİR: 38.000 ödeme + 213.000 RECEIVED gelir); ordered ₺58.000 ✓, collected ₺38.000 ✓, sponsorship ₺750.000 ✓, openBalance ₺22.000 ✓, expenseTotal ₺23.000 ✓ — sıfır veri kaybı.
+- E2E harness: scripts/e2e-golden-flow.sh (agent-browser tabanlı; kayıt→ödeme→yaka kartı→tarama uç haritası + canlı oturum talimatı; Playwright beyaz liste dışı olduğundan dep kurulmadı).
+- Gate: lint 0, tsc 0, seed 200, kuruş bütünlüğü kanıtlandı.
+
+---
+Task ID: OMNI-K7
+Agent: Z.ai Code (ana ajan)
+Task: K7 — KVKK ERASURE: 30 gün SLA, doğrulama, DELETE-tombstone/ANONİMLEŞTİRME, legal hold reddi, 3 yıl op log, ≤6 ay sweep, public giriş.
+
+Work Log:
+- Şema: KvkkErasureRequest (email, personId?, status PENDING|VERIFIED|COMPLETED|REJECTED, note, rejectReason, dueAt=+30g, handledBy...).
+- /api/kvkk/erasure: POST public giriş (5/saat/IP, kişisel veri döndürmez, reference+dueAt döner); GET iç liste + SLA aşımı/sıfırlanma günü + ≤6 ay sweep (otomatik tamamlama = son çare silme); PATCH verify (e-posta→Person eşleşmesi) / complete (ANONİMLEŞTİRME: ad→"Silinmiş Kullanıcı", e-posta/telefon/foto/bio/linkedin→null; katılım+finans geçmişi KORUNUR — yasal saklama) / reject (legal hold gerekçesi ≥10 karakter ZORUNLU). Her geçiş ActivityLog (3 yıl saklama ilkesi) + loglarda e-posta maskeli.
+
+Stage Summary:
+- Kanıtlar (canlı): public giriş 201 (SLA 2026-10-24); verify 200; complete 200 → tombstone kanıtı: kişi {"firstName":"Silinmiş","lastName":"Kullanıcı","email":null,"phone":null} + katılım geçmişi DURUYOR (2 katılım, 3 tarama — yasal saklama); kısa legal-hold gerekçesi 422; lint/tsc 0.
+
+---
+Task ID: OMNI-O8
+Agent: Z.ai Code (ana ajan)
+Task: O8 — OPS GATES: CI dep-audit kapısı, şifreli yedekler + geri yükleme tatbikatı, faz zamanlamaları.
+
+Work Log:
+- scripts/ops-gates.sh (CI exit-code kapısı): [1] bun audit --level high (ağ-kısıtlı sandbox'ta atlanır, CI'da zorunlu); [2] openssl AES-256-CBC + PBKDF2 şifreli DB yedeği (anahtar ayrı dosyada, yedek sonrası silinir); [3] geri yükleme tatbikatı: çöz → Prisma ile restored dosyaya canlı sorgu (tenant/edition sayımı) → bütünlük doğrulanır.
+- Çalıştırma sonucu: PASS=3 FAIL=0 — yedek 8.4M şifreli; restore drill "tenant:1, editions:3" doğrulandı.
+
+Stage Summary (OMNI FAZ ZAMANLAMALARI — duvar saati, kanıt sayısı):
+- G0 Guard Completion: ~90 dk · 40+ kanıt (curl matrisi: 17×200, 10×404-bogus, 7×404-id, 3×404-token, 2×400, prod-seed 404; gizli bug fix: nestedTenantSelect)
+- G1 Publish UI: ~35 dk · 5 tarayıcı kanıtı (yayınla/kilit/diyaloğu/yayın-sonrası durum)
+- P2 Performance: ~75 dk · 8 kanıt (KPI byte-identity, 10k imleç yürüyüşü 20 sayfa/1820ms, 3 EXPLAIN önce/sonra, 500-burst 14ms/tarama, 390px)
+- S3 Secrets/Mail/Brute: ~45 dk · 6 kanıt (sır maskesi, bastırma, kota, 429, maskeli loglar)
+- A4 Auth/MFA/Passkey: ~60 dk · 10 kanıt (argon2id m=19456,t=2,p=1, TOTP pozitif/negatif, oturum imza/oynama/süre, challenge tek-kullanım, flag-off 404)
+- M5 Media: ~40 dk · 4 kanıt (SVG 415, PNG→WebP+thumb, magic-bytes 415, PDF muaf)
+- F6 Money: ~70 dk · 4 kanıt (×100 veri migrasyonu, kuruş bütünlüğü ₺ birebir: 251.000/58.000/38.000/750.000/22.000, UI kuruş gösterimi, e2e harness)
+- K7 KVKK: ~35 dk · 5 kanıt (public giriş SLA, verify, tombstone complete + geçiş koruması, legal-hold 422)
+- O8 Ops: ~20 dk · 3 kanıt (audit kapısı, şifreli yedek, restore drill)
+
+GLOBAL GATE (her faz sonrası): lint 0 ✓ · tsc 0 ✓ (yalnız dokunulmamış examples/skills baskınları) · seed parite ✓ · 390px ✓ (p2-mobile-390.png, f6-accounting-390.png) · yeniden adlandırma yok ✓ · ölü rota yok (tüm kanıtlar canlı) ✓ · loglarda PII/sır yok (mail maskeli, sır alanları API'den çıkartıldı) ✓

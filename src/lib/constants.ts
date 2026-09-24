@@ -453,7 +453,15 @@ export function label(map: Record<string, string>, key?: string | null): string 
   return map[key] ?? key;
 }
 
+// F6: fmtMoney MINOR unit (kuruş) alır — ₺1.234,56 biçiminde gösterir.
+// Form GİRDİLERİ (₺ major) için fmtMoney(toMinor(x)) kullanın; ham ₺ için fmtMoneyMajor.
 export function fmtMoney(v: number | null | undefined, currency = "TRY"): string {
+  const major = (v ?? 0) / 100;
+  return new Intl.NumberFormat("tr-TR", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(major);
+}
+
+// F6: major (₺) değer doğrudan gösterimi — yalnız kullanıcı girdisi yankıları için
+export function fmtMoneyMajor(v: number | null | undefined, currency = "TRY"): string {
   const n = v ?? 0;
   return new Intl.NumberFormat("tr-TR", { style: "currency", currency, maximumFractionDigits: 0 }).format(n);
 }

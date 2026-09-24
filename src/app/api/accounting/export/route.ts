@@ -7,6 +7,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
+import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
+import { fromMinor } from "@/lib/money";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 const INCOME_EXPENSE_STATUSES = ["APPROVED", "PAID", "REIMBURSED"];
 
@@ -27,11 +30,23 @@ const csvNum = (n: number): string => n.toFixed(2).replace(".", ",");
 
 export async function GET(req: NextRequest) {
   try {
+  // S3: finansal çıktı indirme istismarı kapısı — 10 indirme/dk/IP
+  const denied = enforceRateLimit(req, { key: "accounting-export", limit: 10, windowMs: 60_000 });
+  if (denied) return denied;
+
     const sp = req.nextUrl.searchParams;
     const editionId = sp.get("editionId");
     const type = sp.get("type") ?? "ledger";
     const format = sp.get("format") ?? "xlsx";
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
+
+    // G0-b: edisyon kiracı bağlamına doğrulanır — yabancı edisyondan Excel indirme 404
+    try {
+      await resolveEditionContext(editionId, { required: true });
+    } catch (e) {
+      if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
+    }
 
     const edition = await db.eventEdition.findUnique({
       where: { id: editionId },
@@ -58,33 +73,33 @@ export async function GET(req: NextRequest) {
         Tarih: trDate(p.paidAt ?? p.createdAt), Tür: "Gelir (online)",
         Açıklama: `${p.order.payerName ?? "Katılımcı"} — ${p.order.orderNo}`,
         Referans: p.reference ?? p.order.orderNo, Yöntem: p.source, Durum: p.status,
-        Tutar: p.amount, Para: p.currency,
+        Tutar: fromMinor(p.amount), Para: p.currency,
       })),
       ...receivedIncomes.map((i) => ({
         Tarih: trDate(i.incomeDate), Tür: "Manuel Gelir",
         Açıklama: `${i.title}${i.payer ? ` — ${i.payer}` : ""}`,
         Referans: i.code, Yöntem: i.method, Durum: i.status,
-        Tutar: i.amount, Para: i.currency,
+        Tutar: fromMinor(i.amount), Para: i.currency,
       })),
       ...realizedExpenses.map((e) => ({
         Tarih: trDate(e.incurredAt), Tür: "Gider",
         Açıklama: `${e.title}${e.vendor ? ` — ${e.vendor}` : ""}`,
         Referans: e.code, Yöntem: e.paymentMethod, Durum: e.status,
-        Tutar: e.amount, Para: e.currency,
+        Tutar: fromMinor(e.amount), Para: e.currency,
       })),
     ].sort((a, b) => (a.Tarih < b.Tarih ? 1 : -1));
 
     const incomeRows = incomes.map((i) => ({
       Kod: i.code, Başlık: i.title, Kategori: i.category, Ödeyen: i.payer ?? "",
       Tarih: trDay(i.incomeDate), Yöntem: i.method, Durum: i.status,
-      Tutar: i.amount, Para: i.currency, "Dekont No": i.receiptNo ?? "",
+      Tutar: fromMinor(i.amount), Para: i.currency, "Dekont No": i.receiptNo ?? "",
       Onaylayan: i.approvedBy ?? "", Not: i.notes ?? "",
     }));
 
     const expenseRows = expenses.map((e) => ({
       Kod: e.code, Başlık: e.title, Kategori: e.category, Tedarikçi: e.vendor ?? "",
       Tarih: trDay(e.incurredAt), "Ödeme Yöntemi": e.paymentMethod, Durum: e.status,
-      Tutar: e.amount, Para: e.currency, "Fiş No": e.receiptNo ?? "",
+      Tutar: fromMinor(e.amount), Para: e.currency, "Fiş No": e.receiptNo ?? "",
       Harcayan: e.spentBy ?? "", Not: e.notes ?? "",
     }));
 

@@ -47,7 +47,15 @@ const globalForPrisma = globalThis as unknown as {
 // Prisma $extends sorgu kancası — tüm activityLog.create / createMany çağrıları
 // (33+ çağrı noktası) tek yerden canlı veri yoluna düşer.
 function createDb() {
-  const base = new PrismaClient({ log: ['query'] });
+  // P2: prisma:query log'u yalnız geliştirmede (db.ts:50 düzeltmesi) — üretimde gürültü yok
+  const base = new PrismaClient({ log: process.env.NODE_ENV === "development" ? ["query"] : [] });
+  // P2: SQLite WAL + busy_timeout — aynı anda yazım çakışmalarında bekleyip retry eder
+  // (scan hız-yolu 500-burst kanıtı için ön şart). WAL dosya-düzeyi kalıcıdır; busy_timeout
+  // bağlantı başınadır — açılış bağlantısına uygulanır, sonraki havuz bağlantıları WAL'dan yararlanır.
+  void base.$queryRawUnsafe("PRAGMA journal_mode=WAL;").catch(() => undefined);
+  void base.$queryRawUnsafe("PRAGMA busy_timeout=5000;").catch(() => undefined);
+  // P2 kararı: UYGULAMA-DÜZEYİ OKUMA ÖNBELLEĞİ YOK — KPI'lar her istekte canlı agregasyondur.
+  // (Not: okuma önbelleği gerekirse Redis katmanı ayrı değerlendirilir; db içinde tutulmaz.)
   return base.$extends({
     query: {
       activityLog: {

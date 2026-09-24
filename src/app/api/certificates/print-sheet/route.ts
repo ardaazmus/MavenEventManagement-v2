@@ -5,6 +5,7 @@
 //        (kanvas tasarımcısıyla aynı yerleşim); yoksa bodyTemplate fallback devam eder.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 import { BADGE_FONTS } from "@/lib/constants";
 import QRCode from "qrcode";
 
@@ -33,8 +34,19 @@ export async function POST(req: NextRequest) {
     if (!body.editionId || !body.definitionId || !body.participationIds?.length) {
       return NextResponse.json({ error: "editionId, definitionId ve participationIds zorunlu" }, { status: 400 });
     }
+    // G0-b: sertifika kişi verisi basar — edisyon + tanım bağlamı doğrulanır
+    try {
+      await resolveEditionContext(body.editionId, { required: true });
+    } catch (e) {
+      if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+      throw e;
+    }
     const def = await db.certificateDefinition.findUnique({ where: { id: body.definitionId } });
     if (!def) return NextResponse.json({ error: "Sertifika tanımı bulunamadı" }, { status: 404 });
+    if (def.editionId !== body.editionId) {
+      // tanım başka edisyona/kiraciya ait — varlık ifşa edilmez
+      return NextResponse.json({ error: "Sertifika tanımı bulunamadı" }, { status: 404 });
+    }
     const edition = await db.eventEdition.findUnique({ where: { id: body.editionId }, include: { series: true } });
     if (!edition) return NextResponse.json({ error: "Edisyon bulunamadı" }, { status: 404 });
 

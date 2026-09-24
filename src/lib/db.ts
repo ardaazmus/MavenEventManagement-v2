@@ -4,6 +4,9 @@ import { moduleFor, severityFor } from '@/lib/api/notification-meta'
 // Canlı bildirim yayını — ActivityLog create/createMany yakalanır, live-bus'a iletilir.
 // Fire-and-forget: bus kapalıysa sessizce yutulur; ana işlem ASLA bloklanmaz/bozulmaz.
 const LIVE_BUS_PUBLISH_URL = "http://127.0.0.1:3004/publish";
+// P1 (yeni-fazlar 6): yayın kanalı paylaşımlı anahtarla korunur — live-bus tarafıyla
+// AYNI env/değer kullanılır (LIVE_BUS_KEY); geliştirmede ortak başvuru değeri.
+const LIVE_BUS_KEY = process.env.LIVE_BUS_KEY ?? "maven-live-bus-dev-key";
 
 type ActivityLogLike = {
   id: string;
@@ -29,7 +32,7 @@ function publishRow(row: ActivityLogLike) {
   };
   fetch(LIVE_BUS_PUBLISH_URL, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-live-bus-key": LIVE_BUS_KEY },
     body: JSON.stringify({
       room: row.editionId ? `edition:${row.editionId}` : "global",
       payload,

@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { requireAdmin } from "@/lib/auth/request-context";
 
 const AUDIENCES = new Set(["PARTICIPANT", "SPONSOR", "BOTH"]);
 const TYPES = new Set(["ANNOUNCEMENT", "BANNER", "INFO", "LINK", "CUSTOM"]);
@@ -50,6 +51,10 @@ function logBlock(editionId: string, message: string, blockId: string) {
 const SELECT = { id: true, editionId: true, audience: true, type: true, title: true, payloadJson: true, order: true, isVisible: true, createdAt: true, updatedAt: true } as const;
 
 export async function GET(req: NextRequest) {
+  // P1 (yeni-fazlar 4): portal blok editörü CRUD yetkili yönetici yüzeyidir;
+  // katılımcı/sponsor okuması token-korumalı portal/participant + portal/sponsor uçlarındadır.
+  const gate = await requireAdmin();
+  if (gate) return gate;
   try {
     // S3: yönetim listesi istismar edilemez — 60/dk/IP
     const denied = enforceRateLimit(req, { key: "portal-blocks-read", limit: 60, windowMs: 60_000 });
@@ -73,6 +78,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // P1 (yeni-fazlar 4): portal blok editörü CRUD yetkili yönetici yüzeyidir;
+  // katılımcı/sponsor okuması token-korumalı portal/participant + portal/sponsor uçlarındadır.
+  const gate = await requireAdmin();
+  if (gate) return gate;
   try {
     // S3: içerik yazımı istismar edilemez — 30/dk/IP
     const denied = enforceRateLimit(req, { key: "portal-blocks-write", limit: 30, windowMs: 60_000 });
@@ -119,6 +128,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  // P1 (yeni-fazlar 4): portal blok editörü CRUD yetkili yönetici yüzeyidir;
+  // katılımcı/sponsor okuması token-korumalı portal/participant + portal/sponsor uçlarındadır.
+  const gate = await requireAdmin();
+  if (gate) return gate;
   try {
     const denied = enforceRateLimit(req, { key: "portal-blocks-write", limit: 30, windowMs: 60_000 });
     if (denied) return denied;
@@ -175,6 +188,10 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  // P1 (yeni-fazlar 4): portal blok editörü CRUD yetkili yönetici yüzeyidir;
+  // katılımcı/sponsor okuması token-korumalı portal/participant + portal/sponsor uçlarındadır.
+  const gate = await requireAdmin();
+  if (gate) return gate;
   try {
     const denied = enforceRateLimit(req, { key: "portal-blocks-write", limit: 30, windowMs: 60_000 });
     if (denied) return denied;

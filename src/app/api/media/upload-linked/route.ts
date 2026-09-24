@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
 import { db } from "@/lib/db";
 import { ensureSystemFolders, resolveSystemFolderKey, uniqueAssetName, parseDataUrl } from "@/lib/media-system";
+import { resolveContext } from "@/lib/api/tenant-guard";
 
 export const runtime = "nodejs";
 
@@ -57,8 +58,12 @@ export async function POST(req: NextRequest) {
     const editionId = String(body.editionId ?? "");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 422 });
 
-    const edition = await db.eventEdition.findUnique({ where: { id: editionId }, select: { id: true } });
+    // P4 (yeni-fazlar 16): edisyon AKTİF KİRACIYA ait olmalı — klasör/varlık yaratımından
+    // ÖNCE doğrulanır (yabancı edisyon 404; eski kod yalnız varlık bakıyordu).
+    const edition = await db.eventEdition.findUnique({ where: { id: editionId }, select: { id: true, tenantId: true } });
     if (!edition) return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
+    const ctxTenant = await resolveContext(null);
+    if (edition.tenantId !== ctxTenant) return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
 
     const folderKey = resolveSystemFolderKey(body.systemFolder);
     const { folders } = await ensureSystemFolders(editionId);
@@ -68,7 +73,20 @@ export async function POST(req: NextRequest) {
     if (!rawName) return NextResponse.json({ error: "Dosya adı zorunlu" }, { status: 422 });
 
     const dataUrl = typeof body.dataUrl === "string" && body.dataUrl.startsWith("data:") ? body.dataUrl : null;
-    const externalUrl = typeof body.externalUrl === "string" && body.externalUrl.startsWith("http") ? body.externalUrl : null;
+    // P4 (yeni-fazlar 16): dış URL şeması KATI — URL ayrıştırılır, yalnız http:|https:
+    // kabul edilir ("httpfoo", ters-bölü, boşluk/protokol-numarası oyunları reddedilir).
+    let externalUrl: string | null = null;
+    if (typeof body.externalUrl === "string" && body.externalUrl.trim() !== "") {
+      try {
+        const u = new URL(body.externalUrl.trim());
+        if ((u.protocol === "http:" || u.protocol === "https:") && !body.externalUrl.includes("\\\\")) {
+          externalUrl = u.toString();
+        }
+      } catch {
+        externalUrl = null;
+      }
+      if (!externalUrl) return NextResponse.json({ error: "externalUrl yalnız geçerli http(s) adresi olabilir" }, { status: 422 });
+    }
     if (!dataUrl && !externalUrl) {
       return NextResponse.json({ error: "dataUrl (data:) veya externalUrl (http) gereklidir" }, { status: 422 });
     }

@@ -11,6 +11,7 @@ import { db } from "@/lib/db";
 import { resolveContext, verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 import { autoOfferForCategory } from "@/lib/api/waitlist-engine";
+import { editionReadiness } from "@/lib/api/readiness";
 import { toMinor } from "@/lib/money";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { withLock } from "@/lib/tx-lock";
@@ -32,24 +33,69 @@ export async function POST(req: NextRequest) {
     switch (action) {
       // ── Kayıt onay/red (Kayıt sorumlusu) ──
       case "registration.decide": {
-        const { registrationId, decision, decidedBy } = body as { registrationId: string; decision: "CONFIRMED" | "REJECTED"; decidedBy?: string };
+        const { registrationId, decision, decidedBy } = body as { registrationId: string; decision: string; decidedBy?: string };
+        // P3 (yeni-fazlar 9): karar değeri + YASAL geçiş doğrulaması — bilinmeyen karar
+        // duruma YAZILAMAZ; iptal/reddedilmiş kayıt onaylanamaz (geçiş tanımlı değil).
+        if (decision !== "CONFIRMED" && decision !== "REJECTED") {
+          return NextResponse.json({ error: "Geçersiz karar — yalnız CONFIRMED | REJECTED" }, { status: 400 });
+        }
         // G0-d: ebeveyn zinciri (kayıt → edisyon → kiracı) doğrulanır — yabancı kayıt 404
-        const target = await db.registration.findUnique({ where: { id: registrationId }, select: { editionId: true, status: true } });
+        const target = await db.registration.findUnique({ where: { id: registrationId }, select: { editionId: true, status: true, participationId: true } });
         if (!target) return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
         try { await verifyEditionTenant(target.editionId); } catch (e) {
           if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
           throw e;
         }
-        const reg = await db.registration.update({
-          where: { id: registrationId },
-          data: { status: decision, decidedAt: new Date(), decidedBy: decidedBy ?? "Kayıt Sorumlusu" },
-          include: { participation: { include: { person: true, registrations: true } }, category: true },
+        // Yalnız karar-alabilir durumlar geçişe açıktır (§38 akışı).
+        const DECISIONABLE = new Set(["PENDING_APPROVAL", "SUBMITTED"]);
+        if (!DECISIONABLE.has(target.status)) {
+          if (target.status === decision) {
+            // idempotent tekrar — mevcut durum döner, ikinci geçiş/audit YOK
+            const existing = await db.registration.findUnique({ where: { id: registrationId }, include: { participation: { include: { person: true, registrations: true } }, category: true } });
+            return NextResponse.json(existing ?? { ok: true, idempotent: true });
+          }
+          return NextResponse.json({ error: `Bu kayıt '${target.status}' durumunda — karar geçişi tanımlı değil (iptal için registration.cancel)` }, { status: 409 });
+        }
+        // P3: durum geçişi + hak geçişleri + yaka kartı TEK transaction'da —
+        // REJECTED'ta RESERVED haklar serbest bırakılır ve entitlement aynı tx'te yeniden hesaplanır.
+        const reg = await db.$transaction(async (tx) => {
+          const updated = await tx.registration.update({
+            where: { id: registrationId },
+            data: { status: decision, decidedAt: new Date(), decidedBy: decidedBy ?? "Kayıt Sorumlusu" },
+            include: { participation: { include: { person: true, registrations: true } }, category: true },
+          });
+          const claims = await tx.entitlementClaim.findMany({ where: { registrationId } });
+          for (const c of claims) {
+            if (c.status === "RESERVED" && c.entitlementId) {
+              if (decision === "CONFIRMED") {
+                await tx.entitlementClaim.update({ where: { id: c.id }, data: { status: "CONSUMED", consumedAt: new Date() } });
+              } else {
+                await tx.entitlementClaim.update({ where: { id: c.id }, data: { status: "RELEASED", releasedAt: new Date() } });
+              }
+              const ent = await tx.entitlement.findUnique({ where: { id: c.entitlementId }, include: { claims: true } });
+              if (ent) {
+                await tx.entitlement.update({
+                  where: { id: ent.id },
+                  data: {
+                    quantityConsumed: ent.claims.filter((x) => x.status === "CONSUMED").length,
+                    quantityReserved: ent.claims.filter((x) => x.status === "RESERVED").length,
+                  },
+                });
+              }
+            }
+          }
+          if (decision === "CONFIRMED") {
+            // yaka kartı READY (uygun)
+            await tx.badgeInstance.updateMany({ where: { participationId: target.participationId, status: "NOT_ELIGIBLE" }, data: { status: "READY" } });
+          }
+          return updated;
         });
         // TASK-A F1: onay kanalında portal erişim anahtarı çıkarılır — ham değer bu yanıtta
         // BİR KEZ döner (onay e-postasıyla katılımcıya iletilir); sunucuda yalnız sha256
         // hash yaşar, sonraki listeleme/portal yanıtlarında ASLA görünmez.
+        // P3: belirteç YALNIZ geçerli onay geçişinde (PENDING_APPROVAL|SUBMITTED → CONFIRMED).
         let issuedPortalToken: { token: string; expiresAt: string; scope: string } | null = null;
-        if (decision === "CONFIRMED" && target.status !== "CONFIRMED") {
+        if (decision === "CONFIRMED") {
           const issued = await issuePortalToken({
             scope: "PARTICIPANT",
             editionId: reg.editionId,
@@ -57,20 +103,6 @@ export async function POST(req: NextRequest) {
             issuedBy: "REGISTRATION_APPROVAL",
           });
           issuedPortalToken = { token: issued.token, expiresAt: issued.expiresAt.toISOString(), scope: "PARTICIPANT" };
-        }
-        // CONFIRMED ise sponsorship claim'i CONSUMED'a geçir (davette ayır, onayda kullan)
-        if (decision === "CONFIRMED") {
-          const claims = await db.entitlementClaim.findMany({ where: { registrationId } });
-          for (const c of claims) {
-            if (c.status === "RESERVED") {
-              await db.entitlementClaim.update({ where: { id: c.id }, data: { status: "CONSUMED", consumedAt: new Date() } });
-            }
-            if (c.entitlementId) {
-              await recomputeEntitlement(c.entitlementId);
-            }
-          }
-          // yaka kartı READY (uygun)
-          await db.badgeInstance.updateMany({ where: { participationId: reg.participationId, status: "NOT_ELIGIBLE" }, data: { status: "READY" } });
         }
         await db.activityLog.create({ data: { type: decision === "CONFIRMED" ? ActivityType.REGISTRATION_CONFIRMED : ActivityType.REGISTRATION_SAVED, editionId: reg.editionId, message: `Kayıt ${decision === "CONFIRMED" ? "onaylandı" : "reddedildi"}: ${reg.participation.person.firstName} ${reg.participation.person.lastName}${issuedPortalToken ? " · portal erişim anahtarı düzenlendi (tek görünlük)" : ""}`, entityType: "Registration", entityId: reg.id, actorName: decidedBy ?? "Kayıt Sorumlusu" } });
         // TASK-A F1: ham belirteç yalnız bu yanıtta — sonraki okumalarda ASLA yok (tek görünlük)
@@ -113,13 +145,12 @@ export async function POST(req: NextRequest) {
         const { entitlementId, firstName, lastName, email, company, category } = body as {
           entitlementId: string; firstName: string; lastName: string; email: string; company?: string; category?: string;
         };
+        // P3 (yeni-fazlar 9): girdi doğrulaması SORGUDAN ÖNCE — undefined email Prisma'da
+        // filtre-ignorne davranışıyla KİRACIDAKİ İLK kişiyi eşleyebilirdi (yanlış-kişi kaydı).
+        if (!firstName?.trim() || !lastName?.trim()) return NextResponse.json({ error: "Ad ve soyad zorunlu" }, { status: 400 });
+        if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return NextResponse.json({ error: "Geçerli e-posta zorunlu" }, { status: 400 });
         const ent = await db.entitlement.findUnique({ where: { id: entitlementId }, include: { ownerOrganization: true } });
         if (!ent) return NextResponse.json({ error: "Hak havuzu bulunamadı" }, { status: 404 });
-
-        const used = ent.quantityConsumed + ent.quantityReserved;
-        if (used >= ent.quantityGranted) {
-          return NextResponse.json({ error: `Kalan hak yok (${ent.quantityConsumed}/${ent.quantityGranted} kullanıldı, ${ent.quantityReserved} ayrılmış)` }, { status: 409 });
-        }
         if (!ent.editionId) return NextResponse.json({ error: "Etkinlik bağlantısı yok" }, { status: 400 });
         // G0-d: hak havuzunun edisyonu bağlama doğrulanır
         try { await verifyEditionTenant(ent.editionId); } catch (e) {
@@ -127,59 +158,83 @@ export async function POST(req: NextRequest) {
           throw e;
         }
 
-        // 1) Person: e-posta güçlü işaret — KİRACI KAPSAMLI arama (G0-d: çapraz-kiracı eşleşme kapatıldı);
-        //    aynı e-posta bağlam kiracısında varsa o kişi kullanılır
-        let person = await db.person.findFirst({ where: { email, tenantId: ctx } });
-        if (!person) {
-          person = await db.person.create({ data: { tenantId: ctx, firstName, lastName, email, company: company ?? ent.ownerOrganization?.name } });
-        }
+        // P3: kapasite rezervasyonu ATOMİK — kontrol+claim+ sayaç TEK transaction'da
+        // (SQLite tek-yazıcı serileştirme: eşzamanlı misafir ekleme aşım-rezervasyon yapamaz).
+        const result = await db.$transaction(async (tx) => {
+          const entTx = await tx.entitlement.findUnique({ where: { id: entitlementId }, include: { claims: true, ownerOrganization: true } });
+          if (!entTx) throw new GuardError("Hak havuzu bulunamadı", 404);
+          const usedTx = entTx.claims.filter((c) => c.status === "CONSUMED" || c.status === "RESERVED").length;
+          if (usedTx >= entTx.quantityGranted) {
+            throw new GuardError(`Kalan hak yok (${usedTx}/${entTx.quantityGranted} kullanıldı)`, 409);
+          }
 
-        // 2) Participation (sponsor portal kaynağı)
-        const participation = await db.eventParticipation.upsert({
-          where: { editionId_personId: { editionId: ent.editionId, personId: person.id } },
-          create: { editionId: ent.editionId, personId: person.id, source: "SPONSOR_PORTAL" },
-          update: { source: "SPONSOR_PORTAL" },
+          // 1) Person: e-posta güçlü işaret — KİRACI KAPSAMLI arama (G0-d);
+          let person = await tx.person.findFirst({ where: { email, tenantId: ctx } });
+          if (!person) {
+            person = await tx.person.create({ data: { tenantId: ctx, firstName: firstName.trim(), lastName: lastName.trim(), email, company: company ?? entTx.ownerOrganization?.name } });
+          }
+
+          // 2) Participation (sponsor portal kaynağı)
+          const participation = await tx.eventParticipation.upsert({
+            where: { editionId_personId: { editionId: entTx.editionId!, personId: person.id } },
+            create: { editionId: entTx.editionId!, personId: person.id, source: "SPONSOR_PORTAL" },
+            update: { source: "SPONSOR_PORTAL" },
+          });
+
+          // 3) Registration — SPONSOR_ENTITLEMENT funding; ücretsiz (NOT_REQUIRED ödeme ekseni)
+          const registration = await tx.registration.create({
+            data: {
+              editionId: entTx.editionId!,
+              participationId: participation.id,
+              source: "SPONSOR_PORTAL",
+              fundingSource: "SPONSOR_ENTITLEMENT",
+              status: "PENDING_APPROVAL",
+              submittedAt: new Date(),
+              notes: `Sponsor misafiri — ${entTx.ownerOrganization?.name ?? ""} (${entTx.label})`,
+            },
+          });
+
+          // 4) Claim: RESERVED (davette ayır, onayda kullanılır) + sayaç yeniden hesap
+          const claim = await tx.entitlementClaim.create({
+            data: { entitlementId: entTx.id, participationId: participation.id, registrationId: registration.id, status: "RESERVED", guestName: `${firstName.trim()} ${lastName.trim()}` },
+          });
+          const consumed = entTx.claims.filter((c) => c.status === "CONSUMED").length;
+          const reserved = entTx.claims.filter((c) => c.status === "RESERVED").length + 1; // yeni claim dahil
+          await tx.entitlement.update({ where: { id: entTx.id }, data: { quantityConsumed: consumed, quantityReserved: reserved } });
+          return { claim, registration, participation, used: usedTx + 1 };
         });
 
-        // 3) Registration — SPONSOR_ENTITLEMENT funding; ücretsiz (NOT_REQUIRED ödeme ekseni)
-        const registration = await db.registration.create({
-          data: {
-            editionId: ent.editionId,
-            participationId: participation.id,
-            source: "SPONSOR_PORTAL",
-            fundingSource: "SPONSOR_ENTITLEMENT",
-            status: "PENDING_APPROVAL",
-            submittedAt: new Date(),
-            notes: `Sponsor misafiri — ${ent.ownerOrganization?.name ?? ""} (${ent.label})`,
-          },
-        });
-
-        // 4) Claim: RESERVED (davette ayır, onayda kullanılır)
-        const claim = await db.entitlementClaim.create({
-          data: { entitlementId: ent.id, participationId: participation.id, registrationId: registration.id, status: "RESERVED", guestName: `${firstName} ${lastName}` },
-        });
-        await recomputeEntitlement(ent.id);
-
-        await db.activityLog.create({ data: { type: ActivityType.CLAIM_SAVED, editionId: ent.editionId, message: `Sponsor misafiri ayrıldı: ${firstName} ${lastName} → ${ent.label} (#${used + 1})`, entityType: "EntitlementClaim", entityId: claim.id, actorName: "Sponsor Portalı" } });
-        return NextResponse.json({ claim, registration, participation }, { status: 201 });
+        await db.activityLog.create({ data: { type: ActivityType.CLAIM_SAVED, editionId: ent.editionId!, message: `Sponsor misafiri ayrıldı: ${firstName.trim()} ${lastName.trim()} → ${ent.label} (#${result.used})`, entityType: "EntitlementClaim", entityId: result.claim.id, actorName: "Sponsor Portalı" } });
+        return NextResponse.json({ claim: result.claim, registration: result.registration, participation: result.participation }, { status: 201 });
       }
 
       // ── Manuel ödeme teyidi (§38: doğrudan status değiştirme YASAK) ──
+      // P2 (yeni-fazlar 8): onay eşiği AYNI BİRİMDE karşılaştırılır — amountMinor vs
+      // 5.000.000 minor (₺50.000). Eski kod major-₺'yi minor-eşikle kıyaslıyordu
+      // (₺60.000 teyidi bile eşiği tetiklemiyordu). Para birimi siparişle AYNI olmak
+      // ZORUNDA; aşım-ödeme (paid+amount > total) reddedilir.
       case "finance.manualPayment": {
         const { orderId, amount, currency = "TRY", reference, enteredBy, reason } = body as { orderId: string; amount: number; currency?: string; reference?: string; enteredBy?: string; reason?: string };
-        if (!amount || amount <= 0) return NextResponse.json({ error: "Tutar zorunlu" }, { status: 400 });
+        if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) return NextResponse.json({ error: "Tutar zorunlu" }, { status: 400 });
         const amountMinor = toMinor(amount); // F6: UI ₺ gönderir, DB kuruş tutar
+        if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return NextResponse.json({ error: "Tutar kuruş cinsinden güvenli tam sayı olmalı" }, { status: 400 });
         if (!reason) return NextResponse.json({ error: "Manuel teyit için gerekçe zorunlu (denetim)" }, { status: 400 });
         // G0-d: siparişin ebeveyn edisyonu bağlama doğrulanır
-        const orderCtx = await db.order.findUnique({ where: { id: orderId }, select: { editionId: true } });
+        const orderCtx = await db.order.findUnique({ where: { id: orderId } });
         if (!orderCtx) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
         try { await verifyEditionTenant(orderCtx.editionId); } catch (e) {
           if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
           throw e;
         }
+        if (orderCtx.currency !== currency) return NextResponse.json({ error: `Para birimi siparişle uyuşmuyor (sipariş: ${orderCtx.currency})` }, { status: 400 });
+        const paidSoFar = await db.payment.findMany({ where: { orderId, status: "SUCCEEDED" }, select: { amount: true } });
+        const paidSum = paidSoFar.reduce((a, p) => a + p.amount, 0);
+        if (paidSum + amountMinor > orderCtx.totalAmount) {
+          return NextResponse.json({ error: `Aşım ödeme: kalan ${orderCtx.totalAmount - paidSum} minor — talep ${amountMinor} minor` }, { status: 409 });
+        }
 
         const payment = await db.payment.create({
-          data: { orderId, amount: amountMinor, currency, source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference, enteredBy: enteredBy ?? "Finans Sorumlusu", reason, approvedBy: (amount ?? 0) > 5_000_000 ? "Tenant Sahibi" : undefined, paidAt: new Date() }, // F6: ₺50.000 = 5M kuruş
+          data: { orderId, amount: amountMinor, currency, source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference, enteredBy: enteredBy ?? "Finans Sorumlusu", reason, approvedBy: amountMinor > 5_000_000 ? "Tenant Sahibi" : undefined, paidAt: new Date() }, // P2: eşik minor-birimde
         });
         await recalcOrder(orderId);
         await db.activityLog.create({ data: { type: ActivityType.PAYMENT_RECEIVED, message: `Manuel tahsilat: ${amount} ${currency} — ${reason}`, entityType: "Payment", entityId: payment.id, actorName: enteredBy ?? "Finans Sorumlusu" } });
@@ -325,27 +380,72 @@ export async function POST(req: NextRequest) {
         }
         if (!res.block) return NextResponse.json({ error: "Oda bloğu bağlantısı yok" }, { status: 400 });
 
+        // P3 (yeni-fazlar 10): idempotent — teyitli rezervasyon stok YENİDEN TÜKETMEZ.
+        if (res.status === "CONFIRMED") {
+          return NextResponse.json({ ...JSON.parse(JSON.stringify(res)), alreadyConfirmed: true });
+        }
+
         const nights: Date[] = [];
         const cur = new Date(res.checkIn);
         while (cur < res.checkOut) { nights.push(new Date(cur)); cur.setDate(cur.getDate() + 1); }
 
-        // bir gece eksikse teyit görünmez (§09-E)
-        const missing: string[] = [];
-        for (const n of nights) {
-          const inv = res.block.inventoryNights.find((i) => sameDay(i.date, n));
-          if (!inv) { missing.push(n.toLocaleDateString("tr-TR")); continue; }
-          if (inv.reservedRooms + 1 > inv.totalRooms) { missing.push(`${n.toLocaleDateString("tr-TR")} (stok yok)`); }
-        }
-        if (missing.length > 0) {
-          return NextResponse.json({ error: `Teyit engellendi — şu gecelerde stok yetersiz: ${missing.join(", ")}` }, { status: 409 });
-        }
-        // stok tüket
-        for (const n of nights) {
-          const inv = res.block.inventoryNights.find((i) => sameDay(i.date, n))!;
-          await db.inventoryNight.update({ where: { id: inv.id }, data: { reservedRooms: inv.reservedRooms + 1 } });
-        }
-        const updated = await db.reservation.update({ where: { id: reservationId }, data: { status: "CONFIRMED" }, include: { block: { include: { hotel: true, roomType: true } } } });
+        // P3: stok doğrulama + tüketim + durum geçişi TEK transaction'da —
+        // eşzamanlı teyit aşım-rezervasyon yapamaz; başarısız geçiş stok KALICI tüketmez (tx geri alır).
+        const updated = await db.$transaction(async (tx) => {
+          // tx içi TAZE okuma — karar güncel stoğa karşı verilir
+          const fresh = await tx.reservation.findUnique({ where: { id: reservationId }, include: { block: { include: { inventoryNights: true } } } });
+          if (!fresh || fresh.status === "CONFIRMED") {
+            throw new GuardError("Rezervasyon zaten teyitli", 409);
+          }
+          const missing: string[] = [];
+          for (const n of nights) {
+            const inv = fresh.block?.inventoryNights.find((i) => sameDay(i.date, n));
+            if (!inv) { missing.push(n.toLocaleDateString("tr-TR")); continue; }
+            if (inv.reservedRooms + 1 > inv.totalRooms) { missing.push(`${n.toLocaleDateString("tr-TR")} (stok yok)`); }
+          }
+          if (missing.length > 0) {
+            throw new GuardError(`Teyit engellendi — şu gecelerde stok yetersiz: ${missing.join(", ")}`, 409);
+          }
+          for (const n of nights) {
+            const inv = fresh.block!.inventoryNights.find((i) => sameDay(i.date, n))!;
+            await tx.inventoryNight.update({ where: { id: inv.id }, data: { reservedRooms: inv.reservedRooms + 1 } });
+          }
+          return tx.reservation.update({ where: { id: reservationId }, data: { status: "CONFIRMED" }, include: { block: { include: { hotel: true, roomType: true } } } });
+        }).catch((e: unknown) => {
+          if (e instanceof GuardError) throw e;
+          throw e;
+        });
         await db.activityLog.create({ data: { type: ActivityType.RESERVATION_SAVED, editionId: res.editionId, message: `Rezervasyon teyit edildi: ${res.guestName} — ${nights.length} oda-gece tüketildi`, entityType: "Reservation", entityId: res.id, actorName: "Otel Sorumlusu" } });
+        return NextResponse.json(updated);
+      }
+
+      // ── P3 (yeni-fazlar 10): rezervasyon iptali — tüketilen stok GERİ verilir (idempotent) ──
+      case "reservation.cancel": {
+        const { reservationId, reason } = body as { reservationId: string; reason?: string };
+        const res = await db.reservation.findUnique({ where: { id: reservationId }, include: { block: { include: { inventoryNights: true } } } });
+        if (!res) return NextResponse.json({ error: "Rezervasyon bulunamadı" }, { status: 404 });
+        try { await verifyEditionTenant(res.editionId); } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
+        if (res.status === "CANCELLED") {
+          return NextResponse.json({ ...JSON.parse(JSON.stringify(res)), alreadyCancelled: true });
+        }
+        const wasConfirmed = res.status === "CONFIRMED";
+        const nights: Date[] = [];
+        const cur = new Date(res.checkIn);
+        while (cur < res.checkOut) { nights.push(new Date(cur)); cur.setDate(cur.getDate() + 1); }
+        const updated = await db.$transaction(async (tx) => {
+          // stok iadesi: yalnız daha önce TÜKETİLMİŞ (teyitli) rezervasyon için
+          if (wasConfirmed && res.block) {
+            for (const n of nights) {
+              const inv = res.block.inventoryNights.find((i) => sameDay(i.date, n));
+              if (inv) await tx.inventoryNight.update({ where: { id: inv.id }, data: { reservedRooms: Math.max(0, inv.reservedRooms - 1) } });
+            }
+          }
+          return tx.reservation.update({ where: { id: reservationId }, data: { status: "CANCELLED" } });
+        });
+        await db.activityLog.create({ data: { type: ActivityType.RESERVATION_SAVED, editionId: res.editionId, message: `Rezervasyon iptal: ${res.guestName}${wasConfirmed ? ` — ${nights.length} oda-gece stoğa geri verildi` : ""}${reason ? ` · ${reason}` : ""}`, entityType: "Reservation", entityId: res.id, actorName: "Otel Sorumlusu" } });
         return NextResponse.json(updated);
       }
 
@@ -364,7 +464,11 @@ export async function POST(req: NextRequest) {
         const participations = await db.eventParticipation.findMany({ where: { editionId: def.editionId }, include: { registrations: true, scanEvents: true, roleAssignments: true } });
         let eligible = 0;
         for (const p of participations) {
-          const reg = p.registrations?.[0];
+          // P3 (yeni-fazlar 11): GEÇERLİ kayıt deterministik seçilir — registrations[0]
+          // sırasız; eski CANCELLED/REJECTED kayıt güncel CONFIRMED'ı gizleyebilirdi.
+          // Kural: CONFIRMED varsa o; yoksa en-yeni submittedAt'lı kayıt (not için).
+          const regs = [...(p.registrations ?? [])].sort((a, b) => (b.submittedAt?.getTime() ?? 0) - (a.submittedAt?.getTime() ?? 0));
+          const reg = regs.find((r) => r.status === "CONFIRMED") ?? regs[0];
           const checkedIn = p.scanEvents?.some((s) => s.action === "ENTRY" && s.result === "ALLOWED");
           const isEligible = reg?.status === "CONFIRMED" && (def.type === "SPEAKER" ? p.roleAssignments?.some((r) => r.role === "SPEAKER") : Boolean(checkedIn));
           const existing = def.issues.find((i) => i.participationId === p.id);
@@ -389,12 +493,19 @@ export async function POST(req: NextRequest) {
           if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
           throw e;
         }
-        const dashRes = await fetch(`${req.nextUrl.origin}/api/dashboard?editionId=${editionId}`);
-        const dash = await dashRes.json();
-        if (dash.checks?.blockers?.length > 0) {
-          return NextResponse.json({ error: `Yayın engellendi: ${dash.checks.blockers[0].message}`, checks: dash.checks }, { status: 409 });
+        // P3 (yeni-fazlar 13): hazırlık denetimi DAHİLİ HTTP self-request ile DEĞİL,
+        // doğrudan sunucu-içi readiness fonksiyonuyla — eski yol auth-on'da oturum
+        // bağlamını kaybedip 401 alıyor, dash.checks undefined kalıyor ve engeller
+        // FAIL-OPEN olarak yayına izin veriyordu.
+        const { edition: edRow, checks } = await editionReadiness(editionId);
+        if (checks.blockers.length > 0) {
+          return NextResponse.json({ error: `Yayın engellendi: ${checks.blockers[0].message}`, checks }, { status: 409 });
         }
-        const edition = await db.eventEdition.update({ where: { id: editionId }, data: { isPublished: true, status: "REGISTRATION" } });
+        // P3: yaşam-döngüsü geri sarılmaz — ONSITE/COMPLETED/ARCHIVED edisyon
+        // "REGISTRATION"a zorlanmaz; yalnız ön-yaşam-döngüsü (PLANNING/DRAFT) kayıta açılır.
+        const PRE_LIFECYCLE = new Set(["PLANNING", "DRAFT"]);
+        const nextStatus: string = PRE_LIFECYCLE.has(edRow.status ?? "") ? "REGISTRATION" : (edRow.status ?? "PLANNING");
+        const edition = await db.eventEdition.update({ where: { id: editionId }, data: { isPublished: true, status: nextStatus } });
         await db.activityLog.create({ data: { type: ActivityType.EDITION_PUBLISHED, tenantId: edition.tenantId, editionId, message: `Etkinlik yayınlandı: ${edition.name} — kayıt bağlantısı açık`, actorName: "Etkinlik Yöneticisi" } });
         return NextResponse.json(edition);
       }
@@ -502,6 +613,21 @@ export async function POST(req: NextRequest) {
           await tx.delegation.updateMany({ where: { leaderId: sourceId }, data: { leaderId: targetId } });
           await tx.waitlistEntry.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
           await tx.programAssignment.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+          // P3 (yeni-fazlar 12): önceki turda ele alınmamış ilişkiler — geçmiş KAYIP OLMADAN taşınır
+          await tx.cvEntry.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+          await tx.sessionMaterial.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+          await tx.socialPlanAnnouncement.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+          await tx.portalToken.updateMany({ where: { personId: sourceId }, data: { personId: targetId } });
+          // bağımlı/veli bağları: kaynak kişinin bağımlıları hedefi gösterir (PersonGuardian)
+          await tx.person.updateMany({ where: { parentPersonId: sourceId }, data: { parentPersonId: targetId } });
+          // B2B atamaları: personId ZORUNLU FK + @@unique([planId, personId]) —
+          // hedefte aynı plan ataması varsa kaynağın ataması SİLİNİR (çakışma çözümü, audit'li)
+          const srcB2b = await tx.b2bAssignment.findMany({ where: { personId: sourceId } });
+          for (const ba of srcB2b) {
+            const dup = await tx.b2bAssignment.findUnique({ where: { planId_personId: { planId: ba.planId, personId: targetId } } });
+            if (dup) await tx.b2bAssignment.delete({ where: { id: ba.id } });
+            else await tx.b2bAssignment.update({ where: { id: ba.id }, data: { personId: targetId } });
+          }
 
           // yazarlıklar: aynı bildiride çift yazarlık satırı oluşmasın
           const srcAuthorships = await tx.authorship.findMany({ where: { personId: sourceId } });
@@ -526,7 +652,7 @@ export async function POST(req: NextRequest) {
           await tx.activityLog.create({
             data: {
               type: ActivityType.PERSON_MERGED,
-              message: `Kişi birleştirildi: ${source.firstName} ${source.lastName} → ${target.firstName} ${target.lastName} · ${mergedRegistrations} kayıt taşındı${resolvedEditions > 0 ? ` · ${resolvedEditions} edisyonda çakışma çözüldü` : ""} (geçmiş korundu)`,
+              message: `Kişi birleştirildi: ${source.firstName} ${source.lastName} → ${target.firstName} ${target.lastName} · ${mergedRegistrations} kayıt taşındı · CV/B2B/portal-token/bağımlı bağlar dahil tüm ilişkiler hedefe alındı${resolvedEditions > 0 ? ` · ${resolvedEditions} edisyonda çakışma çözüldü` : ""} (geçmiş korundu)`,
               actorName: "Operasyon",
             },
           });

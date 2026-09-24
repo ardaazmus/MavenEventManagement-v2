@@ -21,6 +21,15 @@ function readableNo(prefix: string): string {
   return `${prefix}-${t}${r}`;
 }
 
+// P3 (yeni-fazlar 11): kategori kapasitesi dolu — beklenen iş kuralı ihlali (500 değil 409)
+export class ChainCapacityError extends Error {
+  categoryId: string;
+  constructor(message: string, categoryId: string) {
+    super(message);
+    this.categoryId = categoryId;
+  }
+}
+
 export interface ChainResult {
   registration: unknown;
   order: unknown | null;
@@ -87,6 +96,20 @@ export async function createRegistrationFromSubmission(
         participation = await tx.eventParticipation.create({
           data: { editionId: edition.id, personId: person.id, source: "PUBLIC_FORM" },
         });
+      }
+
+      // P3 (yeni-fazlar 11): aktif kategori kapasitesi ATOMİK uygulanır — kontrol tx
+      // İÇİNDE taze sayımla yapılır (SQLite tek-yazıcı serileştirme); kapasite tx dışında
+      // kontrol edilseydi eşzamanlı zincir aşım-rezervasyon yapabilirdi. İptal/reddedilmiş
+      // kayıtlar kapasiteye sayılmaz; bekleme listesi davranışı waitlist-engine'de kalır
+      // (iptal → autoOfferForCategory zaten zincirLENMİŞ durumda).
+      if (category?.capacity != null && category.capacity > 0) {
+        const used = await tx.registration.count({
+          where: { editionId: edition.id, categoryId: category.id, status: { notIn: ["CANCELLED", "REJECTED"] } },
+        });
+        if (used >= category.capacity) {
+          throw new ChainCapacityError(`Kategori kapasitesi dolu (${used}/${category.capacity})`, category.id);
+        }
       }
 
       // 3) KAYIT — kategori fiyatı ve onay gereksinimi kategoriden

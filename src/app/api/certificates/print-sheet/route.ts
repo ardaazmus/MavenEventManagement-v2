@@ -73,35 +73,44 @@ export async function POST(req: NextRequest) {
     const pages = await Promise.all(issues.map(async (issue, i) => {
       const person = issue.participation.person;
       const snap = issue.participation.snapshots[issue.participation.snapshots.length - 1];
-      const reg = issue.participation.registrations[0];
+      // P4: geçerli kayıt deterministik (P3.11 kuralı — registrations[0] sırasız)
+      const regs = [...issue.participation.registrations].sort((a, b) => (b.submittedAt?.getTime() ?? 0) - (a.submittedAt?.getTime() ?? 0));
+      const reg = regs.find((r) => r.status === "CONFIRMED") ?? regs[0];
       const roles = issue.participation.roleAssignments.map((r) => r.role).join(", ");
       const serial = `${def.type.slice(0, 3).toUpperCase()}-${(reg?.confirmationNo ?? issue.id).slice(-6).toUpperCase()}`;
+      // P4 (yeni-fazlar 16): şablon DEĞERLERİ HTML bağlamından kaçırılır (ad/şirket/rol/
+      // kurum adları kullanıcı-kontrolü) — şablon özelliği korunur; satır sonu davranışı
+      // aynen sürer (escape SONRASI \n→<br/> dönüşümü).
+      const esc = (v: string) => escapeHtml(String(v ?? ""));
       const fill = (s: string) => (s ?? "")
-        .replace(/\{\{fullName\}\}/g, `${person.firstName} ${person.lastName}`)
-        .replace(/\{\{title\}\}/g, snap?.title ?? person.title ?? "")
-        .replace(/\{\{company\}\}/g, snap?.company ?? person.company ?? "")
-        .replace(/\{\{edition\}\}/g, edition.name + (edition.editionLabel ? ` — ${edition.editionLabel}` : ""))
-        .replace(/\{\{series\}\}/g, edition.series?.name ?? "Maven")
-        .replace(/\{\{type\}\}/g, def.name)
-        .replace(/\{\{tier\}\}/g, reg?.category?.name ?? def.tierNote ?? "")
-        .replace(/\{\{date\}\}/g, dateStr)
-        .replace(/\{\{serial\}\}/g, serial)
-        .replace(/\{\{roles\}\}/g, roles)
-        .replace(/\{\{signer\}\}/g, def.signerName ?? "")
+        .replace(/\{\{fullName\}\}/g, esc(`${person.firstName} ${person.lastName}`))
+        .replace(/\{\{title\}\}/g, esc(snap?.title ?? person.title ?? ""))
+        .replace(/\{\{company\}\}/g, esc(snap?.company ?? person.company ?? ""))
+        .replace(/\{\{edition\}\}/g, esc(edition.name + (edition.editionLabel ? ` — ${edition.editionLabel}` : "")))
+        .replace(/\{\{series\}\}/g, esc(edition.series?.name ?? "Maven"))
+        .replace(/\{\{type\}\}/g, esc(def.name))
+        .replace(/\{\{tier\}\}/g, esc(reg?.category?.name ?? def.tierNote ?? ""))
+        .replace(/\{\{date\}\}/g, esc(dateStr))
+        .replace(/\{\{serial\}\}/g, esc(serial))
+        .replace(/\{\{roles\}\}/g, esc(roles))
+        .replace(/\{\{signer\}\}/g, esc(def.signerName ?? ""))
         .replace(/\n/g, "<br/>");
 
       // R10-b: kanvas elemanları — mm mutlak konum; text/image/line/qr
       const elementsHtml = design.length > 0 ? (await Promise.all(design.map(async (el) => {
         const pos = `left:${mm(el.x)}mm;top:${mm(el.y)}mm;width:${mm(el.w)}mm;height:${mm(el.h)}mm;`;
-        const color = `#${String(el.color ?? "1f2937").replace("#", "")}`;
+        // P4: stil değerleri allowlist — CSS enjeksiyonu kapanır
+        const colorHex = String(el.color ?? "1f2937").replace("#", "");
+        const color = `#${/^[0-9a-fA-F]{3,8}$/.test(colorHex) ? colorHex : "1f2937"}`;
+        const align = ["left", "center", "right"].includes(String(el.align)) ? String(el.align) : "left";
         if (el.type === "text") {
-          const style = `${pos}font-size:${mm(el.fontSize ?? 4)}mm;font-weight:${mm(el.fontWeight ?? 400)};color:${color};text-align:${el.align ?? "left"};`;
+          const style = `${pos}font-size:${mm(el.fontSize ?? 4)}mm;font-weight:${mm(el.fontWeight ?? 400)};color:${color};text-align:${align};`;
           return `<div class="el" style="${style}">${fill(String(el.text ?? ""))}</div>`;
         }
         if (el.type === "line") {
           return `<div class="el" style="${pos}background:${color};opacity:.85;"></div>`;
         }
-        if (el.type === "image" && typeof el.imageDataUrl === "string" && el.imageDataUrl.startsWith("data:")) {
+        if (el.type === "image" && typeof el.imageDataUrl === "string" && el.imageDataUrl.startsWith("data:image/")) {
           return `<div class="el" style="${pos}"><img src="${el.imageDataUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:${mm(el.radius ?? 0)}mm;" alt="" /></div>`;
         }
         if (el.type === "qr") {
@@ -115,7 +124,7 @@ export async function POST(req: NextRequest) {
 
       const bodyHtml = def.bodyTemplate
         ? fill(def.bodyTemplate)
-        : `<p>Bu belge, <b>${fill("{{edition}}")}</b> etkinliğine <b>${fill("{{tier}}") || "katılımcı"}</b> olarak katılımını< br/> belgelemek üzere düzenlenmiştir.</p>`;
+        : `<p>Bu belge, <b>${fill("{{edition}}")}</b> etkinliğine <b>${fill("{{tier}}") || "katılımcı"}</b> olarak katılımını<br/> belgelemek üzere düzenlenmiştir.</p>`;
 
       const faceInner = design.length > 0
         ? elementsHtml

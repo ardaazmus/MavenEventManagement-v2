@@ -4,6 +4,7 @@
 // (bogus/yabancı edisyon → 404; önceden 200-empty döndürürdü), portföy görünümü sunucu bağlamıyla sınırlı.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { readinessCheck } from "@/lib/api/readiness";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 
 export async function GET(req: NextRequest) {
@@ -245,46 +246,3 @@ export async function GET(req: NextRequest) {
 // ── Yayın öncesi denetim (05 dosyası: engelleyici/uyarı) ──
 // P2: sessions = skaler aktif-oturum listesi (roomId dolu, CANCELLED hariç); agreementCount = sayı
 // (sessionsByStatusHelper P2 ile kaldırıldı — sessionsByType groupBy'a geçti)
-async function readinessCheck(
-  edition: { id: string; startDate: Date | null; endDate: Date | null; isPublished: boolean },
-  categories: { id: string; name: string; basePrice: number; paymentInstruction: string | null; capacity: number | null }[],
-  sessions: { roomId: string | null; startTime: Date; endTime: Date; status: string; title: string }[],
-  agreementCount: number,
-) {
-  const blockers: { key: string; message: string; severity: "BLOCKER" | "WARNING" }[] = [];
-  const warnings: { key: string; message: string; severity: "BLOCKER" | "WARNING" }[] = [];
-
-  if (edition.startDate && edition.endDate && edition.endDate <= edition.startDate) {
-    blockers.push({ key: "dates", message: "Bitiş tarihi başlangıçtan sonra olmalı", severity: "BLOCKER" });
-  }
-  for (const c of categories) {
-    if (c.basePrice > 0 && !c.paymentInstruction) {
-      blockers.push({ key: `pay-${c.id}`, message: `Ücretli kategori "${c.name}" için ödeme talimatı eksik`, severity: "BLOCKER" });
-    }
-  }
-  // aynı salonda çakışan onaylı oturum
-  const byRoom = new Map<string, { title: string; startTime: Date; endTime: Date }[]>();
-  for (const s of sessions) {
-    if (!s.roomId || s.status === "CANCELLED") continue;
-    const arr = byRoom.get(s.roomId) ?? [];
-    arr.push({ title: s.title, startTime: s.startTime, endTime: s.endTime });
-    byRoom.set(s.roomId, arr);
-  }
-  for (const [roomId, list] of byRoom) {
-    for (let i = 0; i < list.length; i++) {
-      for (let j = i + 1; j < list.length; j++) {
-        const a = list[i], b = list[j];
-        if (a.startTime < b.endTime && b.startTime < a.endTime) {
-          blockers.push({ key: `clash-${roomId}-${i}-${j}`, message: `Aynı salonda çakışan onaylı oturum: "${a.title}" ↔ "${b.title}"`, severity: "BLOCKER" });
-        }
-      }
-    }
-  }
-  if (categories.length === 0) warnings.push({ key: "no-cat", message: "Kayıt kategorisi tanımlanmadı", severity: "WARNING" });
-  if (sessions.length === 0) warnings.push({ key: "no-session", message: "Programda oturum yok", severity: "WARNING" });
-  if (agreementCount > 0) warnings.push({ key: "sponsor-ok", message: `${agreementCount} sponsor sözleşmesi bağlı`, severity: "WARNING" });
-
-  const total = blockers.length + warnings.length;
-  const done = Math.max(0, 8 - total);
-  return { blockers, warnings, score: done, total: 8, pct: Math.round((done / 8) * 100) };
-}

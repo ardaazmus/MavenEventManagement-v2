@@ -4,6 +4,8 @@
 // Auth yokken bağlam = bootstrap aktif kiracı (tek kiracı). TODO-auth: gerçek oturum
 // bağlamı geldiğinde yalnız resolveContext içindeki sorgu değişecek, kurallar aynı kalır.
 import { db } from "@/lib/db";
+import { headers } from "next/headers";
+import { AUTH_ENABLED } from "@/lib/auth-flag";
 
 export class GuardError extends Error {
   status: number;
@@ -121,8 +123,31 @@ export const SCOPES: Record<string, Scope> = {
   "roommate-requests": { mode: "scalarChain", fk: "requesterParticipationId", via: "participation" },
 };
 
-// ─── Bağlam çözümleme (TODO-auth: oturum gelince tek nokta) ─────────────────────
+// ─── Bağlam çözümleme (P1 / yeni-fazlar 3: auth-on'da oturum kiracısı yetkilidir) ──
+// MAVEN_AUTH=on: kiracı, middleware'in HMAC doğrulamasından geçen x-maven-session-tenant
+// başlığından okunur (istemci-supplied kopyalar middleware'de silinir). Başlık yoksa istek
+// public/authless yüzeydedir (ör. public-register kendi edition→tenant yolunu kullanır) —
+// mevcut demo çözümü korunur; korumalı yollarda middleware zaten 401 verir.
+// MAVEN_AUTH=off: davranış bayt-özdeş (findFirst).
 export async function resolveContext(explicitTenantId?: string | null): Promise<string> {
+  if (AUTH_ENABLED) {
+    let sessionTenant: string | null = null;
+    try {
+      const h = await headers();
+      sessionTenant = h.get("x-maven-session-tenant");
+    } catch {
+      // istek-kapsamı dışı çağrı (script/cron) — auth-on'da bağlam çözülemez
+    }
+    if (sessionTenant) {
+      if (explicitTenantId && explicitTenantId !== sessionTenant) {
+        // istenen kiracı oturum kiracısı değil — varlığını ifşa etme
+        throw new GuardError("Kayıt bulunamadı", 404);
+      }
+      return sessionTenant;
+    }
+    // auth-on + oturumsuz: korumalı yol middleware'de 401'i yer; buraya ancak public
+    // yüzeyler düşer → demo çözümü (public giriş akışları bozulmasın).
+  }
   const tenant = await db.tenant.findFirst({ select: { id: true } });
   if (!tenant) {
     throw new GuardError("Kiracı bağlamı çözümlenemedi — önce demo verisini yükleyin", 400);
@@ -172,6 +197,56 @@ function nestedTenantFilter(path: string[], tenantId: string): Record<string, un
 function mergeFrag(where: Record<string, unknown>, key: string, frag: Record<string, unknown>) {
   const cur = where[key];
   where[key] = cur && typeof cur === "object" ? { ...(cur as object), ...frag } : frag;
+}
+
+// ─── P0 (yeni-fazlar) — chain-yazımında PARENT tablo eşlemesi ───────────────────
+// Write-guard artık çocuğun KENDİ tablosunda kardeş aramıyor (parent çocuksuzken
+// findFirst → null → 404: İLK ÇOCUK yaratılamıyordu). Parent VARLIĞI kendi delegate'i
+// üzerinden ilişki-zinciriyle doğrulanır. İlişki adı → registry anahtarı birebir DEĞİL
+// (ör. "plan" hem social-plans hem b2b-plans'a uzanır) → tablo başına açık eşleme.
+const CHAIN_PARENT: Record<string, string> = {
+  snapshots: "participations",
+  "form-fields": "forms",
+  "form-answers": "form-fields",
+  "role-assignments": "participations",
+  claims: "entitlements",
+  "order-lines": "orders",
+  payments: "orders",
+  refunds: "orders",
+  "room-types": "hotels",
+  "room-blocks": "hotels",
+  "inventory-nights": "room-blocks",
+  "occupancy-slots": "reservations",
+  authorships: "submissions",
+  "review-assignments": "submissions",
+  reviews: "review-assignments",
+  decisions: "submissions",
+  "program-assignments": "sessions",
+  "badge-instances": "participations",
+  credentials: "participations",
+  "certificate-issues": "certificate-definitions",
+  "booth-allocations": "booth-units",
+  "delegation-members": "delegations",
+  companions: "participations",
+  "social-announcements": "social-plans",
+  "b2b-assignments": "b2b-plans",
+  deliverables: "sponsor-agreements",
+  "scan-events": "participations",
+  "floor-objects": "booth-units",
+  // chainTenant: OrganizationContact/IntegrationLog tenantId kolonlu DEĞİL —
+  // parent (Organization/ApiIntegration) üzerinden kiracı doğrulanır.
+  "organization-contacts": "organizations",
+  "integration-logs": "api-integrations",
+};
+
+// Parent delegate'i çöz (registry'den) — fail-closed: eşleme/registry eksikse null.
+async function chainParentDelegate(entity: string): Promise<{ delegate: { findFirst: (args: Record<string, unknown>) => Promise<unknown> } } | null> {
+  const parentKey = CHAIN_PARENT[entity];
+  if (!parentKey) return null;
+  const { registry } = await import("./registry");
+  const config = registry[parentKey];
+  if (!config) return null;
+  return { delegate: config.delegate as unknown as { findFirst: (args: Record<string, unknown>) => Promise<unknown> } };
 }
 
 // ─── GET (liste) koruması — where'i yerinde değiştirir ──────────────────────────
@@ -407,15 +482,15 @@ export async function applyWriteGuard(
       const fkValue = typeof data[fk] === "string" ? (data[fk] as string) : null;
       if (fkValue) {
         const ctx = await resolveContext(null);
-        // varlığın kendi delegate'i üzerinden zincir filtresiyle parent doğrulaması
-        // DÜZELTME: filtre ÇOCUK tablosuna göre kurulur — tenant zinciri ÇOCUĞUN İLİŞKİ
-        // YOLUNUN TAMAMIYLA (path[0]→…→tenant) izlenir; eski slice(1) hatalı olarak
-        // path[0] ilişkisini atlıyordu ve TÜM chain-yazımlarını (form-fields, refunds,
-        // deliverables…) Prisma "Unknown argument" hatasıyla kırıyordu (gizli 400).
-        const { registry } = await import("./registry");
-        const config = registry[entity];
-        const hit = await config.delegate.findFirst({
-          where: { [fk]: fkValue, ...(nestedTenantFilter(scope.path, ctx) as Record<string, unknown>) },
+        // P0 DÜZELTME (yeni-fazlar): doğrulama PARENT VARLIK tablosu üzerinden yapılır.
+        // Eski kusur: çocuğun KENDİ tablosunda kardeş aranıyordu — parent çocuksuzken
+        // findFirst → null → 404; İLK ÇOCUK asla yaratılamıyordu (canlı kanıt: boş form
+        // + POST form-fields → 404). Parent filtresi path.slice(1): parent'ın KENDİ
+        // ilişki yolu (…→tenant) — nullable ilk halka (scan-events/floor-objects) korunur.
+        const parent = await chainParentDelegate(entity);
+        if (!parent) throw new GuardError("Kapsam çözümlenemedi — parent eşlemesi eksik", 500);
+        const hit = await parent.delegate.findFirst({
+          where: { id: fkValue, ...(nestedTenantFilter(scope.path.slice(1), ctx) as Record<string, unknown>) },
           select: { id: true },
         });
         if (!hit) throw new GuardError("İlişkili kayıt bulunamadı veya bu çalışma alanına ait değil", 404);
@@ -428,9 +503,13 @@ export async function applyWriteGuard(
       const fkValue = typeof data[fk] === "string" ? (data[fk] as string) : null;
       if (fkValue) {
         const ctx = await resolveContext(null);
-        const { registry } = await import("./registry");
-        const config = registry[entity];
-        const hit = await config.delegate.findFirst({
+        // P0 DÜZELTME (yeni-fazlar): OrganizationContact/IntegrationLog'ta tenantId kolonu
+        // YOK — eski kod ÇOCUK delegate'ini tenantId'li sanıp sorguluyordu (canlı kanıt:
+        // organization-contacts POST → 400 "Kayıt oluşturulamadı"). Parent tablosu
+        // (Organization/ApiIntegration) kendi tenantId kolonuyla doğrulanır.
+        const parent = await chainParentDelegate(entity);
+        if (!parent) throw new GuardError("Kapsam çözümlenemedi — parent eşlemesi eksik", 500);
+        const hit = await parent.delegate.findFirst({
           where: { id: fkValue, tenantId: ctx },
           select: { id: true },
         });

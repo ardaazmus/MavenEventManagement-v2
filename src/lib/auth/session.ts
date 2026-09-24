@@ -24,7 +24,15 @@ export const MAX_SESSION_AGE_SECONDS = 7 * 24 * 3600; // ABSOLUTE tavan — iat'
 const MFA_PENDING_TTL_SECONDS = 5 * 60;
 
 function sessionKey(): string {
-  return process.env.MAVEN_SECRET_KEY ?? "maven-dev-only-secret-key-change-me";
+  // P1 (yeni-fazlar 5): üretim/üretim-benzeri başlangıçta MAVEN_SECRET_KEY ZORUNLU —
+  // belgelenmiş geliştirme sırrı sessizce kullanılamaz (fail-closed). Yerel geliştirme
+  // ergonomisi yalnız NODE_ENV'in açıkça production OLMAMASIyla korunur.
+  const key = process.env.MAVEN_SECRET_KEY;
+  if (key) return key;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("MAVEN_SECRET_KEY zorunlu — üretimde fallback geliştirme sırrı kullanılamaz");
+  }
+  return "maven-dev-only-secret-key-change-me";
 }
 
 export function rpId(): string {

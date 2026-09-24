@@ -45,8 +45,9 @@ async function iyzicoPost<T>(uriPath: string, payload: unknown): Promise<T> {
 
 export interface CheckoutInitInput {
   conversationId: string; // Maven Payment id (izlenebilirlik)
-  priceMinor: number; // kuruş → iyzico TRY ondalıklı (kuruş/100)
+  priceMinor: number; // minor-unit → ondalıklı (kuruş/100) — para modeli korunur
   paidPriceMinor: number;
+  currency: string; // P2: sipariş para birimi — TRY sabitlenmez (çok-paralı sözleşme)
   buyerName: string;
   buyerSurname: string;
   buyerEmail: string;
@@ -67,7 +68,7 @@ export async function initCheckoutForm(input: CheckoutInitInput): Promise<{
     conversationId: input.conversationId,
     price,
     paidPrice: paid,
-    currency: "TRY",
+    currency: input.currency,
     basketId: input.conversationId,
     paymentGroup: "PRODUCT",
     forceThreeDS: 0,
@@ -104,20 +105,33 @@ export async function initCheckoutForm(input: CheckoutInitInput): Promise<{
     ok: true,
     token: res.token,
     checkoutFormContent: res.checkoutFormContent,
-    paymentPageUrl: `${IYZICO_BASE}/payment/iyzico/layout/checkoutform/${res.token}`,
+    // P2: yalnız SAĞLAYICININ döndürdüğü URL kullanılır — URL uydurma YOK.
+    // (Checkout Form UI yolu provider'ın checkoutFormContent'idir; paymentPageUrl
+    // sandbox yanıtında varsa o geçer, yoksa alan dönmez.)
+    paymentPageUrl: res.paymentPageUrl,
   };
 }
 
 /** Checkout sonucu — token ile auth/detail (sağlayıcıdan doğrulanmış durum). */
 export async function retrieveCheckoutResult(token: string, conversationId: string): Promise<{
-  ok: boolean; status?: string; paymentStatus?: string; error?: string;
+  ok: boolean; status?: string; paymentStatus?: string; paidPriceMinor?: number; currency?: string; error?: string;
 }> {
   const uri = "/payment/iyzico/layout/checkoutform/auth/detail";
-  const res = await iyzicoPost<{ status?: string; paymentStatus?: string; errorMessage?: string }>(uri, {
+  const res = await iyzicoPost<{
+    status?: string; paymentStatus?: string; price?: string; paidPrice?: string;
+    currency?: string; errorMessage?: string;
+  }>(uri, {
     locale: "tr",
     conversationId,
     token,
   });
   if (res.status !== "success") return { ok: false, error: res.errorMessage ?? "iyzico doğrulama başarısız" };
-  return { ok: true, status: res.status, paymentStatus: res.paymentStatus };
+  return {
+    ok: true,
+    status: res.status,
+    paymentStatus: res.paymentStatus,
+    // P2: sağlayıcı-dönüş tutar/kur — callback bunları YEREL kayıtla karşılaştırır.
+    paidPriceMinor: res.paidPrice != null ? Math.round(parseFloat(res.paidPrice) * 100) : undefined,
+    currency: res.currency,
+  };
 }

@@ -35,9 +35,22 @@ export async function POST(req: NextRequest) {
     const remaining = Math.max(0, order.totalAmount - paid);
     if (remaining <= 0) return NextResponse.json({ error: "Sipariş zaten kapandı" }, { status: 409 });
 
-    const payment = await db.payment.create({
-      data: { orderId: order.id, amount: remaining, currency: order.currency, source: "ONLINE_CARD", status: "PENDING" },
+    // P2 (yeni-fazlar 7): TEK checkout politikası — aynı PENDING siparişi için tekrar
+    // create YENİ finansal hareket AÇMAZ: mevcut PENDING satırı + token'ı döner
+    // (idempotent retry); token yoksa AYNI satıra init edilir.
+    const pending = await db.payment.findFirst({
+      where: { orderId: order.id, source: "ONLINE_CARD", status: "PENDING" },
+      orderBy: { createdAt: "desc" },
     });
+    if (pending?.reference) {
+      return NextResponse.json(
+        { ok: true, paymentId: pending.id, token: pending.reference, reused: true },
+        { status: 200 },
+      );
+    }
+    const payment = pending ?? (await db.payment.create({
+      data: { orderId: order.id, amount: remaining, currency: order.currency, source: "ONLINE_CARD", status: "PENDING" },
+    }));
 
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "127.0.0.1";
     const originBase = process.env.MAVEN_ORIGIN ?? req.nextUrl.origin;
@@ -47,6 +60,7 @@ export async function POST(req: NextRequest) {
       conversationId: payment.id,
       priceMinor: remaining,
       paidPriceMinor: remaining,
+      currency: order.currency,
       buyerName: nameParts[0] ?? "Misafir",
       buyerSurname: nameParts.slice(1).join(" ") || "Katılımcı",
       buyerEmail: "guest@maven.local", // KVKK asgari veri — gerçek PII iyzico'ya gönderilmez

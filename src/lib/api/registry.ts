@@ -624,6 +624,16 @@ export const registry: Record<string, EntityConfig> = {
 // ─── Yardımcı: hangi alanlar güncellenebilir (id/createdAt hariç) ──────────
 const FORBIDDEN = new Set(["id", "createdAt"]);
 
+// P2 (yeni-fazlar 8): durum-makinesi alanları generic PUT ile DEĞİŞTİRİLEMEZ —
+// ilgili geçişlerin sahibi flows aksiyonlarıdır (§38: doğrudan status değiştirme
+// YASAK). POST etkilenmez (meşru ilk-yazımlar korunur); yalnız güncelleme yolu.
+const IMMUTABLE_ON_UPDATE: Record<string, Set<string>> = {
+  payments: new Set(["status", "amount", "currency", "orderId", "paidAt"]),
+  registrations: new Set(["status", "orderId", "participationId", "categoryId"]),
+  orders: new Set(["status", "totalAmount", "currency"]),
+  entitlements: new Set(["status", "used", "reserved"]),
+};
+
 export function sanitize(data: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
@@ -632,6 +642,25 @@ export function sanitize(data: Record<string, unknown>): Record<string, unknown>
     out[k] = v === "" ? null : v;
   }
   return out;
+}
+
+// P2: PUT yolu — sanitize + entity'ye özel durum-makinesi alan düşmesi.
+// Düşülen alan varsa hata DÖNMEZ (mevcut UI sessizce status gönderiyor olabilir);
+// alan yazılmaz ve yanıt meta'sında bildirilir (davranış-koruma + şeffaflık).
+export function sanitizeForUpdate(entity: string, data: Record<string, unknown>): { data: Record<string, unknown>; dropped: string[] } {
+  const base = sanitize(data);
+  const immutable = IMMUTABLE_ON_UPDATE[entity];
+  if (!immutable) return { data: base, dropped: [] };
+  const dropped: string[] = [];
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(base)) {
+    if (immutable.has(k)) {
+      dropped.push(k);
+      continue;
+    }
+    out[k] = v;
+  }
+  return { data: out, dropped };
 }
 
 // ─── Tenant otomatik doldurma ───────────────────────────────────────────────

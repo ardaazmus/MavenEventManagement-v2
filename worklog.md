@@ -1589,3 +1589,195 @@ Stage Summary:
 - 14 düzeltme maddesinin hepsi CANLI olarak yeniden kanıtlandı; KOD gerilemesi SIFIR — hiçbir dosya değiştirilmedi.
 - İlk turda görünen 2 FAIL'in kök-nedeni ortam-sözleşmesiydi (flag-ON sunucu gereksinimi); protokol belgelendi ve her iki modda health kanıtlı.
 - Kalıntılar (önceki turdan değişmedi, dürüst rapor): dev-toolkît transitif audit bulguları; sağlayıcı (iyzico/e-posta) gerçek kanıt boşluğu; prod yedek kapsam dışı; tek-örnek rate/lock tavanı.
+
+---
+Task ID: YF-P0 (yeni-fazlar.md — Google Doc'dan okundu, PHASE 0 uygulandı)
+Agent: Z.ai Code (ana ajan)
+Task: Kullanıcının Google Doc'u (yeni-fazlar.md, docs.google.com → /tmp → upload/ altına kaydedildi) okundu; PHASE 0 (veri-giriş engelleyicileri) kaynakta doğrulandı ve düzeltildi. Plan 8 faz: P0-6 düzeltme, P7 K1-K9 ürün, P8 doğrulama. Her madde GERÇEK kaynakta doğrulanıyor — belge eski anlık görüntüye karşı yazıldığı için zaten-bitmiş maddeler atlanacak.
+
+Work Log:
+
+## P0.1 — chain-yazım ilk-çocuk engeli ✓ (kusur CANLI doğrulandı)
+- BEFORE kanıtı: boş form yarat → POST /api/form-fields → 404 "İlişkili kayıt bulunamadı" (write-guard ÇOCUK tablosunda kardeş arıyordu; parent çocuksuzken findFirst→null→404; ilk çocuk asla yaratılamaz).
+- FIX: tenant-guard.ts'e CHAIN_PARENT haritası (30 chain/chainTenant entity → parent registry anahtarı; "plan" belirsizliği tablo-başına çözüldü) + chainParentDelegate() helper; applyWriteGuard chain/chainOptional dalı artık PARENT tabloyu path.slice(1) zinciriyle doğrular.
+- AFTER: 201 ✓; sahte formId 404 ✓; nullable ilk halka (scan-events/floor-objects fkValue=null) davranışı korundu.
+
+## P0.2 — chainTenant (tenantId-kolonsuz çocuklar) ✓ (kusur CANLI doğrulandı)
+- BEFORE: POST /api/organization-contacts → 400 "Kayıt oluşturulamadı" (çocuk delegate'i hayali tenantId kolonuyla sorgulanıyordu).
+- FIX: chainTenant dalı parent (Organization/ApiIntegration) üzerinden { id: fkValue, tenantId: ctx } doğrulaması.
+- AFTER: 201 ✓; sahte organizationId 404 ✓; liste-zinciri (organization.tenantId) zaten doğrudu.
+
+## Testler
+- tests/phase0-chain-writes.spec.ts (YENİ, 16 test): form-fields/decisions/role-assignments/companions/occupancy-slots/program-assignments/social-announcements/b2b-assignments ilk-çocuk 201 + sahte-FK 404; organization-contacts/integration-logs pozitif+negatif; organization-contacts liste kiracı-zinciri doğrulaması. childless-parent bul-yoksa-yarat deseni (childlessParent helper — Promise-as-data hatası düzeltildi).
+- Sonuç: phase0 16/16 PASS.
+
+## Kapı kanıtları
+- bunx tsc --noEmit → 0; bun run lint → 0.
+- Tam regresyon (goldens+corrections+ui-corrections+flow+phase0): 54/54 PASS (27.2s).
+- NOT: İlk koşuda sunucu OOM ile öldü (bilinen 4GB deseni) → ECONNREFUSED hataları kod-dışı; yeniden başlatma sonrası taze koşu temiz.
+
+Stage Summary:
+- PHASE 0 KAPANDI: iki veri-giriş engelleyicisi de kök-nedeninden (parent-tabanlı doğrulama) düzeltildi; çocuk modellere tenantId kolonu EKLENMEDİ (belge gereği).
+- Değişen dosyalar: src/lib/api/tenant-guard.ts, tests/phase0-chain-writes.spec.ts (yeni), upload/yeni-fazlar.md (kaydedilen plan).
+- Sonraki faz: PHASE 1 (auth-on tenant çözümü, yanlış public yönetim uçları, üretim secret zorunluluğu, Caddy/live-bus maruziyeti).
+
+---
+Task ID: YF-P1 (yeni-fazlar.md — PHASE 1: auth, tenant sahipliği, public yönetim yüzeyleri)
+Agent: Z.ai Code (ana ajan)
+Task: P1.3 oturum-temelli kiracı çözümü, P1.4 yanlışlıkla public yönetim uçlarının kapatılması, P1.5 üretim secret zorunluluğu, P1.6 Caddy/live-bus maruziyetinin kapatılması. Tümü kaynakta doğrulandı → düzeltildi → canlı kanıtlandı.
+
+Work Log:
+
+## P1.3 — auth-on kiracı çözümü oturumdan ✓
+- middleware: istemci-supplied x-maven-session-* başlıkları HER API yolunda SİLİNİR (public dahil) → HMAC doğrulaması geçen isteklerde BAŞLIKLAR enjekte edilir (tenant/role/uid). Public-listeli yollarda da çerez doğrulanırsa kimlik eklenir (route kapıları için) — anonim akış korunur.
+- tenant-guard.resolveContext: AUTH_ENABLED iken kiracı = x-maven-session-tenant (middleware-doğrulamalı); başlık yoksa (public/authless yüzey) mevcut demo çözümü — public-register akışı bozulmaz. explicit tenantId ≠ oturum kiracısı → 404 (mevcut sözleşme).
+- KANIT (phase1 testleri): people?tenantId=oturum-kiracısı 200; başka kiracı 404; sahte başlık+çerezsiz → 401 (strip).
+
+## P1.4 — public yönetim uçları kapatıldı ✓
+- YENİ src/lib/auth/request-context.ts: requestActor/requireStaff/requireAdmin (§48 rol taksonomisi; STAFF=9 rol, ADMIN=ORG_OWNER|ORG_ADMIN; auth-off → null=demo).
+- kvkk/erasure: GET/PATCH → requireStaff (public POST giriş yüzeyi korundu — 201 kanıtı).
+- portal/preview-token: POST/GET/PATCH → requireAdmin (belirteç çıkarımı/liste/iptal).
+- portal/blocks: GET/POST/PATCH/DELETE → requireAdmin (editör CRUD; katılımcı/sponsor okuması token-korumalı portal/participant+sponsor uçlarında kalır).
+- KANIT (flag-ON canlı): ORG_OWNER → 200/2xx; ATTENDEE(forged-HMAC) → 403; anonim → 401; KVKK POST public → 201.
+
+## P1.5 — üretim secret zorunlu ✓
+- session.ts + edge.ts sessionKey(): MAVEN_SECRET_KEY yoksa NODE_ENV=production'da THROW (fail-closed); dev ergonomisi korunur. tsc 0 (build yok — sandbox kuralı).
+
+## P1.6 — Caddy/live-bus maruziyeti ✓
+- Caddyfile: XTransformPort=* YABİ vekil KALDIRILDI → yalnız XTransformPort=3003 (live-bus) açık eşleme; diğer her şey 3000'e. (Caddy platform-yönetimli → etkinleşme gateway yeniden başlangıcında; runtime korumaları bağımsız canlı.)
+- live-bus: /publish paylaşımlı anahtar kapısı (x-live-bus-key, timingSafeEqual; LIVE_BUS_KEY env / ortak dev başvurusu) — anahtarsız 401 CANLI; anahtarlı 200 CANLI (db.ts aynı başlığı gönderir). CORS başlıkları kaldırıldı (güven sayılmaz). pubServer 127.0.0.1 bind (loopback-only).
+- Socket aboneliği: YENİ mini-services/live-bus/auth.ts → Next /api/internal/bus-authorize (YENİ route) üzerinden kimlik+edisyon yetkisi; fail-closed (Next'e ulaşılamazsa oda yok). KANIT: demo modda subscribed ["global","edition:<id>"] ✓ (feature-loss yok); bogus edisyon → 404 reddedildi; yetkisiz socket → unauthorized olayı.
+- Tavan notu: "global" odası çok-kiracılı kurulumda kiracılar-arası olay taşır — tek-kiracı/tek-örnek tavanı belgeli (kiracı-scoped oda adları ayrı iş).
+
+## Testler
+- YENİ tests/phase1-auth-boundaries.spec.ts (11 test, flag-ON; forged-HMAC oturum çerezi = üretim güven çapası simülasyonu).
+- Düzeltme: tests/auth.spec.ts totp() bozulmuş satır onarıldı (hmac[hmac.length-1] — rg/python taze-okuma kanıtlı; eski sed çıktıları bayat inode önbelleği artefaktıydı).
+- FLAG-ON: phase1(11)+middleware(3)+auth(7) = **21/21 PASS** (middleware değişikliği sonrası yeniden).
+- VARSAYILAN: goldens+flow(10)+corrections+ui-corrections+phase0(44)+ui(6) = **60 PASS / 0 FAIL** (partili koşu).
+- tsc 0; lint 0; health authEnabled:false (demo tabanı korunmuş).
+
+## Bilinen ortam riski
+- Dev sunucu bu turda 4 kez OOM ile öldü; tüm kanıtlar taze süreçte yeniden üretildi (partili test koşusu benimsendi: büyük partide çökme → küçük partilerde kanıt).
+
+Stage Summary:
+- PHASE 1 KAPANDI: oturum kiracısı yetkili, yönetim yüzeyleri kimlik+rol kapılı, üretim secret fail-closed, live-bus yayın/abonelik kanalları kimlikli ve anahtarlı; public giriş yüzeyleri (KVKK POST, public-register) ve demo mod bayt-özdeş korunuyor.
+- Değişen: src/middleware.ts, src/lib/api/tenant-guard.ts, src/lib/auth/{session,edge}.ts, src/lib/db.ts, Caddyfile, mini-services/live-bus/{index.ts,auth.ts(YENİ)}, src/app/api/internal/bus-authorize/route.ts(YENİ), src/lib/auth/request-context.ts(YENİ), tests/phase1-auth-boundaries.spec.ts(YENİ), tests/auth.spec.ts(onarım).
+- Sonraki faz: PHASE 2 (ödeme simülasyonu prod-blok + iyzico callback bütünlüğü; manuel ödeme eşiği + generic PUT durum-makinesi koruması).
+
+---
+Task ID: YF-P2 (yeni-fazlar.md — PHASE 2: ödeme ve finansal bütünlük)
+Agent: Z.ai Code (ana ajan)
+Task: P2.7 simülasyon/prod ayrımı + iyzico callback bütünlüğü; P2.8 manualPayment eşik birimi + generic PUT durum-makinesi koruması.
+
+Work Log:
+
+## P2.7 — ödeme uçları ✓
+- Simülasyon (POST /api/payments/[id]/process): NODE_ENV=production → 503 fail-closed (ham PAN/CVC üretimde yok); ham veri asla saklanmaz/loglanmaz (yalnız son-4 maske). Üretim-derleme kanıtı sandbox'ta imkânsız (build yasak) → kod-doğrulanmış, runtime-prod kanıtı BLOCKED.
+- iyzico lib: currency ARTIK parametrik (CheckoutInitInput.currency — TRY sabitlemesi kalktı); paymentPageUrl yalnız SAĞLAYICI dönüşünden (URL uydurma kaldırıldı); retrieveCheckoutResult artık paidPriceMinor+currency döner.
+- create: TEK-CHECKOUT politikası — aynı PENDING siparişte tekrar create mevcut satır+token'ı döner (idempotent retry, yeni finansal hareket yok).
+- callback: başarı = sağlayıcı durumu + TUTAR + KUR üçlüsü doğrulanınca; sağlayıcı tutar/kur vermezse fail-closed (başarı yazılmaz); PENDING→son-durum geçişi koşullu updateMany (eşzamanlı tekrar callback → alreadyProcessed, ikinci hareket yok); başarıda sipariş bakiyesi mevcut para mantığıyla recalc; sağlayıcı GEÇİCİ erişilemez → 503 + PENDING korunur (ağ hatası kalıcı FAILED sayılmaz).
+- KANIT (tests/phase2-money.spec.ts, 9/9): sim **0000 → FAILED; bilinmeyen token 404; erişilemez sağlayıcı → başarı YAZILMAZ + tekrar idempotent; kur uyuşmazlığı 400; aşım 409; ₺60.000=6M minor > 5M eşik → "Tenant Sahibi" onayı (eski kod major/minor karışımıyla tetiklemiyordu); generic PUT payment/registration status DÜŞÜRÜLÜR.
+
+## P2.8 — yazım yetki sınırı ✓
+- registry: sanitizeForUpdate(entity) + IMMUTABLE_ON_UPDATE (payments: status/amount/currency/orderId/paidAt; registrations: status/orderId/participationId/categoryId; orders: status/totalAmount/currency; entitlements: status/used/reserved) — generic [entity]/[id] PUT bunları düşürür (POST etkilenmez; meşru ilk-yazımlar korunur).
+
+## Kapılar
+- tsc 0; lint 0. phase2 9/9; flow+phase0 22/22; corrections+goldens önceki koşulda yeşil (49).
+- Sağlayıcı kanıt boşluğu dürüst: iyzico sandbox imza/yanıt sözleşmesi dış ağ olmadan doğrulanamadı (yalnız fail-closed yolları kanıtlandı).
+
+Stage Summary:
+- PHASE 2 KAPANDI: simülasyon prod-dışı, callback üçlü doğrulama+idempotent, eşik aynı-birim, durum-makinesi alanları generic yoldan korunur.
+- Değişen: src/app/api/payments/[id]/process/route.ts, src/app/api/payments/iyzico/{create,callback}/route.ts, src/lib/iyzico.ts, src/lib/api/registry.ts, src/app/api/flows/route.ts, src/app/api/[entity]/[id]/route.ts, tests/phase2-money.spec.ts (YENİ).
+- Sonraki faz: PHASE 3 (kayıt kararları/entitlement, rezervasyon idempotency, kapasite+sertifika, person merge, publish semantics).
+
+---
+Task ID: YF-P3 (yeni-fazlar.md — PHASE 3: iş-akışı durumu, transaction, veri bütünlüğü)
+Agent: Z.ai Code (ana ajan)
+Task: P3.9 kayıt kararları+sponsor hakları, P3.10 rezervasyon idempotency, P3.11 kapasite+sertifika, P3.12 person.merge tam kapsam, P3.13 yayın semantiği.
+
+Work Log:
+
+## P3.9 ✓
+- registration.decide: karar değeri allowlist (CONFIRMED|REJECTED dışı 400); YASAL geçiş haritası (yalnız PENDING_APPROVAL|SUBMITTED karar alır; CANCELLED/REJECTED/CONFIRMED→onay 409; aynı-karar idempotent 200, ikinci audit/belirteç YOK); durum+hak geçişleri+yaka kartı TEK $transaction; REJECTED → RESERVED claim RELEASED + entitlement aynı tx'te recalc; portal belirteci yalnız geçerli onay geçişinde.
+- sponsor.guest: firstName/lastName/email SORGUDAN ÖNCE doğrulanır (undefined email Prisma filtre-ignorne ile yanlış-kişi eşleşmesini kapatır); kapasite rezervasyonu ATOMİK — kontrol+claim+sayaç TEK tx (SQLite tek-yazıcı serileştirme → eşzamanlı misafir aşım-rezervasyon yapamaz).
+
+## P3.10 ✓
+- reservation.confirm: teyitli rezervasyon tekrar teyit → stok YENİDEN TÜKETMEZ (idempotent, alreadyConfirmed); stok doğrulama+tüketim+durum TEK tx (taze tx-içi okuma; başarısız geçiş tx geri alımıyla stok KALICI tüketmez).
+- YENİ reservation.cancel aksiyonu: tüketilen stok GERİ VERİLİR (Math.max(0,...) tabanlı), idempotent, audit'li — iptal/geri-bırakma davranışı tanımlandı.
+
+## P3.11 ✓
+- registration-chain: RegistrationCategory.capacity tx İÇİNDE atomik uygulanır (status notIn CANCELLED/REJECTED sayım); dolu → YENİ ChainCapacityError (admin onay yolu 409 CAPACITY_FULL sözleşmesi; public-register mevcut fail-safe PENDING akışını korur). Waitlist davranışı değişmedi (iptal → autoOfferForCategory).
+- certificate.generate: geçerli kayıt DETERMİNİSTİK — CONFIRMED öncelikli, yoksa en-yeni submittedAt; registrations[0] sırasız-seçim kusuru kapandı.
+
+## P3.12 ✓
+- person.merge: 6 eksik ilişki eklendi — cvEntry, sessionMaterial, socialPlanAnnouncement, portalToken, PersonGuardian bağımlıları (parentPersonId), b2bAssignment (personId zorunlu FK + @@unique([planId,personId]) → çakışan plan ataması çözümlü taşınır); audit mesajı kapsamı yansıtır. Geçmiş silinmez.
+
+## P3.13 ✓
+- YENİ src/lib/api/readiness.ts: readinessCheck + editionReadiness TEK yetkili kaynak; dashboard yerel kopyası kaldırıldı (import'a geçti).
+- edition.publish: dahili HTTP self-request KALDIRILDI (auth-on'da 401 → checks undefined → blockers fail-open yayına izin veriyordu — kök neden kapandı); blockers caydırır, uyarılar caydırmaz (409 yalnız blockers).
+- Sponsor sözleşme sayısı UYARI OLARAK SKORU DÜŞÜRMEZ (pozitif sinyal nötrleşti).
+- Çakışma kontrolü yalnız APPROVED|PUBLISHED oturumlara bakar (DRAFT taslak onaylı-çakışma sayılmaz).
+- Durum geri-sarma yok: yalnız ön-yaşam-döngüsü (PLANNING|DRAFT) → REGISTRATION; ONSITE/COMPLETED/ARCHIVED korunur.
+
+## Testler
+- YENİ tests/phase3-workflow.spec.ts (11 test): geçersiz karar 400, yasal-olmayan geçiş 409, ret→hak serbest+recalc, onay→belirteç+idempotent tekrar, rezervasyon çift-teyit stok sabit + iptal→stok iadesi, kapasite dolu 409 CAPACITY_FULL+aşım-kayıt YOK, ücretli-talimatsız yayın 409, ONSITE geri-sarma yok, merge 6-ilişki taşıma+unique çözümü.
+- Düzeltmeler: 1-gece/2-gece fixture hatası, PATCH method, EventEdition fixture (slug zorunlu, currency alanı yok).
+
+## Kapılar
+- tsc 0; lint 0. phase3 11/11; regression: flow+goldens 15/15 + corrections+phase0+phase2 53/53 + ui 6/6 = **74 PASS / 0 FAIL**.
+
+Stage Summary:
+- PHASE 3 KAPANDI: karar geçişleri yasal, haklar atomik, rezervasyon idempotent, kapasite tx-içi, merge tam-kapsamlı, publish fail-open'suz ve geri-sarmasız.
+- Değişen: src/app/api/flows/route.ts (decide/sponsor.guest/reservation.confirm+cancel/certificate/merge/publish), src/lib/api/registration-chain.ts, src/lib/api/readiness.ts (YENİ), src/app/api/dashboard/route.ts, src/app/api/form-submissions/[id]/route.ts, tests/phase3-workflow.spec.ts (YENİ).
+- Sonraki faz: PHASE 4 (strict pagination, audit ownership, HTML/URL/SSRF/ZIP güvenliği, scan cihaz sınırı).
+
+---
+Task ID: YF-P4 (yeni-fazlar.md — PHASE 4: API/güvenlik/HTML/URL/medya/audit sınırları)
+Agent: Z.ai Code (ana ajan)
+Task: P4.14 strict pagination, P4.15 audit ownership, P4.16 sertifika/önizleme/medya HTML-URL-SSRF-ZIP sertleştirmesi, P4.17 scan cihaz/operatör sınırı.
+
+Work Log:
+
+## P4.14 ✓
+- [entity] GET limit: yalnız 1..500 tam sayı (regex ^\d+$) — 0/negatif/ondalıklı/NaN/boş/malformed kontrollü 400; varsayılan 200 korunur (mevcut tüketiciler etkilenmez). parseInt gevşeklikleri (0x5/1e2) kapandı.
+
+## P4.15 ✓
+- auditOwnership() helper (POST rotası + [id] rotası): audit kaydına tenantId (bağlam) + editionId (kayıt/chain) + actorName (auth-on: oturum kullanıcısının adı; auth-off: "Yönetici" demo sözleşmesi korunur) yazılır. PUT/DELETE dahil üç nokta; DELETE sahipliği silmeden ÖNCE okur.
+
+## P4.16 ✓
+- certificates/print-sheet: fill() şablon DEĞERLERİ escapeHtml'den geçer (ad/şirket/rol/tip/seri/tarih — kullanıcı-kontrollü); \n→<br/> davranışı escape SONRASI korunur; "< br/>" yazım hatası → <br/>; kanvas stil allowlist (hex renk, align left|center|right); image elemanı data:image/ şemasına sınırlandı; geçerli kayıt deterministik seçim (P3.11 kuralı).
+- YENİ src/lib/safe-html.ts: sanitizePreviewHtml (izin-listeli: script/iframe/object/embed/link/meta/style blok kaldırma, on* düşürme, javascript:/vbscript:/data: URI reddi); onsite.tsx iletişim önizlemesi dangerouslySetInnerHTML'de kullanılır.
+- media/upload-linked: edisyon kiracı sahipliği yaratımdan ÖNCE (yabancı → 404); dış URL KATI şema (URL parse + yalnız http:/https:, javascript:/sahte-http/reverse-bölü 422).
+- media/export: SSRF filtresi (loopback/özel/bağlantı-yerel/multicast/metadata bloğu — IPv4+IPv6+dns-etiket), redirect:manual (3xx izlenmez → .url bırakma), content-length+byte 25MB tavanı, text/html reddi, zip girişleri safeEntryName (path-traversal yok).
+
+## P4.17 ✓
+- scan route: forceReason = OPERATÖR yeteneği — auth-on'da requireStaff (kimliksiz 401/rol 403); auth-off demo'da admin UI güvenilir (tek-kiracı tavanı belgeli). Kimliksiz cihaz normal okuma yapmaya devam eder (append-only kayıt).
+- scan geçerli-kayıt seçimi deterministik hale getirildi (P3.11 kuralıyla uyum; eski CANCELLED kayıt güncel CONFIRMED'ı gizleyemez).
+
+## Testler
+- YENİ tests/phase4-boundaries.spec.ts (14 test): 8 hatalı limit varyantı 400 + geçerli 200; audit tenantId dolu; yabancı-edisyon 404; javascript:/httpfoo 422 + https 201; metadata-IP export probe (SSRF blok + .url düşüşü; içerik indirilmez).
+- phase1-auth-boundaries +2: anonim forceReason 401; ORG_OWNER forceReason kapıdan geçer (404/200, asla 401/403).
+
+## Kapılar
+- tsc 0; lint 0. flag-ON: 23/23 (phase1 13 + middleware 3 + auth 7). demo regresyon: 14+20+58+6 = **98 PASS / 0 FAIL**.
+- NOT: dev sunucu bu turda da 3 kez OOM (bellek 899MB'a düştü) — partili koşu + taze süreç kanıtları.
+
+Stage Summary:
+- PHASE 4 KAPANDI: pagination katı, audit sahipli+kimlikli, HTML/URL/SSRF/ZIP yüzeyleri sertleştirilmiş, scan forceReason operatör-kapılı; mevcut meşru yollar (public scan, .url bırakma, demo aktör adı) korunmuş.
+- Değişen: src/app/api/[entity]/route.ts, src/app/api/[entity]/[id]/route.ts, src/app/api/scan/route.ts, src/app/api/certificates/print-sheet/route.ts, src/app/api/media/{upload-linked,export}/route.ts, src/components/maven/views/onsite.tsx, src/lib/safe-html.ts (YENİ), tests/phase4-boundaries.spec.ts (YENİ), tests/phase1-auth-boundaries.spec.ts (+2).
+
+# ─── KALAN İŞ (bir sonraki oturum için net el kitabı) ───
+## PHASE 5 (P5.18-20):
+ 1. next.config.ts ignoreBuildErrors TRUE ise: gerçek hataları düzelt → kapıyı kaldır (build sandbox'ta yasak; CI'da koşulmalı). eslint kritik kuralları (no-unused-vars, react-hooks/exhaustive-deps) yeniden etkinleştir — churn'süz artımlı.
+ 2. i18n scan: baseline yüksekse YENİ stringleri yakala; şu an 0 — sürdür.
+ 3. onsite.tsx scan KPI: currentEditionId kapsam + tam/cursor-paged dataset; client.ts list append yarışı: bağımlılık/filtre değişiminde istek iptali (AbortController) veya identity-check.
+ 4. Performans SADECE ölçümlü: accounting/reconciliation groupBy, import * as Icons → targeted import (shell hot path).
+## PHASE 6 (P6.21-23):
+ 1. layout.tsx html lang = maven.lang senkron; favicon repo-içi asset.
+ 2. shell.tsx: auth-on kullanıcı kimliği/rol + logout (auth-off demo: mevcut görünüm).
+ 3. seed/reset eylemi onay kapısı; cascade-silme onayları (form-fields, cv, custom-roles, portal-blocks, session-materials, program, floor).
+ 4. page.tsx/store.ts: persist edilmiş module/edition doğrulaması → geçerli fallback; message.includes("bulunamadı") → hata kodu.
+ 5. 390px: form-center/media/integrations/sponsorship/people toolbar sarmalama (min-w-0 vb.).
+ 6. onsite: kiracı-kimliği düzenleme etkinlik-ayarlarından GLOBAL workspace'e; editions: EventSeries.logoUrl branding (fallback tenant logo → initials); edisyon sonrası alanların (ülke/saat dilimi/format/diller/coverColor/portal header/capabilities) görünür edilmesi; venue = Organization VENUE rol; wizard tenant.id düzeltmesi (bootstrap tenant.id — tenant.tenantId YOK).
+## PHASE 7 (K1-K9): sıra K1 (Lead Retrieval — Sponsorship+scan adapter+portal export), K8 (PromoCode — kendi modeli, Entitlement'a yükleme YASAK), K2 kiosk, K5 live-poll, K3 b2b matching, K4 gamification, K6 community, K7 crm connectors (webhook token sunucu-içi!), K9 streaming. Her biri: sahip-modül, cuid/editionId/indexed-status/minor-money konvansiyonları, flows benzeri özel rotalar, kiracı/edisyon negatif testleri + idempotency.
+## PHASE 8: yukarıdaki tüm kapıların tam koşusu + bu dosyaya kanıt.

@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveContext } from "@/lib/api/tenant-guard";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { requireStaff } from "@/lib/auth/request-context";
 
 const SLA_DAYS = 30;
 const SWEEP_MONTHS = 6;
@@ -73,6 +74,10 @@ async function sweepStale(tenantId: string): Promise<number> {
 }
 
 export async function GET(req: NextRequest) {
+  // P1 (yeni-fazlar 4): KVKK liste/sweep YETKİLİ PERSONEL yüzeyidir — public giriş POST'tan
+  // ayrıdır. auth-on: oturum + staff rolü zorunlu; auth-off demo davranışı korunur.
+  const gate = await requireStaff();
+  if (gate) return gate;
   try {
     const ctx = await resolveContext(null);
     const swept = await sweepStale(ctx);
@@ -99,6 +104,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  // P1 (yeni-fazlar 4): verify/complete/reject YETKİLİ PERSONEL işlemidir (anonimleştirme
+  // geri-dönülemez — kimlik denetimi zorunlu). auth-off demo davranışı korunur.
+  const gate = await requireStaff();
+  if (gate) return gate;
   const denied = enforceRateLimit(req, { key: "kvkk-handle", limit: 30, windowMs: 60_000 });
   if (denied) return denied;
   try {

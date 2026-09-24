@@ -52,7 +52,30 @@ export async function middleware(req: NextRequest) {
   if (!AUTH_ENABLED) return NextResponse.next(); // bayt-özdeş geçiş — E2E değişmez
 
   const { pathname } = req.nextUrl;
-  if (!pathname.startsWith("/api/") || isPublic(pathname)) return NextResponse.next();
+  if (!pathname.startsWith("/api/")) return NextResponse.next();
+
+  // P1 (yeni-fazlar 3): istemci-supplied oturum başlıkları ASLA güvenilmez — her API
+  // yolunda (public dahil) silinir. Böylece x-maven-session-* SADECE middleware'in
+  // HMAC doğrulamasından geçen isteklerde var olabilir (downstream güven sınırı).
+  const headers = new Headers(req.headers);
+  for (const h of [...headers.keys()]) {
+    if (h.toLowerCase().startsWith("x-maven-session-")) headers.delete(h);
+  }
+
+  if (isPublic(pathname)) {
+    // P1 (yeni-fazlar 4): public yol ANONİM kalır — AMA kimlik gerektiren public-listeli
+    // yönetim yüzeyleri (KVKK işleme, portal editörü, preview-token) route kapısında
+    // aktörü okur. Bu yüzden çerez DOĞRULANIRSA başlıklar yine de enjekte edilir;
+    // doğrulanamazsa hiçbir başlık eklenmez (route kapısı 401/403 kararını verir).
+    const token = req.cookies.get(SESSION_COOKIE)?.value;
+    const session = await parseSessionEdge(token);
+    if (session && !session.mfaPending) {
+      headers.set("x-maven-session-tenant", session.tenantId);
+      headers.set("x-maven-session-role", session.role);
+      headers.set("x-maven-session-uid", session.uid);
+    }
+    return NextResponse.next({ request: { headers } });
+  }
 
   const token = req.cookies.get(SESSION_COOKIE)?.value;
   const session = await parseSessionEdge(token);
@@ -60,10 +83,16 @@ export async function middleware(req: NextRequest) {
     return NextResponse.json({ error: "Oturum gerekli" }, { status: 401 });
   }
 
+  // P1: doğrulanmış oturum bağlamı downstream'e başlıkla taşınır (tenant/rol/uid) —
+  // resolveContext db.tenant.findFirst() yerine BU değeri kullanır.
+  headers.set("x-maven-session-tenant", session.tenantId);
+  headers.set("x-maven-session-role", session.role);
+  headers.set("x-maven-session-uid", session.uid);
+  const res = NextResponse.next({ request: { headers } });
+
   // SLIDING: kalan ömür < TTL/2 → aynı iat ile tazele (ABSOLUTE tavan korunur)
   const now = Math.floor(Date.now() / 1000);
   const remaining = session.exp - now;
-  const res = NextResponse.next();
   if (remaining > 0 && remaining < SESSION_TTL_SECONDS / 2 && session.iat) {
     const refreshed = { ...session, exp: now + SESSION_TTL_SECONDS };
     const body = Buffer.from(JSON.stringify(refreshed), "utf8").toString("base64url");

@@ -10,8 +10,13 @@ import { db } from "@/lib/db";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 import { issuePortalToken } from "@/lib/api/portal-tokens";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { requireAdmin } from "@/lib/auth/request-context";
 
 export async function POST(req: NextRequest) {
+  // P1 (yeni-fazlar 4): önizleme belirteci çıkarımı YETKİLİ YÖNETİCİ işlemidir — katılımcı/
+  // sponsor portalları kendi kalıcı token'larını registration-approval kanalından alır.
+  const gate = await requireAdmin();
+  if (gate) return gate;
   try {
     // S3 kapısı: belirteç çıkarımı istismar edilemez — 20/dk/IP
     const denied = enforceRateLimit(req, { key: "portal-preview", limit: 20, windowMs: 60_000 });
@@ -61,6 +66,8 @@ export async function POST(req: NextRequest) {
 
 // yönetici: belirteç yaşam döngüsü denetimi — ham değer ASLA dönmez (yalnız hash ön eki + durum)
 export async function GET(req: NextRequest) {
+  const gate = await requireAdmin(); // P1: belirteç yaşam-döngüsü listesi yönetici yüzeyi
+  if (gate) return gate;
   try {
     const editionId = req.nextUrl.searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
@@ -93,6 +100,8 @@ export async function GET(req: NextRequest) {
 
 // iptal (revokedAt yolu) — gövde { id }
 export async function PATCH(req: NextRequest) {
+  const gate = await requireAdmin(); // P1: iptal yetkili yönetici işlemidir
+  if (gate) return gate;
   try {
     const body = (await req.json()) as { id?: string };
     const id = body.id ?? req.nextUrl.searchParams.get("id");

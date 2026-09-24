@@ -10,6 +10,12 @@ import { ActivityType } from "@/lib/api/activity";
 type Params = { params: Promise<{ id: string }> };
 
 export async function POST(req: NextRequest, { params }: Params) {
+  // P2 (yeni-fazlar 7): ham PAN/CVC kabul eden uç SİMÜLASYONDUR — üretim/üretim-benzeri
+  // ortamda KAPALI (fail-closed 503). Ham kart verisi asla saklanmaz/loglanmaz
+  // (yalnız son-4 hane maskeli aktivite mesajında).
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Kart simülasyonu yalnız test ortamındadır" }, { status: 503 });
+  }
   try {
     const { id } = await params;
     const body = (await req.json()) as {

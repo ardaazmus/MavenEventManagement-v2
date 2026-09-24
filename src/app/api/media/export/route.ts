@@ -6,6 +6,40 @@
 // ============================================================================
 import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
+
+// ── P4 (yeni-fazlar 16): dış bağlantı indirme savunmaları ──
+// SSRF: loopback/özel/bağlantı-yerel/multicast/metadata ağ bloğu; redirect İZLENMEZ
+// (manual) — 3xx → .url bırakma yoluna düşer; boyut + içerik-türü sınırı; zip girişi
+// safe-basename (path-traversal yok).
+import net from "net";
+function isPublicHttpUrl(raw: string): URL | null {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    const host = u.hostname.replace(/[\[\]]/g, "").toLowerCase();
+    if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) return null;
+    if (host === "metadata.google.internal" || host === "169.254.169.254") return null;
+    if (net.isIP(host)) {
+      const ip = host;
+      if (net.isIPv4(ip)) {
+        const o = ip.split(".").map(Number);
+        if (o[0] === 127 || o[0] === 10 || o[0] === 0 || (o[0] === 169 && o[1] === 254) || (o[0] === 172 && o[1] >= 16 && o[1] <= 31) || (o[0] === 192 && o[1] === 168) || (o[0] === 100 && o[1] >= 64 && o[1] <= 127)) return null;
+        if (o[0] >= 224) return null; // multicast/rezerve
+      } else {
+        const low = ip.toLowerCase();
+        if (low === "::1" || low === "::" || low.startsWith("fc") || low.startsWith("fd") || low.startsWith("fe80") || low.startsWith("::ffff:127.")) return null;
+      }
+    }
+    return u;
+  } catch {
+    return null;
+  }
+}
+function safeEntryName(name: string): string {
+  const base = String(name ?? "").split(/[\\/]/).pop() ?? "varlik";
+  return base.replace(/[\u0000-\u001f]/g, "").trim() || "varlik";
+}
+
 import { db } from "@/lib/db";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 import { AUTH_ENABLED, hasSession } from "@/lib/auth-flag";
@@ -86,22 +120,30 @@ export async function GET(req: NextRequest) {
 
       if (a.dataUrl && a.dataUrl.startsWith("data:")) {
         const base64 = a.dataUrl.slice(a.dataUrl.indexOf(",") + 1);
-        dir.file(a.name, base64, { base64: true });
+        dir.file(safeEntryName(a.name), base64, { base64: true });
         embedded++;
       } else if (a.externalUrl) {
-        // en iyi çaba: dış bağlantıyı indir; olmazsa .url dosyası bırak
+        // P4: SSRF filtresi (özel ağ/metadata YOK) + redirect izlenmez + 25MB tavan +
+        // html türü reddi; başarısızlıkta güvenli .url bırakma (dış bağlantı silinmez)
         try {
+          const target = isPublicHttpUrl(a.externalUrl);
+          if (!target) throw new Error("ssrf-blocked");
           const ctrl = new AbortController();
           const t = setTimeout(() => ctrl.abort(), 8000);
-          const res = await fetch(a.externalUrl, { signal: ctrl.signal });
+          const res = await fetch(target, { signal: ctrl.signal, redirect: "manual" });
           clearTimeout(t);
-          if (res.ok) {
-            const buf = await res.arrayBuffer();
-            dir.file(a.name, Buffer.from(buf));
-            linked++;
-          } else throw new Error(String(res.status));
+          if (!res.ok) throw new Error(String(res.status));
+          if (res.status >= 300 && res.status < 400) throw new Error("redirect-not-followed");
+          const ctype = (res.headers.get("content-type") ?? "").toLowerCase();
+          if (ctype.includes("text/html")) throw new Error("html-red");
+          const len = Number(res.headers.get("content-length") ?? "0");
+          if (len > 25 * 1024 * 1024) throw new Error("too-large");
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength > 25 * 1024 * 1024) throw new Error("too-large");
+          dir.file(safeEntryName(a.name), Buffer.from(buf));
+          linked++;
         } catch {
-          dir.file(`${a.name}.url`, `[InternetShortcut]\nURL=${a.externalUrl}\n`);
+          dir.file(`${safeEntryName(a.name)}.url`, `[InternetShortcut]\nURL=${a.externalUrl}\n`);
           failed++;
         }
       }

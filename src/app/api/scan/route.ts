@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ActivityType } from "@/lib/api/activity";
+import { requireStaff } from "@/lib/auth/request-context";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
@@ -22,6 +23,14 @@ export async function POST(req: NextRequest) {
     const { code, door = "MAIN_DOOR", sessionId, action = "ENTRY", forceReason } = body as {
       code: string; door?: string; sessionId?: string; action?: string; forceReason?: string;
     };
+    // P4 (yeni-fazlar 17): forceReason OPERATÖR yeteneğidir — engelleyiciyi aşan istisna
+    // (check-in/CME/sertifika kanıtı üretir) kimliksiz çağırana verilmez. Cihaz sınırı:
+    // MAVEN_AUTH=on → oturum + staff rolü ZORUNLU; off (demo) → admin UI güvenilir kabul edilir
+    // (tek-kiracı demo tavanı belgeli). Kimliksiz cihaz yalnız normal okuma yapabilir.
+    if (forceReason) {
+      const gate = await requireStaff();
+      if (gate) return gate;
+    }
 
     if (!code) return NextResponse.json({ error: "Tarama kodu gerekli" }, { status: 400 });
 
@@ -42,7 +51,9 @@ export async function POST(req: NextRequest) {
     }
 
     const person = participation.person;
-    const reg = participation.registrations?.[0];
+    // P4: geçerli kayıt deterministik — CONFIRMED öncelikli, yoksa en-yeni submittedAt
+    const regs = [...(participation.registrations ?? [])].sort((a, b) => (b.submittedAt?.getTime() ?? 0) - (a.submittedAt?.getTime() ?? 0));
+    const reg = regs.find((r) => r.status === "CONFIRMED") ?? regs[0];
     const badge = participation.badgeInstances?.[0];
 
     // engel kontrolleri

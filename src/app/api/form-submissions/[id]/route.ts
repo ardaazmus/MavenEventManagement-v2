@@ -3,7 +3,7 @@
 // Spam/Ret: bağlı kayıt iptal edilir (veri tutarlılığı)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { createRegistrationFromSubmission, cancelRegistrationOfSubmission, type ChainResult } from "@/lib/api/registration-chain";
+import { createRegistrationFromSubmission, cancelRegistrationOfSubmission, ChainCapacityError, type ChainResult } from "@/lib/api/registration-chain";
 import { ensureInScope } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 
@@ -105,6 +105,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         return NextResponse.json({ error: "Geçersiz aksiyon (approve|reject|spam|pending)" }, { status: 400 });
     }
   } catch (e) {
+    // P3: kategori kapasitesi dolu → beklenen iş durumu 409 (gönderi admin incelemesinde kalır;
+    // bekleme listesi teklifi iptal/geri-bırakma yolunda otomatiktir)
+    if (e instanceof ChainCapacityError) {
+      return NextResponse.json({ error: e.message, code: "CAPACITY_FULL", categoryId: e.categoryId }, { status: 409 });
+    }
     return NextResponse.json({ error: e instanceof Error ? e.message : "İşlem başarısız" }, { status: 500 });
   }
 }

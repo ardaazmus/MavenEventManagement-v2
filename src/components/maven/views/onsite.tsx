@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
+import { sanitizePreviewHtml } from "@/lib/safe-html";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
 import { ATTENDANCE_STATUS, BADGE_STATUS, BADGE_FONTS, CAMPAIGN_PHASE, CERTIFICATE_STATUS, EMAIL_TEMPLATE_CATEGORY, MAIL_PROVIDER_KIND, TASK_STATUS, TASK_PRIORITY, fmtDateTime, fmtDate, label, CAPABILITIES } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
@@ -1625,7 +1626,7 @@ export function CommunicationsView() {
                 <Chip tone={PHASE_TONE[previewTemplate.phase] ?? "neutral"}>{tLabel(CAMPAIGN_PHASE, previewTemplate.phase)}</Chip>
               </div>
               <div className="border-b bg-muted/40 px-3 py-2 text-xs font-semibold">{previewTemplate.subject}</div>
-              <div className="maven-scroll max-h-80 overflow-y-auto bg-white p-4 text-sm text-slate-900" dangerouslySetInnerHTML={{ __html: previewTemplate.htmlBody }} />
+              <div className="maven-scroll max-h-80 overflow-y-auto bg-white p-4 text-sm text-slate-900" dangerouslySetInnerHTML={{ __html: sanitizePreviewHtml(previewTemplate.htmlBody) }} />
             </div>
           )}
           <DialogFooter>

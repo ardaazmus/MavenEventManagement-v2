@@ -5,7 +5,8 @@
 // olduğundan composite keyset zorunlu (id son halka). Yanıt yalnız devam varsa nextCursor ekler.
 import { NextRequest, NextResponse } from "next/server";
 import { registry, sanitize, withTenant } from "@/lib/api/registry";
-import { applyListGuard, applyWriteGuard, GuardError } from "@/lib/api/tenant-guard";
+import { applyListGuard, applyWriteGuard, GuardError, resolveContext, tenantIdOf, tenantSelectFor } from "@/lib/api/tenant-guard";
+import { requestActor } from "@/lib/auth/request-context";
 import { db } from "@/lib/db";
 
 type Ctx = { params: Promise<{ entity: string }> };
@@ -54,7 +55,19 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     Object.assign(where, config.relationSearch(q));
   }
 
-  const limit = Math.min(parseInt(sp.get("limit") ?? "200"), 500);
+  // P4 (yeni-fazlar 14): STRICT pagination — yalnız 1..500 tam sayı; 0/negatif/ondalıklı/
+  // NaN/boş/malformed kontrollü 400 alır (parseInt gevşekliği kapandı: "0x5"/"5e2" vb.).
+  const limitRaw = sp.get("limit");
+  let limit = 200;
+  if (limitRaw !== null) {
+    if (!/^\d+$/.test(limitRaw)) {
+      return NextResponse.json({ error: "limit 1-500 arası tam sayı olmalı" }, { status: 400 });
+    }
+    limit = parseInt(limitRaw, 10);
+    if (limit < 1 || limit > 500) {
+      return NextResponse.json({ error: "limit 1-500 arası tam sayı olmalı" }, { status: 400 });
+    }
+  }
 
   try {
     await applyListGuard(entity, where, sp);
@@ -141,7 +154,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           message: config.auditMessage?.(data as Record<string, unknown>, "create") ?? "Kayıt oluşturuldu",
           entityType: entity,
           entityId: (created as { id?: string })?.id ?? null,
-          actorName: "Yönetici",
+          // P4 (yeni-fazlar 15): audit KİMİLGİ + sahiplik güvenli bağlamdan — sabit
+          // "Yönetici" yerine doğrulanmış aktör; tenant/edition kayıttan çözülür.
+          ...await auditOwnership(entity, created as Record<string, unknown>),
         },
       });
     }
@@ -151,4 +166,36 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const msg = e instanceof Error && e.message.includes("Unique constraint") ? "Bu kayıt zaten mevcut (benzersiz alan çakışması)" : "Kayıt oluşturulamadı";
     return NextResponse.json({ error: msg }, { status: 400 });
   }
+}
+
+// P4 (yeni-fazlar 15): audit kaydına güvenli sahiplik + aktör kimliği.
+// tenantId: bağlam kiracısı (fail-closed GuardError → çağıran catch'i 500'e düşürür, yazım zaten tamam);
+// editionId: kayıttan doğrudan; actorName: auth-on'da oturum kullanıcısının adı, auth-off demo "Yönetici".
+async function auditOwnership(entity: string, row: Record<string, unknown>): Promise<{ tenantId: string; editionId: string | null; actorName: string }> {
+  const ctx = await resolveContext(null);
+  let editionId: string | null = typeof row.editionId === "string" ? row.editionId : null;
+  if (!editionId) {
+    // chain modeller: kapsam select'i ile kaydın zincir-bağlantısından edisyon çöz
+    try {
+      const sel = tenantSelectFor(entity);
+      if (sel) {
+        const config = registry[entity];
+        const fresh = row.id ? await config.delegate.findFirst({ where: { id: row.id as string }, ...(sel as Record<string, unknown>) }) : null;
+        if (fresh && tenantIdOf(entity, fresh)) {
+          // edisyon zinciri: scope.path'ten edisyon-modeli seç — yalnız edition kolonu olan satırlar
+          const rec = fresh as Record<string, unknown>;
+          editionId = (rec.editionId as string) ?? (rec as { edition?: { id?: string } })?.edition?.id ?? null;
+        }
+      }
+    } catch {
+      editionId = null; // audit sahipliği edisyon ÇÖZÜLEMEZSE null kalır — kayıt kiracı altında
+    }
+  }
+  const actor = await requestActor();
+  let actorName = "Yönetici";
+  if (actor) {
+    const u = await (await import("@/lib/db")).db.user.findUnique({ where: { id: actor.uid }, select: { name: true } });
+    actorName = u?.name ?? actor.role;
+  }
+  return { tenantId: ctx, editionId, actorName };
 }

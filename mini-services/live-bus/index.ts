@@ -7,17 +7,28 @@
 // Dayanıklılık  : durum yok — yalnız aktarım; kalıcılık ActivityLog (Prisma) sorumluluğundadır
 import { createServer } from "http";
 import { Server } from "socket.io";
+import crypto from "crypto";
+import { authorizeSubscribe } from "./auth";
 
 const PORT = 3003;        // socket.io — tarayıcıya açık (Caddy XTransformPort ile)
 const PUB_PORT = 3004;    // HTTP yayın ucu — yalnız Next.js sunucu içi (localhost)
 
 // socket.io path "/" ile çalıştığı için tüm HTTP isteklerini engine.io yutar;
 // yayın ucu bu yüzden ayrı iç porta alınır (tarayıcı bu porta asla dokunmaz).
-const pubServer = createServer((req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "content-type");
+// P1 (yeni-fazlar 6): yayın ucu paylaşımlı anahtarla korunur — CORS güven olarak
+  // SAYILMAZ (sunucu-sunucu kanalında CORS zaten anlamsızdır). Anahtar iki tarafta
+  // aynı env (LIVE_BUS_KEY) / aynı geliştirme-başvuru değerinden gelir.
+  const PUB_KEY = process.env.LIVE_BUS_KEY ?? "maven-live-bus-dev-key";
+  function publishKeyOk(req: { headers: Record<string, string | string[] | undefined> }): boolean {
+    const got = req.headers["x-live-bus-key"];
+    const value = Array.isArray(got) ? got[0] : got;
+    if (typeof value !== "string" || value.length === 0) return false;
+    const a = crypto.createHash("sha256").update(value).digest();
+    const b = crypto.createHash("sha256").update(PUB_KEY).digest();
+    return crypto.timingSafeEqual(a, b);
+  }
 
+  const pubServer = createServer((req, res) => {
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
   // Sağlık kontrolü
@@ -27,8 +38,13 @@ const pubServer = createServer((req, res) => {
     return;
   }
 
-  // Yayın ucu — yalnız Next.js sunucu içinden çağrılır (localhost)
+  // Yayın ucu — yalnız Next.js sunucu içinden (loopback + paylaşımlı anahtar)
   if (req.method === "POST" && req.url === "/publish") {
+    if (!publishKeyOk(req)) {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "yetkisiz yayın" }));
+      return;
+    }
     let body = "";
     let overflow = false;
     req.on("data", (chunk: Buffer) => {
@@ -89,14 +105,22 @@ function broadcastPresence() {
 }
 
 io.on("connection", (socket) => {
-  socket.on("subscribe", (data: { editionId?: string | null } = {}) => {
+  // P1 (yeni-fazlar 6): abonelik KİMİLİ + edisyon yetkisi — Next.js güvenli yolu
+  // (bus-authorize) doğrulaması olmadan hiçbir odaya katılım yok (fail-closed).
+  socket.on("subscribe", async (data: { editionId?: string | null } = {}) => {
     const editionId = data?.editionId ?? null;
+    const cookieHeader = String(socket.handshake.headers.cookie ?? "");
+    const verdict = await authorizeSubscribe({ cookieHeader, editionId });
+    if (!verdict.ok) {
+      socket.emit("unauthorized", { reason: verdict.reason ?? "kimlik doğrulanamadı", at: new Date().toISOString() });
+      return;
+    }
     // önceki odalardan ayrıl (edisyon değişimi)
     const prev = presence.get(socket.id) ?? null;
     for (const room of roomsForSocket(prev)) socket.leave(room);
-    presence.set(socket.id, editionId);
-    for (const room of roomsForSocket(editionId)) socket.join(room);
-    socket.emit("subscribed", { editionId, rooms: roomsForSocket(editionId), at: new Date().toISOString() });
+    presence.set(socket.id, verdict.editionId ?? null);
+    for (const room of roomsForSocket(verdict.editionId ?? null)) socket.join(room);
+    socket.emit("subscribed", { editionId: verdict.editionId ?? null, rooms: roomsForSocket(verdict.editionId ?? null), at: new Date().toISOString() });
     broadcastPresence();
   });
 
@@ -110,8 +134,8 @@ io.on("connection", (socket) => {
   });
 });
 
-pubServer.listen(PUB_PORT, () => {
-  console.log(`[live-bus] yayın ucu :${PUB_PORT} (POST /publish, GET /health)`);
+pubServer.listen(PUB_PORT, "127.0.0.1", () => {
+  console.log(`[live-bus] yayın ucu :${PUB_PORT} (loopback-only, POST /publish, GET /health)`);
 });
 
 io.listen(PORT);

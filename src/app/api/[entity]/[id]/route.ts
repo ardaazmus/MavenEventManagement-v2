@@ -3,7 +3,37 @@
 // id ile erişim 404 döner (IDOR koruması). ensureInScope artık tenant-guard'ta ortak:
 // özel rotalar (people/[id], form-submissions/[id], payments/[id]/process…) aynı fonksiyonu kullanır.
 import { NextRequest, NextResponse } from "next/server";
-import { registry, sanitize } from "@/lib/api/registry";
+import { registry, sanitizeForUpdate } from "@/lib/api/registry";
+import { resolveContext, tenantIdOf, tenantSelectFor } from "@/lib/api/tenant-guard";
+import { requestActor } from "@/lib/auth/request-context";
+
+// P4 (yeni-fazlar 15): audit sahipliği + aktör — POST rotasıyla birebir aynı sözleşme
+async function auditOwnership(entity: string, row: Record<string, unknown>): Promise<{ tenantId: string; editionId: string | null; actorName: string }> {
+  const ctx = await resolveContext(null);
+  let editionId: string | null = typeof row.editionId === "string" ? row.editionId : null;
+  if (!editionId) {
+    try {
+      const sel = tenantSelectFor(entity);
+      if (sel) {
+        const config = registry[entity];
+        const fresh = row.id ? await config.delegate.findFirst({ where: { id: row.id as string }, ...(sel as Record<string, unknown>) }) : null;
+        if (fresh && tenantIdOf(entity, fresh)) {
+          const rec = fresh as Record<string, unknown>;
+          editionId = (rec.editionId as string) ?? (rec as { edition?: { id?: string } })?.edition?.id ?? null;
+        }
+      }
+    } catch {
+      editionId = null;
+    }
+  }
+  const actor = await requestActor();
+  let actorName = "Yönetici";
+  if (actor) {
+    const u = await db.user.findUnique({ where: { id: actor.uid }, select: { name: true } });
+    actorName = u?.name ?? actor.role;
+  }
+  return { tenantId: ctx, editionId, actorName };
+}
 import { applyWriteGuard, ensureInScope, GuardError } from "@/lib/api/tenant-guard";
 import { issuePortalToken } from "@/lib/api/portal-tokens";
 import { db } from "@/lib/db";
@@ -42,7 +72,9 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
 
     const body = await req.json();
-    let data = sanitize(body);
+    // P2 (yeni-fazlar 8): durum-makinesi alanları generic PUT'tan düşürülür
+    const upd = sanitizeForUpdate(entity, body);
+    let data = upd.data;
     data = await applyWriteGuard(entity, data, { isUpdate: true });
     if (config.writeTransform) data = await config.writeTransform(data, true); // S3: sır şifreleme
     // DÜZELTME (server-side validation): güncellemede de varlık sözleşmesi zorlanır
@@ -73,7 +105,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
           message: config.auditMessage?.(data as Record<string, unknown>, "update") ?? "Kayıt güncellendi",
           entityType: entity,
           entityId: id,
-          actorName: "Yönetici",
+          ...await auditOwnership(entity, updated as Record<string, unknown>),
         },
       });
     }
@@ -95,6 +127,13 @@ export async function DELETE(_req: NextRequest, ctx: Ctx) {
     if (entity === "tenants") return NextResponse.json({ error: "Kiracı kaydı silinemez" }, { status: 400 });
     const scoped = await ensureInScope(entity, id);
     if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });
+    // P4: silmeden önce sahiplik okunur (silinen kaydın tenant'ı audit'e yazılır)
+    let ownership: Record<string, unknown> = { id };
+    try {
+      const sel = tenantSelectFor(entity);
+      const pre = sel ? await config.delegate.findFirst({ where: { id }, ...(sel as Record<string, unknown>) }) : null;
+      if (pre) ownership = pre as Record<string, unknown>;
+    } catch { /* sahiplik çözülemezse audit yine yazılır */ }
     await config.delegate.delete({ where: { id } });
     if (config.auditType) {
       await db.activityLog.create({
@@ -103,7 +142,7 @@ export async function DELETE(_req: NextRequest, ctx: Ctx) {
           message: config.auditMessage?.({}, "delete") ?? "Kayıt silindi",
           entityType: entity,
           entityId: id,
-          actorName: "Yönetici",
+          ...await auditOwnership(entity, ownership),
         },
       });
     }

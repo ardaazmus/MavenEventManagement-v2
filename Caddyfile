@@ -1,10 +1,14 @@
+# P1 (yeni-fazlar 6): XTransformPort YABİ RASTGELE port vekili DEĞİL —
+# yalnız sunucu-sahibi açık eşlemeler: 3003 = live-bus (socket.io). Diğer her şey
+# Next.js'e (3000) gider. Bu kapanış, tarayıcıdan 3004/publish gibi İÇ uçlara
+# doğrudan erişimi ve öngörülmemiş hizmet vekilliklerini engeller.
 :81 {
-	@transform_port_query {
-		query XTransformPort=*
+	@livebus {
+		query XTransformPort=3003
 	}
 
-	handle @transform_port_query {
-		reverse_proxy localhost:{query.XTransformPort} {
+	handle @livebus {
+		reverse_proxy localhost:3003 {
 			header_up Host {host}
 			header_up X-Forwarded-For {remote_host}
 			header_up X-Forwarded-Proto {scheme}

@@ -50,6 +50,12 @@
     "deletedDesc": "\"{title}\" portaldan kaldırıldı.",
     "visibleOnToast": "Blok görünür yapıldı",
     "visibleOffToast": "Blok gizlendi",
-    "actionFailed": "İşlem başarısız"
+    "actionFailed": "İşlem başarısız",
+    "stepReg": "Kayıt",
+    "stepsAria": "Kayıt durum adımları",
+    "regOpened": "Kayıt açıldı: {no} — tebrikler!",
+    "noParticipationDesc": "Kayıt formuyla başvurduğunuzda katılımınız oluşturulur ve bu ekrancan takip edebilirsiniz.",
+    "hdrSubtitlePh": "örn. Kayıt, ödeme ve programınız tek yerde",
+    "firmIdentityHint": "Ayarlar → Firma Kimliği bölümünden eklenebilir."
   }
 }

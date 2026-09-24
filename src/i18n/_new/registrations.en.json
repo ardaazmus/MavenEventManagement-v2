@@ -1,0 +1,12 @@
+{
+ "registrations": {
+  "title": "Registrations & Participants",
+  "updatedAll": "Person, participation and registration fields updated.",
+  "cancelled": "Registration cancelled",
+  "approved": "Registration approved",
+  "rejected": "Registration rejected",
+  "saveChanges": "Save Changes",
+  "selectPerson": "Select a person",
+  "selectPersonPh": "Select a person…"
+ }
+}

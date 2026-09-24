@@ -1,5 +1,8 @@
 {
  "scientific": {
+  "sessAccessOpen": "Open — anyone can enter",
+  "sessAccessRegistrationRequired": "Registration required",
+  "sessAccessScan": "Scan to enter",
   "title": "Scientific Process",
   "desc": "Call → submission → review → committee decision; scientific decisions and scheduling live in separate modules (§28)",
   "addSubmission": "Add Submission",

@@ -1,0 +1,8 @@
+{
+  "editions": {
+    "published": "Event published",
+    "draftCreated": "Event draft created",
+    "capsOpened": "{n} capabilities enabled. You can change them anytime under Settings → Capabilities.",
+    "createDraft": "Create draft"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "badgeQueue": {
+    "searchPlaceholder": "Kişi / yaka kartı no / profil ara",
+    "emptyQueueDesc": "Kayıt onaylandığında yaka kartları otomatik hazırlanır (READY) ve burada listelenir.",
+    "clearFilterHint": "Durum filtresini veya aramayı temizleyin."
+  }
+}

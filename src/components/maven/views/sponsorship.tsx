@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useLang } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -50,13 +51,14 @@ const BOOTH_TONE: Record<string, string> = {
 // hak onay akışı — APPROVED teal, PROPOSED amber, REJECTED rose (renk dili)
 const APPROVAL_TONE: Record<string, "teal" | "amber" | "rose"> = { APPROVED: "teal", PROPOSED: "amber", REJECTED: "rose" };
 const ENT_TYPES: Record<string, string> = {
-  COMPLIMENTARY_REGISTRATION: "Ücretsiz Kayıt", BOOTH: "Stant", GALA_TICKET: "Gala Davetiyesi", BADGE: "Yaka Kartı",
-  LOUNGE_ACCESS: "Lounge Erişimi", DISCOUNT: "İndirim", SESSION_ACCESS: "Oturum Erişimi", HOTEL: "Konaklama", CUSTOM: "Özel",
+  COMPLIMENTARY_REGISTRATION: "sponsorship.entType.complimentaryRegistration", BOOTH: "sponsorship.entType.booth", GALA_TICKET: "sponsorship.entType.galaTicket", BADGE: "sponsorship.entType.badge",
+  LOUNGE_ACCESS: "sponsorship.entType.loungeAccess", DISCOUNT: "sponsorship.entType.discount", SESSION_ACCESS: "sponsorship.entType.sessionAccess", HOTEL: "sponsorship.entType.hotel", CUSTOM: "sponsorship.entType.custom",
 };
 
 export function SponsorshipView() {
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
+  const { t } = useLang(); // dil değişiminde re-render (F9-R-d)
   const [guestTarget, setGuestTarget] = useState<Entitlement | null>(null);
   const [guest, setGuest] = useState({ firstName: "", lastName: "", email: "", company: "" });
   const [busy, setBusy] = useState(false);
@@ -78,7 +80,7 @@ export function SponsorshipView() {
       await apiSend("/api/flows", "POST", { action: "sponsor.guest", entitlementId: guestTarget.id, ...guest });
       toast({
         title: "Sponsor misafiri ayrıldı",
-        description: "Person → Participation → Registration(SPONSOR_ENTITLEMENT) → Claim(RESERVED) zinciri kuruldu. Onayla henüz tüketmez.",
+        description: t("sponsorship.guestFlowDesc"),
       });
       setGuestTarget(null); setGuest({ firstName: "", lastName: "", email: "", company: "" });
       reload(); bump();
@@ -214,7 +216,7 @@ export function SponsorshipView() {
                         </Chip>
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {ent.ownerOrganization?.name} · {ENT_TYPES[ent.type] ?? ent.type}
+                        {ent.ownerOrganization?.name} · {ENT_TYPES[ent.type] ? t(ENT_TYPES[ent.type]) : ent.type}
                         {ent.approvalStatus === "APPROVED" && ent.approvedBy && <span> · onay: {ent.approvedBy}{ent.approvedAt ? ` · ${fmtDate(ent.approvedAt)}` : ""}</span>}
                         {ent.approvalStatus === "REJECTED" && <span className="text-rose-600"> · komite kararıyla reddedildi</span>}
                       </p>
@@ -396,7 +398,7 @@ export function SponsorshipView() {
               <Select value={createForm.type} onValueChange={(v) => setCreateForm({ ...createForm, type: v })}>
                 <SelectTrigger aria-label="Hak tipi"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(ENT_TYPES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  {Object.entries(ENT_TYPES).map(([k, v]) => <SelectItem key={k} value={k}>{t(v)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -436,7 +438,7 @@ export function SponsorshipView() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Vazgeç</Button>
-            <Button onClick={createEntitlement} disabled={busy || !createForm.label.trim()}>{busy ? "Kaydediliyor…" : createForm.approvalStatus === "PROPOSED" ? "Öneri Olarak Ekle" : "Hak Havuzu Ekle"}</Button>
+            <Button onClick={createEntitlement} disabled={busy || !createForm.label.trim()}>{busy ? "Kaydediliyor…" : createForm.approvalStatus === "PROPOSED" ? t("sponsorship.addAsProposal") : "Hak Havuzu Ekle"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useLang } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 
 interface OrderRow {
@@ -26,6 +27,7 @@ interface CatalogRow { id: string; name: string; category: string; price: number
 export function FinanceView() {
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
+  const { t } = useLang(); // dil değişiminde re-render (F9-R-d)
   const [manualTarget, setManualTarget] = useState<OrderRow | null>(null);
   const [manual, setManual] = useState({ amount: "", reference: "", reason: "" });
   const [busy, setBusy] = useState(false);
@@ -77,7 +79,7 @@ export function FinanceView() {
         <KpiCard label="Manuel Teyit Bekleyen" value={pendingManual} sub="kanıt ve ikinci onay kuyruğu" tone="rose" icon={<Icons.FileClock className="size-4" />} />
       </div>
 
-      <SectionCard title="Siparişler" desc="satır bazında hangi katılımcıya/ek hizmete ait olduğu görünür">
+      <SectionCard title={t("finance.orders")} desc="satır bazında hangi katılımcıya/ek hizmete ait olduğu görünür">
         {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (orders ?? []).length === 0 ? (
           <EmptyState title="Henüz sipariş yok" desc="Kategori fiyatlarını ve kayıt bağlantısını kontrol edin." />
         ) : (
@@ -191,7 +193,7 @@ export function FinanceView() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setManualTarget(null)}>Vazgeç</Button>
-            <Button onClick={submitManual} disabled={busy || !manual.amount || !manual.reason}>{busy ? "Kaydediliyor…" : "Tahsilatı Kaydet"}</Button>
+            <Button onClick={submitManual} disabled={busy || !manual.amount || !manual.reason}>{busy ? "Kaydediliyor…" : t("finance.saveCollection")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1269,3 +1269,203 @@ Stage Summary:
 - 28: iyzico sandbox adaptörü (IYZWSv2 imza) — sonraki ödeme aşamaları kilitli.
 - 29: sözlük-öncelik tırmık kapısı (taban 54) + 217 yaprak x2 firin.
 - 30: DERIN-TEST 20/20 + tarayıcı buton denetimi + 390px — sıfır açık P1.
+
+---
+Task ID: F9-R-a
+Agent: i18n-portals-agent
+Task: portals.tsx 8 sert-kodlu TR metni → t("portal.*") + portal.{tr,en}.json uzatma
+
+Work Log:
+- Read worklog (TASK-A F9 + TASK-B) → mevcut F9 sözleşmesi ve dosyanın t() deseni doğrulandı: portals.tsx zaten `import { useLang, t } from "@/lib/i18n"` (satır 25) + standalone `t()` kullanıyor (54 çağrı); buildSteps/Steps modül-düzeyi yardımcılar olduğu için dosya deseni olan standalone `t` kullanıldı — buildSteps imzası ve çağrı yeri DEĞİŞMEDİ.
+- 8 ihlal satırı çevrildi (yalnız listelenen metinler; aynı satırdaki mandat-dışı TR dizgilere — 135 "Henüz kayıt yok", 543 title "Bu edisyonda katılımınız bulunmuyor" — DOKUNULMADI):
+  | key | TR (birebir) | EN |
+  |---|---|---|
+  | portal.stepReg | Kayıt | Registration |
+  | portal.stepsAria | Kayıt durum adımları | Registration status steps |
+  | portal.regOpened | Kayıt açıldı: {no} — tebrikler! | Registration opened: {no} — congratulations! |
+  | portal.noParticipationDesc | Kayıt formuyla başvurduğunuzda katılımınız oluşturulur ve bu ekrancan takip edebilirsiniz. | Apply through the registration form and your participation will be created — you can follow its progress on this screen. |
+  | portal.hdrSubtitlePh | örn. Kayıt, ödeme ve programınız tek yerde | e.g. Registration, payments and your programme in one place |
+  | portal.firmIdentityHint | Ayarlar → Firma Kimliği bölümünden eklenebilir. | You can add this under Settings → Firm Identity. |
+- Satır eşlemesi: 131+135 → stepReg (aynı mesaj, tek anahtar); 223 → stepsAria; 439 → regOpened (template literal → t("portal.regOpened", { no: r.registration?.confirmationNo ?? "—" }), `?? "—"` fallback KORUNDU); 543 → noParticipationDesc (desc tam metin tek anahtar; kaynak dizgideki "ekrancan" yazımı kural gereği BİREBİR korundu); 1085 → hdrSubtitlePh; 1520+1559 → firmIdentityHint (aynı mesaj, tek anahtar).
+- portal.tr.json / portal.en.json: 6+6 yaprak ADDITIVE (son yaprak actionFailed sonrası); mevcut anahtarlara, başka hiçbir json'a, i18n.ts'e dokunulmadı. Yeni anahtarlar base tr.json/en.json portal ns (44 anahtar) ile çakışmıyor — deepMerge TABAN-KAZANIR kuralında çakışma riski 0.
+- DOĞRULAMA: (1) node json karşılaştırma → 6/6 anahtar hem tr hem en parçada; (2) TR parite → 6/6 sözlük değeri orijinal hardcoded string ile BAYT-AYNI (git diff -U0 ile orijinaller teyitli); (3) interpolasyon kanıtı: t("portal.regOpened",{no:"REG-2026-0042"}) → "Kayıt açıldı: REG-2026-0042 — tebrikler!"; (4) `bun run lint` → 0 problem; (5) `bunx tsc --noEmit | grep views/portals` → BOŞ (tsc toplam 3 hata: examples/ + skills/ önceki oturum bakiyesi, dokunulmadı); (6) tırmık (i18n-hardcoded-scan) → 74 dosya 32 ihlal, taban 54 korundu; portals.tsx tek-dosya taraması → 0 ihlal (8→0).
+
+Stage Summary:
+- 6 yeni portal.* anahtarı (tr+en parite), 8 ihlal satırı çevrildi, 2 anahtar (stepReg, firmIdentityHint) iki çağrı yerinde paylaşıldı.
+- lint 0 / tsc (portals.tsx) 0 / TR birebir 6-6 / tırmık portals 0.
+- portals.tsx'te kalan sert-kodlu TR (manuel sayım): ~80 dizgi tekrarı (~70 ayrı mesaj; adım başlıkları, enum etiket map'leri, toast/diyalog/SectionCard metinleri, FirmaVitrin başlıkları) — tırmık kelime listesi dışında kalanlar dahil sonraki F9 partilerine.
+
+---
+Task ID: F9-R-b
+Agent: i18n-registrations-forms-agent
+Task: registrations.tsx i18n bağlantısı (8 ihlal, yeni ns) + form-center.tsx 6 ihlal (forms uzatma)
+
+Work Log:
+- Önce worklog.md TASK-A F9 + TASK-B/25-26 bölümleri okundu; 3-adım desen (view'da t() → parça json → i18n.ts FRAGMENTS) aynen uygulandı.
+- registrations.tsx (önceden i18n'sizdi): `import { useLang } from "@/lib/i18n"` eklendi; iki component'e de hook bağlandı — RegistrationsView + WaitlistTab içinde `const { t } = useLang()` (hooks kuralı: stringin kullanıldığı component'e). Not: WaitlistTab'daki mevcut yerel `const t = await fn()` (runAction) gölgelemesi dokunulmadan korundu — lexical scope sayesinde t() çağrıları doğru çözülür (tsc+lint temiz).
+- Yeni parçalar: src/i18n/_new/registrations.{tr,en}.json (8+8 yaprak); i18n.ts FRAGMENTS'e 1 giriş (tr.json/en.json DOKUNULMADI; "registrations" ns'de taban-çakışması yok — node ile doğrulandı).
+- form-center.tsx: yalnız listelenen 6 satır t("forms.*")'e çevrildi; mevcut 216 t() kullanımına ve "Oluşturuluyor…"/"Ekleniyor…" busy etiketleri dahil diğer her şeye dokunulmadı.
+- forms parçaları: mevcut forms.{tr,en}.json'un "forms" objesine 6 YENİ anahtar eklendi (mevcut 178 anahtara dokunulmadı; forms.tr=en 184+2 common yaprak).
+- SAPMA NOTU: Görev listesinde 1867 "…Gala Yeme" yazıyordu; dosyadaki gerçek string "Gala Yemeği" — TR BİREBİR kuralı gereği DOSYADAKİ korundu.
+
+Key → TR (birebir) → EN tablosu:
+| Anahtar | TR | EN |
+|---|---|---|
+| registrations.title | Kayıt & Katılımcılar | Registrations & Participants |
+| registrations.updatedAll | Kişi, katılım ve kayıt alanları güncellendi. | Person, participation and registration fields updated. |
+| registrations.cancelled | Kayıt iptal edildi | Registration cancelled |
+| registrations.approved | Kayıt onaylandı | Registration approved |
+| registrations.rejected | Kayıt reddedildi | Registration rejected |
+| registrations.saveChanges | Değişiklikleri Kaydet | Save Changes |
+| registrations.selectPerson | Kişi seçin | Select a person |
+| registrations.selectPersonPh | Kişi seçin… | Select a person… |
+| forms.namePh | Örn. Online Kayıt Formu | e.g. Online Registration Form |
+| forms.createForm | Formu Oluştur | Create Form |
+| forms.orgPh | Örn. Kurum Adı | e.g. Organization Name |
+| forms.optionsPh | Seçenek başına bir satır:\nKongre Kaydı\nWorkshop\nGala Yemeği | One option per line:\nConference Registration\nWorkshop\nGala Dinner |
+| forms.selectOptionPh | Seçeneklerden seçin… | Choose from options… |
+| forms.addFieldCta | Alanı Ekle | Add Field |
+
+Stage Summary:
+- 14 yeni anahtar (registrations 8 ×2 dil + forms 6 ×2 dil); TR parite node-doğrulaması: 14/14 BİREBİR (… U+2026 ve \n kaçışları dahil, git-HEAD kaynak literaline karşı kod-noktası eşleşmesi).
+- Anahtar-mevcudiyet: 14 anahtar × tr+en parça = ALL-COVERED; merge-simülasyonu: taban-kazanır derin birleşimde tüm anahtarlar TR+EN çözülüyor (çakışma 0).
+- bun run lint → 0 problem (exit 0). bunx tsc --noEmit → views/registrations + views/form-center: BOŞ (kalan 3 hata: examples/skills kalıntısı — bu görevin dosyaları değil).
+- Tırmık (scripts/i18n-hardcoded-scan.mjs): registrations.tsx 8 → 0 ihlal, form-center.tsx 6 → 0 ihlal; repo-genel 54 → 32 (düşüşün bir kısmı PARALEL ajanların portal/media/dashboard/editions düzenlemelerinden — bu ajan yalnız yukarıdaki 5+2 dosyaya dokundu).
+- tr.json / en.json ve diğer hiçbir json dosyasına dokunulmadı (git status kanıtlı); DB/API/mantık/tarih/para değişmedi.
+
+---
+Task ID: F9-R-c
+Agent: i18n-media-dashboard-editions-agent
+Task: media/dashboard/editions i18n bağlantısı (16 ihlal, 3 yeni ns)
+
+Work Log:
+- Desen: TASK-A F9 3-adım deseni (view'da useLang→t() → parça json → i18n.ts FRAGMENTS kaydı). tr.json/en.json VE diğer hiçbir json dosyasına dokunulmadı; DB/API/mantık/tarih/para/yorumlar değişmedi; diff yalnızca listeli satırlar + import + hook (git diff satır-satır denetlendi).
+- Yeni parçalar: src/i18n/_new/{media,dashboard,editions}.{tr,en}.json → 23+23 yaprak; src/lib/i18n.ts FRAGMENTS'e 3 giriş eklendi (additive; paralel ajanın registrations girişiyle çakışmasız birleşti).
+- media.tsx (6 ihlal): LINKED_TYPE_LABEL modül-seviyeli map — t() hook'a taşınamayacağı için değerler media.linkedType.* sözlük anahtarına çevrildi, tek kullanım yerinde (SelectItem) {v} → {t(v)} köprüsü (tLabel/tQuiet deseniyle aynı ruh). Diğer 5 ihlal doğrudan t().
+- editions.tsx:144 capsOpened: görev metnindeki "{n} yetenek açıldı. Ayarlar → Yetenekler" tırmık çıktısının 60-karakter KIRPMASIYDI (scan slice(0,60)); F9 sözleşmesi gereği TAM cümle korundu: "{n} yetenek açıldı. Ayarlar → Yetenekler'den her zaman değiştirebilirsiniz." → t("editions.capsOpened", { n: selectedCaps.length }).
+- Key → TR → EN (23 anahtar):
+  media.linkedType.PERSON | Kişi | Person
+  media.linkedType.ORGANIZATION | Kurum | Organization
+  media.linkedType.HOTEL | Otel | Hotel
+  media.linkedType.SESSION | Oturum | Session
+  media.linkedType.SUBMISSION | Gönderim | Submission
+  media.linkedType.PORTAL | Portal | Portal
+  media.linkedType.CERTIFICATE | Sertifika | Certificate
+  media.linkedType.BADGE_DESIGN | Yaka Kartı Tasarımı | Badge design
+  media.totalAssets | Toplam Varlık | Total assets
+  media.emptyAssetsDesc | 'Varlık Yükle' ile dosya bağlantısı ekleyin ya da küçük dosyaları doğrudan arşive gömün. | Use 'Upload asset' to attach a file link, or embed small files directly into the archive.
+  media.addSubfolder | Alt Klasör Ekle | Add subfolder
+  media.deleteFolder | Klasörü Sil | Delete folder
+  media.addToArchive | Arşive Ekle | Add to archive
+  dashboard.person | Kişi | Person
+  dashboard.portfolio | Etkinlik Portföyü | Event portfolio
+  dashboard.registrationsLink | Kayıt listesi → | Registration list →
+  dashboard.uniquePersons | Benzersiz Kişi | Unique persons
+  dashboard.ordersLink | Siparişler → | Orders →
+  dashboard.registrationCurve | Kayıt Eğrisi | Registration curve
+  editions.published | Etkinlik yayınlandı | Event published
+  editions.draftCreated | Etkinlik taslağı oluşturuldu | Event draft created
+  editions.capsOpened | {n} yetenek açıldı. Ayarlar → Yetenekler'den her zaman değiştirebilirsiniz. | {n} capabilities enabled. You can change them anytime under Settings → Capabilities.
+  editions.createDraft | Taslağı Oluştur | Create draft
+
+Stage Summary:
+- Anahtar: 23 yeni (media 13, dashboard 6, editions 4); her t() anahtarı tr+en parçada mevcut (node doğrulaması) + deepMerge simülasyonu 23/23 çözüm ✓.
+- TR parite: 23/23 git-HEAD orijinaline karşı BAYT-AYNI (capsOpened {n} interpolasyonu n=5 ile simüle edildi — birebir) ✓; "→" ve boşluklar dahil.
+- lint: `bun run lint` → 0 problem (exit 0) ✓; tsc: `bunx tsc --noEmit | grep views/(media|dashboard|editions)` → BOŞ ✓.
+- Tırmık (scripts/i18n-hardcoded-scan.mjs): bu görevin 3 dosyasında 16 → 0 ihlal; taban 54 DOKUNULMADI (düşürme sorumluluğu süpervisörde); son okuma: repo-genel 5 ihlal (paralel ajanların düşüşüyle — bu ajan yalnız 3 view + i18n.ts + 6 yeni parça dosyasına dokundu).
+- Kalan sert-kodlu TR: bu 3 dosyada 0; repo-genel son ölçüm 5 (media/dashboard/editions kapsam dışı dosyalardan — JSX gövde metinleri tırmığın kapsamı dışında kalabilir, bkz. scan yalnız string-literal tarar).
+
+---
+Task ID: F9-R-d
+Agent: i18n-misc-views-agent
+Task: finance/sponsorship/badge-queue/accommodation/accounting/scientific/cme-report — 16 ihlal
+
+Work Log:
+- 7 view dosyası okundu; tırmık mantığı (i18n-hardcoded-scan.mjs) birebir node ile replike edilip 16 ihlal doğrulandı (finance 2, sponsorship 4, badge-queue 3, accommodation 2, accounting 2, scientific 1, cme-report 2).
+- YENİ parçalar: src/i18n/_new/{finance,sponsorship,badge-queue,accounting-plus,cme-report}.{tr,en}.json (2+2, 11+11, 3+3, 1+1, 2+2 yaprak); MEVCUT parçalar uzatıldı: accommodation-plus (+6+6), scientific (+3+3) — mevcut anahtarlara DOKUNULMADI. src/lib/i18n.ts FRAGMENTS'e 5 yeni giriş (tr.json/en.json'a DOKUNULMADI).
+- Dönüşüm deseni: useLang + t() component içinde (finance/sponsorship/badge-queue/cme-report yeni bağlandı; accommodation/accounting/scientific mevcut modül-t deseni korundu).
+- Module-level enum map kuralı: değerler sözlük anahtarına çevrildi, t() KULLANIM yerinde çözülür (hooks/re-render güvenli):
+  * sponsorship ENT_TYPES (satır 53-54): 9 değer → "sponsorship.entType.*" anahtarı; kullanım yerleri 219 (`ENT_TYPES[ent.type] ? t(...) : ent.type`) ve 401 (`{t(v)}`) bağlandı — SelectItem değerleri (DB enum) DEĞİŞMEDİ.
+  * scientific SESSION_ACCESS (satır 65): 3 değer → "scientific.sessAccess*"; 468. satır tLabel→t(v) (tLabel status.* köprüsü bu map için eksen-çakışması riskiydi; parça anahtarı donuk TR + EN verir; TR/EN çıktı bayt-aynı doğrulandı: status.OPEN/REGISTRATION_REQUIRED/SCAN ile kelime-birebir).
+
+Key → TR → EN (28 yeni anahtar):
+| anahtar | TR (birebir) | EN |
+|---|---|---|
+| finance.orders | Siparişler | Orders |
+| finance.saveCollection | Tahsilatı Kaydet | Record Payment |
+| sponsorship.guestFlowDesc | Person → Participation → Registration(SPONSOR_ENTITLEMENT) → Claim(RESERVED) zinciri kuruldu. Onayla henüz tüketmez. | Person → Participation → Registration(SPONSOR_ENTITLEMENT) → Claim(RESERVED) chain created. Approving does not consume it yet. |
+| sponsorship.addAsProposal | Öneri Olarak Ekle | Add as Proposal |
+| sponsorship.entType.complimentaryRegistration | Ücretsiz Kayıt | Free Registration |
+| sponsorship.entType.booth | Stant | Booth |
+| sponsorship.entType.galaTicket | Gala Davetiyesi | Gala Invitation |
+| sponsorship.entType.badge | Yaka Kartı | Badge |
+| sponsorship.entType.loungeAccess | Lounge Erişimi | Lounge Access |
+| sponsorship.entType.discount | İndirim | Discount |
+| sponsorship.entType.sessionAccess | Oturum Erişimi | Session Access |
+| sponsorship.entType.hotel | Konaklama | Accommodation |
+| sponsorship.entType.custom | Özel | Custom |
+| badgeQueue.searchPlaceholder | Kişi / yaka kartı no / profil ara | Search person / badge no / profile |
+| badgeQueue.emptyQueueDesc | Kayıt onaylandığında yaka kartları otomatik hazırlanır (READY) ve burada listelenir. | Badges are prepared automatically once a registration is approved (READY) and are listed here. |
+| badgeQueue.clearFilterHint | Durum filtresini veya aramayı temizleyin. | Clear the status filter or your search. |
+| accommodation.guestProfileCreated | Kişi + {note}{companion}{slot} kuruldu. | Person + {note}{companion}{slot} created. |
+| accommodation.guestNewParticipation | yeni katılım | new participation |
+| accommodation.guestExistingParticipation | mevcut katılım | existing participation |
+| accommodation.guestPlusCompanion | " + refakatçi" | " + companion" |
+| accommodation.guestPlusSlot | " + konuk slotu" | " + guest slot" |
+| accommodation.editHotel | Otel Düzenle | Edit Hotel |
+| accounting.selectOne | Seçin | Select |
+| cmeReport.loadFailed | Rapor yüklenemedi | Could not load the report |
+| cmeReport.sessionCreditBreakdown | Oturum kredi dökümü | Session credit breakdown |
+| scientific.sessAccessOpen | Açık — herkes girebilir | Open — anyone can enter |
+| scientific.sessAccessRegistrationRequired | Kayıt gerekli | Registration required |
+| scientific.sessAccessScan | Taramalı giriş | Scan to enter |
+
+- accommodation.tsx:210 template literal → TEK anahtar {note}{companion}{slot} interpolasyonu; note, dokunulmayan 186/190. satırlardaki participationNote değeriyle eşleştirilerek yerelleştirildi (`participationNote === "yeni katılım" ? t(...) : t(...)`) — render çıktısı bayt-aynı (rekonstrüksiyon testiyle kanıtlandı: "Kişi + mevcut katılım + refakatçi + konuk slotu kuruldu."). "Otel Ekle" (ihlal değil — hint-char yok) olduğu gibi bırakıldı; finance "Kaydediliyor…" ve sponsorship "Hak Havuzu Ekle" de ihlal olmadığından dokunulmadı.
+- Sadece listelenen satırlar + bağlama zorunlu kılan tüketim satırları (sponsorship 219/401, scientific 468) düzenlendi; DB içerik, API yolu, akış, tarih/para mantığı DEĞİŞMEDİ.
+
+Doğrulama (GATES):
+- bun run lint → 0 problem ✓
+- bunx tsc --noEmit | grep "(views/(finance|sponsorship|badge-queue|accommodation|accounting|scientific)|cme-report)" → BOŞ ✓ (repo-genel tsc bakiyesi yalnız examples/ + skills/ — önceki oturum kalıntısı, bu görevin dosyaları değil)
+- Anahtar-varlığı: 28/28 anahtar derin-merge sonrası İKİ sözlükte de doğrulandı (node replikasyonu; TABAN KAZANIR çakışması YOK — accounting.selectOne ve 4 yeni ns tabanda yoktu) ✓
+- TR parite: 28/28 TR değeri orijinal literal ile bayt-bayt eşleşti; accommodation interpolasyon rekonstrüksiyonu bayt-aynı ✓
+- Tırmık: 7 dosyada 16 → 0 ihlal; `bun run i18n:scan` repo-genel 0 ihlal (taban 54 DOKUNULMADI — düşürme süpervisörde) ✓
+- NOT: Bu ajan çalışırken paralel i18n ajanları i18n.ts'e media/dashboard/editions/registrations parçalarını ekledi; kendi eklerim (5 import + 5 FRAGMENTS girişi) onlara dokunmadan yapıldı, çift-kayıt yok (grep ile doğrulandı).
+
+Stage Summary:
+- 16 ihlal → 0; 28 yeni anahtar (×2 dil = 56 yaprak): finance 2, sponsorship 11, badge-queue 3, accommodation 6, accounting 1, cme-report 2, scientific 3.
+- 5 yeni parça dosyası + 2 mevcut uzatma + i18n.ts 5 kayıt; lint 0 / tsc (dokunulan) 0 / tırmık 0 / TR bayt-parite ✓.
+- Kalan sert-kodlu TR: 7 dosyanın hepsinde 0; repo-genel tırmık okuması 0 (paralel ajanların media/dashboard/editions/registrations dönüşümleriyle taban 54 artık güncel-değil — sıfıra düşürülebilir).
+
+---
+Task ID: F9-R (FINAL)
+Agent: Z.ai Code (ana ajan) + 4 paralel i18n ajanı (F9-R-a/b/c/d)
+Task: TASK-A F9 ARTAN KAPANIŞ — kalan 54 sert-kodlu TR ihlalinin sözlüğe alınması, tırmık tabanını 54→0'a düşürme, merge/bake + EN gate.
+
+Work Log:
+
+## 4 paralel ajan turu (54 ihlal → 0)
+- F9-R-a: portals.tsx 8 ihlal → t("portal.*"); portal.{tr,en}.json +6 anahtar (stepReg, stepsAria, regOpened {no}, noParticipationDesc, hdrSubtitlePh, firmIdentityHint) — bayt-parite node assert ile kanıtlandı.
+- F9-R-b: registrations.tsx i18n'e BAĞLANDI (yeni ns) 8 ihlal → t("registrations.*") (yeni parça 8+8 yaprak); form-center.tsx 6 ihlal → forms +6 (namePh, createForm, orgPh, optionsPh \n'li, selectOptionPh, addFieldCta). Not: 1867 "Gala Yemeği" dosyadaki gerçek metin (spec'teki kırpılmış "Gala Yeme" değil) — TR-birebir kuralı gereği dosyadaki korundu.
+- F9-R-c: media/dashboard/editions i18n'e BAĞLANDI (3 yeni ns + 3 yeni parça) — media 6 ihlal (linkedType.* 8 enum dahil 13 anahtar), dashboard 6 (person, portfolio, registrationsLink, uniquePersons, ordersLink, registrationCurve), editions 4 (published, draftCreated, capsOpened {n}, createDraft). i18n.ts FRAGMENTS'e 3 kayıt.
+- F9-R-d: finance (2, yeni ns), sponsorship (4 → entType.* 9 enum dahil 11 anahtar), badge-queue (3, yeni ns), accommodation (2 → accommodation-plus +6: guestProfileCreated tek anahtarda {note}{companion}{slot} rekonstrüksiyonu), accounting (2 → accounting-plus, selectOne), scientific (1 → sessAccess* +3), cme-report (2, yeni ns cmeReport: loadFailed, sessionCreditBreakdown). i18n.ts FRAGMENTS'e 5 kayıt.
+
+## MERGE/BAKE + KAPILAR (ana ajan)
+- scripts/i18n-merge.mjs (YENİ, kalıcı): _new/*.json → tr.json/en.json TABAN-KAZANIR additive bake; çakışma raporu; TR/EN simetri denetimi.
+- BAKE: 21 parça × 2 dil işlendi → +71 yaprak/dil; 2 bilgi-level çakışma (status.REJECTED / status.UNDER_REVIEW — bilinen eksen farkı, taban kazandı); SİMETRİ: tr=2335, en=2335, yalnız-TR=0, yalnız-EN=0 ✓
+- TIRMIK: scripts/i18n-baseline.json 54→0 DÜŞÜRÜLDÜ; `bun run i18n:scan` → 74 dosya, 0 ihlal (taban 0) ✓
+- KEY-USAGE: 2347 t() çağrısı tarandı → 0 eksik ✓
+- lint 0 ✓; tsc touched 0 (kalan 3: examples/skills baskı kalıntısı — dokunulmadı) ✓
+
+## TARAYICI KANITLARI (canlı)
+- Dev sunucu görev başında ÖLÜydü (port 3000 kapalı — OOM deseni) → `bun run dev` yeniden başlatıldı (health 200).
+- EN modu (localStorage maven.lang=en): dashboard + Registrations + Form Center + Accounting + Scientific + Sponsors + Accommodation + Finance + Media + Badge Queue + Portals + Events → konsol SIFIR [i18n] uyarısı ✓
+- TR modu: "Benzersiz Kişi", "Kayıt Eğrisi", "Kayıt listesi →", "Siparişler →" — ok karakterleri dahil BAYT-AYNI render ✓
+- 390px: scrollWidth=390=clientWidth ✓ (kanıt: tool-results/f9-final-tr-390.png)
+- GOLDEN Playwright 4/4 PASS (1.2s): ledger 25.100.000 kuruş; kayıt 20+3+3+1+1; vitrin agregatları + SIFIR PII; guard matrisi ✓
+
+Stage Summary:
+- TASK-A F9 ARTAN resmen KAPANDI: tırmık tabanı 54→0; tüm view ihlalleri sözlük-öncelikli.
+- Sözlük: 2047 → 2335 yaprak × 2 dil (simetrik); 9 yeni ns (registrations, media, dashboard, editions, finance, sponsorship, badgeQueue, cmeReport, accounting-plus uzatısı).
+- Dil-dışı davranış değişikliği SIFIR: seed parite golden 4/4, API sözleşmeleri dokunulmadı.
+- Bilinen ara-durum: yeni bağlanan 8 view (media/dashboard/editions/finance/sponsorship/badge-queue/registrations/cme-report) yalnız ihlal satırlarında t() taşıyor — TAM view dönüşümü sonraki parti işi (portals.tsx'te ~70 mesaj, diğerlerinde benzer ölçek işaretli).
+- scripts/i18n-merge.mjs kalıcı kapı: parça ekleyen ajan artık bunu çalıştırıp bake edebilir.

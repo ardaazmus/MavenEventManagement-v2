@@ -35,6 +35,24 @@ import portalTr from "@/i18n/_new/portal.tr.json";
 import portalEn from "@/i18n/_new/portal.en.json";
 import accommodationPlusTr from "@/i18n/_new/accommodation-plus.tr.json";
 import accommodationPlusEn from "@/i18n/_new/accommodation-plus.en.json";
+import financeTr from "@/i18n/_new/finance.tr.json";
+import financeEn from "@/i18n/_new/finance.en.json";
+import sponsorshipTr from "@/i18n/_new/sponsorship.tr.json";
+import sponsorshipEn from "@/i18n/_new/sponsorship.en.json";
+import badgeQueueTr from "@/i18n/_new/badge-queue.tr.json";
+import badgeQueueEn from "@/i18n/_new/badge-queue.en.json";
+import accountingPlusTr from "@/i18n/_new/accounting-plus.tr.json";
+import accountingPlusEn from "@/i18n/_new/accounting-plus.en.json";
+import cmeReportTr from "@/i18n/_new/cme-report.tr.json";
+import cmeReportEn from "@/i18n/_new/cme-report.en.json";
+import mediaTr from "@/i18n/_new/media.tr.json";
+import mediaEn from "@/i18n/_new/media.en.json";
+import dashboardTr from "@/i18n/_new/dashboard.tr.json";
+import dashboardEn from "@/i18n/_new/dashboard.en.json";
+import editionsTr from "@/i18n/_new/editions.tr.json";
+import editionsEn from "@/i18n/_new/editions.en.json";
+import registrationsTr from "@/i18n/_new/registrations.tr.json";
+import registrationsEn from "@/i18n/_new/registrations.en.json";
 
 type Dict = Record<string, unknown>;
 
@@ -63,8 +81,17 @@ const FRAGMENTS: { tr: Dict; en: Dict }[] = [
   { tr: floorsTr as Dict, en: floorsEn as Dict },
   { tr: integrationsTr as Dict, en: integrationsEn as Dict },
   { tr: portalTr as Dict, en: portalEn as Dict },
+  { tr: financeTr as Dict, en: financeEn as Dict },
+  { tr: sponsorshipTr as Dict, en: sponsorshipEn as Dict },
+  { tr: badgeQueueTr as Dict, en: badgeQueueEn as Dict },
+  { tr: accountingPlusTr as Dict, en: accountingPlusEn as Dict },
+  { tr: cmeReportTr as Dict, en: cmeReportEn as Dict },
   { tr: accommodationPlusTr as Dict, en: accommodationPlusEn as Dict },
+  { tr: registrationsTr as Dict, en: registrationsEn as Dict },
   { tr: complianceTr as Dict, en: complianceEn as Dict },
+  { tr: mediaTr as Dict, en: mediaEn as Dict },
+  { tr: dashboardTr as Dict, en: dashboardEn as Dict },
+  { tr: editionsTr as Dict, en: editionsEn as Dict },
 ];
 
 function withFragments(base: Dict): Dict {

@@ -8,6 +8,12 @@
     "hLocalPhonePh": "örn. +90 212 000 00 00 · Kontak kodu: 1234",
     "hPower": "Priz/Gerilim Bilgisi",
     "hPowerPh": "örn. 220V — Type C/F priz",
-    "hPortalFieldsHint": "Kompakt bilgi alanları — değerleri tamamen sizin girdiğiniz, konaklama kartında gösterilen bilgiler. Hiçbir alan önceden doldurulmaz."
+    "hPortalFieldsHint": "Kompakt bilgi alanları — değerleri tamamen sizin girdiğiniz, konaklama kartında gösterilen bilgiler. Hiçbir alan önceden doldurulmaz.",
+    "guestProfileCreated": "Kişi + {note}{companion}{slot} kuruldu.",
+    "guestNewParticipation": "yeni katılım",
+    "guestExistingParticipation": "mevcut katılım",
+    "guestPlusCompanion": " + refakatçi",
+    "guestPlusSlot": " + konuk slotu",
+    "editHotel": "Otel Düzenle"
   }
 }

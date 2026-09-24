@@ -1,0 +1,8 @@
+{
+  "editions": {
+    "published": "Etkinlik yayınlandı",
+    "draftCreated": "Etkinlik taslağı oluşturuldu",
+    "capsOpened": "{n} yetenek açıldı. Ayarlar → Yetenekler'den her zaman değiştirebilirsiniz.",
+    "createDraft": "Taslağı Oluştur"
+  }
+}

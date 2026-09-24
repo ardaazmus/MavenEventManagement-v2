@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useLang } from "@/lib/i18n";
 
 interface RegRow {
   id: string; confirmationNo: string; status: string; source: string; fundingSource: string; submittedAt?: string | null; decidedAt?: string | null; notes?: string | null;
@@ -47,6 +48,7 @@ interface PersonLite { id: string; firstName: string; lastName: string; email?: 
 export function RegistrationsView() {
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
+  const { t } = useLang(); // dil değişiminde re-render (F9-R-b)
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [q, setQ] = useState("");
   const [decideTarget, setDecideTarget] = useState<{ reg: RegRow; decision: "CONFIRMED" | "REJECTED" | "CANCELLED" } | null>(null);
@@ -91,7 +93,7 @@ export function RegistrationsView() {
         categoryId: editForm.categoryId || null, status: editForm.status,
         fundingSource: editForm.fundingSource, notes: editForm.notes || null,
       });
-      toast({ title: "Değişiklikler kaydedildi", description: "Kişi, katılım ve kayıt alanları güncellendi." });
+      toast({ title: "Değişiklikler kaydedildi", description: t("registrations.updatedAll") });
       setEditOpen(false); setEditRow(null);
       reload(); bump();
     } catch (e) {
@@ -123,7 +125,7 @@ export function RegistrationsView() {
         const res = await apiSend<{ waitlistOffered?: { personName: string }[] }>("/api/flows", "POST", { action: "registration.cancel", registrationId: decideTarget.reg.id, reason });
         const offers = res.waitlistOffered ?? [];
         toast({
-          title: "Kayıt iptal edildi",
+          title: t("registrations.cancelled"),
           description: offers.length > 0
             ? `Koltuk boşaldı — bekleme listesinden teklif gönderildi: ${offers.map((o) => o.personName).join(", ")}`
             : "Yaka kartı ve haklar etkilendi; etki önizlemesi kayıtta görülür.",
@@ -131,7 +133,7 @@ export function RegistrationsView() {
       } else {
         await apiSend("/api/flows", "POST", { action: "registration.decide", registrationId: decideTarget.reg.id, decision: decideTarget.decision });
         toast({
-          title: decideTarget.decision === "CONFIRMED" ? "Kayıt onaylandı" : "Kayıt reddedildi",
+          title: decideTarget.decision === "CONFIRMED" ? t("registrations.approved") : t("registrations.rejected"),
           description: decideTarget.decision === "CONFIRMED"
             ? "Hak claim'i CONSUMED'a geçti, yaka kartı READY — ödeme durumu ayrı hesaplanır."
             : "Yaka kartı ve haklar etkilendi; etki önizlemesi kayıtta görülür.",
@@ -149,7 +151,7 @@ export function RegistrationsView() {
 
   return (
     <div>
-      <PageHeader title="Kayıt & Katılımcılar" desc="Kategori → form → onay akışı; kayıt/ödeme/katılım üç ayrı eksen">
+      <PageHeader title={t("registrations.title")} desc="Kategori → form → onay akışı; kayıt/ödeme/katılım üç ayrı eksen">
         <div className="flex rounded-lg border p-0.5">
           <button onClick={() => setTab("list")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Kayıtlar</button>
           <button onClick={() => setTab("waitlist")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "waitlist" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Bekleme</button>
@@ -451,7 +453,7 @@ export function RegistrationsView() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>Vazgeç</Button>
             <Button onClick={saveFullEdit} disabled={editBusy || !editForm.firstName.trim() || !editForm.lastName.trim()}>
-              {editBusy ? "Kaydediliyor…" : "Değişiklikleri Kaydet"}
+              {editBusy ? "Kaydediliyor…" : t("registrations.saveChanges")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -464,6 +466,7 @@ export function RegistrationsView() {
 function WaitlistTab({ editionId, categories, onChanged }: { editionId: string | null; categories: CategoryRow[]; onChanged: () => void }) {
   const { refreshKey } = useApp();
   const { toast } = useToast();
+  const { t } = useLang(); // dil değişiminde re-render (F9-R-b)
   const [catFilter, setCatFilter] = useState("ALL");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
@@ -560,7 +563,7 @@ function WaitlistTab({ editionId, categories, onChanged }: { editionId: string |
   }, e.id);
 
   const addEntry = () => runAction(async () => {
-    if (!addPersonId) throw new Error("Kişi seçin");
+    if (!addPersonId) throw new Error(t("registrations.selectPerson"));
     await apiSend("/api/waitlist", "POST", {
       action: "add",
       editionId,
@@ -791,7 +794,7 @@ function WaitlistTab({ editionId, categories, onChanged }: { editionId: string |
             <div>
               <Label>Kişi *</Label>
               <Select value={addPersonId} onValueChange={setAddPersonId}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Kişi seçin…" /></SelectTrigger>
+                <SelectTrigger className="mt-1"><SelectValue placeholder={t("registrations.selectPersonPh")} /></SelectTrigger>
                 <SelectContent>
                   {(people ?? []).map((p) => (
                     <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}{p.company ? ` — ${p.company}` : ""}</SelectItem>

@@ -1,0 +1,12 @@
+{
+ "registrations": {
+  "title": "Kayıt & Katılımcılar",
+  "updatedAll": "Kişi, katılım ve kayıt alanları güncellendi.",
+  "cancelled": "Kayıt iptal edildi",
+  "approved": "Kayıt onaylandı",
+  "rejected": "Kayıt reddedildi",
+  "saveChanges": "Değişiklikleri Kaydet",
+  "selectPerson": "Kişi seçin",
+  "selectPersonPh": "Kişi seçin…"
+ }
+}

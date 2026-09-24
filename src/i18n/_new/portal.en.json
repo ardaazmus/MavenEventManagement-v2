@@ -50,6 +50,12 @@
     "deletedDesc": "\"{title}\" removed from the portal.",
     "visibleOnToast": "Block is now visible",
     "visibleOffToast": "Block hidden",
-    "actionFailed": "Operation failed"
+    "actionFailed": "Operation failed",
+    "stepReg": "Registration",
+    "stepsAria": "Registration status steps",
+    "regOpened": "Registration opened: {no} — congratulations!",
+    "noParticipationDesc": "Apply through the registration form and your participation will be created — you can follow its progress on this screen.",
+    "hdrSubtitlePh": "e.g. Registration, payments and your programme in one place",
+    "firmIdentityHint": "You can add this under Settings → Firm Identity."
   }
 }

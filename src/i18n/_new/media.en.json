@@ -1,0 +1,19 @@
+{
+  "media": {
+    "linkedType": {
+      "PERSON": "Person",
+      "ORGANIZATION": "Organization",
+      "HOTEL": "Hotel",
+      "SESSION": "Session",
+      "SUBMISSION": "Submission",
+      "PORTAL": "Portal",
+      "CERTIFICATE": "Certificate",
+      "BADGE_DESIGN": "Badge design"
+    },
+    "totalAssets": "Total assets",
+    "emptyAssetsDesc": "Use 'Upload asset' to attach a file link, or embed small files directly into the archive.",
+    "addSubfolder": "Add subfolder",
+    "deleteFolder": "Delete folder",
+    "addToArchive": "Add to archive"
+  }
+}

@@ -8,6 +8,12 @@
     "hLocalPhonePh": "e.g. +90 212 000 00 00 · Room code: 1234",
     "hPower": "Power/Voltage Info",
     "hPowerPh": "e.g. 220V — Type C/F plugs",
-    "hPortalFieldsHint": "Compact info fields — everything shown here is entered by you and displayed on the accommodation card. No field is pre-filled."
+    "hPortalFieldsHint": "Compact info fields — everything shown here is entered by you and displayed on the accommodation card. No field is pre-filled.",
+    "guestProfileCreated": "Person + {note}{companion}{slot} created.",
+    "guestNewParticipation": "new participation",
+    "guestExistingParticipation": "existing participation",
+    "guestPlusCompanion": " + companion",
+    "guestPlusSlot": " + guest slot",
+    "editHotel": "Edit Hotel"
   }
 }

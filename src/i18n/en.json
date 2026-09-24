@@ -263,7 +263,8 @@
     "fisBadge": "Receipt",
     "spentByPrefix": "Field:",
     "reconDataEmpty": "No reconciliation data",
-    "reconDataEmptyDesc": "The reconciliation report is generated automatically when an edition is selected."
+    "reconDataEmptyDesc": "The reconciliation report is generated automatically when an edition is selected.",
+    "selectOne": "Select"
   },
   "settings": {
     "languageTitle": "Language / Dil",
@@ -1439,7 +1440,10 @@
     "addAssignmentAria": "Add assignment",
     "add": "Add",
     "assignAfterSave": "After saving the session you can assign speaker/moderator roles.",
-    "saveSession": "Save Session"
+    "saveSession": "Save Session",
+    "sessAccessOpen": "Open — anyone can enter",
+    "sessAccessRegistrationRequired": "Registration required",
+    "sessAccessScan": "Scan to enter"
   },
   "cme": {
     "tabCredits": "CME Credits",
@@ -1667,7 +1671,13 @@
     "mobileInteractive": "Mobile Interactive",
     "timeTrapTitle": "Time trap",
     "timeTrapDesc": "Very fast submissions are considered suspicious",
-    "emailLimitDesc": "The same email can submit at most this many times per day"
+    "emailLimitDesc": "The same email can submit at most this many times per day",
+    "namePh": "e.g. Online Registration Form",
+    "createForm": "Create Form",
+    "orgPh": "e.g. Organization Name",
+    "optionsPh": "One option per line:\nConference Registration\nWorkshop\nGala Dinner",
+    "selectOptionPh": "Choose from options…",
+    "addFieldCta": "Add Field"
   },
   "archive": {
     "title": "Archive",
@@ -2346,7 +2356,13 @@
     "deletedDesc": "\"{title}\" removed from the portal.",
     "visibleOnToast": "Block is now visible",
     "visibleOffToast": "Block hidden",
-    "actionFailed": "Operation failed"
+    "actionFailed": "Operation failed",
+    "stepReg": "Registration",
+    "stepsAria": "Registration status steps",
+    "regOpened": "Registration opened: {no} — congratulations!",
+    "noParticipationDesc": "Apply through the registration form and your participation will be created — you can follow its progress on this screen.",
+    "hdrSubtitlePh": "e.g. Registration, payments and your programme in one place",
+    "firmIdentityHint": "You can add this under Settings → Firm Identity."
   },
   "accommodation": {
     "hMapsUrl": "Map Link",
@@ -2357,6 +2373,81 @@
     "hLocalPhonePh": "e.g. +90 212 000 00 00 · Room code: 1234",
     "hPower": "Power/Voltage Info",
     "hPowerPh": "e.g. 220V — Type C/F plugs",
-    "hPortalFieldsHint": "Compact info fields — everything shown here is entered by you and displayed on the accommodation card. No field is pre-filled."
+    "hPortalFieldsHint": "Compact info fields — everything shown here is entered by you and displayed on the accommodation card. No field is pre-filled.",
+    "guestProfileCreated": "Person + {note}{companion}{slot} created.",
+    "guestNewParticipation": "new participation",
+    "guestExistingParticipation": "existing participation",
+    "guestPlusCompanion": " + companion",
+    "guestPlusSlot": " + guest slot",
+    "editHotel": "Edit Hotel"
+  },
+  "badgeQueue": {
+    "searchPlaceholder": "Search person / badge no / profile",
+    "emptyQueueDesc": "Badges are prepared automatically once a registration is approved (READY) and are listed here.",
+    "clearFilterHint": "Clear the status filter or your search."
+  },
+  "cmeReport": {
+    "loadFailed": "Could not load the report",
+    "sessionCreditBreakdown": "Session credit breakdown"
+  },
+  "dashboard": {
+    "person": "Person",
+    "portfolio": "Event portfolio",
+    "registrationsLink": "Registration list →",
+    "uniquePersons": "Unique persons",
+    "ordersLink": "Orders →",
+    "registrationCurve": "Registration curve"
+  },
+  "editions": {
+    "published": "Event published",
+    "draftCreated": "Event draft created",
+    "capsOpened": "{n} capabilities enabled. You can change them anytime under Settings → Capabilities.",
+    "createDraft": "Create draft"
+  },
+  "finance": {
+    "orders": "Orders",
+    "saveCollection": "Record Payment"
+  },
+  "media": {
+    "linkedType": {
+      "PERSON": "Person",
+      "ORGANIZATION": "Organization",
+      "HOTEL": "Hotel",
+      "SESSION": "Session",
+      "SUBMISSION": "Submission",
+      "PORTAL": "Portal",
+      "CERTIFICATE": "Certificate",
+      "BADGE_DESIGN": "Badge design"
+    },
+    "totalAssets": "Total assets",
+    "emptyAssetsDesc": "Use 'Upload asset' to attach a file link, or embed small files directly into the archive.",
+    "addSubfolder": "Add subfolder",
+    "deleteFolder": "Delete folder",
+    "addToArchive": "Add to archive"
+  },
+  "registrations": {
+    "title": "Registrations & Participants",
+    "updatedAll": "Person, participation and registration fields updated.",
+    "cancelled": "Registration cancelled",
+    "approved": "Registration approved",
+    "rejected": "Registration rejected",
+    "saveChanges": "Save Changes",
+    "selectPerson": "Select a person",
+    "selectPersonPh": "Select a person…"
+  },
+  "sponsorship": {
+    "guestFlowDesc": "Person → Participation → Registration(SPONSOR_ENTITLEMENT) → Claim(RESERVED) chain created. Approving does not consume it yet.",
+    "addAsProposal": "Add as Proposal",
+    "entType": {
+      "complimentaryRegistration": "Free Registration",
+      "booth": "Booth",
+      "galaTicket": "Gala Invitation",
+      "badge": "Badge",
+      "loungeAccess": "Lounge Access",
+      "discount": "Discount",
+      "sessionAccess": "Session Access",
+      "hotel": "Accommodation",
+      "custom": "Custom"
+    }
   }
 }

@@ -4,6 +4,7 @@
 // Yazdırma: body.maven-printing + @media print kurallarıyla yalnız belge basılır; CSV ayrı uçtan.
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/client";
+import { useLang } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { EVENT_ROLES, label } from "@/lib/constants";
 import * as Icons from "lucide-react";
@@ -36,6 +37,7 @@ const fmtHour = (iso: string) =>
   new Date(iso).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
 
 export function CmeReportOverlay({ editionId, onClose }: { editionId: string; onClose: () => void }) {
+  const { t } = useLang(); // dil değişiminde re-render (F9-R-d)
   const [data, setData] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,7 +45,7 @@ export function CmeReportOverlay({ editionId, onClose }: { editionId: string; on
     let alive = true;
     apiGet<ReportData>(`/api/cme/report?editionId=${encodeURIComponent(editionId)}`)
       .then((d) => { if (alive) setData(d); })
-      .catch((e) => { if (alive) setError(e instanceof Error ? e.message : "Rapor yüklenemedi"); });
+      .catch((e) => { if (alive) setError(e instanceof Error ? e.message : t("cmeReport.loadFailed")); });
     return () => { alive = false; };
   }, [editionId]);
 
@@ -138,7 +140,7 @@ export function CmeReportOverlay({ editionId, onClose }: { editionId: string; on
               <h2 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-teal-900">
                 <Icons.ListChecks className="size-4" aria-hidden /> Oturum Kredi Dökümü
               </h2>
-              <table className="maven-report-table w-full text-xs" aria-label="Oturum kredi dökümü">
+              <table className="maven-report-table w-full text-xs" aria-label={t("cmeReport.sessionCreditBreakdown")}>
                 <thead>
                   <tr className="text-left text-[10px] uppercase tracking-wider text-zinc-500">
                     <th className="px-2.5 py-2">Oturum</th>

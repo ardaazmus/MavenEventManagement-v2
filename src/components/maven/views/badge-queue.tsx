@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useLang } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 
 // ─── Tipler ──────────────────────────────────────────────────────────────────
@@ -82,6 +83,7 @@ const ACTION_SKIP: Record<BadgeAction, string> = {
 export function BadgeQueueView() {
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
+  const { t } = useLang(); // dil değişiminde re-render (F9-R-d)
   const [tab, setTab] = useState<"queue" | "designer">("queue");
 
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -256,7 +258,7 @@ export function BadgeQueueView() {
           </Select>
           <div className="relative flex-1">
             <Icons.Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Kişi / yaka kartı no / profil ara" className="pl-8" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("badgeQueue.searchPlaceholder")} className="pl-8" />
           </div>
         </div>
 
@@ -264,7 +266,7 @@ export function BadgeQueueView() {
           {loading ? <Loading rows={6} /> : error ? <ErrorState message={error} onRetry={reload} /> : visible.length === 0 ? (
             <EmptyState
               title={queue.length === 0 ? "Kuyrukta yaka kartı yok" : "Filtreye uyan yaka kartı yok"}
-              desc={queue.length === 0 ? "Kayıt onaylandığında yaka kartları otomatik hazırlanır (READY) ve burada listelenir." : "Durum filtresini veya aramayı temizleyin."}
+              desc={queue.length === 0 ? t("badgeQueue.emptyQueueDesc") : t("badgeQueue.clearFilterHint")}
             />
           ) : (
             <div className="maven-scroll max-h-96 overflow-y-auto rounded-lg border">

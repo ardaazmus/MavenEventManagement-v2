@@ -263,7 +263,8 @@
     "fisBadge": "Fiş",
     "spentByPrefix": "Sahada:",
     "reconDataEmpty": "Mutabakat verisi yok",
-    "reconDataEmptyDesc": "Bir edisyon seçildiğinde mutabakat raporu otomatik oluşturulur."
+    "reconDataEmptyDesc": "Bir edisyon seçildiğinde mutabakat raporu otomatik oluşturulur.",
+    "selectOne": "Seçin"
   },
   "settings": {
     "languageTitle": "Dil / Language",
@@ -1439,7 +1440,10 @@
     "addAssignmentAria": "Görev ekle",
     "add": "Ekle",
     "assignAfterSave": "Oturumu kaydettikten sonra konuşmacı/moderatör görev ataması yapabilirsiniz.",
-    "saveSession": "Oturumu Kaydet"
+    "saveSession": "Oturumu Kaydet",
+    "sessAccessOpen": "Açık — herkes girebilir",
+    "sessAccessRegistrationRequired": "Kayıt gerekli",
+    "sessAccessScan": "Taramalı giriş"
   },
   "cme": {
     "tabCredits": "CME Kredi",
@@ -1667,7 +1671,13 @@
     "mobileInteractive": "Mobil Etkileşimli",
     "timeTrapTitle": "Zaman tuzağı",
     "timeTrapDesc": "Çok hızlı gönderimler şüpheli sayılır",
-    "emailLimitDesc": "Aynı e-posta günde en fazla bu kadar gönderim yapabilir"
+    "emailLimitDesc": "Aynı e-posta günde en fazla bu kadar gönderim yapabilir",
+    "namePh": "Örn. Online Kayıt Formu",
+    "createForm": "Formu Oluştur",
+    "orgPh": "Örn. Kurum Adı",
+    "optionsPh": "Seçenek başına bir satır:\nKongre Kaydı\nWorkshop\nGala Yemeği",
+    "selectOptionPh": "Seçeneklerden seçin…",
+    "addFieldCta": "Alanı Ekle"
   },
   "archive": {
     "title": "Arşiv",
@@ -2346,7 +2356,13 @@
     "deletedDesc": "\"{title}\" portaldan kaldırıldı.",
     "visibleOnToast": "Blok görünür yapıldı",
     "visibleOffToast": "Blok gizlendi",
-    "actionFailed": "İşlem başarısız"
+    "actionFailed": "İşlem başarısız",
+    "stepReg": "Kayıt",
+    "stepsAria": "Kayıt durum adımları",
+    "regOpened": "Kayıt açıldı: {no} — tebrikler!",
+    "noParticipationDesc": "Kayıt formuyla başvurduğunuzda katılımınız oluşturulur ve bu ekrancan takip edebilirsiniz.",
+    "hdrSubtitlePh": "örn. Kayıt, ödeme ve programınız tek yerde",
+    "firmIdentityHint": "Ayarlar → Firma Kimliği bölümünden eklenebilir."
   },
   "accommodation": {
     "hMapsUrl": "Harita Bağlantısı",
@@ -2357,6 +2373,81 @@
     "hLocalPhonePh": "örn. +90 212 000 00 00 · Kontak kodu: 1234",
     "hPower": "Priz/Gerilim Bilgisi",
     "hPowerPh": "örn. 220V — Type C/F priz",
-    "hPortalFieldsHint": "Kompakt bilgi alanları — değerleri tamamen sizin girdiğiniz, konaklama kartında gösterilen bilgiler. Hiçbir alan önceden doldurulmaz."
+    "hPortalFieldsHint": "Kompakt bilgi alanları — değerleri tamamen sizin girdiğiniz, konaklama kartında gösterilen bilgiler. Hiçbir alan önceden doldurulmaz.",
+    "guestProfileCreated": "Kişi + {note}{companion}{slot} kuruldu.",
+    "guestNewParticipation": "yeni katılım",
+    "guestExistingParticipation": "mevcut katılım",
+    "guestPlusCompanion": " + refakatçi",
+    "guestPlusSlot": " + konuk slotu",
+    "editHotel": "Otel Düzenle"
+  },
+  "badgeQueue": {
+    "searchPlaceholder": "Kişi / yaka kartı no / profil ara",
+    "emptyQueueDesc": "Kayıt onaylandığında yaka kartları otomatik hazırlanır (READY) ve burada listelenir.",
+    "clearFilterHint": "Durum filtresini veya aramayı temizleyin."
+  },
+  "cmeReport": {
+    "loadFailed": "Rapor yüklenemedi",
+    "sessionCreditBreakdown": "Oturum kredi dökümü"
+  },
+  "dashboard": {
+    "person": "Kişi",
+    "portfolio": "Etkinlik Portföyü",
+    "registrationsLink": "Kayıt listesi →",
+    "uniquePersons": "Benzersiz Kişi",
+    "ordersLink": "Siparişler →",
+    "registrationCurve": "Kayıt Eğrisi"
+  },
+  "editions": {
+    "published": "Etkinlik yayınlandı",
+    "draftCreated": "Etkinlik taslağı oluşturuldu",
+    "capsOpened": "{n} yetenek açıldı. Ayarlar → Yetenekler'den her zaman değiştirebilirsiniz.",
+    "createDraft": "Taslağı Oluştur"
+  },
+  "finance": {
+    "orders": "Siparişler",
+    "saveCollection": "Tahsilatı Kaydet"
+  },
+  "media": {
+    "linkedType": {
+      "PERSON": "Kişi",
+      "ORGANIZATION": "Kurum",
+      "HOTEL": "Otel",
+      "SESSION": "Oturum",
+      "SUBMISSION": "Gönderim",
+      "PORTAL": "Portal",
+      "CERTIFICATE": "Sertifika",
+      "BADGE_DESIGN": "Yaka Kartı Tasarımı"
+    },
+    "totalAssets": "Toplam Varlık",
+    "emptyAssetsDesc": "'Varlık Yükle' ile dosya bağlantısı ekleyin ya da küçük dosyaları doğrudan arşive gömün.",
+    "addSubfolder": "Alt Klasör Ekle",
+    "deleteFolder": "Klasörü Sil",
+    "addToArchive": "Arşive Ekle"
+  },
+  "registrations": {
+    "title": "Kayıt & Katılımcılar",
+    "updatedAll": "Kişi, katılım ve kayıt alanları güncellendi.",
+    "cancelled": "Kayıt iptal edildi",
+    "approved": "Kayıt onaylandı",
+    "rejected": "Kayıt reddedildi",
+    "saveChanges": "Değişiklikleri Kaydet",
+    "selectPerson": "Kişi seçin",
+    "selectPersonPh": "Kişi seçin…"
+  },
+  "sponsorship": {
+    "guestFlowDesc": "Person → Participation → Registration(SPONSOR_ENTITLEMENT) → Claim(RESERVED) zinciri kuruldu. Onayla henüz tüketmez.",
+    "addAsProposal": "Öneri Olarak Ekle",
+    "entType": {
+      "complimentaryRegistration": "Ücretsiz Kayıt",
+      "booth": "Stant",
+      "galaTicket": "Gala Davetiyesi",
+      "badge": "Yaka Kartı",
+      "loungeAccess": "Lounge Erişimi",
+      "discount": "İndirim",
+      "sessionAccess": "Oturum Erişimi",
+      "hotel": "Konaklama",
+      "custom": "Özel"
+    }
   }
 }

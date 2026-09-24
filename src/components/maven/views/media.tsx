@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listEntity, apiGet, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
+import { useLang } from "@/lib/i18n";
 import { PageHeader, SectionCard, EmptyState, Loading, ErrorState, useApi, Chip, KpiCard } from "../bits";
 import { MEDIA_KIND, label } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
@@ -44,8 +45,8 @@ interface SystemFoldersResponse {
 }
 // upload diyaloğundaki bağlı varlık tipi seçenekleri — MediaAsset.linkedType değerleri
 const LINKED_TYPE_LABEL: Record<string, string> = {
-  PERSON: "Kişi", ORGANIZATION: "Kurum", HOTEL: "Otel", SESSION: "Oturum",
-  SUBMISSION: "Gönderim", PORTAL: "Portal", CERTIFICATE: "Sertifika", BADGE_DESIGN: "Yaka Kartı Tasarımı",
+  PERSON: "media.linkedType.PERSON", ORGANIZATION: "media.linkedType.ORGANIZATION", HOTEL: "media.linkedType.HOTEL", SESSION: "media.linkedType.SESSION",
+  SUBMISSION: "media.linkedType.SUBMISSION", PORTAL: "media.linkedType.PORTAL", CERTIFICATE: "media.linkedType.CERTIFICATE", BADGE_DESIGN: "media.linkedType.BADGE_DESIGN",
 };
 
 // klasör renk dili — nokta + seçili zemin
@@ -103,6 +104,7 @@ function kindFromMime(mime: string, fileName: string): string {
 export function MediaArchiveView() {
   const { currentEditionId, editions, bump, refreshKey } = useApp();
   const { toast } = useToast();
+  const { t } = useLang();
 
   const { data: folders, error: foldersError, reload: reloadFolders, loading: foldersLoading } = useApi<MediaFolderRow[]>(
     () => listEntity<MediaFolderRow>("media-folders", { editionId: currentEditionId ?? undefined }),
@@ -476,7 +478,7 @@ export function MediaArchiveView() {
         </span>
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard label="Toplam Varlık" value={(assets ?? []).length} icon={<Icons.Files className="size-4" />} />
+        <KpiCard label={t("media.totalAssets")} value={(assets ?? []).length} icon={<Icons.Files className="size-4" />} />
         <KpiCard label="Görsel" value={imageCount} tone="teal" icon={<Icons.Image className="size-4" />} />
         <KpiCard label="Video" value={videoCount} tone="violet" icon={<Icons.Clapperboard className="size-4" />} />
         <KpiCard label="Klasör" value={mergedFolders.length} tone="amber" icon={<Icons.FolderOpen className="size-4" />} />
@@ -527,7 +529,7 @@ export function MediaArchiveView() {
           {assetsLoading && !assets ? <Loading rows={3} /> : assetsError ? <ErrorState message={assetsError} onRetry={reloadAssets} /> : visibleAssets.length === 0 ? (
             <EmptyState
               title={search ? "Aramaya uyan varlık yok" : "Bu klasörde varlık yok"}
-              desc={search ? "Farklı bir ad/etiket deneyin." : "'Varlık Yükle' ile dosya bağlantısı ekleyin ya da küçük dosyaları doğrudan arşive gömün."}
+              desc={search ? "Farklı bir ad/etiket deneyin." : t("media.emptyAssetsDesc")}
             />
           ) : (
             <div className="maven-scroll grid max-h-[520px] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
@@ -572,7 +574,7 @@ export function MediaArchiveView() {
       <Dialog open={Boolean(folderDialog)} onOpenChange={(o) => !o && setFolderDialog(null)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>{folderDialog?.mode === "edit" ? "Klasörü Yeniden Adlandır" : "Alt Klasör Ekle"}</DialogTitle>
+            <DialogTitle>{folderDialog?.mode === "edit" ? "Klasörü Yeniden Adlandır" : t("media.addSubfolder")}</DialogTitle>
             <DialogDescription>
               {folderDialog?.mode === "edit"
                 ? (folderDialog?.target?.name ?? "")
@@ -623,7 +625,7 @@ export function MediaArchiveView() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Vazgeç</AlertDialogCancel>
-            <AlertDialogAction onClick={removeFolder} className="bg-rose-600 text-white hover:bg-rose-700">{busy ? "Siliniyor…" : "Klasörü Sil"}</AlertDialogAction>
+            <AlertDialogAction onClick={removeFolder} className="bg-rose-600 text-white hover:bg-rose-700">{busy ? "Siliniyor…" : t("media.deleteFolder")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -739,7 +741,7 @@ export function MediaArchiveView() {
                   <SelectTrigger aria-label="Bağlı varlık tipi"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">Bağlantısız</SelectItem>
-                    {Object.entries(LINKED_TYPE_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                    {Object.entries(LINKED_TYPE_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{t(v)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -756,7 +758,7 @@ export function MediaArchiveView() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setUploadOpen(false)}>Vazgeç</Button>
             <Button onClick={uploadAsset} disabled={busy || !uploadForm.name.trim() || (uploadMode === "link" && !uploadForm.externalUrl.trim())}>
-              {busy ? "Ekleniyor…" : "Arşive Ekle"}
+              {busy ? "Ekleniyor…" : t("media.addToArchive")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
+import { useLang } from "@/lib/i18n";
 import { SectionCard, EmptyState, PageHeader, StatusBadge, Chip } from "../bits";
 import { EDITION_STATUS, label, TEMPLATES, CAPABILITIES, fmtDate } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,7 @@ type EditionRow = {
 export function EditionsView() {
   const { editions, currentEditionId, setCurrentEdition, setModule, bump, bootstrap } = useApp();
   const { toast } = useToast();
+  const { t } = useLang();
   const [createOpen, setCreateOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -82,7 +84,7 @@ export function EditionsView() {
     setPublishBusy(true);
     try {
       const r = await apiSend<{ name: string }>("/api/flows", "POST", { action: "edition.publish", editionId: publishTarget.id });
-      toast({ title: "Etkinlik yayınlandı", description: `${r.name} — kayıt bağlantısı açıldı, katılımcılar görebilir.` });
+      toast({ title: t("editions.published"), description: `${r.name} — kayıt bağlantısı açıldı, katılımcılar görebilir.` });
       setPublishTarget(null);
       await bootstrap();
       bump();
@@ -141,7 +143,7 @@ export function EditionsView() {
       for (const key of selectedCaps) {
         await apiSend("/api/capabilities", "POST", { editionId: edition.id, key, enabled: true, setupNote: "yapılacak" });
       }
-      toast({ title: "Etkinlik taslağı oluşturuldu", description: `${selectedCaps.length} yetenek açıldı. Ayarlar → Yetenekler'den her zaman değiştirebilirsiniz.` });
+      toast({ title: t("editions.draftCreated"), description: t("editions.capsOpened", { n: selectedCaps.length }) });
       setCreateOpen(false); setStep(1);
       await bootstrap();
       setCurrentEdition(edition.id);
@@ -360,7 +362,7 @@ export function EditionsView() {
             {step < 3 ? (
               <Button onClick={() => setStep(step + 1)}>Devam et</Button>
             ) : (
-              <Button onClick={create} disabled={busy || !form.seriesName}>{busy ? "Oluşturuluyor…" : "Taslağı Oluştur"}</Button>
+              <Button onClick={create} disabled={busy || !form.seriesName}>{busy ? "Oluşturuluyor…" : t("editions.createDraft")}</Button>
             )}
           </DialogFooter>
         </DialogContent>

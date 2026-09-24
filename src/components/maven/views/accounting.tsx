@@ -1131,7 +1131,7 @@ export function AccountingView() {
             <div className="space-y-1.5">
               <Label>{t("accounting.fCategory")}</Label>
               <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
-                <SelectTrigger><SelectValue placeholder="Seçin" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder={t("accounting.selectOne")} /></SelectTrigger>
                 <SelectContent>
                   {Object.entries(EXPENSE_CATEGORY).map(([k, v]) => <SelectItem key={k} value={k}>{expCategoryMap[k]}</SelectItem>)}
                 </SelectContent>
@@ -1259,7 +1259,7 @@ export function AccountingView() {
             <div className="space-y-1.5">
               <Label>{t("accounting.fCategory")}</Label>
               <Select value={incForm.category} onValueChange={(v) => setIncForm({ ...incForm, category: v })}>
-                <SelectTrigger><SelectValue placeholder="Seçin" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder={t("accounting.selectOne")} /></SelectTrigger>
                 <SelectContent>
                   {Object.entries(INCOME_CATEGORY).map(([k, v]) => <SelectItem key={k} value={k}>{incCategoryMap[k]}</SelectItem>)}
                 </SelectContent>

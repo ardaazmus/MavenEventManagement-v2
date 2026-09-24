@@ -1,5 +1,8 @@
 {
  "scientific": {
+  "sessAccessOpen": "Açık — herkes girebilir",
+  "sessAccessRegistrationRequired": "Kayıt gerekli",
+  "sessAccessScan": "Taramalı giriş",
   "title": "Bilimsel Süreç",
   "desc": "Çağrı → bildiri → hakem → komite kararı; bilimsel karar ile programlama ayrı modüllerdedir (§28)",
   "addSubmission": "Bildiri Ekle",

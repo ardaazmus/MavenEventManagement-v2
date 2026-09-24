@@ -1719,7 +1719,7 @@ export function FormCenterView() {
           <div className="grid gap-3">
             <div className="grid gap-1">
               <Label className="text-xs">{t("forms.formName")}</Label>
-              <Input value={newForm.name} onChange={(e) => setNewForm({ ...newForm, name: e.target.value })} placeholder="Örn. Online Kayıt Formu" />
+              <Input value={newForm.name} onChange={(e) => setNewForm({ ...newForm, name: e.target.value })} placeholder={t("forms.namePh")} />
             </div>
             <div className="grid gap-1">
               <Label className="text-xs">Tür</Label>
@@ -1810,7 +1810,7 @@ export function FormCenterView() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Vazgeç</Button>
             <Button disabled={busy !== null || !newForm.name.trim()} onClick={createForm}>
-              {busy === "create" ? "Oluşturuluyor…" : "Formu Oluştur"}
+              {busy === "create" ? "Oluşturuluyor…" : t("forms.createForm")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1828,7 +1828,7 @@ export function FormCenterView() {
           <div className="grid gap-3">
             <div className="grid gap-1">
               <Label className="text-xs">Etiket</Label>
-              <Input value={newField.label} onChange={(e) => setNewField({ ...newField, label: e.target.value })} placeholder="Örn. Kurum Adı" />
+              <Input value={newField.label} onChange={(e) => setNewField({ ...newField, label: e.target.value })} placeholder={t("forms.orgPh")} />
             </div>
             <div className="grid gap-1">
               <Label className="text-xs">Alan türü</Label>
@@ -1864,7 +1864,7 @@ export function FormCenterView() {
                 <Textarea
                   rows={3}
                   value={newField.options}
-                  placeholder={"Seçenek başına bir satır:\nKongre Kaydı\nWorkshop\nGala Yemeği"}
+                  placeholder={t("forms.optionsPh")}
                   onChange={(e) => setNewField({ ...newField, options: e.target.value })}
                 />
               </div>
@@ -1927,7 +1927,7 @@ export function FormCenterView() {
                   value={newField.correctAnswer || undefined}
                   onValueChange={(v) => setNewField({ ...newField, correctAnswer: v })}
                 >
-                  <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Seçeneklerden seçin…" /></SelectTrigger>
+                  <SelectTrigger className="mt-1 h-9"><SelectValue placeholder={t("forms.selectOptionPh")} /></SelectTrigger>
                   <SelectContent>
                     {newField.options.split("\n").map((s) => s.trim()).filter(Boolean).map((opt) => (
                       <SelectItem key={opt} value={opt}>{opt}</SelectItem>
@@ -1943,7 +1943,7 @@ export function FormCenterView() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setFieldOpen(false)}>Vazgeç</Button>
             <Button disabled={busy !== null || !newField.label.trim() || !selectedForm} onClick={addField}>
-              {busy === "field" ? "Ekleniyor…" : "Alanı Ekle"}
+              {busy === "field" ? "Ekleniyor…" : t("forms.addFieldCta")}
             </Button>
           </DialogFooter>
         </DialogContent>

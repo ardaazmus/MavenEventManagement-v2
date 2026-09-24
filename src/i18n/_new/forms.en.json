@@ -177,7 +177,13 @@
   "mobileInteractive": "Mobile Interactive",
   "timeTrapTitle": "Time trap",
   "timeTrapDesc": "Very fast submissions are considered suspicious",
-  "emailLimitDesc": "The same email can submit at most this many times per day"
+  "emailLimitDesc": "The same email can submit at most this many times per day",
+  "namePh": "e.g. Online Registration Form",
+  "createForm": "Create Form",
+  "orgPh": "e.g. Organization Name",
+  "optionsPh": "One option per line:\nConference Registration\nWorkshop\nGala Dinner",
+  "selectOptionPh": "Choose from options…",
+  "addFieldCta": "Add Field"
  },
  "common": {
   "error": "Error"

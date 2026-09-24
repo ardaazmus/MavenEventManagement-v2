@@ -1,0 +1,17 @@
+{
+  "sponsorship": {
+    "guestFlowDesc": "Person → Participation → Registration(SPONSOR_ENTITLEMENT) → Claim(RESERVED) chain created. Approving does not consume it yet.",
+    "addAsProposal": "Add as Proposal",
+    "entType": {
+      "complimentaryRegistration": "Free Registration",
+      "booth": "Booth",
+      "galaTicket": "Gala Invitation",
+      "badge": "Badge",
+      "loungeAccess": "Lounge Access",
+      "discount": "Discount",
+      "sessionAccess": "Session Access",
+      "hotel": "Accommodation",
+      "custom": "Custom"
+    }
+  }
+}

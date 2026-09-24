@@ -1,0 +1,17 @@
+{
+  "sponsorship": {
+    "guestFlowDesc": "Person → Participation → Registration(SPONSOR_ENTITLEMENT) → Claim(RESERVED) zinciri kuruldu. Onayla henüz tüketmez.",
+    "addAsProposal": "Öneri Olarak Ekle",
+    "entType": {
+      "complimentaryRegistration": "Ücretsiz Kayıt",
+      "booth": "Stant",
+      "galaTicket": "Gala Davetiyesi",
+      "badge": "Yaka Kartı",
+      "loungeAccess": "Lounge Erişimi",
+      "discount": "İndirim",
+      "sessionAccess": "Oturum Erişimi",
+      "hotel": "Konaklama",
+      "custom": "Özel"
+    }
+  }
+}

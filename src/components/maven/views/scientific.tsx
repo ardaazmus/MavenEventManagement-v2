@@ -62,7 +62,7 @@ const MATERIAL_STATUS_LABEL: Record<string, string> = { PENDING: "Bekliyor", REA
 
 // ── R10-b: manuel oturum/bildiri girişi sabitleri — import akışıyla tutarlı ─
 const SESSION_TYPES: Record<string, string> = { KEYNOTE: "Ana Konuşma", TALK: "Sunum", PANEL: "Panel", WORKSHOP: "Atölye", BREAK: "Ara", NETWORKING: "Ağ Oluşturma", POSTER_SESSION: "Poster Oturumu" };
-const SESSION_ACCESS: Record<string, string> = { OPEN: "Açık — herkes girebilir", REGISTRATION_REQUIRED: "Kayıt gerekli", SCAN: "Taramalı giriş" };
+const SESSION_ACCESS: Record<string, string> = { OPEN: "scientific.sessAccessOpen", REGISTRATION_REQUIRED: "scientific.sessAccessRegistrationRequired", SCAN: "scientific.sessAccessScan" }; // F9-R-d: sözlük anahtarları (t() kullanım yerinde)
 const SUBMISSION_TYPES: Record<string, string> = { ORAL: "Sözlü", POSTER: "Poster", E_POSTER: "E-Poster", PANEL: "Panel", WORKSHOP: "Atölye" };
 const FILE_STATUS_OPTIONS: Record<string, string> = { MISSING: "Dosya Yok", FORMAT_ISSUE: "Biçim Hatalı", AV_PENDING: "AV Bekliyor", APPROVED: "Onaylı" };
 const ASSIGN_ROLES = ["SPEAKER", "MODERATOR", "SESSION_CHAIR", "PANELIST"] as const; // §29 + program import akışıyla aynı küme
@@ -465,7 +465,7 @@ export function ProgramView() {
   useLang(); // dil değişiminde yeniden render
   // Faz E: sabit enum map'lerini tLabel ile çevir (status sözlüğü köprüsü)
   const sessionTypeMap = Object.fromEntries(Object.entries(SESSION_TYPES).map(([k]) => [k, tLabel(SESSION_TYPES, k)]));
-  const sessionAccessMap = Object.fromEntries(Object.entries(SESSION_ACCESS).map(([k]) => [k, tLabel(SESSION_ACCESS, k)]));
+  const sessionAccessMap = Object.fromEntries(Object.entries(SESSION_ACCESS).map(([k, v]) => [k, t(v)])); // F9-R-d: parça sözlükten etiket
   const sessionStatusMap = Object.fromEntries(Object.entries(SESSION_STATUS).map(([k]) => [k, tLabel(SESSION_STATUS, k)]));
   const materialTypeMap = Object.fromEntries(Object.entries(MATERIAL_TYPE).map(([k]) => [k, tLabel(MATERIAL_TYPE, k)]));
   const matStatusMap = Object.fromEntries(Object.entries(MATERIAL_STATUS_LABEL).map(([k]) => [k, tLabel(MATERIAL_STATUS_LABEL, k)]));

@@ -1,0 +1,19 @@
+{
+  "media": {
+    "linkedType": {
+      "PERSON": "Kişi",
+      "ORGANIZATION": "Kurum",
+      "HOTEL": "Otel",
+      "SESSION": "Oturum",
+      "SUBMISSION": "Gönderim",
+      "PORTAL": "Portal",
+      "CERTIFICATE": "Sertifika",
+      "BADGE_DESIGN": "Yaka Kartı Tasarımı"
+    },
+    "totalAssets": "Toplam Varlık",
+    "emptyAssetsDesc": "'Varlık Yükle' ile dosya bağlantısı ekleyin ya da küçük dosyaları doğrudan arşive gömün.",
+    "addSubfolder": "Alt Klasör Ekle",
+    "deleteFolder": "Klasörü Sil",
+    "addToArchive": "Arşive Ekle"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "badgeQueue": {
+    "searchPlaceholder": "Search person / badge no / profile",
+    "emptyQueueDesc": "Badges are prepared automatically once a registration is approved (READY) and are listed here.",
+    "clearFilterHint": "Clear the status filter or your search."
+  }
+}

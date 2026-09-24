@@ -1,0 +1,10 @@
+{
+  "dashboard": {
+    "person": "Person",
+    "portfolio": "Event portfolio",
+    "registrationsLink": "Registration list →",
+    "uniquePersons": "Unique persons",
+    "ordersLink": "Orders →",
+    "registrationCurve": "Registration curve"
+  }
+}

@@ -177,7 +177,13 @@
   "mobileInteractive": "Mobil Etkileşimli",
   "timeTrapTitle": "Zaman tuzağı",
   "timeTrapDesc": "Çok hızlı gönderimler şüpheli sayılır",
-  "emailLimitDesc": "Aynı e-posta günde en fazla bu kadar gönderim yapabilir"
+  "emailLimitDesc": "Aynı e-posta günde en fazla bu kadar gönderim yapabilir",
+  "namePh": "Örn. Online Kayıt Formu",
+  "createForm": "Formu Oluştur",
+  "orgPh": "Örn. Kurum Adı",
+  "optionsPh": "Seçenek başına bir satır:\nKongre Kaydı\nWorkshop\nGala Yemeği",
+  "selectOptionPh": "Seçeneklerden seçin…",
+  "addFieldCta": "Alanı Ekle"
  },
  "common": {
   "error": "Hata"

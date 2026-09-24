@@ -2,6 +2,7 @@
 // Dashboard — 08 dosyası: portföy görünümü + edisyon hazırlığı (8/8) + analitik
 import { useApp } from "@/lib/store";
 import { apiGet } from "@/lib/client";
+import { useLang } from "@/lib/i18n";
 import { KpiCard, SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip } from "../bits";
 import { fmtDate, fmtDateTime, fmtMoney, EDITION_STATUS, TASK_PRIORITY, label } from "@/lib/constants";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
@@ -34,6 +35,7 @@ const PIE_COLORS = ["#0f9b8e", "#58b368", "#e0a458", "#d16ba5", "#7a6ff0", "#e07
 
 export function DashboardView() {
   const { currentEditionId, editions, setCurrentEdition, setModule } = useApp();
+  const { t } = useLang();
 
   const { data, error, reload, loading } = useApi<DashData>(
     () => apiGet<DashData>(`/api/dashboard${currentEditionId ? `?editionId=${currentEditionId}` : ""}`),
@@ -54,14 +56,14 @@ export function DashboardView() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <KpiCard label="Etkinlik" value={data.portfolio?.editionCount ?? 0} sub={`${data.portfolio?.activeEditions ?? 0} aktif edisyon`} icon={<Icons.CalendarRange className="size-4" />} />
           <KpiCard label="Yayında" value={data.portfolio?.publishedCount ?? 0} sub="kayıt bağlantısı açık" tone="emerald" icon={<Icons.Globe className="size-4" />} />
-          <KpiCard label="Kişi" value={data.portfolio?.personCount ?? 0} sub="tenant içinde tekil" icon={<Icons.Users className="size-4" />} />
+          <KpiCard label={t("dashboard.person")} value={data.portfolio?.personCount ?? 0} sub="tenant içinde tekil" icon={<Icons.Users className="size-4" />} />
           <KpiCard label="Kurum" value={data.portfolio?.orgCount ?? 0} sub="kalıcı profil" icon={<Icons.Building2 className="size-4" />} />
           <KpiCard label="Açık iş" value={data.portfolio?.taskOpen ?? 0} sub="tüm modüller" tone="amber" icon={<Icons.ListChecks className="size-4" />} onClick={() => setModule("operations")} detailHref="Operasyonu aç →" />
           <KpiCard label="Net Tahsilat" value={fmtMoney(data.portfolio?.portfolioNet ?? 0)} sub="tahsilat − iade" tone="violet" icon={<Icons.CreditCard className="size-4" />} onClick={() => setModule("finance")} detailHref="Finansı aç →" />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-3">
-          <SectionCard title="Etkinlik Portföyü" desc="seri/edisyon bazında — karta tıklayınca edisyon açılır" className="min-w-0 lg:col-span-2">
+          <SectionCard title={t("dashboard.portfolio")} desc="seri/edisyon bazında — karta tıklayınca edisyon açılır" className="min-w-0 lg:col-span-2">
             <div className="grid gap-3 sm:grid-cols-2">
               {(data.editions ?? []).map((e) => (
                 <button
@@ -171,10 +173,10 @@ export function DashboardView() {
 
       {/* Kayıt & katılım kartları */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <KpiCard label="Başvuru" value={num("applications")} sub="taslak hariç gönderim" icon={<Icons.Inbox className="size-4" />} onClick={() => setModule("registrations")} detailHref="Kayıt listesi →" />
+        <KpiCard label="Başvuru" value={num("applications")} sub="taslak hariç gönderim" icon={<Icons.Inbox className="size-4" />} onClick={() => setModule("registrations")} detailHref={t("dashboard.registrationsLink")} />
         <KpiCard label="Onaylı" value={num("confirmed")} sub="ödeme ayrı eksen" tone="emerald" icon={<Icons.ClipboardCheck className="size-4" />} onClick={() => setModule("registrations")} detailHref="Onaylı filtresi →" />
         <KpiCard label="Onay Bekleyen" value={num("pendingApproval")} sub="inceleme kuyruğu" tone="amber" icon={<Icons.Hourglass className="size-4" />} onClick={() => setModule("registrations")} detailHref="Bekleyenler →" />
-        <KpiCard label="Benzersiz Kişi" value={num("uniquePersons")} sub="aynı kişi iki rol → tek kişi" icon={<Icons.Users className="size-4" />} onClick={() => setModule("people")} detailHref="Kişiler →" />
+        <KpiCard label={t("dashboard.uniquePersons")} value={num("uniquePersons")} sub="aynı kişi iki rol → tek kişi" icon={<Icons.Users className="size-4" />} onClick={() => setModule("people")} detailHref="Kişiler →" />
         <KpiCard label="Onay Oranı" value={kpi.approvalRate != null ? `%${kpi.approvalRate}` : "—"} sub="karara bağlanan üzerinden" icon={<Icons.Gauge className="size-4" />} />
         <KpiCard label="Sahada Gelen" value={num("arrived")} sub={`katılım oranı ${kpi.attendanceRate != null ? `%${kpi.attendanceRate}` : "—"}`} tone="emerald" icon={<Icons.ScanLine className="size-4" />} onClick={() => setModule("onsite")} detailHref="Saha paneli →" />
         <KpiCard label="No-Show" value={num("noShow")} sub="onaylı, girişsiz" tone="rose" icon={<Icons.UserX className="size-4" />} />
@@ -188,7 +190,7 @@ export function DashboardView() {
             <KpiCard label="Sipariş Edilen" value={fmtMoney(num("ordered"))} sub="geçerli satır toplamı" />
             <KpiCard label="Tahsil Edilen" value={fmtMoney(num("collected"))} sub="iade düşülmemiş brüt" tone="emerald" />
             <KpiCard label="İade Edilen" value={fmtMoney(num("refunded"))} sub="kesinleşen" tone="violet" />
-            <KpiCard label="Açık Bakiye" value={fmtMoney(num("openBalance"))} sub="borç − tahsilat + iade" tone="amber" onClick={() => setModule("finance")} detailHref="Siparişler →" />
+            <KpiCard label="Açık Bakiye" value={fmtMoney(num("openBalance"))} sub="borç − tahsilat + iade" tone="amber" onClick={() => setModule("finance")} detailHref={t("dashboard.ordersLink")} />
             <KpiCard label="Kısmi Ödeme" value={num("partialCount")} sub="sipariş sayısı" tone="amber" />
             <KpiCard label="Manuel Teyit Bekleyen" value={num("pendingManual")} sub="finans kuyruğu" tone="rose" />
           </div>
@@ -215,7 +217,7 @@ export function DashboardView() {
 
       {/* Grafikler */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <SectionCard title="Kayıt Eğrisi" desc="gönderim tarihi bazlı — son 14 gün" className="min-w-0 lg:col-span-2">
+        <SectionCard title={t("dashboard.registrationCurve")} desc="gönderim tarihi bazlı — son 14 gün" className="min-w-0 lg:col-span-2">
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={data.curve ?? []} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.9 0.01 190)" />

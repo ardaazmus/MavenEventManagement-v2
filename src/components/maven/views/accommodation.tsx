@@ -207,7 +207,11 @@ export function AccommodationView() {
       }
       toast({
         title: "Misafir profili eklendi",
-        description: `Kişi + ${participationNote}${guestForm.makeCompanion ? " + refakatçi" : ""}${guestForm.addSlot ? " + konuk slotu" : ""} kuruldu.`,
+        description: t("accommodation.guestProfileCreated", {
+          note: participationNote === "yeni katılım" ? t("accommodation.guestNewParticipation") : t("accommodation.guestExistingParticipation"),
+          companion: guestForm.makeCompanion ? t("accommodation.guestPlusCompanion") : "",
+          slot: guestForm.addSlot ? t("accommodation.guestPlusSlot") : "",
+        }),
       });
       setAddGuestOpen(false);
       reloadPeople(); reloadCompanions(); reloadRes(); setGuestTick((t) => t + 1); bump();
@@ -800,7 +804,7 @@ export function AccommodationView() {
       <Dialog open={Boolean(hotelDialog)} onOpenChange={(o) => !o && setHotelDialog(null)}>
         <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Icons.Hotel className="size-4 text-teal-600" /> {hotelDialog?.target ? "Otel Düzenle" : "Otel Ekle"}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2"><Icons.Hotel className="size-4 text-teal-600" /> {hotelDialog?.target ? t("accommodation.editHotel") : "Otel Ekle"}</DialogTitle>
             <DialogDescription>
               {hotelDialog?.target
                 ? `${hotelDialog.target.name} — iletişim, adres ve kontrat ayrıntılarını güncelleyin.`

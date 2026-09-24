@@ -1,5 +1,1 @@
-{
-  "maxViolations": 54,
-  "note": "TASK-B 29 tırmık tabanı — TASK-A F9 artan view dönüşümüyle DÜŞÜRÜLÜR",
-  "generatedAt": "2026-09-24T15:52:16.155Z"
-}
+{"maxViolations": 0, "note": "TASK-A F9 TAMAMLANDI — tüm view ihlalleri sözlüğe alındı; taban 0", "generatedAt": "2026-09-24T19:03:15.000Z"}

@@ -128,11 +128,11 @@ function buildSteps(p: NonNullable<ParticipantData["participation"]>, regs: Part
     { key: "part", title: "Katılım", state: "done", hint: label(REG_SOURCES, p.source) },
     activeReg
       ? {
-          key: "reg", title: "Kayıt",
+          key: "reg", title: t("portal.stepReg"),
           state: ["REJECTED", "CANCELLED"].includes(activeReg.status) ? "error" : "done",
           hint: activeReg.confirmationNo,
         }
-      : { key: "reg", title: "Kayıt", state: "pending", hint: "Henüz kayıt yok" },
+      : { key: "reg", title: t("portal.stepReg"), state: "pending", hint: "Henüz kayıt yok" },
     activeReg && ["CONFIRMED"].includes(activeReg.status)
       ? { key: "appr", title: "Onay", state: "done", hint: activeReg.decidedAt ? fmtDate(activeReg.decidedAt) : undefined }
       : activeReg && ["SUBMITTED", "PENDING_APPROVAL"].includes(activeReg.status)
@@ -220,7 +220,7 @@ function PortalHero({
 // ─── durum zaman çizelgesi ──────────────────────────────────────────────────
 function Steps({ steps }: { steps: ReturnType<typeof buildSteps> }) {
   return (
-    <ol className="flex flex-col gap-0 sm:flex-row sm:items-start sm:gap-0" aria-label="Kayıt durum adımları">
+    <ol className="flex flex-col gap-0 sm:flex-row sm:items-start sm:gap-0" aria-label={t("portal.stepsAria")}>
       {steps.map((s, i) => (
         <li key={s.key} className="flex flex-1 gap-3 sm:block sm:px-2 sm:text-center">
           <div className="flex flex-col items-center sm:flex-row">
@@ -436,7 +436,7 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
       toast({
         title: response === "ACCEPT" ? "Teklif kabul edildi" : "Teklif reddedildi",
         description: response === "ACCEPT"
-          ? `Kayıt açıldı: ${r.registration?.confirmationNo ?? "—"} — tebrikler!`
+          ? t("portal.regOpened", { no: r.registration?.confirmationNo ?? "—" })
           : "Yanıtınız kaydedildi; sıradaki kişiye teklif gidecek.",
       });
       data.reload();
@@ -540,7 +540,7 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
               {/* TASK-B 25: düzenleyici blokları — ziyaretçi görüşünün en üstünde */}
               <PortalBlocks blocks={d.blocks} />
               {!d.participation ? (
-                <PortalEmpty icon={Icons.UserPlus} title="Bu edisyonda katılımınız bulunmuyor" desc="Kayıt formuyla başvurduğunuzda katılımınız oluşturulur ve bu ekrancan takip edebilirsiniz." />
+                <PortalEmpty icon={Icons.UserPlus} title="Bu edisyonda katılımınız bulunmuyor" desc={t("portal.noParticipationDesc")} />
               ) : (
                 <>
                   {/* durum adımları */}
@@ -1082,7 +1082,7 @@ function PortalHeaderDesigner({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ph-subtitle">Alt başlık</Label>
-            <Input id="ph-subtitle" value={draft.subtitle} onChange={(e) => setDraft((d) => ({ ...d, subtitle: e.target.value }))} maxLength={160} placeholder="örn. Kayıt, ödeme ve programınız tek yerde" />
+            <Input id="ph-subtitle" value={draft.subtitle} onChange={(e) => setDraft((d) => ({ ...d, subtitle: e.target.value }))} maxLength={160} placeholder={t("portal.hdrSubtitlePh")} />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -1517,7 +1517,7 @@ export function FirmaVitrin() {
           {c.aboutText ? (
             <p className="text-sm leading-relaxed text-muted-foreground">{c.aboutText}</p>
           ) : (
-            <EmptyState title="Hakkında metni yok" desc="Ayarlar → Firma Kimliği bölümünden eklenebilir." />
+            <EmptyState title="Hakkında metni yok" desc={t("portal.firmIdentityHint")} />
           )}
           {data.nextEdition && (
             <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
@@ -1556,7 +1556,7 @@ export function FirmaVitrin() {
               </div>
             </div>
           ) : (
-            <EmptyState title="Yetkili bilgisi yok" desc="Ayarlar → Firma Kimliği bölümünden eklenebilir." />
+            <EmptyState title="Yetkili bilgisi yok" desc={t("portal.firmIdentityHint")} />
           )}
           <div className="mt-4 rounded-lg border border-dashed border-amber-300 bg-amber-50/60 p-3 text-[11px] leading-relaxed text-amber-800">
             <span className="font-semibold">TODO-auth:</span> &quot;Yönetime giriş&quot; yetkili oturumu ile korunacak — şimdilik dashboard&apos;a yönlendirir.

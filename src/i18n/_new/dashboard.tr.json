@@ -1,0 +1,10 @@
+{
+  "dashboard": {
+    "person": "Kişi",
+    "portfolio": "Etkinlik Portföyü",
+    "registrationsLink": "Kayıt listesi →",
+    "uniquePersons": "Benzersiz Kişi",
+    "ordersLink": "Siparişler →",
+    "registrationCurve": "Kayıt Eğrisi"
+  }
+}

@@ -36,6 +36,13 @@ export async function POST() {
       data: {
         name: "Maven Etkinlik Çözümleri", slug: "maven-demo", plan: "ENTERPRISE",
         country: "Türkiye", timezone: "Europe/Istanbul",
+        // Faz C: firma kimliği örneği — shell logosu + vitrin
+        tagline: "Etkinliklerin tek elden organizasyon platformu",
+        aboutText: "Maven Etkinlik Çözümleri; kongre, fuar ve kurumsal etkinliklerin planlama, kayıt, bilimsel program, sponsorluk ve saha operasyonu süreçlerini tek platformda birleştiren organizasyon ekibidir. 2014'ten bu yana 120'den fazla edisyon için uçtan uca organizasyon hizmeti verdik.",
+        contactName: "Elif Kaya",
+        contactPhone: "+90 212 555 0142",
+        contactEmail: "elif@maven-demo.com.tr",
+        website: "https://maven-demo.com.tr",
         users: {
           create: [
             { email: "elif@maven.demo", name: "Elif Kaya", role: "ORG_OWNER" },
@@ -134,6 +141,26 @@ export async function POST() {
         format: "IN_PERSON", description: "B2B teknoloji fuarı ve eşlik eden zirve.",
         coverColor: "violet",
       },
+    });
+    // Faz C: arşiv modülü + firma vitrini için tamamlanmış geçmiş edisyon
+    const edition3 = await db.eventEdition.create({
+      data: {
+        tenantId: tenant.id, seriesId: seriesNoDig.id,
+        name: "No-Dig Turkey 2025", slug: "no-dig-turkey-2025", editionLabel: "2025",
+        status: "ARCHIVED", isPublished: true, template: "SCIENTIFIC_CONGRESS",
+        startDate: D(-365, 9, 0), endDate: D(-362, 17, 0),
+        venueName: "Swissotel The Bosphorus", city: "İstanbul", country: "Türkiye",
+        format: "IN_PERSON", description: "Kazısız teknolojiler kongresi — 2025 edisyonu, arşivlenmiş.",
+        coverColor: "amber",
+      },
+    });
+    // arşiv edisyonuna birkaç katılım kaydı (tenant-içi isimler; vitrinde yalnız adet görünür)
+    await db.eventParticipation.createMany({
+      data: [
+        { editionId: edition3.id, personId: P.Ahmet.id, source: "SCIENTIFIC_PORTAL", attendance: "CHECKED_IN" },
+        { editionId: edition3.id, personId: P.Ayşe.id, source: "PUBLIC_FORM", attendance: "CHECKED_IN" },
+        { editionId: edition3.id, personId: P.Mustafa.id, source: "ADMIN_ENTRY", attendance: "CHECKED_OUT" },
+      ],
     });
 
     // ── Yetenekler (§6 şablonlar) ──
@@ -767,6 +794,19 @@ export async function POST() {
       ],
     });
 
+    // ── Muhasebe: manuel gelir kalemleri (Faz B — Expense aynası) ──
+    await db.income.createMany({
+      data: [
+        { editionId: edition1.id, code: "GLR-2026-001", category: "SPONSORLUK", title: "Ana sponsorluk paketi — 1. taksit", description: "Platinum paket sözleşme bedelinin ilk yarısı", amount: 150000, method: "BANK_TRANSFER", payer: "ABC Pharma", incomeDate: D(-10), status: "RECEIVED", receiptNo: "HV-77240", approvedBy: "Burak Demir" },
+        { editionId: edition1.id, code: "GLR-2026-002", category: "SPONSORLUK", title: "Lansman alanı sponsorluğu", description: "Fuaye lansman ekranı — tek seferlik", amount: 45000, method: "BANK_TRANSFER", payer: "Nokta Bilişim", incomeDate: D(-6), status: "RECEIVED", receiptNo: "HV-77301", approvedBy: "Burak Demir" },
+        { editionId: edition1.id, code: "GLR-2026-003", category: "KAYIT", title: "Kurumsal grup kaydı — Delta Üniversitesi", description: "Online ödeme dışı gelen kurumsal kayıt bedeli", amount: 18000, method: "BANK_TRANSFER", payer: "Delta Üniversitesi", incomeDate: D(-3), status: "RECEIVED", receiptNo: "HV-77355", approvedBy: "Elif Kaya" },
+        { editionId: edition1.id, code: "GLR-2026-004", category: "SATIS", title: "Program kitabı ilan satışı", description: "Baskı program kitabı iç sayfa ilanları", amount: 22000, method: "MANUAL_EXTERNAL", payer: "Anadolu Matbaa", incomeDate: D(-1), status: "APPROVED", approvedBy: "Elif Kaya" },
+        { editionId: edition1.id, code: "GLR-2026-005", category: "HIBE", title: "Meslek birliği bilimsel hibesi", description: "Kongre bilimsel içeriği destek hibesi — dekont bekliyor", amount: 30000, method: "BANK_TRANSFER", payer: "Radyoloji Derneği", incomeDate: D(0), status: "PENDING_RECEIPT" },
+        { editionId: edition1.id, code: "GLR-2026-006", category: "SPONSORLUK", title: "Kapanış kokteyl sponsorluğu", description: "3. gün kapanış kokteyl ikramları — teklif aşaması", amount: 25000, method: "MANUAL_EXTERNAL", payer: "Lezzet Catering", incomeDate: D(2), status: "PLANNED" },
+        { editionId: edition2.id, code: "GLR-2027-001", category: "SPONSORLUK", title: "Fuar alanı ana sponsorluk — ön anlaşma", description: "TechDays 2027 ana sponsorluk görüşmesi", amount: 200000, method: "MANUAL_EXTERNAL", payer: "Nokta Bilişim", incomeDate: D(1), status: "PLANNED" },
+      ],
+    });
+
     // ── Katalog / ek hizmetler ──
     await db.catalogItem.createMany({
       data: [
@@ -1246,6 +1286,7 @@ export async function POST() {
       forms: await db.formDefinition.count(),
       formSubmissions: await db.formSubmission.count(),
       expenses: await db.expense.count(),
+      incomes: await db.income.count(),
     };
     return NextResponse.json({ ok: true, counts });
   } catch (e) {

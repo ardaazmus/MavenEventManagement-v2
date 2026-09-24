@@ -8,6 +8,7 @@ import { ActivityType } from "./activity";
 type AnyDelegate = {
   findMany: (args?: Record<string, unknown>) => Promise<unknown[]>;
   findUnique: (args: Record<string, unknown>) => Promise<unknown>;
+  findFirst: (args?: Record<string, unknown>) => Promise<unknown>;
   create: (args: Record<string, unknown>) => Promise<unknown>;
   update: (args: Record<string, unknown>) => Promise<unknown>;
   delete: (args: Record<string, unknown>) => Promise<unknown>;
@@ -26,6 +27,11 @@ export interface EntityConfig {
 }
 
 export const registry: Record<string, EntityConfig> = {
+  // Faz C: kiracı (firma) kaydı — yalnız aktif kiracı okunabilir/güncellenebilir (tenant-guard "self")
+  tenants: {
+    delegate: db.tenant as unknown as AnyDelegate,
+    filterFields: [],
+  },
   organizations: {
     delegate: db.organization as unknown as AnyDelegate,
     include: { _count: { select: { eventAssignments: true, sponsorAgreements: true, contacts: true } } },
@@ -149,6 +155,16 @@ export const registry: Record<string, EntityConfig> = {
     orderBy: { incurredAt: "desc" },
     auditType: ActivityType.PAYMENT_SAVED,
     auditMessage: (d) => `Gider güncellendi: ${d.title ?? ""} (${d.amount ?? 0} ${d.currency ?? "TRY"})`,
+  },
+  // Faz B: manuel gelir kalemleri — Expense aynası, GLR kodlu
+  incomes: {
+    delegate: db.income as unknown as AnyDelegate,
+    include: { edition: { select: { id: true, name: true } } },
+    searchFields: ["title", "payer", "code"],
+    filterFields: ["editionId", "status", "category", "method"],
+    orderBy: { incomeDate: "desc" },
+    auditType: ActivityType.PAYMENT_SAVED,
+    auditMessage: (d) => `Gelir güncellendi: ${d.title ?? ""} (${d.amount ?? 0} ${d.currency ?? "TRY"})`,
   },
   "form-fields": {
     delegate: db.formField as unknown as AnyDelegate,

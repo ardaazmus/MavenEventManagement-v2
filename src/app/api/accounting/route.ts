@@ -1,5 +1,7 @@
-// Entegre muhasebe — kayıt tahsilatları (Order/Payment) + ek/saha harcamaları (Expense) tek defterde
+// Entegre muhasebe — kayıt tahsilatları (Order/Payment) + manuel gelirler (Income) + ek/saha harcamaları (Expense) tek defterde
 // GET /api/accounting?editionId=...
+// Faz B: incomeTotal = SUCCEEDED payments + RECEIVED incomes; manualIncomeTotal/incomeCount;
+// ledger'da kind:"MANUAL_INCOME"; incomeByCategory kırılımı.
 // Dönen: gelir/gider/net özeti, kaynak & kategori kırılımları, açık alacaklar, 30 günlük seri, birleşik defter
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -12,7 +14,7 @@ export async function GET(req: NextRequest) {
     const editionId = searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
 
-    const [orders, payments, expenses] = await Promise.all([
+    const [orders, payments, expenses, incomes] = await Promise.all([
       db.order.findMany({
         where: { editionId },
         include: { payments: true, lines: true },
@@ -24,11 +26,18 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: "desc" },
       }),
       db.expense.findMany({ where: { editionId }, orderBy: { incurredAt: "desc" } }),
+      db.income.findMany({ where: { editionId }, orderBy: { incomeDate: "desc" } }),
     ]);
 
-    // ── GELİR (tahsil edilen) ──
+    // ── GELİR (tahsil edilen): online ödemeler + RECEIVED manuel gelirler ──
     const succeeded = payments.filter((p) => p.status === "SUCCEEDED");
-    const incomeTotal = succeeded.reduce((a, p) => a + p.amount, 0);
+    const receivedIncomes = incomes.filter((i) => i.status === "RECEIVED");
+    const onlineIncome = succeeded.reduce((a, p) => a + p.amount, 0);
+    const manualIncomeTotal = receivedIncomes.reduce((a, i) => a + i.amount, 0);
+    const incomeTotal = onlineIncome + manualIncomeTotal;
+    const plannedIncome = incomes
+      .filter((i) => ["PLANNED", "PENDING_RECEIPT", "APPROVED"].includes(i.status))
+      .reduce((a, i) => a + i.amount, 0);
     const pendingIncome = payments
       .filter((p) => p.status === "PENDING")
       .reduce((a, p) => a + p.amount, 0);
@@ -39,6 +48,16 @@ export async function GET(req: NextRequest) {
         acc[p.source] = acc[p.source] ?? { total: 0, count: 0 };
         acc[p.source].total += p.amount;
         acc[p.source].count += 1;
+        return acc;
+      }, {})
+    ).map(([key, v]) => ({ key, total: v.total, count: v.count }));
+
+    // manuel gelir kategori kırılımı (yalnız tahsil edilenler — gider kırılımı ile aynı ilke)
+    const incomeByCategory = Object.entries(
+      receivedIncomes.reduce<Record<string, { total: number; count: number }>>((acc, i) => {
+        acc[i.category] = acc[i.category] ?? { total: 0, count: 0 };
+        acc[i.category].total += i.amount;
+        acc[i.category].count += 1;
         return acc;
       }, {})
     ).map(([key, v]) => ({ key, total: v.total, count: v.count }));
@@ -77,7 +96,7 @@ export async function GET(req: NextRequest) {
     const net = incomeTotal - expenseTotal;
     const margin = incomeTotal > 0 ? Math.round((net / incomeTotal) * 100) : null;
 
-    // ── 30 günlük seri (gelir paidAt, gider incurredAt) ──
+    // ── 30 günlük seri (gelir: paidAt/incomeDate, gider: incurredAt) ──
     const daily: { date: string; income: number; expense: number }[] = [];
     for (let i = 29; i >= 0; i--) {
       const d = new Date();
@@ -87,9 +106,13 @@ export async function GET(req: NextRequest) {
       next.setDate(next.getDate() + 1);
       daily.push({
         date: d.toISOString().slice(0, 10),
-        income: succeeded
-          .filter((p) => p.paidAt && new Date(p.paidAt) >= d && new Date(p.paidAt) < next)
-          .reduce((a, p) => a + p.amount, 0),
+        income:
+          succeeded
+            .filter((p) => p.paidAt && new Date(p.paidAt) >= d && new Date(p.paidAt) < next)
+            .reduce((a, p) => a + p.amount, 0) +
+          receivedIncomes
+            .filter((i) => new Date(i.incomeDate) >= d && new Date(i.incomeDate) < next)
+            .reduce((a, i) => a + i.amount, 0),
         expense: realizedExpenses
           .filter((e) => new Date(e.incurredAt) >= d && new Date(e.incurredAt) < next)
           .reduce((a, e) => a + e.amount, 0),
@@ -107,6 +130,17 @@ export async function GET(req: NextRequest) {
       status: p.status,
       amount: p.amount,
       currency: p.currency,
+    }));
+    const manualIncomeRows = receivedIncomes.map((i) => ({
+      id: i.id,
+      kind: "MANUAL_INCOME" as const,
+      date: i.incomeDate,
+      description: `${i.title}${i.payer ? ` — ${i.payer}` : ""}`,
+      ref: i.code,
+      method: i.method,
+      status: i.status,
+      amount: i.amount,
+      currency: i.currency,
     }));
     const expenseRows = realizedExpenses.map((e) => ({
       id: e.id,
@@ -132,13 +166,17 @@ export async function GET(req: NextRequest) {
         amount: p.amount,
         currency: p.currency,
       }));
-    const ledger = [...incomeRows, ...expenseRows, ...pendingRows]
+    const ledger = [...incomeRows, ...manualIncomeRows, ...expenseRows, ...pendingRows]
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 60);
 
     return NextResponse.json({
       summary: {
         incomeTotal,
+        onlineIncome,
+        manualIncomeTotal,
+        plannedIncome,
+        incomeCount: receivedIncomes.length,
         pendingIncome,
         pendingCount,
         expenseTotal,
@@ -150,6 +188,7 @@ export async function GET(req: NextRequest) {
       },
       receivable: { amount: receivable, openOrders: openOrders.length },
       incomeBySource: bySource,
+      incomeByCategory,
       expenseByCategory: byCategory,
       expenseByStatus: byExpenseStatus,
       daily,

@@ -1,12 +1,20 @@
 // Generic collection route: /api/[entity]
+// Faz A: tüm listeleme/oluşturma istekleri Tenant Guard'dan geçer —
+// tenant/edition kapsamı otomatik uygulanır, bağlam çözülemeyen istek 400 alır.
 import { NextRequest, NextResponse } from "next/server";
 import { registry, sanitize, withTenant } from "@/lib/api/registry";
+import { applyListGuard, applyWriteGuard, GuardError } from "@/lib/api/tenant-guard";
 import { db } from "@/lib/db";
 
 type Ctx = { params: Promise<{ entity: string }> };
 
 function notFound() {
   return NextResponse.json({ error: "Bilinmeyen varlık" }, { status: 404 });
+}
+
+function guardError(e: unknown) {
+  if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+  return null;
 }
 
 export async function GET(req: NextRequest, ctx: Ctx) {
@@ -31,6 +39,15 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const limit = Math.min(parseInt(sp.get("limit") ?? "200"), 500);
 
   try {
+    await applyListGuard(entity, where, sp);
+  } catch (e) {
+    const ge = guardError(e);
+    if (ge) return ge;
+    console.error(`GET /api/${entity} [guard]`, e);
+    return NextResponse.json({ error: "Kiracı izolasyonu uygulanamadı" }, { status: 500 });
+  }
+
+  try {
     const items = await config.delegate.findMany({
       where,
       include: config.include,
@@ -51,7 +68,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   try {
     const body = await req.json();
-    const data = await withTenant(entity, sanitize(body));
+    let data = await withTenant(entity, sanitize(body));
+    try {
+      data = await applyWriteGuard(entity, data); // Faz A: tenantId sunucu bağlamından yazılır
+    } catch (e) {
+      const ge = guardError(e);
+      if (ge) return ge;
+      throw e;
+    }
     const created = await config.delegate.create({ data, include: config.include });
 
     if (config.auditType) {

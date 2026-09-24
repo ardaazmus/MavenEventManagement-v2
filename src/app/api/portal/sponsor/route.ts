@@ -3,6 +3,7 @@
 // portal tüketici. SPONSOR_PORTAL / EXHIBITOR_PORTAL kaynaklı katılımlar buraya bağlanır.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { resolvePublicEdition } from "@/lib/api/public-guard";
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,7 +14,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "editionId ve organizationId zorunlu" }, { status: 400 });
     }
 
-    const organization = await db.organization.findUnique({ where: { id: organizationId } });
+    // Faz A public allowlist: editionId → kiracı çözümlenemiyorsa 404
+    const publicEdition = await resolvePublicEdition(editionId);
+    if (!publicEdition) return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
+
+    const organization = await db.organization.findFirst({
+      where: { id: organizationId, tenantId: publicEdition.tenantId }, // kiracı izolasyonu: başka kiracının kurumu ifşa edilmez
+    });
     if (!organization) return NextResponse.json({ error: "Kurum bulunamadı" }, { status: 404 });
 
     const agreements = await db.sponsorAgreement.findMany({

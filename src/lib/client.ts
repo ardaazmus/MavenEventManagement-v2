@@ -1,4 +1,6 @@
 // API istemci yardımcıları — tüm istekler göreli yol
+import { useApp } from "@/lib/store";
+
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(path, { cache: "no-store" });
   if (!res.ok) {
@@ -22,8 +24,13 @@ export async function apiSend<T>(path: string, method: "POST" | "PUT" | "DELETE"
 }
 
 // basit listelenmiş varlık yardımcıları
+// Faz A: tenant-kapsamlı listeler için tenantId otomatik eklenir (store'daki aktif kiracı);
+// edition-kapsamlı varlıklar tenantId parametresini yok sayar (sunucu guard'ı filtreler).
 export const listEntity = <T,>(entity: string, params?: Record<string, string | number | undefined>) => {
   const sp = new URLSearchParams();
+  const autoTenant = typeof window !== "undefined" ? useApp.getState().tenant?.id : undefined;
+  const tenantId = params?.tenantId ?? autoTenant;
+  if (tenantId) sp.set("tenantId", String(tenantId));
   for (const [k, v] of Object.entries(params ?? {})) {
     if (v !== undefined && v !== "") sp.set(k, String(v));
   }

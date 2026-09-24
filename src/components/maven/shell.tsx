@@ -13,6 +13,7 @@ import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { NotificationBell } from "./notification-bell";
+import { useLang, t } from "@/lib/i18n";
 
 function ModuleIcon({ name, className }: { name: string; className?: string }) {
   const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[name] ?? Icons.Circle;
@@ -20,22 +21,31 @@ function ModuleIcon({ name, className }: { name: string; className?: string }) {
 }
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
-  const { module, setModule, editions, currentEditionId } = useApp();
+  const { module, setModule, editions, currentEditionId, tenant } = useApp();
   const edition = editions.find((e) => e.id === currentEditionId);
 
   const groups: { id: string; label: string }[] = [
-    { id: "workspace", label: "Çalışma Alanı" },
-    { id: "people", label: "İnsanlar & Kurumlar" },
-    { id: "edition", label: edition ? `Edisyon — ${edition.name}` : "Edisyon" },
+    { id: "workspace", label: t("shell.workspaceGroup") },
+    { id: "people", label: t("shell.peopleGroup") },
+    { id: "edition", label: edition ? `${t("shell.editionGroup")} — ${edition.name}` : t("shell.editionGroup") },
   ];
 
   return (
-    <nav aria-label="Ana menü" className="flex h-full flex-col gap-1 overflow-y-auto maven-scroll px-3 py-4">
+    <nav aria-label={t("shell.srMenu")} className="flex h-full flex-col gap-1 overflow-y-auto maven-scroll px-3 py-4">
+      {/* Faz C: firma kimliği — logoUrl varsa görsel, yoksa "M"; alt yazı tagline */}
       <div className="mb-2 flex items-center gap-2 px-2">
-        <div className="grid size-8 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">M</div>
-        <div>
-          <p className="text-sm font-semibold leading-none">Maven</p>
-          <p className="text-[11px] text-sidebar-foreground/60">Event Management</p>
+        {tenant?.logoUrl ? (
+          <img
+            src={tenant.logoUrl}
+            alt={`${tenant.name} logosu`}
+            className="size-8 shrink-0 rounded-lg border border-sidebar-border/60 object-cover"
+          />
+        ) : (
+          <div className="grid size-8 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">M</div>
+        )}
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold leading-none">{tenant?.name ?? "Maven"}</p>
+          <p className="truncate text-[11px] text-sidebar-foreground/60">{tenant?.tagline?.trim() || t("shell.defaultTagline")}</p>
         </div>
       </div>
       <Separator className="bg-sidebar-border/60" />
@@ -72,15 +82,15 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
                     module === m.id ? "text-sidebar-primary" : "group-hover:scale-110"
                   )}
                 />
-                <span className="truncate">{m.label}</span>
+                <span className="truncate">{t(`modules.${m.id}`)}</span>
               </button>
             ))}
           </div>
         );
       })}
       <div className="mt-auto rounded-lg border border-sidebar-border/60 bg-gradient-to-br from-sidebar-accent/60 to-sidebar-accent/20 p-3 text-[11px] leading-relaxed text-sidebar-foreground/70">
-        <p className="flex items-center gap-1.5 font-semibold text-sidebar-foreground/90"><Icons.Shapes className="size-3.5 text-primary" /> Ortak Organizasyonel Mimari</p>
-        <p className="mt-1">Kişi ≠ Katılım ≠ Kayıt ≠ Rol ≠ Ödeme — her eksen bağımsız yönetilir.</p>
+        <p className="flex items-center gap-1.5 font-semibold text-sidebar-foreground/90"><Icons.Shapes className="size-3.5 text-primary" /> {t("shell.archTitle")}</p>
+        <p className="mt-1">{t("shell.archDesc")}</p>
       </div>
     </nav>
   );
@@ -99,6 +109,7 @@ function currentEditionOf() {
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const { tenant, editions, currentEditionId, setCurrentEdition, module, loading, error, bootstrap, seed } = useApp();
+  const { lang, setLang: setUiLang } = useLang();
   const edition = editions.find((e) => e.id === currentEditionId);
   const activeModule = MODULES.find((m) => m.id === module);
 
@@ -113,18 +124,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="flex h-14 items-center gap-3 px-4">
             <Sheet open={open} onOpenChange={setOpen}>
               <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Menüyü aç">
+                <Button variant="ghost" size="icon" className="lg:hidden" aria-label={t("shell.openMenu")}>
                   <Icons.Menu className="size-5" />
                 </Button>
               </SheetTrigger>
               <SheetContent side="left" className="w-72 bg-sidebar p-0 text-sidebar-foreground">
-                <SheetTitle className="sr-only">Ana menü</SheetTitle>
+                <SheetTitle className="sr-only">{t("shell.srMenu")}</SheetTitle>
                 <SidebarNav onNavigate={() => setOpen(false)} />
               </SheetContent>
             </Sheet>
 
             <div className="hidden items-center gap-1.5 text-sm text-muted-foreground lg:flex">
-              <span className="font-medium text-foreground">{tenant?.name ?? "Çalışma alanı"}</span>
+              <span className="font-medium text-foreground">{tenant?.name ?? t("shell.workspace")}</span>
               <Icons.ChevronRight className="size-3.5" />
               {edition?.series?.name && (
                 <>
@@ -136,6 +147,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="ml-auto flex items-center gap-2">
+              {/* Faz E: mini dil butonu — TR/EN tek tıkla değişir */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 w-[52px] px-0 font-semibold tabular-nums"
+                aria-label={lang === "tr" ? "Switch to English" : "Türkçe'ye geç"}
+                onClick={() => setUiLang(lang === "tr" ? "en" : "tr")}
+              >
+                {lang === "tr" ? "EN" : "TR"}
+              </Button>
               <Select
                 value={currentEditionId ?? ""}
                 onValueChange={(v) => {
@@ -143,8 +164,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   try { window.localStorage.setItem("maven.edition", v); } catch { /* yoksay */ }
                 }}
               >
-                <SelectTrigger className="h-9 w-[150px] gap-2 sm:w-[220px]" aria-label="Edisyon seçici">
-                  <SelectValue placeholder="Edisyon seçin" />
+                <SelectTrigger className="h-9 w-[150px] gap-2 sm:w-[220px]" aria-label={t("shell.selectEditionAria")}>
+                  <SelectValue placeholder={t("shell.selectEdition")} />
                 </SelectTrigger>
                 <SelectContent>
                   {editions.map((e) => (
@@ -173,7 +194,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   {label(EDITION_STATUS, edition.status)}
                 </Badge>
               )}
-              <Button variant="ghost" size="icon" aria-label="Yenile" onClick={() => bootstrap()} disabled={loading}>
+              <Button variant="ghost" size="icon" aria-label={t("shell.refresh")} onClick={() => bootstrap()} disabled={loading}>
                 <Icons.RefreshCw className={cn("size-4", loading && "animate-spin text-primary")} />
               </Button>
               <NotificationBell />
@@ -187,7 +208,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <span className="inline-flex items-center gap-1"><Icons.CalendarDays className="size-3.5" /> {fmtDate(edition.startDate)} — {fmtDate(edition.endDate)}</span>
               {edition.venueName && <span className="inline-flex items-center gap-1"><Icons.MapPin className="size-3.5" /> {edition.venueName}{edition.city ? `, ${edition.city}` : ""}</span>}
               <span className="inline-flex items-center gap-1"><Icons.Globe2 className="size-3.5" /> {tenant?.timezone}</span>
-              <span className="ml-auto hidden md:inline">Edisyon değiştirilince ekran başlığı ve filtreler güncellenir</span>
+              <span className="ml-auto hidden md:inline">{t("shell.editionHint")}</span>
             </div>
           )}
         </header>
@@ -204,7 +225,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <div className="grid min-h-[60vh] place-items-center">
                 <div className="flex flex-col items-center gap-3 text-muted-foreground">
                   <Icons.Loader2 className="size-8 animate-spin text-primary" />
-                  <p className="text-sm">Maven yükleniyor…</p>
+                  <p className="text-sm">{t("shell.loading")}</p>
                 </div>
               </div>
             ) : error ? (
@@ -212,18 +233,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 <Icons.AlertTriangle className="mx-auto size-10 text-rose-400" />
                 <p className="text-sm font-medium">{error}</p>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => bootstrap()}><Icons.RefreshCw className="size-4" /> Yeniden dene</Button>
-                  <Button onClick={() => seed()}><Icons.Database className="size-4" /> Demo verisi yükle</Button>
+                  <Button variant="outline" onClick={() => bootstrap()}><Icons.RefreshCw className="size-4" /> {t("shell.retry")}</Button>
+                  <Button onClick={() => seed()}><Icons.Database className="size-4" /> {t("shell.seed")}</Button>
                 </div>
               </div>
             ) : !tenant ? (
               <div className="grid min-h-[60vh] place-items-center gap-4 text-center">
                 <Icons.Database className="mx-auto size-10 text-muted-foreground/40" />
                 <div>
-                  <p className="font-medium">Henüz veri yok</p>
-                  <p className="mt-1 text-sm text-muted-foreground">Demo verisini yükleyerek tüm modülleri gerçekçi kayıtlarla inceleyin.</p>
+                  <p className="font-medium">{t("shell.noData")}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{t("shell.noDataDesc")}</p>
                 </div>
-                <Button onClick={() => seed()} size="lg"><Icons.Sparkles className="size-4" /> Demo verisi yükle</Button>
+                <Button onClick={() => seed()} size="lg"><Icons.Sparkles className="size-4" /> {t("shell.seed")}</Button>
               </div>
             ) : (
               children
@@ -237,8 +258,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs text-muted-foreground md:px-6">
             <p>© 2026 Maven Event Management — Ortak Organizasyonel Mimari v1.0 · Tenant: {tenant?.name ?? "—"}</p>
             <p className="flex items-center gap-3">
-              <span className="inline-flex items-center gap-1"><Icons.Layers className="size-3.5" /> {editions.length} edisyon</span>
-              <span className="inline-flex items-center gap-1"><Icons.Users className="size-3.5" /> 78 model</span>
+              <span className="inline-flex items-center gap-1"><Icons.Layers className="size-3.5" /> {editions.length} {t("shell.footerEditions")}</span>
+              <span className="inline-flex items-center gap-1"><Icons.Users className="size-3.5" /> 79 {t("shell.footerModels")}</span>
             </p>
           </div>
         </footer>

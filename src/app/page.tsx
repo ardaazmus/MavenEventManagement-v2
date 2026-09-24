@@ -22,6 +22,7 @@ import { OnsiteView, CertificatesView, CommunicationsView, OperationsView, Setti
 import { SocialView } from "@/components/maven/views/social";
 import { B2bView } from "@/components/maven/views/b2b";
 import { MediaArchiveView } from "@/components/maven/views/media";
+import { ArchiveView } from "@/components/maven/views/archive";
 import { ApiGatewayView } from "@/components/maven/views/integrations";
 import { Lock } from "lucide-react";
 
@@ -95,6 +96,7 @@ function renderModule(module: string) {
     case "communications": return <CommunicationsView />;
     case "operations": return <OperationsView />;
     case "media": return <MediaArchiveView />;
+    case "archive": return <ArchiveView />;
     case "integrations": return <ApiGatewayView />;
     case "settings": return <SettingsView />;
     default: return <DashboardView />;

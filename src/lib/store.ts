@@ -28,6 +28,14 @@ export interface TenantLite {
   plan: string;
   country?: string | null;
   timezone: string;
+  // Faz C: firma kimliği
+  logoUrl?: string | null;
+  tagline?: string | null;
+  aboutText?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  website?: string | null;
 }
 
 interface AppState {

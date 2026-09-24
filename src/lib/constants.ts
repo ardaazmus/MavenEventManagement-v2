@@ -197,14 +197,34 @@ export const EXPENSE_PAYMENT_METHOD: Record<string, string> = {
   PERSONAL_REIMBURSE: "Personel Karşıladı",
 };
 
-export const PAYMENT_METHODS: Record<string, string> = {
+// ─── Muhasebe — manuel gelir kalemleri (Expense aynası, Faz B) ──────────────
+
+export const INCOME_STATUS: Record<string, string> = {
+  PLANNED: "Planlandı",
+  PENDING_RECEIPT: "Dekont Bekliyor",
+  APPROVED: "Onaylandı",
+  RECEIVED: "Tahsil Edildi",
+};
+
+export const INCOME_CATEGORY: Record<string, string> = {
+  SPONSORLUK: "Sponsorluk",
+  KAYIT: "Kayıt",
+  SATIS: "Satış",
+  HIBE: "Hibe",
+  DIGER: "Diğer",
+};
+
+// gelir tahsil yöntemi — Payment kaynaklarıyla aynı set (PAYMENT_METHODS'ten türetilir)
+export const INCOME_METHOD: Record<string, string> = {
   ONLINE_CARD: "Online Kart",
   BANK_TRANSFER: "Havale / EFT",
   POS: "Sahada POS",
   CASH: "Nakit",
   PAYMENT_LINK: "Ödeme Linki",
-  MANUAL_EXTERNAL: "Manuel / Dış", 
+  MANUAL_EXTERNAL: "Manuel / Dış",
 };
+
+export const PAYMENT_METHODS: Record<string, string> = INCOME_METHOD;
 
 export const ORDER_STATUS = {
   OPEN: "Açık",
@@ -421,6 +441,7 @@ export const MODULES = [
   { id: "certificates", label: "Belgeler", icon: "Award", capability: "CERTIFICATES", group: "edition" },
   { id: "operations", label: "Operasyon", icon: "ListChecks", capability: null, group: "workspace" },
   { id: "media", label: "Medya Arşivi", icon: "FolderOpen", capability: null, group: "workspace" },
+  { id: "archive", label: "Arşiv", icon: "Archive", capability: null, group: "workspace" },
   { id: "integrations", label: "API Geçidi", icon: "PlugZap", capability: null, group: "workspace" },
   { id: "settings", label: "Ayarlar", icon: "Settings", capability: null, group: "workspace" },
 ] as const;
@@ -527,6 +548,8 @@ export const STATUS_TONE: Record<string, string> = {
   PLANNED: "bg-sky-50 text-sky-700 border-sky-200",
   PENDING_RECEIPT: "bg-amber-50 text-amber-700 border-amber-200",
   REIMBURSED: "bg-purple-50 text-purple-700 border-purple-200",
+  // gelir (Faz B)
+  RECEIVED: "bg-emerald-50 text-emerald-700 border-emerald-200",
   // bekleme listesi
   WAITING: "bg-amber-50 text-amber-700 border-amber-200",
   OFFERED: "bg-sky-50 text-sky-700 border-sky-200",

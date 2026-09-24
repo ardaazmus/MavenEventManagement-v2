@@ -25,6 +25,14 @@ model Tenant {
   country   String?
   timezone  String   @default("Europe/Istanbul")
   createdAt DateTime @default(now())
+  // — Firma kimliği (Faz C / R11) — vitrin + shell logo için nullable alanlar
+  logoUrl      String? // shell sol üst + vitrin hero (medya/dataURL)
+  tagline      String? // kısa slogan (shell alt yazı + vitrin)
+  aboutText    String? // vitrin "Hakkında" metni
+  contactName  String? // yetkili adı (vitrin kartı)
+  contactPhone String? // yetkili telefon (tel: linki)
+  contactEmail String? // yetkili e-posta (mailto: linki)
+  website      String? // firma web sitesi
 
   users          User[]
   organizations  Organization[]
@@ -228,6 +236,7 @@ model EventEdition {
   badgeDesigns     BadgeDesign[]
   socialPlans      SocialPlan[]
   b2bPlans         B2bPlan[]
+  incomes          Income[]
 
   @@index([status])
   @@index([startDate])
@@ -550,6 +559,36 @@ model Expense {
   notes         String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([editionId])
+  @@index([status])
+  @@index([category])
+}
+
+// ─── FAZ 6-C: MUHASEBE — manuel gelir kalemleri (Expense aynası) ────────────
+// Online ödeme (Payment) dışındaki gelirler: sponsorluk, kayıt, satış, hibe...
+// amount Float BİLİNÇLİ — kuruş migrasyonu ayrı görev.
+
+model Income {
+  id          String   @id @default(cuid())
+  editionId   String
+  code        String   @unique @default(cuid()) // okunabilir: GLR-2026-001 (istemci set eder)
+  category    String   @default("DIGER") // SPONSORLUK|KAYIT|SATIS|HIBE|DIGER
+  title       String
+  description String?
+  amount      Float    @default(0)
+  currency    String   @default("TRY")
+  method      String   @default("BANK_TRANSFER") // ONLINE_CARD|BANK_TRANSFER|POS|CASH|PAYMENT_LINK|MANUAL_EXTERNAL
+  payer       String?  // ödeyen (kurum/kişi adı)
+  incomeDate  DateTime @default(now()) // gelir tarihi (varsayılan bugün)
+  status      String   @default("PLANNED") // PLANNED|PENDING_RECEIPT|APPROVED|RECEIVED
+  receiptNo   String?
+  approvedBy  String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
 

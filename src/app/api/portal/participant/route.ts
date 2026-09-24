@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { expireStaleOffers } from "@/lib/api/waitlist-engine";
+import { resolvePublicEdition } from "@/lib/api/public-guard";
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,6 +14,10 @@ export async function GET(req: NextRequest) {
     if (!editionId || !personId) {
       return NextResponse.json({ error: "editionId ve personId zorunlu" }, { status: 400 });
     }
+
+    // Faz A public allowlist: editionId → kiracı çözümlenemiyorsa 404
+    const publicEdition = await resolvePublicEdition(editionId);
+    if (!publicEdition) return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
 
     // süresi geçen teklifleri kapat — portal görünümü hep güncel
     await expireStaleOffers(editionId);

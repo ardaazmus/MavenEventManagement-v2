@@ -1,7 +1,7 @@
 "use client";
 // Sahada — canlı onsite kontrol (§07/§42): kapı seçimi, arama, tarama, tekrar/ret kuyruğu
 // + Sertifikalar (§43) + İletişim + Operasyon + Ayarlar
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listEntity, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { useLang, t, exportI18nJson, importI18nJson } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -1802,6 +1803,8 @@ export function SettingsView() {
   return (
     <div className="space-y-5">
       <PageHeader title="Etkinlik Ayarları" desc="Kimlik, tarih, ekip, yayın ve modül seçimleri — kapalı yeteneğin menüsü baştan gizlenir" />
+      <LanguageCard />
+      <TenantIdentityCard />
       <SectionCard
         title="Yetenekler (Capabilities)"
         desc="Modül kartı: açılınca hangi menü/form/rapor geleceği buradan görünür (§6) — switch'i değiştirmek menüyü anında açar/kapatır"
@@ -1848,5 +1851,207 @@ export function SettingsView() {
         )}
       </SectionCard>
     </div>
+  );
+}
+
+// ─── Ayarlar: Firma Kimliği (Faz C / R11) ──────────────────────────────────────
+// Tenant logo/tagline/about/iletişim alanlarını düzenler — shell logosu ve
+// Dış Portal → Firma Vitrini bu alanlardan beslenir. PUT /api/tenants/{id} (guard: self).
+export function TenantIdentityCard() {
+  const { tenant, bootstrap } = useApp();
+  const { toast } = useToast();
+  const [form, setForm] = useState({
+    tagline: "", aboutText: "", contactName: "", contactPhone: "", contactEmail: "", website: "", logoUrl: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // store tenant değişince formu doldur (async desen — lint set-state-in-effect uyumlu)
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (!alive || !tenant) return;
+      setForm({
+        tagline: tenant.tagline ?? "",
+        aboutText: tenant.aboutText ?? "",
+        contactName: tenant.contactName ?? "",
+        contactPhone: tenant.contactPhone ?? "",
+        contactEmail: tenant.contactEmail ?? "",
+        website: tenant.website ?? "",
+        logoUrl: tenant.logoUrl ?? "",
+      });
+    });
+    return () => { alive = false; };
+  }, [tenant?.id]);
+
+  const pickLogo = (file: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Geçersiz dosya", description: "Görsel dosyası seçin (PNG/JPG/SVG).", variant: "destructive" });
+      return;
+    }
+    if (file.size > 300 * 1024) {
+      toast({ title: "Dosya çok büyük", description: "Logo en fazla 300KB olabilir — küçültüp tekrar deneyin.", variant: "destructive" });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setForm((f) => ({ ...f, logoUrl: String(reader.result ?? "") }));
+    reader.readAsDataURL(file);
+  };
+
+  const save = async () => {
+    if (!tenant) return;
+    setBusy(true);
+    try {
+      await apiSend(`/api/tenants/${tenant.id}`, "PUT", {
+        tagline: form.tagline || null,
+        aboutText: form.aboutText || null,
+        contactName: form.contactName || null,
+        contactPhone: form.contactPhone || null,
+        contactEmail: form.contactEmail || null,
+        website: form.website || null,
+        logoUrl: form.logoUrl || null,
+      });
+      await bootstrap();
+      toast({ title: "Firma kimliği kaydedildi", description: "Shell logosu ve Firma Vitrini güncellendi." });
+    } catch (e) {
+      toast({ title: "Kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SectionCard
+      title="Firma Kimliği"
+      desc="Sol menü logosu, Firma Vitrini ve arşiv kampanyaları bu kimliği kullanır (tenant geneli)"
+      action={<Chip tone="teal">{tenant?.slug ?? "—"}</Chip>}
+    >
+      <div className="flex flex-col gap-4 sm:flex-row">
+        {/* logo önizleme + seçici */}
+        <div className="flex flex-col items-center gap-2">
+          {form.logoUrl ? (
+            <img src={form.logoUrl} alt="Firma logosu" className="size-20 rounded-2xl border object-cover shadow-sm" />
+          ) : (
+            <div className="grid size-20 place-items-center rounded-2xl border border-dashed bg-muted/40 text-2xl font-bold text-muted-foreground">
+              {(tenant?.name ?? "M").slice(0, 1)}
+            </div>
+          )}
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => pickLogo(e.target.files?.[0] ?? null)} />
+          <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()}>
+            <Icons.ImagePlus className="size-3.5" /> Logo seç
+          </Button>
+          {form.logoUrl && (
+            <Button size="sm" variant="ghost" className="h-7 text-rose-600 hover:text-rose-700" onClick={() => setForm((f) => ({ ...f, logoUrl: "" }))}>
+              <Icons.Trash2 className="size-3.5" /> Kaldır
+            </Button>
+          )}
+          <p className="max-w-36 text-center text-[10px] text-muted-foreground">≤ 300KB görsel — PNG/JPG/SVG</p>
+        </div>
+
+        {/* alanlar */}
+        <div className="grid flex-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="t-tagline">Slogan (tagline)</Label>
+            <Input id="t-tagline" value={form.tagline} onChange={(e) => setForm((f) => ({ ...f, tagline: e.target.value }))} placeholder="Örn. Etkinliklerin tek elden organizasyon platformu" />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="t-about">Hakkında (vitrin metni)</Label>
+            <Textarea id="t-about" rows={3} value={form.aboutText} onChange={(e) => setForm((f) => ({ ...f, aboutText: e.target.value }))} placeholder="Firmanızın kamu bilgilendirme metni — vitrinde Hakkında bölümünde görünür" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Yetkili Adı</Label>
+            <Input value={form.contactName} onChange={(e) => setForm((f) => ({ ...f, contactName: e.target.value }))} placeholder="Örn. Elif Kaya" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Yetkili Telefon</Label>
+            <Input value={form.contactPhone} onChange={(e) => setForm((f) => ({ ...f, contactPhone: e.target.value }))} placeholder="+90 212 555 0142" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Yetkili E-posta</Label>
+            <Input type="email" value={form.contactEmail} onChange={(e) => setForm((f) => ({ ...f, contactEmail: e.target.value }))} placeholder="info@firma.com" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Web Sitesi</Label>
+            <Input value={form.website} onChange={(e) => setForm((f) => ({ ...f, website: e.target.value }))} placeholder="https://firma.com" />
+          </div>
+        </div>
+      </div>
+      <div className="mt-4 flex justify-end">
+        <Button onClick={save} disabled={busy}>
+          {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Check className="size-4" />} Kimliği Kaydet
+        </Button>
+      </div>
+    </SectionCard>
+  );
+}
+
+// ─── Ayarlar: Dil / Language (Faz E — tek-dosyalı i18n) ────────────────────────
+export function LanguageCard() {
+  const { lang, setLang: setUiLang } = useLang();
+  const { toast } = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const exportJson = () => {
+    const blob = new Blob([exportI18nJson()], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `maven-i18n-${lang}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast({ title: t("settings.jsonExported") });
+  };
+
+  const importJson = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const err = importI18nJson(raw);
+      if (err) toast({ title: t("settings.jsonImportFailed"), description: err, variant: "destructive" });
+      else toast({ title: t("settings.jsonImported") });
+    } catch {
+      toast({ title: t("settings.jsonImportFailed"), variant: "destructive" });
+    }
+  };
+
+  return (
+    <SectionCard
+      title={t("settings.languageTitle")}
+      desc={t("settings.languageDesc")}
+      action={<Chip tone="teal">{lang === "tr" ? "Türkçe" : "English"}</Chip>}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant={lang === "tr" ? "default" : "outline"}
+          onClick={() => setUiLang("tr")}
+          aria-pressed={lang === "tr"}
+        >
+          Türkçe
+        </Button>
+        <Button
+          variant={lang === "en" ? "default" : "outline"}
+          onClick={() => setUiLang("en")}
+          aria-pressed={lang === "en"}
+        >
+          English
+        </Button>
+        <div className="ml-auto flex gap-2">
+          <Button variant="outline" onClick={exportJson}>
+            <Icons.Download className="size-4" /> {t("settings.exportJson")}
+          </Button>
+          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => importJson(e.target.files?.[0] ?? null)} />
+          <Button variant="outline" onClick={() => fileRef.current?.click()}>
+            <Icons.Upload className="size-4" /> {t("settings.importJson")}
+          </Button>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        localStorage: <span className="font-mono">maven.lang</span> · eksik anahtar otomatik TR&apos;ye düşer ve konsola bir kez uyarı yazar.
+        next-intl kullanılmaz — tek kaynak <span className="font-mono">src/i18n/tr.json</span>.
+      </p>
+    </SectionCard>
   );
 }

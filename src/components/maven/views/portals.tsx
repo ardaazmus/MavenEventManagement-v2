@@ -1033,11 +1033,14 @@ export function PortalsView() {
           <TabsList>
             <TabsTrigger value="participant" className="gap-1.5"><Icons.UserRound className="size-3.5" /> Katılımcı</TabsTrigger>
             <TabsTrigger value="sponsor" className="gap-1.5"><Icons.Handshake className="size-3.5" /> Sponsor</TabsTrigger>
+            <TabsTrigger value="vitrin" className="gap-1.5"><Icons.Store className="size-3.5" /> Firma Vitrini</TabsTrigger>
           </TabsList>
         </Tabs>
       </PageHeader>
 
-      {!edition ? (
+      {tab === "vitrin" ? (
+        <FirmaVitrin />
+      ) : !edition ? (
         <EmptyState title="Edisyon seçin" desc="Portal önizlemesi için bir edisyon gerekli." />
       ) : (
         <div className="space-y-4">
@@ -1049,6 +1052,182 @@ export function PortalsView() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Firma Vitrini (Faz C / R11) — /api/public/tenant kamu yüzeyinin önizlemesi ──
+// Kural: bu görünüm public uçtan beslenir (kişisel veri YOK); isimler tenant-içi kalır.
+interface PublicTenantData {
+  company: {
+    name: string; slug: string; tagline?: string | null; aboutText?: string | null;
+    logoUrl?: string | null; website?: string | null; country?: string | null;
+    contact: { name?: string | null; phone?: string | null; email?: string | null };
+  };
+  stats: { editionTotal: number; archiveCount: number; participantTotal: number; mediaCount: number };
+  nextEdition: { id: string; name: string; startDate?: string | null; endDate?: string | null; city?: string | null; venueName?: string | null; editionLabel?: string | null } | null;
+  archive: { id: string; name: string; slug: string; editionLabel?: string | null; startDate?: string | null; endDate?: string | null; city?: string | null; venueName?: string | null; participantCount: number }[];
+  note: string;
+}
+
+export function FirmaVitrin() {
+  const { tenant, setModule } = useApp();
+  const slug = tenant?.slug ?? null;
+
+  const { data, error, loading } = useApi<PublicTenantData | null>(() => {
+    if (!slug) return Promise.resolve(null);
+    return apiGet<PublicTenantData>(`/api/public/tenant?slug=${encodeURIComponent(slug)}`);
+  }, [slug]);
+
+  if (!slug) return <EmptyState title="Kiracı bulunamadı" desc="Vitrin için demo verisini yükleyin." />;
+  if (loading && !data) return <Loading rows={6} />;
+  if (error || !data) return <ErrorState message={error ?? "Vitrin verisi alınamadı"} onRetry={() => window.location.reload()} />;
+
+  const c = data.company;
+  const s = data.stats;
+
+  return (
+    <div className="space-y-4">
+      {/* Kamu yüzeyi bilgi şeridi */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-teal-200 bg-teal-50/60 px-4 py-2.5 text-xs text-teal-900">
+        <Icons.ShieldCheck className="size-4 shrink-0 text-teal-600" />
+        <span className="min-w-0 flex-1">Public URL önizlemesi — <span className="font-mono">/api/public/tenant?slug={c.slug}</span> · kişisel veri çıkmaz, katılımcılar yalnız adet olarak görünür (KVKK).</span>
+      </div>
+
+      {/* HERO — vitrin girişi */}
+      <section className="overflow-hidden rounded-2xl border bg-gradient-to-br from-teal-600 via-teal-700 to-emerald-800 text-white shadow-sm">
+        <div className="relative p-6 md:p-10">
+          <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
+            {c.logoUrl ? (
+              <img src={c.logoUrl} alt={`${c.name} logosu`} className="size-20 rounded-2xl border-2 border-white/30 bg-white object-cover shadow-lg" />
+            ) : (
+              <div className="grid size-20 shrink-0 place-items-center rounded-2xl border-2 border-white/30 bg-white/10 text-3xl font-bold shadow-lg backdrop-blur">
+                {c.name.slice(0, 1)}
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-wider text-white/70">Firma Vitrini</p>
+              <h2 className="mt-1 text-2xl font-bold leading-tight md:text-3xl">{c.name}</h2>
+              {c.tagline && <p className="mt-1.5 max-w-xl text-sm text-white/85 md:text-base">{c.tagline}</p>}
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                {c.website && (
+                  <a href={c.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 font-medium backdrop-blur transition hover:bg-white/25">
+                    <Icons.Globe className="size-3.5" /> {c.website.replace(/^https?:\/\//, "")}
+                  </a>
+                )}
+                {c.country && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-white/85">
+                    <Icons.MapPin className="size-3.5" /> {c.country}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* İstatistik — agregat sayılar (kişisel veri yok) */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          { label: "Etkinlik", value: s.editionTotal, icon: <Icons.CalendarRange className="size-4" />, tone: "text-teal-600 bg-teal-50" },
+          { label: "Arşiv", value: s.archiveCount, icon: <Icons.Archive className="size-4" />, tone: "text-amber-600 bg-amber-50" },
+          { label: "Katılımcı (toplam)", value: s.participantTotal, icon: <Icons.Users className="size-4" />, tone: "text-violet-600 bg-violet-50" },
+          { label: "Arşiv Medyası", value: s.mediaCount, icon: <Icons.Images className="size-4" />, tone: "text-emerald-600 bg-emerald-50" },
+        ].map((k) => (
+          <div key={k.label} className="rounded-xl border bg-card p-4 shadow-sm">
+            <div className={cn("inline-flex size-8 items-center justify-center rounded-lg", k.tone)}>{k.icon}</div>
+            <p className="mt-2 text-2xl font-bold tabular-nums leading-none">{k.value}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{k.label}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Hakkında */}
+        <SectionCard title="Hakkında" desc="firmanın kamu bilgilendirme metni" className="lg:col-span-2">
+          {c.aboutText ? (
+            <p className="text-sm leading-relaxed text-muted-foreground">{c.aboutText}</p>
+          ) : (
+            <EmptyState title="Hakkında metni yok" desc="Ayarlar → Firma Kimliği bölümünden eklenebilir." />
+          )}
+          {data.nextEdition && (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                <Icons.Sparkles className="size-3.5" /> Sıradaki Etkinlik
+              </p>
+              <p className="mt-1.5 text-sm font-semibold">{data.nextEdition.name}{data.nextEdition.editionLabel ? ` · ${data.nextEdition.editionLabel}` : ""}</p>
+              <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1"><Icons.CalendarDays className="size-3.5" /> {fmtDate(data.nextEdition.startDate)}{data.nextEdition.endDate ? ` — ${fmtDate(data.nextEdition.endDate)}` : ""}</span>
+                {data.nextEdition.city && <span className="inline-flex items-center gap-1"><Icons.MapPin className="size-3.5" /> {data.nextEdition.city}</span>}
+              </p>
+            </div>
+          )}
+        </SectionCard>
+
+        {/* Yetkili kartı — tel:/mailto: */}
+        <SectionCard title="Yetkili" desc="vitrin iletişim kartı">
+          {c.contact.name || c.contact.phone || c.contact.email ? (
+            <div className="flex items-start gap-3">
+              <div className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/10 text-base font-semibold text-primary">
+                {(c.contact.name ?? "?").slice(0, 1)}
+              </div>
+              <div className="min-w-0 space-y-1.5">
+                <p className="text-sm font-semibold">{c.contact.name ?? "—"}</p>
+                <p className="text-xs text-muted-foreground">Vitrin yetkilisi</p>
+                {c.contact.phone && (
+                  <a href={`tel:${c.contact.phone.replace(/\s+/g, "")}`} className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline">
+                    <Icons.Phone className="size-3.5 shrink-0" /> <span className="truncate">{c.contact.phone}</span>
+                  </a>
+                )}
+                {c.contact.email && (
+                  <a href={`mailto:${c.contact.email}`} className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline">
+                    <Icons.Mail className="size-3.5 shrink-0" /> <span className="truncate">{c.contact.email}</span>
+                  </a>
+                )}
+              </div>
+            </div>
+          ) : (
+            <EmptyState title="Yetkili bilgisi yok" desc="Ayarlar → Firma Kimliği bölümünden eklenebilir." />
+          )}
+          <div className="mt-4 rounded-lg border border-dashed border-amber-300 bg-amber-50/60 p-3 text-[11px] leading-relaxed text-amber-800">
+            <span className="font-semibold">TODO-auth:</span> &quot;Yönetime giriş&quot; yetkili oturumu ile korunacak — şimdilik dashboard&apos;a yönlendirir.
+          </div>
+          <Button className="mt-3 w-full" variant="outline" onClick={() => setModule("dashboard")}>
+            <Icons.LogIn className="size-4" /> Yönetime giriş
+          </Button>
+        </SectionCard>
+      </div>
+
+      {/* Arşiv girişleri — public: yalnız sayı, isim yok */}
+      <SectionCard
+        title="Arşiv"
+        desc="tamamlanan etkinliklerin kamu kaydı — katılımcı sayısı gösterilir, isim listesi tenant-içidir"
+        action={<Chip tone="amber">{data.archive.length} kayıt</Chip>}
+      >
+        {data.archive.length === 0 ? (
+          <EmptyState title="Arşiv kaydı yok" desc="POST_EVENT / RECONCILIATION / ARCHIVED durumdaki etkinlikler burada listelenir." />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {data.archive.map((e) => (
+              <div key={e.id} className="rounded-xl border p-4 transition hover:border-primary/30">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">{e.name}{e.editionLabel ? ` · ${e.editionLabel}` : ""}</p>
+                    <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                      <span className="inline-flex items-center gap-1"><Icons.CalendarDays className="size-3.5" /> {fmtDate(e.startDate)}{e.endDate ? ` — ${fmtDate(e.endDate)}` : ""}</span>
+                      {e.city && <span className="inline-flex items-center gap-1"><Icons.MapPin className="size-3.5" /> {e.city}</span>}
+                    </p>
+                  </div>
+                  <Chip tone="violet">{e.participantCount} katılımcı</Chip>
+                </div>
+                <p className="mt-2 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <Icons.ShieldCheck className="size-3 text-emerald-500" /> İsim listesi kamu yüzeyinde gösterilmez (KVKK md.5/6)
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
     </div>
   );
 }

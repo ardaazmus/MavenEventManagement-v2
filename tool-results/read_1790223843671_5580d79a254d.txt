@@ -1,0 +1,939 @@
+     1→"use client";
+     2→// Muhasebe — kayıt tahsilatları, bekleyen ödemeler ve saha/ek harcamalar tek defterde (§36: gelir ≠ gider ≠ alacak)
+     3→import { useMemo, useState } from "react";
+     4→import { listEntity, apiSend, apiGet } from "@/lib/client";
+     5→import { useApp } from "@/lib/store";
+     6→import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
+     7→import { EXPENSE_STATUS, EXPENSE_CATEGORY, EXPENSE_PAYMENT_METHOD, PAYMENT_METHODS, STATUS_TONE, label, fmtDate, fmtDateTime, fmtMoney } from "@/lib/constants";
+     8→import { Button } from "@/components/ui/button";
+     9→import { Input } from "@/components/ui/input";
+    10→import { Label } from "@/components/ui/label";
+    11→import { Textarea } from "@/components/ui/textarea";
+    12→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    13→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+    14→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    15→import { Badge } from "@/components/ui/badge";
+    16→import { Separator } from "@/components/ui/separator";
+    17→import { useToast } from "@/hooks/use-toast";
+    18→import * as Icons from "lucide-react";
+    19→
+    20→// ─── Tipler ──────────────────────────────────────────────────────────────────
+    21→
+    22→interface AccountingData {
+    23→  summary: { incomeTotal: number; pendingIncome: number; pendingCount: number; expenseTotal: number; plannedExpense: number; net: number; margin: number | null; paymentCount: number; expenseCount: number };
+    24→  receivable: { amount: number; openOrders: number };
+    25→  incomeBySource: { key: string; total: number; count: number }[];
+    26→  expenseByCategory: { key: string; total: number; count: number }[];
+    27→  expenseByStatus: { key: string; total: number; count: number }[];
+    28→  daily: { date: string; income: number; expense: number }[];
+    29→  ledger: { id: string; kind: "INCOME" | "EXPENSE" | "RECEIVABLE"; date: string; description: string; ref: string | null; method: string; status: string; amount: number; currency: string }[];
+    30→}
+    31→
+    32→// Mutabakat raporu (§7) — kapanış öncesi finansal denetim
+    33→interface ReconciliationData {
+    34→  generatedAt: string;
+    35→  orders: { total: number; paid: number; open: number; partiallyPaid: number; cancelled: number; mismatches: { orderNo: string; payer: string; issue: string; expected: number; actual: number; delta: number }[] };
+    36→  unverifiedPayments: { id: string; orderNo: string; payer: string; amount: number; currency: string; source: string; paidAt: string | null; reason: string | null }[];
+    37→  expenseAudit: { awaitingReceipt: { count: number; amount: number }; awaitingOld: { count: number; amount: number }; approvedUnpaid: { count: number; amount: number }; reimbursable: { count: number; amount: number } };
+    38→  aging: { buckets: { label: string; count: number; amount: number }[]; totalReceivable: number; openOrders: number };
+    39→  period: { month: string; income: number; expense: number; net: number }[];
+    40→  readiness: { ok: boolean; blockers: string[]; warnings: string[] };
+    41→}
+    42→
+    43→interface ExpenseRow {
+    44→  id: string; code: string; category: string; title: string; description?: string | null;
+    45→  amount: number; currency: string; vendor?: string | null; incurredAt: string; spentBy?: string | null;
+    46→  paymentMethod: string; status: string; receiptNo?: string | null; approvedBy?: string | null; notes?: string | null;
+    47→}
+    48→
+    49→interface ExpenseForm {
+    50→  title: string; category: string; amount: string; currency: string; vendor: string; spentBy: string;
+    51→  paymentMethod: string; incurredAt: string; status: string; description: string; receiptNo: string; notes: string;
+    52→}
+    53→
+    54→interface QuickForm { title: string; amount: string; spentBy: string; paymentMethod: string; }
+    55→
+    56→type ChipTone = "neutral" | "teal" | "amber" | "rose" | "violet" | "emerald";
+    57→
+    58→// ─── Sabitler ────────────────────────────────────────────────────────────────
+    59→
+    60→const CURRENCIES = ["TRY", "USD", "EUR"] as const;
+    61→const QUICK_METHODS = ["CASH", "COMPANY_CARD", "PERSONAL_REIMBURSE"] as const;
+    62→
+    63→const EMPTY_EXPENSE_FORM: ExpenseForm = {
+    64→  title: "", category: "OTHER", amount: "", currency: "TRY", vendor: "", spentBy: "",
+    65→  paymentMethod: "COMPANY_CARD", incurredAt: "", status: "PENDING_RECEIPT", description: "", receiptNo: "", notes: "",
+    66→};
+    67→
+    68→const EMPTY_QUICK_FORM: QuickForm = { title: "", amount: "", spentBy: "", paymentMethod: "CASH" };
+    69→
+    70→// defterde ödeme + gider durumları karışık gelir — birleşik etiket haritası
+    71→const LEDGER_STATUS_LABEL: Record<string, string> = {
+    72→  SUCCEEDED: "Tahsil Edildi",
+    73→  PENDING: "Bekliyor",
+    74→  FAILED: "Başarısız",
+    75→  ...EXPENSE_STATUS,
+    76→};
+    77→
+    78→// kategori → Chip tonu (TECH için sky yok, en yakın teal)
+    79→const CATEGORY_TONE: Record<string, ChipTone> = {
+    80→  FIELD_EXPENSE: "amber",
+    81→  TECH: "teal",
+    82→  CATERING: "violet",
+    83→  LOGISTICS: "neutral",
+    84→};
+    85→
+    86→const categoryTone = (key: string): ChipTone => CATEGORY_TONE[key] ?? "neutral";
+    87→
+    88→// durum rengini STATUS_TONE'dan Chip tonuna çevir (kırılımda tutarlı renk)
+    89→const toneFromStatus = (status: string): ChipTone => {
+    90→  const cls = STATUS_TONE[status] ?? "";
+    91→  if (cls.includes("emerald")) return "emerald";
+    92→  if (cls.includes("amber")) return "amber";
+    93→  if (cls.includes("rose")) return "rose";
+    94→  if (cls.includes("sky")) return "teal";
+    95→  if (cls.includes("purple")) return "violet";
+    96→  return "neutral";
+    97→};
+    98→
+    99→const todayStr = (): string => {
+   100→  const d = new Date();
+   101→  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+   102→};
+   103→
+   104→// benzersiz gider kodu: GSN-YYYY-XXX (sayaç = mevcut adet + 1; çakışırsa +1 dene)
+   105→const nextExpenseCode = (existing: ExpenseRow[]): string => {
+   106→  const year = new Date().getFullYear();
+   107→  const taken = new Set(existing.map((e) => e.code));
+   108→  let n = existing.length + 1;
+   109→  let code = `GSN-${year}-${String(n).padStart(3, "0")}`;
+   110→  while (taken.has(code)) {
+   111→    n += 1;
+   112→    code = `GSN-${year}-${String(n).padStart(3, "0")}`;
+   113→  }
+   114→  return code;
+   115→};
+   116→
+   117→// ay etiketi: "2026-09" → "Eyl 2026"
+   118→const monthLabel = (m: string): string => {
+   119→  const d = new Date(`${m}-01`);
+   120→  return Number.isNaN(d.getTime()) ? m : d.toLocaleDateString("tr-TR", { month: "short", year: "numeric" });
+   121→};
+   122→
+   123→// mutabakat temiz durum bloğu — yeşil EmptyState
+   124→function ReconCleanState({ title, desc }: { title: string; desc: string }) {
+   125→  return (
+   126→    <div className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-emerald-200 bg-emerald-50/40 p-6 text-center">
+   127→      <Icons.CheckCircle2 className="size-8 text-emerald-500/70" />
+   128→      <p className="text-sm font-medium">{title}</p>
+   129→      <p className="max-w-sm text-xs text-muted-foreground">{desc}</p>
+   130→    </div>
+   131→  );
+   132→}
+   133→
+   134→// kırılım barları için ortak satır
+   135→function BreakdownBar({ text, count, total, max, barClass }: { text: string; count: number; total: number; max: number; barClass: string }) {
+   136→  return (
+   137→    <div>
+   138→      <div className="flex items-baseline justify-between gap-2 text-xs">
+   139→        <span className="min-w-0 truncate font-medium">{text}</span>
+   140→        <span className="shrink-0 tabular-nums text-muted-foreground">
+   141→          {count} adet · <span className="font-semibold text-foreground">{fmtMoney(total)}</span>
+   142→        </span>
+   143→      </div>
+   144→      <div className="mt-1 h-2 overflow-hidden rounded-full bg-muted">
+   145→        <div className={`h-full rounded-full ${barClass}`} style={{ width: `${Math.max(4, Math.round((total / max) * 100))}%` }} />
+   146→      </div>
+   147→    </div>
+   148→  );
+   149→}
+   150→
+   151→// ─── View ────────────────────────────────────────────────────────────────────
+   152→
+   153→export function AccountingView() {
+   154→  const { currentEditionId, bump, refreshKey } = useApp();
+   155→  const { toast } = useToast();
+   156→
+   157→  const [kindFilter, setKindFilter] = useState("ALL");
+   158→  const [expStatus, setExpStatus] = useState("ALL");
+   159→  const [expCategory, setExpCategory] = useState("ALL");
+   160→  const [expSearch, setExpSearch] = useState("");
+   161→  const [newOpen, setNewOpen] = useState(false);
+   162→  const [quickOpen, setQuickOpen] = useState(false);
+   163→  const [form, setForm] = useState<ExpenseForm>(EMPTY_EXPENSE_FORM);
+   164→  const [quick, setQuick] = useState<QuickForm>(EMPTY_QUICK_FORM);
+   165→  const [busy, setBusy] = useState(false);
+   166→  const [busyId, setBusyId] = useState<string | null>(null);
+   167→
+   168→  // entegre muhasebe özeti + defter
+   169→  const { data: acc, error, reload, loading } = useApi<AccountingData | null>(() => {
+   170→    if (!currentEditionId) return Promise.resolve(null);
+   171→    return apiGet<AccountingData>("/api/accounting?editionId=" + currentEditionId);
+   172→  }, [currentEditionId, refreshKey]);
+   173→
+   174→  // gider kalemleri (tümü — filtreler istemci tarafında, kod üretimi de tam listeden)
+   175→  const { data: expenses, error: expError, reload: reloadExpenses, loading: loadingExpenses } = useApi<ExpenseRow[]>(
+   176→    () => listEntity<ExpenseRow>("expenses", { editionId: currentEditionId ?? undefined }),
+   177→    [currentEditionId, refreshKey]
+   178→  );
+   179→
+   180→  // mutabakat raporu — kapanış öncesi denetim (ayrı istek, aynı yenileme döngüsü)
+   181→  const { data: recon, error: reconError, reload: reloadRecon, loading: loadingRecon } = useApi<ReconciliationData | null>(() => {
+   182→    if (!currentEditionId) return Promise.resolve(null);
+   183→    return apiGet<ReconciliationData>("/api/reconciliation?editionId=" + currentEditionId);
+   184→  }, [currentEditionId, refreshKey]);
+   185→
+   186→  const sum = acc?.summary;
+   187→  const net = sum?.net ?? 0;
+   188→  const NetIcon = net >= 0 ? Icons.TrendingUp : Icons.TrendingDown;
+   189→
+   190→  // defter: kind filtresi (istemci tarafı)
+   191→  const ledger = useMemo(() => {
+   192→    const rows = acc?.ledger ?? [];
+   193→    return kindFilter === "ALL" ? rows : rows.filter((r) => r.kind === kindFilter);
+   194→  }, [acc, kindFilter]);
+   195→  const ledgerIncome = useMemo(() => ledger.filter((r) => r.kind === "INCOME").reduce((a, r) => a + r.amount, 0), [ledger]);
+   196→  const ledgerExpense = useMemo(() => ledger.filter((r) => r.kind === "EXPENSE").reduce((a, r) => a + r.amount, 0), [ledger]);
+   197→
+   198→  // gider listesi: durum + kategori + arama (istemci tarafı)
+   199→  const filteredExpenses = useMemo(() => {
+   200→    const q = expSearch.trim().toLocaleLowerCase("tr-TR");
+   201→    return (expenses ?? []).filter((e) => {
+   202→      if (expStatus !== "ALL" && e.status !== expStatus) return false;
+   203→      if (expCategory !== "ALL" && e.category !== expCategory) return false;
+   204→      if (q) {
+   205→        const hay = `${e.title} ${e.vendor ?? ""} ${e.code}`.toLocaleLowerCase("tr-TR");
+   206→        if (!hay.includes(q)) return false;
+   207→      }
+   208→      return true;
+   209→    });
+   210→  }, [expenses, expStatus, expCategory, expSearch]);
+   211→
+   212→  // kırılım ölçekleri
+   213→  const incomeBySource = acc?.incomeBySource ?? [];
+   214→  const expenseByCategory = acc?.expenseByCategory ?? [];
+   215→  const expenseByStatus = acc?.expenseByStatus ?? [];
+   216→  const daily = acc?.daily ?? [];
+   217→  const maxIncomeSource = Math.max(1, ...incomeBySource.map((r) => r.total));
+   218→  const maxExpenseCategory = Math.max(1, ...expenseByCategory.map((r) => r.total));
+   219→  const dailyMax = Math.max(1, ...daily.map((d) => Math.max(d.income, d.expense)));
+   220→  const dailyIncomeTotal = daily.reduce((a, d) => a + d.income, 0);
+   221→  const dailyExpenseTotal = daily.reduce((a, d) => a + d.expense, 0);
+   222→  const CHART_H = 112;
+   223→
+   224→  // mutabakat: dönem özeti türevleri
+   225→  const reconPeriod = recon?.period ?? [];
+   226→  const periodIncome = reconPeriod.reduce((a, p) => a + p.income, 0);
+   227→  const periodExpense = reconPeriod.reduce((a, p) => a + p.expense, 0);
+   228→  const periodNet = periodIncome - periodExpense;
+   229→  const periodMaxNet = Math.max(1, ...reconPeriod.map((p) => Math.abs(p.net)));
+   230→
+   231→  const refreshAll = () => { reload(); reloadExpenses(); bump(); };
+   232→
+   233→  // ── aksiyonlar ──
+   234→
+   235→  const patchExpense = async (id: string, body: { status: string; approvedBy?: string }) => {
+   236→    setBusyId(id);
+   237→    try {
+   238→      await apiSend(`/api/expenses/${id}`, "PUT", body);
+   239→      toast({ title: "Gider güncellendi", description: "Defter ve kırılımlar yenilendi." });
+   240→      refreshAll();
+   241→    } catch (err) {
+   242→      toast({ title: "Gider güncellenemedi", description: err instanceof Error ? err.message : "Hata", variant: "destructive" });
+   243→    } finally {
+   244→      setBusyId(null);
+   245→    }
+   246→  };
+   247→
+   248→  const openNew = () => { setForm({ ...EMPTY_EXPENSE_FORM, incurredAt: todayStr() }); setNewOpen(true); };
+   249→  const openQuick = () => { setQuick(EMPTY_QUICK_FORM); setQuickOpen(true); };
+   250→
+   251→  const submitNewExpense = async () => {
+   252→    if (!currentEditionId) return;
+   253→    setBusy(true);
+   254→    try {
+   255→      await apiSend("/api/expenses", "POST", {
+   256→        editionId: currentEditionId,
+   257→        code: nextExpenseCode(expenses ?? []),
+   258→        category: form.category,
+   259→        title: form.title.trim(),
+   260→        description: form.description,
+   261→        amount: Number(form.amount),
+   262→        currency: form.currency,
+   263→        vendor: form.vendor,
+   264→        spentBy: form.spentBy,
+   265→        paymentMethod: form.paymentMethod,
+   266→        incurredAt: form.incurredAt ? new Date(form.incurredAt).toISOString() : undefined,
+   267→        status: form.status,
+   268→        receiptNo: form.receiptNo,
+   269→        notes: form.notes,
+   270→      });
+   271→      toast({ title: "Gider kaydedildi", description: `${form.title.trim()} — ${fmtMoney(Number(form.amount), form.currency)} deftere işlendi.` });
+   272→      setNewOpen(false);
+   273→      setForm(EMPTY_EXPENSE_FORM);
+   274→      refreshAll();
+   275→    } catch (err) {
+   276→      toast({ title: "Gider kaydedilemedi", description: err instanceof Error ? err.message : "Hata", variant: "destructive" });
+   277→    } finally {
+   278→      setBusy(false);
+   279→    }
+   280→  };
+   281→
+   282→  const submitQuickExpense = async () => {
+   283→    if (!currentEditionId) return;
+   284→    setBusy(true);
+   285→    try {
+   286→      await apiSend("/api/expenses", "POST", {
+   287→        editionId: currentEditionId,
+   288→        code: nextExpenseCode(expenses ?? []),
+   289→        category: "FIELD_EXPENSE",
+   290→        title: quick.title.trim(),
+   291→        description: "Sahada anlık harcama — fiş sonradan eklenebilir.",
+   292→        amount: Number(quick.amount),
+   293→        currency: "TRY",
+   294→        spentBy: quick.spentBy,
+   295→        paymentMethod: quick.paymentMethod,
+   296→        incurredAt: new Date().toISOString(),
+   297→        status: "APPROVED",
+   298→        approvedBy: "Saha Onayı",
+   299→      });
+   300→      toast({ title: "Saha harcaması kaydedildi — deftere işlendi", description: `${quick.title.trim()} — ${fmtMoney(Number(quick.amount))}` });
+   301→      setQuickOpen(false);
+   302→      setQuick(EMPTY_QUICK_FORM);
+   303→      refreshAll();
+   304→    } catch (err) {
+   305→      toast({ title: "Saha harcaması kaydedilemedi", description: err instanceof Error ? err.message : "Hata", variant: "destructive" });
+   306→    } finally {
+   307→      setBusy(false);
+   308→    }
+   309→  };
+   310→
+   311→  // ── render ──
+   312→
+   313→  return (
+   314→    <div className="space-y-5">
+   315→      <PageHeader title="Muhasebe" desc="Kayıt tahsilatları, bekleyen ödemeler ve saha/ek harcamalar tek defterde — gelir ≠ gider ≠ alacak (§36)">
+   316→        <Button variant="outline" className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:text-amber-900" onClick={openQuick}>
+   317→          <Icons.Zap className="size-4" /> Hızlı Saha Harcaması
+   318→        </Button>
+   319→        <Button onClick={openNew}>
+   320→          <Icons.Plus className="size-4" /> Yeni Gider
+   321→        </Button>
+   322→      </PageHeader>
+   323→
+   324→      {/* Üst KPI sırası */}
+   325→      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+   326→        <KpiCard label="Tahsil Edilen" value={fmtMoney(sum?.incomeTotal ?? 0)} sub={`${sum?.paymentCount ?? 0} tahsilat`} tone="emerald" icon={<Icons.Banknote className="size-4" />} />
+   327→        <KpiCard label="Bekleyen Tahsilat" value={fmtMoney(sum?.pendingIncome ?? 0)} sub={`${sum?.pendingCount ?? 0} ödeme + ${acc?.receivable.openOrders ?? 0} açık sipariş`} tone="amber" icon={<Icons.Hourglass className="size-4" />} />
+   328→        <KpiCard label="Gerçekleşen Gider" value={fmtMoney(sum?.expenseTotal ?? 0)} sub={`${sum?.expenseCount ?? 0} kalem`} tone="rose" icon={<Icons.ReceiptText className="size-4" />} />
+   329→        <KpiCard label="Planlanan Gider" value={fmtMoney(sum?.plannedExpense ?? 0)} sub="onay/fiş bekleyen" tone="violet" icon={<Icons.NotebookText className="size-4" />} />
+   330→        <KpiCard
+   331→          label="Net Bakiye"
+   332→          value={<span className={net >= 0 ? "text-emerald-600" : "text-rose-600"}>{fmtMoney(net)}</span>}
+   333→          sub={sum && sum.margin !== null ? `%${sum.margin} marj` : "gelir − gerçekleşen gider"}
+   334→          tone={net >= 0 ? "emerald" : "rose"}
+   335→          icon={<NetIcon className="size-4" />}
+   336→        />
+   337→        <KpiCard label="Açık Alacak" value={fmtMoney(acc?.receivable.amount ?? 0)} sub={`${acc?.receivable.openOrders ?? 0} sipariş bakiyesi`} tone="amber" icon={<Icons.Coins className="size-4" />} />
+   338→      </div>
+   339→
+   340→      <Tabs defaultValue="defter" className="gap-4">
+   341→        {/* 4. sekmeyle birlikte mobilde taşma — form-center ile aynı konvansiyon (h-auto flex-wrap) */}
+   342→        <TabsList className="h-auto flex-wrap">
+   343→          <TabsTrigger value="defter"><Icons.BookOpen className="size-4" /> Genel Defter</TabsTrigger>
+   344→          <TabsTrigger value="expenses"><Icons.ReceiptText className="size-4" /> Gider Kalemleri</TabsTrigger>
+   345→          <TabsTrigger value="breakdown"><Icons.ChartBar className="size-4" /> Kırılım &amp; Analiz</TabsTrigger>
+   346→          <TabsTrigger value="recon"><Icons.FileCheck className="size-4" /> Mutabakat</TabsTrigger>
+   347→        </TabsList>
+   348→
+   349→        {/* ── TAB: Genel Defter ── */}
+   350→        <TabsContent value="defter" className="space-y-4">
+   351→          <SectionCard
+   352→            title="Genel Defter"
+   353→            desc="tahsilat, gider ve bekleyen alacak tek akışta — son 60 hareket"
+   354→            action={
+   355→              <Select value={kindFilter} onValueChange={setKindFilter}>
+   356→                <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+   357→                <SelectContent>
+   358→                  <SelectItem value="ALL">Tüm hareketler</SelectItem>
+   359→                  <SelectItem value="INCOME">Gelir</SelectItem>
+   360→                  <SelectItem value="EXPENSE">Gider</SelectItem>
+   361→                  <SelectItem value="RECEIVABLE">Alacak (bekleyen)</SelectItem>
+   362→                </SelectContent>
+   363→              </Select>
+   364→            }
+   365→          >
+   366→            {loading ? <Loading rows={6} /> : error ? <ErrorState message={error} onRetry={reload} /> : ledger.length === 0 ? (
+   367→              <EmptyState title="Defter hareketi yok" desc="Tahsilat veya gider kaydedildiğinde burada listelenir." />
+   368→            ) : (
+   369→              <>
+   370→                <div className="maven-scroll max-h-96 overflow-y-auto rounded-lg border">
+   371→                  <table className="w-full text-xs">
+   372→                    <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
+   373→                      <tr>
+   374→                        <th className="px-3 py-2 font-medium">Tarih</th>
+   375→                        <th className="px-3 py-2 font-medium">Açıklama</th>
+   376→                        <th className="hidden px-3 py-2 font-medium md:table-cell">Referans</th>
+   377→                        <th className="hidden px-3 py-2 font-medium sm:table-cell">Yöntem</th>
+   378→                        <th className="px-3 py-2 font-medium">Durum</th>
+   379→                        <th className="px-3 py-2 text-right font-medium">Tutar</th>
+   380→                      </tr>
+   381→                    </thead>
+   382→                    <tbody>
+   383→                      {ledger.map((r) => (
+   384→                        <tr key={`${r.kind}-${r.id}`} className="border-t transition hover:bg-muted/40">
+   385→                          <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{fmtDateTime(r.date)}</td>
+   386→                          <td className="max-w-44 truncate px-3 py-2 font-medium md:max-w-64">{r.description}</td>
+   387→                          <td className="hidden px-3 py-2 font-mono text-[11px] text-muted-foreground md:table-cell">{r.ref ?? "—"}</td>
+   388→                          <td className="hidden whitespace-nowrap px-3 py-2 text-muted-foreground sm:table-cell">
+   389→                            {r.kind === "EXPENSE" ? label(EXPENSE_PAYMENT_METHOD, r.method) : label(PAYMENT_METHODS, r.method)}
+   390→                          </td>
+   391→                          <td className="px-3 py-2"><StatusBadge map={LEDGER_STATUS_LABEL} value={r.status} /></td>
+   392→                          <td className={`whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums ${r.kind === "INCOME" ? "text-emerald-600" : r.kind === "EXPENSE" ? "text-rose-600" : "text-amber-600"}`}>
+   393→                            {r.kind === "INCOME" ? `+${fmtMoney(r.amount, r.currency)}` : r.kind === "EXPENSE" ? `−${fmtMoney(r.amount, r.currency)}` : `${fmtMoney(r.amount, r.currency)} (bekliyor)`}
+   394→                          </td>
+   395→                        </tr>
+   396→                      ))}
+   397→                    </tbody>
+   398→                  </table>
+   399→                </div>
+   400→                {/* alt toplam — görünür filtrede */}
+   401→                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs">
+   402→                  <span className="text-muted-foreground">{ledger.length} hareket gösteriliyor</span>
+   403→                  <span className="flex flex-wrap gap-3">
+   404→                    <span className="font-medium text-emerald-700">Gelir: +{fmtMoney(ledgerIncome)}</span>
+   405→                    <span className="font-medium text-rose-700">Gider: −{fmtMoney(ledgerExpense)}</span>
+   406→                  </span>
+   407→                </div>
+   408→              </>
+   409→            )}
+   410→          </SectionCard>
+   411→        </TabsContent>
+   412→
+   413→        {/* ── TAB: Gider Kalemleri ── */}
+   414→        <TabsContent value="expenses" className="space-y-4">
+   415→          <SectionCard
+   416→            title="Gider Kalemleri"
+   417→            desc="saha ve ek harcamalar — onay, fiş ve ödeme adımları satır üzerinden yürütülür"
+   418→            action={
+   419→              <Button size="sm" variant="outline" onClick={openNew}>
+   420→                <Icons.Plus className="size-3.5" /> Yeni Gider
+   421→              </Button>
+   422→            }
+   423→          >
+   424→            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+   425→              <Select value={expStatus} onValueChange={setExpStatus}>
+   426→                <SelectTrigger className="w-full sm:w-44"><SelectValue /></SelectTrigger>
+   427→                <SelectContent>
+   428→                  <SelectItem value="ALL">Tüm durumlar</SelectItem>
+   429→                  {Object.entries(EXPENSE_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   430→                </SelectContent>
+   431→              </Select>
+   432→              <Select value={expCategory} onValueChange={setExpCategory}>
+   433→                <SelectTrigger className="w-full sm:w-48"><SelectValue /></SelectTrigger>
+   434→                <SelectContent>
+   435→                  <SelectItem value="ALL">Tüm kategoriler</SelectItem>
+   436→                  {Object.entries(EXPENSE_CATEGORY).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   437→                </SelectContent>
+   438→              </Select>
+   439→              <div className="relative flex-1">
+   440→                <Icons.Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+   441→                <Input value={expSearch} onChange={(e) => setExpSearch(e.target.value)} placeholder="Başlık / tedarikçi / kod ara" className="pl-8" />
+   442→              </div>
+   443→            </div>
+   444→
+   445→            <div className="mt-3">
+   446→              {loadingExpenses ? <Loading rows={4} /> : expError ? <ErrorState message={expError} onRetry={reloadExpenses} /> : filteredExpenses.length === 0 ? (
+   447→                <EmptyState title="Gider kalemi bulunamadı" desc="Filtreleri temizleyin veya yeni gider ekleyin." />
+   448→              ) : (
+   449→                <div className="maven-scroll max-h-96 space-y-3 overflow-y-auto pr-1">
+   450→                  {filteredExpenses.map((e) => (
+   451→                    <div key={e.id} className="rounded-xl border p-4 transition hover:border-primary/30">
+   452→                      <div className="flex flex-wrap items-center gap-2">
+   453→                        <span className="font-mono text-xs text-muted-foreground">{e.code}</span>
+   454→                        <StatusBadge map={EXPENSE_STATUS} value={e.status} />
+   455→                        <Chip tone={categoryTone(e.category)}>{label(EXPENSE_CATEGORY, e.category)}</Chip>
+   456→                        <span className="ml-auto text-sm font-bold tabular-nums">{fmtMoney(e.amount, e.currency)}</span>
+   457→                      </div>
+   458→                      <p className="mt-1.5 text-sm font-semibold">
+   459→                        {e.title}
+   460→                        {e.vendor ? <span className="font-normal text-muted-foreground"> · {e.vendor}</span> : null}
+   461→                      </p>
+   462→                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+   463→                        <span className="inline-flex items-center gap-1"><Icons.CalendarDays className="size-3.5" /> {fmtDate(e.incurredAt)}</span>
+   464→                        {e.spentBy && <span className="inline-flex items-center gap-1"><Icons.UserRound className="size-3.5" /> Sahada: {e.spentBy}</span>}
+   465→                        <span className="inline-flex items-center gap-1"><Icons.Wallet className="size-3.5" /> {label(EXPENSE_PAYMENT_METHOD, e.paymentMethod)}</span>
+   466→                        {e.receiptNo && <Badge variant="outline" className="font-mono text-[11px]">Fiş: {e.receiptNo}</Badge>}
+   467→                      </div>
+   468→                      {e.description && <p className="mt-1 text-xs text-muted-foreground">{e.description}</p>}
+   469→                      {(e.status === "PLANNED" || e.status === "PENDING_RECEIPT" || e.status === "APPROVED" || (e.status === "PAID" && e.paymentMethod === "PERSONAL_REIMBURSE")) && (
+   470→                        <div className="mt-2.5 flex flex-wrap gap-2 border-t pt-2.5">
+   471→                          {(e.status === "PLANNED" || e.status === "PENDING_RECEIPT") && (
+   472→                            <>
+   473→                              <Button size="sm" variant="outline" disabled={busyId === e.id} onClick={() => patchExpense(e.id, { status: "APPROVED", approvedBy: "Muhasebe" })}>
+   474→                                <Icons.Check className="size-3.5" /> Onayla
+   475→                              </Button>
+   476→                              <Button size="sm" variant="outline" disabled={busyId === e.id} onClick={() => patchExpense(e.id, { status: "PAID" })}>
+   477→                                <Icons.Banknote className="size-3.5" /> Ödendi İşaretle
+   478→                              </Button>
+   479→                            </>
+   480→                          )}
+   481→                          {e.status === "APPROVED" && (
+   482→                            <Button size="sm" variant="outline" disabled={busyId === e.id} onClick={() => patchExpense(e.id, { status: "PAID" })}>
+   483→                              <Icons.Banknote className="size-3.5" /> Ödendi
+   484→                            </Button>
+   485→                          )}
+   486→                          {e.status === "PAID" && e.paymentMethod === "PERSONAL_REIMBURSE" && (
+   487→                            <Button size="sm" variant="outline" disabled={busyId === e.id} onClick={() => patchExpense(e.id, { status: "REIMBURSED" })}>
+   488→                              <Icons.HandCoins className="size-3.5" /> Personeline Ödendi
+   489→                            </Button>
+   490→                          )}
+   491→                        </div>
+   492→                      )}
+   493→                    </div>
+   494→                  ))}
+   495→                </div>
+   496→              )}
+   497→            </div>
+   498→          </SectionCard>
+   499→        </TabsContent>
+   500→
+   501→        {/* ── TAB: Kırılım & Analiz ── */}
+   502→        <TabsContent value="breakdown" className="space-y-4">
+   503→          {loading && !acc ? <Loading rows={6} /> : error ? <ErrorState message={error} onRetry={reload} /> : (
+   504→            <>
+   505→              <div className="grid gap-4 lg:grid-cols-2">
+   506→                <div className="space-y-4">
+   507→                  <SectionCard title="Gelir Kaynakları" desc="tahsil edilen ödemelerin yönteme göre dökümü">
+   508→                    {incomeBySource.length === 0 ? (
+   509→                      <EmptyState title="Tahsilat yok" desc="Ödeme tamamlandığında kaynak kırılımı oluşur." />
+   510→                    ) : (
+   511→                      <div className="space-y-3">
+   512→                        {incomeBySource.map((row) => (
+   513→                          <BreakdownBar key={row.key} text={label(PAYMENT_METHODS, row.key)} count={row.count} total={row.total} max={maxIncomeSource} barClass="bg-teal-500" />
+   514→                        ))}
+   515→                      </div>
+   516→                    )}
+   517→                  </SectionCard>
+   518→                  <SectionCard title="Gider Kategorileri" desc="gerçekleşen (onaylı/ödenmiş) giderlerin kategoriye göre dökümü">
+   519→                    {expenseByCategory.length === 0 ? (
+   520→                      <EmptyState title="Gerçekleşen gider yok" desc="Gider onaylandığında kırılım oluşur." />
+   521→                    ) : (
+   522→                      <div className="space-y-3">
+   523→                        {expenseByCategory.map((row) => (
+   524→                          <BreakdownBar
+   525→                            key={row.key}
+   526→                            text={label(EXPENSE_CATEGORY, row.key)}
+   527→                            count={row.count}
+   528→                            total={row.total}
+   529→                            max={maxExpenseCategory}
+   530→                            barClass={row.key === "FIELD_EXPENSE" ? "bg-amber-500" : "bg-rose-400"}
+   531→                          />
+   532→                        ))}
+   533→                      </div>
+   534→                    )}
+   535→                  </SectionCard>
+   536→                </div>
+   537→                <div className="space-y-4">
+   538→                  <SectionCard title="Gider Durumları" desc="tüm gider kalemlerinin akıştaki anlık durumu">
+   539→                    {expenseByStatus.length === 0 ? (
+   540→                      <EmptyState title="Gider hareketi yok" desc="Gider kalemi eklendiğinde durum dağılımı oluşur." />
+   541→                    ) : (
+   542→                      <div className="flex flex-wrap gap-2">
+   543→                        {expenseByStatus.map((row) => (
+   544→                          <Chip key={row.key} tone={toneFromStatus(row.key)}>
+   545→                            {label(EXPENSE_STATUS, row.key)} · {row.count} kalem · {fmtMoney(row.total)}
+   546→                          </Chip>
+   547→                        ))}
+   548→                      </div>
+   549→                    )}
+   550→                  </SectionCard>
+   551→                  <SectionCard title="30 Günlük Akış" desc="gelir ve gider hareketleri — son 30 gün">
+   552→                    {daily.length === 0 ? (
+   553→                      <EmptyState title="Akış verisi yok" />
+   554→                    ) : (
+   555→                      <>
+   556→                        <div className="flex h-28 items-end gap-[3px]">
+   557→                          {daily.map((d) => {
+   558→                            const dt = new Date(`${d.date}T00:00:00`);
+   559→                            const dd = String(dt.getDate()).padStart(2, "0");
+   560→                            const mm = String(dt.getMonth() + 1).padStart(2, "0");
+   561→                            return (
+   562→                              <div key={d.date} className="flex h-full min-w-0 flex-1 flex-col justify-end gap-[2px]" title={`${dd}.${mm} — ${fmtMoney(d.income)} / ${fmtMoney(d.expense)}`}>
+   563→                                <div className={`w-full rounded-t-[2px] bg-teal-500 ${d.income > 0 ? "" : "opacity-30"}`} style={{ height: Math.max(2, Math.round((d.income / dailyMax) * CHART_H)) }} />
+   564→                                <div className={`w-full rounded-b-[2px] bg-rose-500 ${d.expense > 0 ? "" : "opacity-30"}`} style={{ height: Math.max(2, Math.round((d.expense / dailyMax) * CHART_H)) }} />
+   565→                              </div>
+   566→                            );
+   567→                          })}
+   568→                        </div>
+   569→                        <div className="mt-3 flex flex-wrap items-center gap-4 border-t pt-2 text-xs text-muted-foreground">
+   570→                          <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-teal-500" /> Gelir: {fmtMoney(dailyIncomeTotal)}</span>
+   571→                          <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-rose-500" /> Gider: {fmtMoney(dailyExpenseTotal)}</span>
+   572→                        </div>
+   573→                      </>
+   574→                    )}
+   575→                  </SectionCard>
+   576→                </div>
+   577→              </div>
+   578→
+   579→              <SectionCard title="Mutabakat Notu" desc="gelir ≠ gider ≠ alacak — üç eksen birbirine eşitlenmez (§36)">
+   580→                <ul className="list-disc space-y-1.5 pl-4 text-xs text-muted-foreground">
+   581→                  <li>Net bakiye = tahsil edilen gelir − gerçekleşen gider (APPROVED / PAID / REIMBURSED kalemler); marj bu iki büyüklükten türetilir.</li>
+   582→                  <li>Planlanan gider (PLANNED / PENDING_RECEIPT) net&apos;e henüz yansımaz; onay ve ödeme tamamlandığında deftere işlenir ve net&apos;e etki eder.</li>
+   583→                  <li>RECEIVABLE satırları açık sipariş bakiyeleridir; tahsil edilince INCOME&apos;a döner ve bekleyen tahsilat tutarından düşer.</li>
+   584→                </ul>
+   585→                <Separator className="my-3" />
+   586→                <p className="text-xs text-muted-foreground">
+   587→                  Defter son 60 hareketi gösterir; tüm kırılımlar edisyon bazlı hesaplanır. Kalemler kendi para birimiyle listelenir, kur dönüştürmesi yapılmaz.
+   588→                </p>
+   589→              </SectionCard>
+   590→            </>
+   591→          )}
+   592→        </TabsContent>
+   593→
+   594→        {/* ── TAB: Mutabakat ── */}
+   595→        <TabsContent value="recon" className="space-y-4">
+   596→          {loadingRecon && !recon ? <Loading rows={6} /> : reconError ? <ErrorState message={reconError} onRetry={reloadRecon} /> : recon ? (
+   597→            <>
+   598→              {/* Kapanış Hazırlığı — engelleyici (kırmızı) vs uyarı (amber) ayrımı */}
+   599→              <SectionCard
+   600→                title="Kapanış Hazırlığı"
+   601→                desc="mutabakat öncesi engelleyici ve uyarı denetimi (§7)"
+   602→                action={
+   603→                  <div className="flex items-center gap-2">
+   604→                    <span className="hidden text-xs text-muted-foreground md:inline">Oluşturuldu: {fmtDateTime(recon.generatedAt)}</span>
+   605→                    <Button size="sm" variant="outline" onClick={reloadRecon} disabled={loadingRecon}>
+   606→                      <Icons.RefreshCw className={`size-3.5 ${loadingRecon ? "animate-spin" : ""}`} /> Yenile
+   607→                    </Button>
+   608→                  </div>
+   609→                }
+   610→              >
+   611→                <div className={`rounded-lg border p-4 ${recon.readiness.ok ? "border-emerald-200 bg-emerald-50/60" : "border-rose-200 bg-rose-50/60"}`}>
+   612→                  <div className="flex items-center gap-2">
+   613→                    {recon.readiness.ok
+   614→                      ? <Icons.CheckCircle2 className="size-5 shrink-0 text-emerald-600" />
+   615→                      : <Icons.AlertTriangle className="size-5 shrink-0 text-rose-600" />}
+   616→                    <p className={`text-sm font-semibold ${recon.readiness.ok ? "text-emerald-700" : "text-rose-700"}`}>
+   617→                      {recon.readiness.ok ? "Mutabakata hazır — engelleyici bulunamadı" : "Kapanış engellendi — önce engelleyicileri çözün"}
+   618→                    </p>
+   619→                  </div>
+   620→                  {recon.readiness.blockers.length > 0 && (
+   621→                    <div className="mt-3">
+   622→                      <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Engelleyici ({recon.readiness.blockers.length})</p>
+   623→                      <ul className="mt-1 space-y-1">
+   624→                        {recon.readiness.blockers.map((b) => (
+   625→                          <li key={b} className="flex items-start gap-1.5 text-xs text-rose-700">
+   626→                            <Icons.OctagonAlert className="mt-0.5 size-3.5 shrink-0" /> {b}
+   627→                          </li>
+   628→                        ))}
+   629→                      </ul>
+   630→                    </div>
+   631→                  )}
+   632→                  {recon.readiness.warnings.length > 0 && (
+   633→                    <div className="mt-2">
+   634→                      <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Uyarı ({recon.readiness.warnings.length})</p>
+   635→                      <ul className="mt-1 space-y-1">
+   636→                        {recon.readiness.warnings.map((w) => (
+   637→                          <li key={w} className="flex items-start gap-1.5 text-xs text-amber-700">
+   638→                            <Icons.TriangleAlert className="mt-0.5 size-3.5 shrink-0" /> {w}
+   639→                          </li>
+   640→                        ))}
+   641→                      </ul>
+   642→                    </div>
+   643→                  )}
+   644→                </div>
+   645→              </SectionCard>
+   646→
+   647→              {/* Sipariş özeti — mini durum çipleri */}
+   648→              <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card px-4 py-3 shadow-sm">
+   649→                <span className="mr-1 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+   650→                  <Icons.ShoppingCart className="size-3.5" /> Sipariş Özeti
+   651→                </span>
+   652→                <Chip tone="neutral">Toplam · {recon.orders.total}</Chip>
+   653→                <Chip tone="emerald">Ödendi · {recon.orders.paid}</Chip>
+   654→                <Chip tone="amber">Açık · {recon.orders.open}</Chip>
+   655→                <Chip tone="amber">Kısmi · {recon.orders.partiallyPaid}</Chip>
+   656→                <Chip tone="rose">İptal · {recon.orders.cancelled}</Chip>
+   657→              </div>
+   658→
+   659→              <div className="grid gap-4 lg:grid-cols-2">
+   660→                {/* Sipariş Tutarsızlıkları */}
+   661→                <SectionCard title="Sipariş Tutarsızlıkları" desc="sipariş tutarı, kalem toplamı ve durum-tahsilat tutarlılık denetimi">
+   662→                  {recon.orders.mismatches.length === 0 ? (
+   663→                    <ReconCleanState title="Tutarsızlık yok" desc="Tüm siparişler tutarlı — tutar, kalem ve tahsilat denetimi temiz." />
+   664→                  ) : (
+   665→                    <div className="maven-scroll max-h-96 space-y-3 overflow-y-auto pr-1">
+   666→                      {recon.orders.mismatches.map((m, i) => (
+   667→                        <div key={`${m.orderNo}-${i}`} className="rounded-xl border border-rose-200 bg-rose-50/40 p-4">
+   668→                          <div className="flex flex-wrap items-center gap-2">
+   669→                            <span className="font-mono text-xs font-bold">{m.orderNo}</span>
+   670→                            <span className="min-w-0 truncate text-xs text-muted-foreground">{m.payer}</span>
+   671→                            <Badge variant="outline" className="ml-auto shrink-0 border-rose-200 bg-rose-50 font-semibold text-rose-700">
+   672→                              Fark: {m.delta > 0 ? "+" : ""}{fmtMoney(m.delta)}
+   673→                            </Badge>
+   674→                          </div>
+   675→                          <p className="mt-1.5 text-sm font-medium">{m.issue}</p>
+   676→                          <p className="mt-1 text-xs text-muted-foreground">
+   677→                            Beklenen: <span className="font-semibold text-foreground">{fmtMoney(m.expected)}</span>
+   678→                            {" ≠ "}Gerçekleşen: <span className="font-semibold text-foreground">{fmtMoney(m.actual)}</span>
+   679→                          </p>
+   680→                        </div>
+   681→                      ))}
+   682→                    </div>
+   683→                  )}
+   684→                </SectionCard>
+   685→
+   686→                {/* Doğrulanmamış Tahsilatlar (§38) */}
+   687→                <SectionCard title="Doğrulanmamış Tahsilatlar (§38)" desc="referans veya manuel teyit bilgisi eksik tahsilatlar">
+   688→                  {recon.unverifiedPayments.length === 0 ? (
+   689→                    <ReconCleanState title="Tümü doğrulanmış" desc="Tahsilatların referans ve teyit bilgileri eksiksiz." />
+   690→                  ) : (
+   691→                    <div className="maven-scroll max-h-96 space-y-3 overflow-y-auto pr-1">
+   692→                      {recon.unverifiedPayments.map((p) => (
+   693→                        <div key={p.id} className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+   694→                          <div className="flex flex-wrap items-center gap-2">
+   695→                            <span className="font-mono text-xs font-bold">{p.orderNo}</span>
+   696→                            <span className="min-w-0 truncate text-xs text-muted-foreground">{p.payer}</span>
+   697→                            <span className="ml-auto text-sm font-bold tabular-nums">{fmtMoney(p.amount, p.currency)}</span>
+   698→                          </div>
+   699→                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+   700→                            <span className="inline-flex items-center gap-1"><Icons.Wallet className="size-3.5" /> {label(PAYMENT_METHODS, p.source)}</span>
+   701→                            <span className="inline-flex items-center gap-1"><Icons.CalendarDays className="size-3.5" /> {fmtDateTime(p.paidAt)}</span>
+   702→                          </div>
+   703→                          {p.reason && (
+   704→                            <p className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
+   705→                              <Icons.TriangleAlert className="size-3" /> {p.reason}
+   706→                            </p>
+   707→                          )}
+   708→                        </div>
+   709→                      ))}
+   710→                    </div>
+   711→                  )}
+   712→                </SectionCard>
+   713→              </div>
+   714→
+   715→              {/* Gider Denetimi — 4 denetim kartı */}
+   716→              <SectionCard title="Gider Denetimi" desc="fiş, onay ve personel ödemesi bekleyen gider kalemleri">
+   717→                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+   718→                  <KpiCard label="Fiş Bekleyen" value={recon.expenseAudit.awaitingReceipt.count} sub={fmtMoney(recon.expenseAudit.awaitingReceipt.amount)} tone="amber" icon={<Icons.ReceiptText className="size-4" />} />
+   719→                  <KpiCard
+   720→                    label="7+ Gün Bekleyen Fiş"
+   721→                    value={recon.expenseAudit.awaitingOld.count}
+   722→                    sub={fmtMoney(recon.expenseAudit.awaitingOld.amount)}
+   723→                    tone={recon.expenseAudit.awaitingOld.count > 0 ? "amber" : "neutral"}
+   724→                    icon={<Icons.Clock4 className="size-4" />}
+   725→                  />
+   726→                  <KpiCard label="Onaylı — Ödenmemiş" value={recon.expenseAudit.approvedUnpaid.count} sub={fmtMoney(recon.expenseAudit.approvedUnpaid.amount)} tone="violet" icon={<Icons.CircleDollarSign className="size-4" />} />
+   727→                  <KpiCard label="Personeline Ödenecek" value={recon.expenseAudit.reimbursable.count} sub={fmtMoney(recon.expenseAudit.reimbursable.amount)} tone="teal" icon={<Icons.HandCoins className="size-4" />} />
+   728→                </div>
+   729→              </SectionCard>
+   730→
+   731→              <div className="grid gap-4 lg:grid-cols-2">
+   732→                {/* Açık Alacak Yaşlandırması */}
+   733→                <SectionCard title="Açık Alacak Yaşlandırması" desc={`${recon.aging.openOrders} açık siparişin vade yaşına göre dağılımı`}>
+   734→                  <div className="grid gap-3 sm:grid-cols-3">
+   735→                    {recon.aging.buckets.map((b, i) => {
+   736→                      const warn = i === 2 && b.amount > 0;
+   737→                      return (
+   738→                        <div key={b.label} className={`rounded-xl border p-4 ${warn ? "border-rose-300 bg-rose-50/60" : "border-border bg-muted/30"}`}>
+   739→                          <div className="flex items-center justify-between gap-1">
+   740→                            <span className={`text-xs font-medium ${warn ? "text-rose-700" : "text-muted-foreground"}`}>{b.label}</span>
+   741→                            {warn && <Icons.TriangleAlert className="size-3.5 shrink-0 text-rose-500" />}
+   742→                          </div>
+   743→                          <p className={`mt-1 text-xl font-semibold tracking-tight tabular-nums ${warn ? "text-rose-700" : ""}`}>{fmtMoney(b.amount)}</p>
+   744→                          <p className="text-xs text-muted-foreground">{b.count} sipariş</p>
+   745→                        </div>
+   746→                      );
+   747→                    })}
+   748→                  </div>
+   749→                  <Separator className="my-3" />
+   750→                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+   751→                    <span className="text-muted-foreground">Toplam açık alacak</span>
+   752→                    <span className="font-bold tabular-nums">{fmtMoney(recon.aging.totalReceivable)}</span>
+   753→                  </div>
+   754→                </SectionCard>
+   755→
+   756→                {/* Son 6 Ay Dönem Özeti */}
+   757→                <SectionCard title="Son 6 Ay Dönem Özeti" desc="aylık tahsilat, gerçekleşen gider ve net akış">
+   758→                  {reconPeriod.length === 0 ? (
+   759→                    <EmptyState title="Dönem verisi yok" desc="Tahsilat ve gider kaydedildikçe aylık özet oluşur." />
+   760→                  ) : (
+   761→                    <div className="maven-scroll max-h-96 overflow-y-auto rounded-lg border">
+   762→                      <table className="w-full text-xs">
+   763→                        <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
+   764→                          <tr>
+   765→                            <th className="px-3 py-2 font-medium">Ay</th>
+   766→                            <th className="px-3 py-2 text-right font-medium">Gelir</th>
+   767→                            <th className="px-3 py-2 text-right font-medium">Gider</th>
+   768→                            <th className="px-3 py-2 text-right font-medium">Net</th>
+   769→                          </tr>
+   770→                        </thead>
+   771→                        <tbody>
+   772→                          {reconPeriod.map((p) => (
+   773→                            <tr key={p.month} className="border-t transition hover:bg-muted/40">
+   774→                              <td className="whitespace-nowrap px-3 py-2 font-medium">{monthLabel(p.month)}</td>
+   775→                              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-emerald-600">{fmtMoney(p.income)}</td>
+   776→                              <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-rose-600">{fmtMoney(p.expense)}</td>
+   777→                              <td className="whitespace-nowrap px-3 py-2 text-right">
+   778→                                <span className={`inline-flex items-center justify-end gap-1.5 font-semibold tabular-nums ${p.net >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+   779→                                  <span
+   780→                                    className={`hidden h-1 rounded-full sm:inline-block ${p.net >= 0 ? "bg-emerald-400" : "bg-rose-400"}`}
+   781→                                    style={{ width: `${Math.max(2, Math.round((Math.abs(p.net) / periodMaxNet) * 56))}px` }}
+   782→                                  />
+   783→                                  {p.net >= 0 ? "+" : ""}{fmtMoney(p.net)}
+   784→                                </span>
+   785→                              </td>
+   786→                            </tr>
+   787→                          ))}
+   788→                        </tbody>
+   789→                        <tfoot>
+   790→                          <tr className="border-t bg-muted/50">
+   791→                            <td className="px-3 py-2 font-semibold">Toplam</td>
+   792→                            <td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">{fmtMoney(periodIncome)}</td>
+   793→                            <td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">{fmtMoney(periodExpense)}</td>
+   794→                            <td className={`whitespace-nowrap px-3 py-2 text-right font-bold tabular-nums ${periodNet >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{fmtMoney(periodNet)}</td>
+   795→                          </tr>
+   796→                        </tfoot>
+   797→                      </table>
+   798→                    </div>
+   799→                  )}
+   800→                </SectionCard>
+   801→              </div>
+   802→            </>
+   803→          ) : (
+   804→            <EmptyState title="Mutabakat verisi yok" desc="Bir edisyon seçildiğinde mutabakat raporu otomatik oluşturulur." />
+   805→          )}
+   806→        </TabsContent>
+   807→      </Tabs>
+   808→
+   809→      {/* Yeni Gider dialogu — tam form */}
+   810→      <Dialog open={newOpen} onOpenChange={setNewOpen}>
+   811→        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+   812→          <DialogHeader>
+   813→            <DialogTitle>Yeni Gider Kalemi</DialogTitle>
+   814→            <DialogDescription>Kaydedilen gider deftere işlenir; onay, fiş ve ödeme adımları Gider Kalemleri sekmesinden yürütülür.</DialogDescription>
+   815→          </DialogHeader>
+   816→          <div className="grid gap-3 sm:grid-cols-2">
+   817→            <div className="space-y-1.5 sm:col-span-2">
+   818→              <Label htmlFor="exp-title">Başlık *</Label>
+   819→              <Input id="exp-title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Örn. salon kurulum ekipmanı kirası" />
+   820→            </div>
+   821→            <div className="space-y-1.5">
+   822→              <Label>Kategori *</Label>
+   823→              <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
+   824→                <SelectTrigger><SelectValue placeholder="Seçin" /></SelectTrigger>
+   825→                <SelectContent>
+   826→                  {Object.entries(EXPENSE_CATEGORY).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   827→                </SelectContent>
+   828→              </Select>
+   829→            </div>
+   830→            <div className="space-y-1.5">
+   831→              <Label>Tutar *</Label>
+   832→              <Input type="number" min={0} step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0" />
+   833→            </div>
+   834→            <div className="space-y-1.5">
+   835→              <Label>Para Birimi</Label>
+   836→              <Select value={form.currency} onValueChange={(v) => setForm({ ...form, currency: v })}>
+   837→                <SelectTrigger><SelectValue /></SelectTrigger>
+   838→                <SelectContent>
+   839→                  {CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+   840→                </SelectContent>
+   841→              </Select>
+   842→            </div>
+   843→            <div className="space-y-1.5">
+   844→              <Label>Ödeme Yöntemi</Label>
+   845→              <Select value={form.paymentMethod} onValueChange={(v) => setForm({ ...form, paymentMethod: v })}>
+   846→                <SelectTrigger><SelectValue /></SelectTrigger>
+   847→                <SelectContent>
+   848→                  {Object.entries(EXPENSE_PAYMENT_METHOD).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   849→                </SelectContent>
+   850→              </Select>
+   851→            </div>
+   852→            <div className="space-y-1.5">
+   853→              <Label>Tedarikçi</Label>
+   854→              <Input value={form.vendor} onChange={(e) => setForm({ ...form, vendor: e.target.value })} placeholder="Örn. AVS Teknik" />
+   855→            </div>
+   856→            <div className="space-y-1.5">
+   857→              <Label>Harcayan</Label>
+   858→              <Input value={form.spentBy} onChange={(e) => setForm({ ...form, spentBy: e.target.value })} placeholder="Örn. Mert Şahin" />
+   859→            </div>
+   860→            <div className="space-y-1.5">
+   861→              <Label>Harcama Tarihi</Label>
+   862→              <Input type="date" value={form.incurredAt} onChange={(e) => setForm({ ...form, incurredAt: e.target.value })} />
+   863→            </div>
+   864→            <div className="space-y-1.5">
+   865→              <Label>Durum</Label>
+   866→              <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+   867→                <SelectTrigger><SelectValue /></SelectTrigger>
+   868→                <SelectContent>
+   869→                  {Object.entries(EXPENSE_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   870→                </SelectContent>
+   871→              </Select>
+   872→            </div>
+   873→            <div className="space-y-1.5 sm:col-span-2">
+   874→              <Label htmlFor="exp-desc">Açıklama</Label>
+   875→              <Textarea id="exp-desc" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+   876→            </div>
+   877→            <div className="space-y-1.5">
+   878→              <Label>Fiş No</Label>
+   879→              <Input value={form.receiptNo} onChange={(e) => setForm({ ...form, receiptNo: e.target.value })} />
+   880→            </div>
+   881→            <div className="space-y-1.5">
+   882→              <Label>Not</Label>
+   883→              <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+   884→            </div>
+   885→          </div>
+   886→          <DialogFooter>
+   887→            <Button variant="outline" onClick={() => setNewOpen(false)} disabled={busy}>Vazgeç</Button>
+   888→            <Button onClick={submitNewExpense} disabled={busy || !form.title.trim() || !form.category || !(Number(form.amount) > 0)}>
+   889→              {busy ? "Kaydediliyor…" : "Gideri Kaydet"}
+   890→            </Button>
+   891→          </DialogFooter>
+   892→        </DialogContent>
+   893→      </Dialog>
+   894→
+   895→      {/* Hızlı Saha Harcaması dialogu — kategori/durum sabit */}
+   896→      <Dialog open={quickOpen} onOpenChange={setQuickOpen}>
+   897→        <DialogContent className="sm:max-w-md">
+   898→          <DialogHeader>
+   899→            <DialogTitle>Hızlı Saha Harcaması</DialogTitle>
+   900→            <DialogDescription>Kategori &quot;Saha Harcaması&quot; olarak onaylı kaydedilir ve doğrudan deftere işlenir; fiş sonradan eklenebilir.</DialogDescription>
+   901→          </DialogHeader>
+   902→          <div className="grid gap-3">
+   903→            <div className="space-y-1.5">
+   904→              <Label htmlFor="quick-title">Başlık *</Label>
+   905→              <Input id="quick-title" value={quick.title} onChange={(e) => setQuick({ ...quick, title: e.target.value })} placeholder="Örn. fuaye ikram alımı" />
+   906→            </div>
+   907→            <div className="grid grid-cols-2 gap-3">
+   908→              <div className="space-y-1.5">
+   909→                <Label>Tutar *</Label>
+   910→                <Input type="number" min={0} value={quick.amount} onChange={(e) => setQuick({ ...quick, amount: e.target.value })} placeholder="0" />
+   911→              </div>
+   912→              <div className="space-y-1.5">
+   913→                <Label>Harcayan</Label>
+   914→                <Input value={quick.spentBy} onChange={(e) => setQuick({ ...quick, spentBy: e.target.value })} placeholder="Ad Soyad" />
+   915→              </div>
+   916→            </div>
+   917→            <div className="space-y-1.5">
+   918→              <Label>Ödeme Yöntemi</Label>
+   919→              <Select value={quick.paymentMethod} onValueChange={(v) => setQuick({ ...quick, paymentMethod: v })}>
+   920→                <SelectTrigger><SelectValue /></SelectTrigger>
+   921→                <SelectContent>
+   922→                  {QUICK_METHODS.map((m) => <SelectItem key={m} value={m}>{label(EXPENSE_PAYMENT_METHOD, m)}</SelectItem>)}
+   923→                </SelectContent>
+   924→              </Select>
+   925→            </div>
+   926→            <p className="text-xs text-muted-foreground">Durum: Onaylandı (Saha Onayı) — harcama defterde gider olarak hemen görünür.</p>
+   927→          </div>
+   928→          <DialogFooter>
+   929→            <Button variant="outline" onClick={() => setQuickOpen(false)} disabled={busy}>Vazgeç</Button>
+   930→            <Button onClick={submitQuickExpense} disabled={busy || !quick.title.trim() || !(Number(quick.amount) > 0)}>
+   931→              {busy ? "Kaydediliyor…" : "Harcamayı Kaydet"}
+   932→            </Button>
+   933→          </DialogFooter>
+   934→        </DialogContent>
+   935→      </Dialog>
+   936→    </div>
+   937→  );
+   938→}
+   939→

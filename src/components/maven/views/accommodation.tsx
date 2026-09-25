@@ -414,38 +414,42 @@ export function AccommodationView() {
                 className="cursor-pointer overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md"
               >
                 <div className="space-y-2.5 p-3">
-                  <div className="flex items-start gap-3">
-                    {h.logoUrl ? (
-                      <img src={h.logoUrl} alt={`${h.name} logosu`} className="size-11 shrink-0 rounded-lg border bg-white object-contain p-0.5" />
-                    ) : (
-                      <span className="grid size-11 shrink-0 place-items-center rounded-lg border bg-muted text-muted-foreground"><Icons.Building className="size-5" /></span>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{h.name}</p>
-                      <p className="truncate text-xs text-muted-foreground">{[h.district, h.city].filter(Boolean).join(" · ") || "konum belirtilmedi"}</p>
-                      {h.starRating ? (
-                        <p className="mt-0.5 text-xs text-amber-500" aria-label={`${h.starRating} yıldız`}>
-                          {"★".repeat(h.starRating)}
-                          <span className="text-muted-foreground/30">{"★".repeat(5 - h.starRating)}</span>
-                        </p>
-                      ) : null}
+                  <div className={cn("grid gap-3", h.imageUrl && "sm:grid-cols-2")}>
+                    <div className="flex min-w-0 items-start gap-3">
+                      {h.logoUrl ? (
+                        <img src={h.logoUrl} alt={`${h.name} logosu`} className="size-11 shrink-0 rounded-lg border bg-white object-contain p-0.5" />
+                      ) : (
+                        <span className="grid size-11 shrink-0 place-items-center rounded-lg border bg-muted text-muted-foreground"><Icons.Building className="size-5" /></span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold">{h.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">{[h.district, h.city].filter(Boolean).join(" · ") || "konum belirtilmedi"}</p>
+                        {h.starRating ? (
+                          <p className="mt-0.5 text-xs text-amber-500" aria-label={`${h.starRating} yıldız`}>
+                            {"★".repeat(h.starRating)}
+                            <span className="text-muted-foreground/30">{"★".repeat(5 - h.starRating)}</span>
+                          </p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={`${h.name} otelini düzenle`}
+                        onClick={() => openEditHotel(h)}
+                        className="grid size-7 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        <Icons.Pencil className="size-3.5" />
+                      </button>
                     </div>
                     {h.imageUrl && (
-                      <img
-                        src={h.imageUrl}
-                        alt={`${h.name} kapak görseli`}
-                        loading="lazy"
-                        className="hidden h-14 w-24 shrink-0 rounded-lg border object-cover sm:block"
-                      />
+                      <div className="relative h-28 overflow-hidden rounded-lg border bg-muted sm:h-auto sm:min-h-24">
+                        <img
+                          src={h.imageUrl}
+                          alt={`${h.name} kapak görseli`}
+                          loading="lazy"
+                          className="absolute inset-0 size-full object-cover"
+                        />
+                      </div>
                     )}
-                    <button
-                      type="button"
-                      aria-label={`${h.name} otelini düzenle`}
-                      onClick={() => openEditHotel(h)}
-                      className="grid size-7 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    >
-                      <Icons.Pencil className="size-3.5" />
-                    </button>
                   </div>
 
                   {(h.address || h.checkInNote || h.contactName || h.contactPhone) && (

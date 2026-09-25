@@ -1925,3 +1925,20 @@ Stage Summary:
 - Değişen: src/components/maven/views/accommodation.tsx (3 blok: renderHotelMediaPicker, otel kartı kapak→thumb, kart header'ı). tsc 0, lint 0, i18n-hardcoded-scan 76 dosya 0 ihlal (yeni metin YOK — mevcut TR stringler korundu).
 - Ekran görüntüleri: tool-results/hotel-compact-cards.png, hotel-compact-dialog.png, hotel-compact-mobile3.png, hotel-compact-verified.png.
 - Not: Tarayıcı-önbellekli eski chunk belirtileri (parse/ReferenceError) görülürse kök neden koddan ÖNCE taze context'tir (close+reopen).
+---
+Task ID: HOTEL-SPLIT (otel kartı üst alanı ikiye bölme)
+Agent: Z.ai Code (ana ajan)
+Task: Kullanıcı geri bildirimi ("o kadar da küçük değil") üzerine otel kartı üst alanının yeniden düzenlenmesi — solda bilgiler, sağda kapak görseli sığacak şekilde ikiye bölünmüş düzen.
+
+Work Log:
+- accommodation.tsx otel kartı header'ı yeniden yapılandırıldı: küçük 96×56 thumb KALDIRILDI; üst alan `grid gap-3` + (imageUrl varsa) `sm:grid-cols-2` ile İKİ SÜTUNA bölündü.
+  - SOL sütun: logo (size-11) + otel adı/konum/yıldız + düzenleme düğmesi — tek satır flex.
+  - SAĞ sütun: kapak görseli `relative h-28 overflow-hidden rounded-lg border` + `absolute inset-0 size-full object-cover` — grid stretch ile SOL sütunun yüksekliğine tam oturur (kanıt: 958px kartta 458×94, üst kenar info ile hizalı).
+  - Görsel yoksa grid tek sütun (boş alan oluşmaz).
+  - Mobil (<sm): görsel info altına tam genişlik stack olur (h-28; kanıt 296×110, belowInfo=true).
+- Adres/chip/e-posta/blok çizelgeleri değişmedi. Yeni metin YOK.
+
+Stage Summary:
+- Kanıt (agent-browser taze context): masaüstü 1440px — imgW 458 / imgH 94, kartın sağ yarısını dolduruyor, info ile üst-hizalı; mobil 390px — görsel info altında 296×110; page errors 0; tsc 0, lint 0, i18n-hardcoded-scan 0 ihlal.
+- Değişen: src/components/maven/views/accommodation.tsx (yalnız otel kartı header grid'i).
+- Ekran görüntüleri: tool-results/hotel-split-desktop.png, hotel-split-card.png, hotel-split-mobile.png.

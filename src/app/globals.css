@@ -316,3 +316,22 @@
 @media (prefers-reduced-motion: reduce) {
   .animate-in { animation: none !important; transition-duration: 0.01ms !important; }
 }
+
+/* ── PWA Portal — mobil uygulama hissiyatı ────────────────────────────────── */
+/* ekran geçişi: kısa fade + yukarı kayma (kullanıcı isteği: mobil app hissi) */
+@keyframes portal-screen-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes portal-confetti-fall {
+  0% { opacity: 1; transform: translate3d(0, -10px, 0) rotate(0deg); }
+  100% { opacity: 0; transform: translate3d(var(--cx, 0px), 110px, 0) rotate(var(--cr, 180deg)); }
+}
+@keyframes portal-pop-in {
+  0% { opacity: 0; transform: scale(0.6); }
+  70% { transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .portal-screen-anim, .portal-confetti-dot { animation: none !important; }
+}

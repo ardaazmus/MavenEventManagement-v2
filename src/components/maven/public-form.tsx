@@ -184,7 +184,7 @@ function RankingInput({ opts, value, onChange }: { opts: string[]; value: string
 
 // ─── Ana bileşen ─────────────────────────────────────────────────────────────
 
-export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; embed?: boolean }) {
+export function PublicFormPage({ idOrSlug, embed = false, onSubmitted }: { idOrSlug: string; embed?: boolean; onSubmitted?: (info: { status: string }) => void }) {
   useLang();
   const [form, setForm] = useState<PublicForm | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -287,6 +287,14 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
         commsOptIn,
       });
       setResult(res);
+      // portal entegrasyonu: başarılı gönderimde arayan taraf haberdar edilir (gamification puanı vb.)
+      if (res.status !== "SPAM") {
+        try {
+          onSubmitted?.({ status: res.status });
+        } catch {
+          /* arayan tarafın hatası form akışını bozmaz */
+        }
+      }
       if (form.hasPublicResults && res.status !== "SPAM") {
         fetch(`/api/public-forms/${encodeURIComponent(idOrSlug)}/results`)
           .then((r) => (r.ok ? r.json() : null))

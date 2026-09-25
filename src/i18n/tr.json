@@ -2844,7 +2844,10 @@
       "mapSub": "Yerleşimi görün",
       "b2b": "B2B Görüşmeler",
       "b2bSub": "{count} randevu",
-      "authOnly": "Yalnız kayıtlı"
+      "authOnly": "Yalnız kayıtlı",
+      "game": "Görevler & Rozetler",
+      "gameSub": "{points} puan",
+      "gameEmpty": "Puanını topla"
     },
     "home": {
       "upNext": "Sıradaki oturum",
@@ -3031,6 +3034,29 @@
     "design": {
       "sponsorLabel": "Mobil Portal Sponsoru",
       "sponsorVisit": "Ziyaret et"
+    },
+    "game": {
+      "title": "Görevler & Rozetler",
+      "disabled": "Oyunlaştırma bu etkinlik için kapalı.",
+      "refresh": "Yenile",
+      "currentLevel": "Seviye",
+      "points": "{points} puan",
+      "nextLevel": "Sonraki: {level} ({min} puan)",
+      "quests": "Görevler",
+      "noQuests": "Şu an görev yok.",
+      "questQa": "Soru-Cevap'ta soru sor",
+      "questB2b": "B2B randevularını onayla",
+      "leaderboard": "Liderlik Tablosu",
+      "leaderEmpty": "Henüz puan alan yok — ilk sen ol!",
+      "guest": "Misafir",
+      "you": "sen",
+      "levelUp": "Seviye atladın!",
+      "levelUpDesc": "Tebrikler — artık {level} seviyesindesin.",
+      "pointsWon": "Puan kazandın!",
+      "pointsWonDesc": "+{points} puan hesabına eklendi."
+    },
+    "form": {
+      "title": "Form"
     }
   },
   "portalSettings": {
@@ -3218,7 +3244,19 @@
       "nav_program": "Program",
       "nav_sponsors": "Sponsorlar",
       "nav_map": "Yer Planı",
-      "nav_profile": "Profil"
+      "nav_profile": "Profil",
+      "googleFontsGroup": "Google Fonts",
+      "pickLibrary": "İkon Kütüphanesi",
+      "pickShort": "Seç",
+      "widgetIconsTitle": "Panel Widget İkonları",
+      "widgetIconsDesc": "Dashboard kartlarının ikonlarını kütüphaneden seçin veya SVG/PNG yükleyin.",
+      "libraryTitle": "İkon Kütüphanesi",
+      "libraryDesc": "Bir ikon arayın ve seçin — veya kendi SVG/PNG logonuzu yükleyin.",
+      "libraryTab": "Kütüphane",
+      "uploadTab": "Yükle",
+      "searchPh": "İkon ara (ör. takvim, sponsor, kalp / heart)",
+      "noResults": "Sonuç yok — farklı bir kelime deneyin veya yükleyin.",
+      "uploadDesc": "Kendi ikonunuzu yükleyin — SVG (önerilen) veya PNG, en fazla 300KB."
     },
     "channels": {
       "title": "Bildirim Kanalları — WhatsApp & SMS",
@@ -3273,6 +3311,41 @@
       "savedDesc": "Bildirim kanalları güncellendi.",
       "saveFail": "Kanallar kaydedilemedi",
       "loadFail": "Kanal yapılandırması yüklenemedi"
+    },
+    "chrome": {
+      "title": "Ekran Üst Bantları",
+      "desc": "Hangi ekranda Maven üst bandı ve etkinlik başlığının görüneceğine ekran başına karar verin.",
+      "screen": "Ekran",
+      "screen_home": "Anasayfa",
+      "screen_program": "Program",
+      "screen_speakers": "Konuşmacılar",
+      "screen_forms": "Formlar",
+      "screen_qa": "Soru-Cevap",
+      "screen_sponsors": "Sponsorlar",
+      "screen_map": "Yer Planı",
+      "screen_b2b": "B2B",
+      "screen_profile": "Profil",
+      "topHeader": "Maven Üst Bandı",
+      "topHeaderHint": "Organizatör + diğer etkinlikler",
+      "eventBar": "Etkinlik Başlığı",
+      "eventBarHint": "Anasayfada hero, diğer ekranlarda kompakt bar",
+      "hint": "Varsayılan: Maven üst bandı yalnız Anasayfa'da görünür; etkinlik başlığı tüm ekranlarda. Kapatılan bantlar o ekranda hiç render edilmez."
+    },
+    "game": {
+      "title": "Oyunlaştırma (Gamification)",
+      "desc": "Katılımcılar formları doldurup soru sorarak puan ve seviye kazanır; liderlik tablosu ve rozetlerle mobil uygulama hissi.",
+      "enabled": "Oyunlaştırma",
+      "enabledHint": "Açıkken panelde 'Görevler & Rozetler' kartı ve oyun ekranı görünür.",
+      "points": "Aksiyon Puanları",
+      "pointForm": "Form gönderimi",
+      "pointQa": "Soru gönderimi",
+      "pointB2b": "B2B onayı",
+      "qaCap": "Soru puanı tavanı (kaç soruya kadar puan)",
+      "levels": "Seviyeler",
+      "levelsHint": "Eşikler artan sırada olmalıdır — katılımcı eşiği geçtiğinde seviye atlar ve konfeti kutlaması gösterilir.",
+      "levelAdd": "Seviye ekle",
+      "levelRemove": "Son seviyeyi sil",
+      "levelNew": "Yeni Seviye"
     }
   }
 }

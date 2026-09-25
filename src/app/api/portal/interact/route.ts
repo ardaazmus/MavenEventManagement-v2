@@ -5,12 +5,77 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { extractSession, validatePortalSession, touchSession } from "@/lib/api/portal-access";
+import { extractSession, validatePortalSession, touchSession, type PortalSessionRow } from "@/lib/api/portal-access";
 
 export const dynamic = "force-dynamic";
 
 const LOG_KINDS = new Set(["VISIT", "WIDGET_CLICK", "PWA_INSTALL", "FORM_OPEN", "REMINDER_SET"]);
-const WIDGET_KEYS = new Set(["agenda", "speakers", "forms", "qa", "map", "b2b", "sponsors", "program", "profile", "home"]);
+const WIDGET_KEYS = new Set(["agenda", "speakers", "forms", "qa", "map", "b2b", "sponsors", "program", "profile", "home", "game"]);
+
+type SessionRow = PortalSessionRow;
+
+// ── OYUNLAŞTIRMA PUAN MOTORU ──
+// Kullanıcı isteği: "Mobil Portal için mobil app gamification alanları düşünülsün
+// modullerdeki formlar ile etkileşimli olsun."
+// • Puan kuralları EventPortalConfig.gameConfigJson'tan okunur (gameEnabled kapalıysa no-op).
+// • FORM_SUBMIT / B2B_ACCEPT: ref başına TEK sefer; QA_SUBMIT: qaCap (varsayılan 5) tavana kadar.
+// • Hata asla ana aksiyonu bozmaz — puanlama fire-and-forget güvenli.
+async function awardGamePoints(
+  editionId: string,
+  session: SessionRow,
+  action: "FORM_SUBMIT" | "QA_SUBMIT" | "B2B_ACCEPT",
+  refId: string,
+): Promise<{ awarded: number; total: number } | null> {
+  try {
+    const config = await db.eventPortalConfig.findUnique({
+      where: { editionId },
+      select: { gameEnabled: true, gameConfigJson: true },
+    });
+    if (!config?.gameEnabled) return null;
+    let pointsCfg: Record<string, number> = { FORM_SUBMIT: 20, QA_SUBMIT: 10, B2B_ACCEPT: 15 };
+    let qaCap = 5;
+    if (config.gameConfigJson) {
+      try {
+        const p = JSON.parse(config.gameConfigJson) as { points?: Record<string, number>; qaCap?: number };
+        if (p.points && typeof p.points === "object") pointsCfg = { ...pointsCfg, ...p.points };
+        if (Number.isFinite(p.qaCap)) qaCap = Math.max(1, Math.min(50, Math.round(Number(p.qaCap))));
+      } catch {
+        /* bozuk json → varsayılan */
+      }
+    }
+    const gain = Math.round(pointsCfg[action] ?? 0);
+    const existing = await db.portalGameProgress.findUnique({
+      where: { editionId_sessionId: { editionId, sessionId: session.id } },
+    });
+    const actions = (existing?.actionsJson ? (JSON.parse(existing.actionsJson) as Record<string, number>) : {});
+    let nextActions: Record<string, number>;
+    if (action === "QA_SUBMIT") {
+      const count = Number(actions["QA_SUBMIT"] ?? 0);
+      if (count >= qaCap) return { awarded: 0, total: existing?.points ?? 0 };
+      nextActions = { ...actions, QA_SUBMIT: count + 1 };
+    } else {
+      const key = `${action}:${refId}`;
+      if (actions[key]) return { awarded: 0, total: existing?.points ?? 0 };
+      nextActions = { ...actions, [key]: 1 };
+    }
+    if (gain <= 0) return { awarded: 0, total: existing?.points ?? 0 };
+    const personId = session.kind === "AUTH" ? session.personId : null;
+    if (existing) {
+      const total = existing.points + gain;
+      await db.portalGameProgress.update({
+        where: { id: existing.id },
+        data: { points: total, actionsJson: JSON.stringify(nextActions), ...(personId ? { personId } : {}) },
+      });
+      return { awarded: gain, total };
+    }
+    await db.portalGameProgress.create({
+      data: { editionId, sessionId: session.id, personId, points: gain, actionsJson: JSON.stringify(nextActions) },
+    });
+    return { awarded: gain, total: gain };
+  } catch {
+    return null; // puanlama hatası ana akışı bozmaz
+  }
+}
 
 export async function POST(req: NextRequest) {
   const denied = enforceRateLimit(req, { key: "portal-interact", limit: 90, windowMs: 60_000 });
@@ -39,6 +104,7 @@ export async function POST(req: NextRequest) {
       assignmentId?: string;
       response?: string; // ACCEPTED | DECLINED | RESCHEDULE
       note?: string;
+      formId?: string; // FORM_SUBMIT puanı için
     };
     const action = (body.action ?? "").toUpperCase();
 
@@ -105,7 +171,24 @@ export async function POST(req: NextRequest) {
       await db.portalAnalyticsLog.create({
         data: { editionId, sessionId: session.id, kind: "QA_SUBMIT" },
       });
-      return NextResponse.json({ ok: true, id: question.id }, { status: 201 });
+      const game = await awardGamePoints(editionId, session, "QA_SUBMIT", question.id);
+      return NextResponse.json({ ok: true, id: question.id, game }, { status: 201 });
+    }
+
+    // ── OYUNLAŞTIRMA: form gönderimi puanı (form edisyona ait + isPublic doğrulanır) ──
+    if (action === "FORM_SUBMIT") {
+      const formId = (body.formId ?? "").trim();
+      if (!formId) return NextResponse.json({ error: "formId zorunlu" }, { status: 400 });
+      const form = await db.formDefinition.findFirst({
+        where: { OR: [{ id: formId }, { slug: formId }], editionId, isPublic: true },
+        select: { id: true },
+      });
+      if (!form) return NextResponse.json({ error: "Form bulunamadı" }, { status: 404 });
+      await db.portalAnalyticsLog.create({
+        data: { editionId, sessionId: session.id, kind: "FORM_SUBMIT", meta: form.id },
+      });
+      const game = await awardGamePoints(editionId, session, "FORM_SUBMIT", form.id);
+      return NextResponse.json({ ok: true, game });
     }
 
     // ── B2B yanıtı (§4.1) — yalnız AUTH + kendi ataması ──
@@ -151,7 +234,8 @@ export async function POST(req: NextRequest) {
       await db.portalAnalyticsLog.create({
         data: { editionId, sessionId: session.id, kind: "B2B_ACTION", meta: response },
       });
-      return NextResponse.json({ ok: true });
+      const game = response === "ACCEPTED" ? await awardGamePoints(editionId, session, "B2B_ACCEPT", assignmentId) : null;
+      return NextResponse.json({ ok: true, game });
     }
 
     return NextResponse.json({ error: "Bilinmeyen aksiyon" }, { status: 400 });

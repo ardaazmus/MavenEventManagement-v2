@@ -24,6 +24,9 @@ import { useLang, t } from "@/lib/i18n";
 import { fmtDate, fmtDateTime, fmtMoney } from "@/lib/constants";
 import { apiGet, apiSend } from "@/lib/client";
 import { cn } from "@/lib/utils";
+import { fontStackFor, loadGoogleFont } from "@/lib/portal-fonts";
+import { resolvePortalIcon } from "@/components/maven/portal-icon-library";
+import { PublicFormPage } from "@/components/maven/public-form";
 
 // ─── tipler (API yanıt aynası) ──────────────────────────────────────────────
 type Phase = "LOADING" | "LOGIN" | "DISABLED" | "ACTIVE" | "ERROR";
@@ -58,21 +61,52 @@ type B2bMeeting = {
 };
 type OtherEvent = { id: string; slug: string; name: string; editionLabel: string | null; startDate: string | null; endDate: string | null; city: string | null; logoUrl: string | null; headerImageUrl: string | null };
 // §5.2+ tasarım kontrolü — admin ayarlarından gelir; hepsi nullable (varsayılan tema)
+type IconOverride = { icon?: string; svg?: string; color?: string };
 type PortalDesign = {
   fontFamily: string | null; fontScale: number | null;
   headerBgColor: string | null; footerBgColor: string | null; contentBgColor: string | null;
   headerBgImage: string | null; footerBgImage: string | null; contentBgImage: string | null;
-  iconOverrides: Record<string, { svg?: string; color?: string }> | null;
+  iconOverrides: Record<string, IconOverride> | null;
   iconLayout: Record<string, number> | null;
 };
-// font ailesi anahtarı → CSS stack (portal-settings.tsx ile birebir aynı)
-const PORTAL_FONT_STACKS: Record<string, string> = {
-  system: "inherit",
-  serif: "Georgia, 'Times New Roman', serif",
-  rounded: "ui-rounded, 'Nunito', 'SF Pro Rounded', system-ui, sans-serif",
-  mono: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-  condensed: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif",
+// ekran üst-bant görünürlüğü — "Ana sayfa haricinde Maven ın üst bandı görünmesin;
+// her ekranda custom karar" (kullanıcı isteği). Eksik ekran → varsayılanlar.
+type PortalChrome = {
+  topHeader?: Record<string, boolean> | null; // Maven üst bandı (organizatör + diğer etkinlikler)
+  eventBar?: Record<string, boolean> | null; // etkinlik başlığı (home'da hero, diğer ekranlarda kompakt bar)
 };
+type GameRules = { enabled: boolean; points: Record<string, number>; levels: { name: string; min: number }[] };
+type GameQuest = { key: string; kind: string; label: string; points: number; done: boolean; progress?: number; target?: number };
+type GameData = {
+  enabled: boolean;
+  points: number;
+  level: string;
+  levelMin: number;
+  nextLevel: string | null;
+  nextLevelMin: number | null;
+  pct: number;
+  quests: GameQuest[];
+  leaderboard: { rank: number; name: string; points: number; you: boolean }[];
+  isAuth: boolean;
+};
+// font ailesi anahtarı → CSS stack — lib/portal-fonts (sistem + Google Fonts) tek kaynak
+const PORTAL_FONT_STACKS = fontStackFor;
+
+// ikon çözümleyici: override.icon (kütüphane) > override.svg (yüklü logo) > varsayılan lucide
+function resolveIconNode(
+  key: string,
+  fallback: (typeof Icons.Home),
+  overrides: Record<string, IconOverride> | null | undefined,
+  props: { className?: string; style?: React.CSSProperties },
+): React.ReactNode {
+  const o = overrides?.[key];
+  if (o?.svg) {
+    return <img src={o.svg} alt="" className={props.className} style={{ objectFit: "contain", ...(props.style ?? {}) }} />;
+  }
+  const O = o?.icon ? resolvePortalIcon(o.icon) : null;
+  const I = O ?? fallback;
+  return <I className={props.className} style={props.style} />;
+}
 type PortalContent = {
   phase: string;
   session?: { kind: "GUEST" | "AUTH" };
@@ -91,6 +125,8 @@ type PortalContent = {
     registrationFormId: string | null;
     pwaEnabled: boolean;
     design?: PortalDesign | null;
+    chrome?: PortalChrome | null;
+    game?: GameRules | null;
     portalSponsor?: { logoUrl: string | null; name: string | null; url: string | null } | null;
   };
   otherEvents?: OtherEvent[];
@@ -199,6 +235,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   const [content, setContent] = useState<PortalContent | null>(null);
   const [kind, setKind] = useState<"GUEST" | "AUTH" | null>(null);
   const [screen, setScreen] = useState("home");
+  const [formRef, setFormRef] = useState<string | null>(null); // portal-İÇİ form ekranı (?form= yerine)
   const [fatal, setFatal] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState<string | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -395,6 +432,91 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     }
   }, [fetchContent]);
 
+  // ── oyunlaştırma durumu — görev/liderlik; level atlama → konfeti (kullanıcı isteği) ──
+  const [gameData, setGameData] = useState<GameData | null>(null);
+  const [confettiKey, setConfettiKey] = useState(0);
+  const prevLevelRef = useRef<string | null>(null);
+  const fetchGame = useCallback(async () => {
+    if (!sessionRef.current) return;
+    try {
+      const d = (await apiGet<GameData>("/api/portal/game", { headers: { "x-portal-session": sessionRef.current } })) as GameData;
+      if (!d.enabled) {
+        setGameData(null);
+        return;
+      }
+      setGameData((prev) => {
+        if (prev && prev.points > 0 && d.points > prev.points && prev.level !== d.level) {
+          setConfettiKey((k) => k + 1);
+        }
+        return d;
+      });
+      if (prevLevelRef.current && d.level !== prevLevelRef.current && d.points > 0) {
+        toast({ title: t("portalApp.game.levelUp"), description: t("portalApp.game.levelUpDesc", { level: d.level }) });
+      }
+      prevLevelRef.current = d.level;
+    } catch {
+      /* sessiz — oyun verisi opsiyonel */
+    }
+  }, [toast, t]);
+  useEffect(() => {
+    if (phase !== "ACTIVE" || !sessionRef.current) return;
+    let alive = true;
+    void Promise.resolve().then(async () => {
+      if (!sessionRef.current) return;
+      try {
+        const d = (await apiGet<GameData>("/api/portal/game", { headers: { "x-portal-session": sessionRef.current } })) as GameData;
+        if (!alive) return;
+        if (!d.enabled) {
+          if (alive) setGameData(null);
+          return;
+        }
+        if (alive) setGameData(d);
+      } catch {
+        /* sessiz — oyun verisi opsiyonel */
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [phase, sessionKey]);
+
+  // form gönderimi → puan (FORM_SUBMIT — sunucu form bağlantısını doğrular)
+  const onPortalFormSubmitted = useCallback(
+    (formIdOrSlug: string) => {
+      void (async () => {
+        try {
+          const r = (await portalSend("/api/portal/interact", { action: "FORM_SUBMIT", formId: formIdOrSlug }, sessionRef.current)) as { game?: { awarded: number } | null };
+          if (r?.game?.awarded && r.game.awarded > 0) {
+            toast({ title: t("portalApp.game.pointsWon"), description: t("portalApp.game.pointsWonDesc", { points: r.game.awarded }) });
+          }
+          void fetchGame();
+        } catch {
+          /* puan opsiyonel — form akışını bozmaz */
+        }
+      })();
+    },
+    [fetchGame, toast, t],
+  );
+
+  // Google Fonts yükleme — seçili font gf-* ise CDN link enjeksiyonu (idempotent)
+  const gfKey = content?.config?.design?.fontFamily ?? null;
+  useEffect(() => {
+    if (gfKey && gfKey.startsWith("gf-")) loadGoogleFont(gfKey);
+  }, [gfKey]);
+
+  // dinamik theme-color — mobil tarayıcı çubuğu portal aksanıyla boyanır (app hissi)
+  useEffect(() => {
+    if (phase !== "ACTIVE") return;
+    const c = content?.config?.themeColor ?? content?.edition.portalHeaderAccent ?? "#0d9488";
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.name = "theme-color";
+      document.head.appendChild(meta);
+    }
+    meta.content = c;
+  }, [phase, content?.config?.themeColor, content?.edition.portalHeaderAccent]);
+
   const openForm = async (formIdOrSlug: string | null) => {
     if (!formIdOrSlug) return;
     try {
@@ -402,7 +524,11 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     } catch {
       /* fire-and-forget */
     }
-    window.location.href = `/?form=${encodeURIComponent(formIdOrSlug)}`;
+    // Kullanıcı isteği: "Formlar acılınca header ve footer kayboluyor Kaybolmasın."
+    // → form artık portal İÇİNDE ekran olarak açılır (?form= tam-sayfa yerine)
+    setFormRef(formIdOrSlug);
+    setScreen("form");
+    window.scrollTo({ top: 0 });
   };
 
   const trackClick = (widgetKey: string) => {
@@ -483,8 +609,15 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
 
   const accent = cfg.themeColor ?? content.edition.portalHeaderAccent ?? "#0d9488";
   const design = cfg.design ?? null;
-  const visibleWidgets = cfg.widgets;
+  // oyunlaştırma widget'ı — yalnız gameEnabled açıkken panelde göster
+  const visibleWidgets = cfg.widgets.filter((w) => w.key !== "game" || cfg.game?.enabled);
   const iconOverrides = design?.iconOverrides ?? {};
+  // ── ekran üst-bant görünürlüğü (kullanıcı isteği): Maven üst bandı varsayılan yalnız
+  // anasayfada; etkinlik başlığı her ekranda. Admin her ekran için custom karar verebilir
+  // (chromeJson — Portal Ayarları → Ekran Üst Bantları matrisi).
+  const chromeCfg = cfg.chrome ?? null;
+  const showTopHeader = chromeCfg?.topHeader ? (chromeCfg.topHeader[screen] ?? (screen === "home")) : screen === "home";
+  const showEventBar = chromeCfg?.eventBar ? (chromeCfg.eventBar[screen] ?? true) : true;
   // alt menü konum düzeni — admin kanvas grid sırası (varsayılan: home, program, sponsors, map, profile)
   const navOrder = (k: string) => design?.iconLayout?.[k] ?? { home: 0, program: 1, sponsors: 2, map: 3, profile: 4 }[k] ?? 9;
   const navItems: { key: string; label: string; icon: typeof Icons.Home }[] = [
@@ -519,12 +652,15 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
       className="flex min-h-screen flex-col bg-muted/40"
       style={{
         ["--portal-accent" as string]: accent,
-        fontFamily: design?.fontFamily && design.fontFamily !== "system" ? PORTAL_FONT_STACKS[design.fontFamily] : undefined,
+        fontFamily: design?.fontFamily && design.fontFamily !== "system" ? PORTAL_FONT_STACKS(design.fontFamily) : undefined,
         fontSize: design?.fontScale && design.fontScale !== 100 ? `${16 * (design.fontScale / 100)}px` : undefined,
+        WebkitTapHighlightColor: "transparent", // native app hissi — dokunma vurgusu yok
         ...contentBgStyle,
       }}
     >
-      {/* ── Top Header (§3.1): organizatör + diğer etkinlikler carousel ── */}
+      {/* ── Top Header (§3.1): organizatör + diğer etkinlikler carousel ──
+          Görünürlük: varsayılan yalnız ANASAYFA; admin her ekran için custom karar verir */}
+      {showTopHeader && (
       <div className="border-b bg-background" style={headerBgStyle}>
         <div className="mx-auto w-full max-w-2xl px-4 pt-3">
           <div className="flex items-center gap-2">
@@ -559,53 +695,82 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
           )}
         </div>
       </div>
+      )}
 
-      {/* ── Event Header (§3.1): banner + logo + ad + tarih ── */}
-      <header className="relative overflow-hidden bg-background" style={headerBgStyle}>
-        {content.edition.headerImageUrl && (
-          <div className="relative h-28 sm:h-36">
-            <img src={content.edition.headerImageUrl} alt={`${content.edition.name} ${t("portalApp.bannerAlt")}`} className="absolute inset-0 size-full object-cover" />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/55 to-transparent" />
+      {/* ── Event Header (§3.1) — ANASAYFA: hero kart (banner + logo + ad AYNI kartta;
+          negatif-marj bindirme KALDIRILDI — "logo/ad header alanı ile çakışıyor" sorunu bitti) ── */}
+      {showEventBar && screen === "home" && (
+        <header className="px-4 pt-3">
+          <div className="overflow-hidden rounded-2xl border bg-background shadow-sm" style={headerBgStyle}>
+            {content.edition.headerImageUrl && (
+              <div className="relative h-32 sm:h-40">
+                <img src={content.edition.headerImageUrl} alt={`${content.edition.name} ${t("portalApp.bannerAlt")}`} className="absolute inset-0 size-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
+              </div>
+            )}
+            <div className="flex items-center gap-3 p-3">
+              <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card">
+                {content.edition.logoUrl ? (
+                  <img src={content.edition.logoUrl} alt={`${content.edition.name} ${t("portalApp.logoAlt")}`} className="size-full object-contain p-1" />
+                ) : (
+                  <Icons.CalendarRange className="size-6" style={{ color: accent }} />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h1 className="line-clamp-2 text-base font-bold leading-tight">
+                  {content.edition.portalHeaderTitle || content.edition.name}
+                </h1>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {[
+                    content.edition.startDate ? fmtDate(content.edition.startDate) : null,
+                    content.edition.city,
+                    content.edition.venueName,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || content.edition.portalHeaderSubtitle || "—"}
+                </p>
+              </div>
+            </div>
           </div>
-        )}
-        <div className={cn("mx-auto w-full max-w-2xl px-4 pb-3", !content.edition.headerImageUrl && "pt-4")}>
-          <div className="flex items-end gap-3">
-            {/* yalnız logo banner'a bindirilir — başlık hiçbir genişlikte kesilmez */}
-            <div className={cn("grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card", content.edition.headerImageUrl && "-mt-7")}>
+        </header>
+      )}
+
+      {/* ── ALT EKRANLAR: kompakt sabit (sticky) uygulama çubuğu — mobil app hissi; büyük
+          banner + Maven bandı YOK (kullanıcı isteği: "Ana sayfa haricinde Maven ın üst bandı görünmesin") ── */}
+      {showEventBar && screen !== "home" && (
+        <div
+          className="sticky top-0 z-30 border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+          style={headerBgStyle}
+        >
+          <div className="mx-auto flex h-12 w-full max-w-2xl items-center gap-2 px-4">
+            <div className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md border bg-white dark:bg-card">
               {content.edition.logoUrl ? (
-                <img src={content.edition.logoUrl} alt={`${content.edition.name} ${t("portalApp.logoAlt")}`} className="size-full object-contain p-1" />
+                <img src={content.edition.logoUrl} alt="" className="size-full object-contain p-0.5" />
               ) : (
-                <Icons.CalendarRange className="size-6" style={{ color: accent }} />
+                <Icons.CalendarRange className="size-3.5" style={{ color: accent }} />
               )}
             </div>
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-base font-bold">
-                {content.edition.portalHeaderTitle || content.edition.name}
-              </h1>
-              <p className="truncate text-xs text-muted-foreground">
-                {[
-                  content.edition.startDate ? fmtDate(content.edition.startDate) : null,
-                  content.edition.city,
-                  content.edition.venueName,
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || content.edition.portalHeaderSubtitle || "—"}
-              </p>
-            </div>
+            <span className="truncate text-xs font-semibold">{content.edition.portalHeaderTitle || content.edition.name}</span>
+            <span className="ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: `${accent}1a`, color: accent }}>
+              {kind === "AUTH" ? t("portalApp.badge.auth") : t("portalApp.badge.guest")}
+            </span>
           </div>
         </div>
-      </header>
+      )}
 
-      {/* ── ana içerik (§3.2-§3.4 + §4) ── */}
+      {/* ── ana içerik (§3.2-§3.4 + §4) — ekran geçiş animasyonu (mobil app hissi) ── */}
       <main
         className="mx-auto w-full max-w-2xl flex-1 px-4 pb-24 pt-3"
         style={{ paddingBottom: sponsor?.logoUrl || sponsor?.name ? "calc(env(safe-area-inset-bottom) + 96px)" : undefined }}
       >
+        <div key={screen} className="animate-[portal-screen-in_0.22s_ease-out]">
         {screen === "home" && (
           <HomeScreen
             content={content}
             kind={kind}
             accent={accent}
+            iconOverrides={iconOverrides}
+            gameData={gameData}
             deferredPrompt={deferredPrompt}
             onInstall={() => void installApp()}
             onNavigate={gotoScreen}
@@ -616,8 +781,26 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
         {screen === "speakers" && <SpeakersScreen content={content} onBack={() => setScreen("home")} />}
         {screen === "sponsors" && <SponsorsScreen content={content} />}
         {screen === "map" && <VenueMapScreen content={content} />}
-        {screen === "qa" && <QaScreen content={content} sessionKey={sessionKey} onSubmitted={() => void refreshContent()} />}
+        {screen === "qa" && <QaScreen content={content} sessionKey={sessionKey} onSubmitted={() => void refreshContent()} onGameRefresh={() => void fetchGame()} />}
         {screen === "forms" && <FormsScreen content={content} onOpenForm={openForm} />}
+        {screen === "form" && (
+          <FormScreen
+            content={content}
+            formRef={formRef}
+            onBack={() => setScreen("forms")}
+            onSubmitted={formRef ? () => onPortalFormSubmitted(formRef) : undefined}
+          />
+        )}
+        {screen === "game" && (
+          <GameScreen
+            data={gameData}
+            accent={accent}
+            confettiKey={confettiKey}
+            onRefresh={() => void fetchGame()}
+            onOpenForm={openForm}
+            onNavigate={gotoScreen}
+          />
+        )}
         {screen === "b2b" && <B2bScreen content={content} sessionKey={sessionKey} onChanged={() => void bootstrap()} />}
         {screen === "profile" && (
           <ProfileScreen
@@ -645,6 +828,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             onInstall={() => void installApp()}
           />
         )}
+        </div>
       </main>
 
       {/* ── Mobil Portal Sponsoru şeridi (§5.2+) — sponsor logo alanı ── */}
@@ -676,25 +860,34 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
       >
         <div className="mx-auto flex w-full max-w-2xl">
           {navItems.map((n) => {
-            const I = n.icon;
             const o = iconOverrides[n.key];
-            const active = screen === n.key || (n.key === "home" && ["speakers", "qa", "forms", "b2b"].includes(screen));
+            const active = screen === n.key || (n.key === "home" && ["speakers", "qa", "forms", "form", "b2b", "game"].includes(screen));
             return (
               <button
                 key={n.key}
                 onClick={() => setScreen(n.key)}
                 className={cn(
-                  "flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors min-h-[44px] justify-center",
+                  "flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium transition-all active:scale-95 min-h-[52px]",
                   active ? "text-primary" : "text-muted-foreground hover:text-foreground",
                 )}
                 aria-current={active ? "page" : undefined}
               >
-                {o?.svg ? (
-                  <img src={o.svg} alt="" className="object-contain" style={{ width: 20, height: 20, opacity: active ? 1 : 0.72 }} />
-                ) : (
-                  <I className={cn("size-5", active && "stroke-[2.4]")} style={{ color: o?.color || undefined }} />
-                )}
-                {n.label}
+                {/* aktif-sekme pill'i — native uygulama hissi (kullanıcı isteği: mobil app feel) */}
+                <span
+                  className={cn("grid size-9 place-items-center rounded-full transition-all", active ? "scale-105" : "scale-100")}
+                  style={active && !o?.svg ? { backgroundColor: `${accent}1f` } : undefined}
+                >
+                  {o?.svg ? (
+                    <img src={o.svg} alt="" className="object-contain" style={{ width: 20, height: 20, opacity: active ? 1 : 0.72 }} />
+                  ) : (
+                    (() => {
+                      const O = o?.icon ? resolvePortalIcon(o.icon) : null;
+                      const I = O ?? n.icon;
+                      return <I className={cn("size-5", active && "stroke-[2.4]")} style={{ color: active ? accent : (o?.color || undefined) }} />;
+                    })()
+                  )}
+                </span>
+                <span className={cn(active && "font-semibold")}>{n.label}</span>
               </button>
             );
           })}
@@ -798,7 +991,7 @@ function LoginScreen({
     <div
       className="flex min-h-screen flex-col bg-gradient-to-b from-teal-50 to-background"
       style={{
-        fontFamily: dsg?.fontFamily && dsg.fontFamily !== "system" ? PORTAL_FONT_STACKS[dsg.fontFamily] : undefined,
+        fontFamily: dsg?.fontFamily && dsg.fontFamily !== "system" ? PORTAL_FONT_STACKS(dsg.fontFamily) : undefined,
         fontSize: dsg?.fontScale && dsg.fontScale !== 100 ? `${16 * (dsg.fontScale / 100)}px` : undefined,
         ...(dsg?.contentBgColor ? { backgroundColor: dsg.contentBgColor } : {}),
         ...(dsg?.contentBgImage ? { backgroundImage: `url(${dsg.contentBgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}),
@@ -911,6 +1104,8 @@ function HomeScreen({
   content,
   kind,
   accent,
+  iconOverrides,
+  gameData,
   deferredPrompt,
   onInstall,
   onNavigate,
@@ -919,6 +1114,8 @@ function HomeScreen({
   content: PortalContent;
   kind: "GUEST" | "AUTH" | null;
   accent: string;
+  iconOverrides: Record<string, IconOverride>;
+  gameData: GameData | null;
   deferredPrompt: { prompt: () => void } | null;
   onInstall: () => void;
   onNavigate: (s: string) => void;
@@ -939,6 +1136,7 @@ function HomeScreen({
     qa: { label: t("portalApp.widget.qa"), icon: Icons.MessageCircleQuestion, sub: t("portalApp.widget.qaSub"), target: "qa" },
     map: { label: t("portalApp.widget.map"), icon: Icons.Map, sub: content.edition.venueName ?? t("portalApp.widget.mapSub"), target: "map" },
     b2b: { label: t("portalApp.widget.b2b"), icon: Icons.Handshake, sub: t("portalApp.widget.b2bSub", { count: content.b2b?.length ?? 0 }), target: "b2b" },
+    game: { label: t("portalApp.widget.game"), icon: Icons.Trophy, sub: gameData ? t("portalApp.widget.gameSub", { points: gameData.points }) : t("portalApp.widget.gameEmpty"), target: "game" },
   };
 
   return (
@@ -970,21 +1168,31 @@ function HomeScreen({
         </div>
       ))}
 
-      {/* widget grid — admin sırası ile */}
+      {/* widget grid — admin sırası ile; ikon kütüphanesi/SVG override'lı (kullanıcı isteği) */}
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3" role="list" aria-label={t("portalApp.widget.aria")}>
         {widgets.map((w) => {
           const meta = WIDGET_META[w.key];
           if (!meta) return null;
-          const I = meta.icon;
+          const o = iconOverrides[w.key];
+          const hasCustom = Boolean(o?.svg || o?.icon);
           return (
             <button
               key={w.key}
               role="listitem"
               onClick={() => onNavigate(meta.target)}
-              className="group flex min-h-[92px] flex-col items-start gap-1.5 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 hover:shadow dark:bg-card"
+              className="group flex min-h-[92px] flex-col items-start gap-1.5 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 hover:shadow active:scale-[0.97] dark:bg-card"
             >
-              <span className="grid size-8 place-items-center rounded-lg text-white" style={{ backgroundColor: accent }}>
-                <I className="size-4" />
+              <span
+                className={cn("grid size-8 place-items-center rounded-lg text-white transition-transform", !hasCustom && "group-hover:scale-105")}
+                style={{ backgroundColor: hasCustom && o?.svg ? "transparent" : accent }}
+              >
+                {o?.svg ? (
+                  <img src={o.svg} alt="" className="size-7 object-contain" />
+                ) : (() => {
+                  const O = o?.icon ? resolvePortalIcon(o.icon) : null;
+                  const I = O ?? meta.icon;
+                  return <I className="size-4" />;
+                })()}
               </span>
               <span className="text-xs font-semibold leading-tight">{meta.label}</span>
               <span className="line-clamp-2 text-[10px] text-muted-foreground">{meta.sub}</span>
@@ -1325,7 +1533,7 @@ function VenueMapScreen({ content }: { content: PortalContent }) {
 }
 
 // ─── Q&A (§3.2 widget) ──────────────────────────────────────────────────────
-function QaScreen({ content, sessionKey, onSubmitted }: { content: PortalContent; sessionKey: string | null; onSubmitted?: () => void }) {
+function QaScreen({ content, sessionKey, onSubmitted, onGameRefresh }: { content: PortalContent; sessionKey: string | null; onSubmitted?: () => void; onGameRefresh?: () => void }) {
   const { t } = useLang();
   const { toast } = useToast();
   const program = content.program ?? [];
@@ -1340,7 +1548,7 @@ function QaScreen({ content, sessionKey, onSubmitted }: { content: PortalContent
     if (!sessionKey) return;
     setBusy(true);
     try {
-      await portalSend(
+      const r = (await portalSend(
         "/api/portal/interact",
         {
           action: "QA_SUBMIT",
@@ -1350,10 +1558,16 @@ function QaScreen({ content, sessionKey, onSubmitted }: { content: PortalContent
           displayName: name.trim() || undefined,
         },
         sessionKey,
-      );
+      )) as { ok?: boolean; id?: string; game?: { awarded?: number } | null };
       setBody("");
-      toast({ title: t("portalApp.qa.sent"), description: t("portalApp.qa.sentDesc") });
+      // oyunlaştırma: soru puanı — anında toast (kullanıcı isteği: formlarla etkileşimli)
+      const awarded = r?.game?.awarded ?? 0;
+      toast({
+        title: awarded > 0 ? t("portalApp.game.pointsWon") : t("portalApp.qa.sent"),
+        description: awarded > 0 ? t("portalApp.game.pointsWonDesc", { points: awarded }) : t("portalApp.qa.sentDesc"),
+      });
       onSubmitted?.(); // ekran korunur, soru listesi tazelenir
+      onGameRefresh?.();
     } catch (e) {
       toast({ title: t("portalApp.qa.fail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
     } finally {
@@ -1777,19 +1991,213 @@ function ProfileScreen({
   );
 }
 
+// ─── PORTAL-İÇİ FORM EKRANI (kullanıcı isteği: "Formlar acılınca header ve footer
+// kayboluyor Kaybolmasın.") — form artık tam-sayfa ?form= yerine portal Shell'i içinde
+// açılır: üst bant + kompakt event bar + alt menü GÖRÜNÜR kalır, geri butonlu.
+function FormScreen({
+  content,
+  formRef,
+  onBack,
+  onSubmitted,
+}: {
+  content: PortalContent;
+  formRef: string | null;
+  onBack: () => void;
+  onSubmitted?: (info: { status: string }) => void;
+}) {
+  const { t } = useLang();
+  const form = (content.forms ?? []).find((f) => f.id === formRef || f.slug === formRef);
+  if (!formRef) return <EmptyMini text={t("portalApp.forms.empty")} />;
+  return (
+    <ScreenShell title={form?.name ?? t("portalApp.form.title")} icon={<Icons.ClipboardList className="size-4" />} onBack={onBack}>
+      <div className="-mx-1 overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card">
+        <PublicFormPage key={formRef} idOrSlug={formRef} embed onSubmitted={onSubmitted} />
+      </div>
+    </ScreenShell>
+  );
+}
+
+// ─── OYUNLAŞTIRMA EKRANI (§ gamification — formlarla etkileşimli) ───────────
+// Seviye kartı (Bronz→Elmas) + görev listesi (form gönderimi, Q&A, B2B) + liderlik
+// tablosu + level-atlama konfetisi. Kullanıcı isteği: "mobil app gamification alanları
+// düşünülsün modullerdeki formlar ile etkileşimli olsun."
+function GameScreen({
+  data,
+  accent,
+  confettiKey,
+  onRefresh,
+  onOpenForm,
+  onNavigate,
+}: {
+  data: GameData | null;
+  accent: string;
+  confettiKey: number;
+  onRefresh: () => void;
+  onOpenForm: (id: string | null) => void;
+  onNavigate: (s: string) => void;
+}) {
+  const { t } = useLang();
+  if (!data) {
+    return (
+      <ScreenShell title={t("portalApp.game.title")} icon={<Icons.Trophy className="size-4" />}>
+        <EmptyMini text={t("portalApp.game.disabled")} />
+      </ScreenShell>
+    );
+  }
+  return (
+    <ScreenShell
+      title={t("portalApp.game.title")}
+      icon={<Icons.Trophy className="size-4" />}
+      action={
+        <button onClick={onRefresh} aria-label={t("portalApp.game.refresh")} className="grid size-8 place-items-center rounded-lg border bg-white shadow-sm transition hover:bg-muted active:scale-95 dark:bg-card">
+          <Icons.RotateCcw className="size-4" />
+        </button>
+      }
+    >
+      {confettiKey > 0 && <Confetti key={confettiKey} accent={accent} />}
+
+      {/* seviye kartı */}
+      <div className="relative overflow-hidden rounded-2xl border p-4 shadow-sm" style={{ background: `linear-gradient(135deg, ${accent}14, transparent 60%)` }}>
+        <div className="flex items-center gap-3">
+          <div className="grid size-14 shrink-0 place-items-center rounded-2xl text-white shadow-sm animate-[portal-pop-in_0.5s_ease-out]" style={{ backgroundColor: accent }}>
+            <Icons.Trophy className="size-7" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("portalApp.game.currentLevel")}</p>
+            <p className="text-lg font-bold leading-tight">{data.level}</p>
+            <p className="text-xs text-muted-foreground">
+              {t("portalApp.game.points", { points: data.points })}
+              {data.nextLevel ? ` · ${t("portalApp.game.nextLevel", { level: data.nextLevel, min: data.nextLevelMin ?? 0 })}` : ""}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={data.pct} aria-valuemin={0} aria-valuemax={100}>
+          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${data.pct}%`, backgroundColor: accent }} />
+        </div>
+      </div>
+
+      {/* görev listesi */}
+      <div>
+        <h3 className="mb-1.5 mt-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">{t("portalApp.game.quests")}</h3>
+        <div className="space-y-2" role="list">
+          {data.quests.length === 0 && <EmptyMini text={t("portalApp.game.noQuests")} />}
+          {data.quests.map((q) => {
+            const isForm = q.kind === "FORM";
+            const formId = isForm ? q.key.slice("form:".length) : null;
+            const IconC = q.kind === "FORM" ? Icons.ClipboardList : q.kind === "QA" ? Icons.MessageCircleQuestion : Icons.Handshake;
+            const questLabel = q.kind === "QA" ? t("portalApp.game.questQa") : q.kind === "B2B" ? t("portalApp.game.questB2b") : q.label;
+            return (
+              <button
+                key={q.key}
+                role="listitem"
+                onClick={isForm && formId ? () => onOpenForm(formId) : q.kind === "QA" ? () => onNavigate("qa") : q.kind === "B2B" ? () => onNavigate("b2b") : undefined}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition active:scale-[0.98] dark:bg-card",
+                  !q.done && "hover:border-teal-300",
+                )}
+              >
+                <span
+                  className={cn(
+                    "grid size-9 shrink-0 place-items-center rounded-full",
+                    q.done ? "text-white" : "bg-muted text-muted-foreground",
+                  )}
+                  style={q.done ? { backgroundColor: accent } : undefined}
+                >
+                  {q.done ? <Icons.Check className="size-4" /> : <IconC className="size-4" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={cn("block truncate text-xs font-semibold", q.done && "line-through opacity-60")}>{questLabel}</span>
+                  {typeof q.progress === "number" && typeof q.target === "number" && (
+                    <span className="mt-0.5 block text-[10px] text-muted-foreground">{q.progress} / {q.target}</span>
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold",
+                    q.done ? "bg-muted text-muted-foreground line-through" : "",
+                  )}
+                  style={!q.done ? { backgroundColor: `${accent}1a`, color: accent } : undefined}
+                >
+                  +{q.points}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* liderlik tablosu — gizlilik maskeli adlar */}
+      <div>
+        <h3 className="mb-1.5 mt-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">{t("portalApp.game.leaderboard")}</h3>
+        <div className="overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card">
+          {data.leaderboard.length === 0 ? (
+            <p className="p-4 text-center text-xs text-muted-foreground">{t("portalApp.game.leaderEmpty")}</p>
+          ) : (
+            data.leaderboard.map((r) => (
+              <div key={r.rank} className={cn("flex items-center gap-2.5 border-b px-3 py-2 last:border-b-0", r.you && "font-semibold")} style={r.you ? { backgroundColor: `${accent}0f` } : undefined}>
+                <span className={cn("grid size-6 shrink-0 place-items-center rounded-full text-[10px] font-bold", r.rank <= 3 ? "text-white" : "bg-muted text-muted-foreground")} style={r.rank <= 3 ? { backgroundColor: accent } : undefined}>
+                  {r.rank}
+                </span>
+                <Icons.Crown className={cn("size-3.5 shrink-0", r.rank === 1 ? "text-amber-500" : "opacity-0")} />
+                <span className="min-w-0 flex-1 truncate text-xs">{r.name || t("portalApp.game.guest")}{r.you ? ` · ${t("portalApp.game.you")}` : ""}</span>
+                <span className="shrink-0 text-xs font-bold tabular-nums">{r.points}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </ScreenShell>
+  );
+}
+
+// konfeti — level atlama kutlaması (bağımlılık yok; saf CSS animasyonu)
+function Confetti({ accent }: { accent: string }) {
+  const dots = useMemo(() => {
+    const colors = [accent, "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#0ea5e9"];
+    return Array.from({ length: 26 }, (_, i) => ({
+      left: 4 + ((i * 37) % 92),
+      color: colors[i % colors.length],
+      dx: `${(i % 2 === 0 ? 1 : -1) * (8 + ((i * 13) % 30))}px`,
+      rot: `${(i % 2 === 0 ? 1 : -1) * (120 + ((i * 29) % 240))}deg`,
+      delay: (i % 7) * 40,
+      size: 5 + (i % 3) * 2,
+    }));
+  }, [accent]);
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-50" aria-hidden="true">
+      {dots.map((d, i) => (
+        <span
+          key={i}
+          className="portal-confetti-dot absolute top-2 block rounded-[2px]"
+          style={{
+            left: `${d.left}%`,
+            width: d.size,
+            height: d.size,
+            backgroundColor: d.color,
+            ["--cx" as string]: d.dx,
+            ["--cr" as string]: d.rot,
+            animation: `portal-confetti-fall 1.1s ease-in ${d.delay}ms forwards`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 // ─── küçük parçalar ─────────────────────────────────────────────────────────
-function ScreenShell({ title, icon, onBack, children }: { title: string; icon?: React.ReactNode; onBack?: () => void; children: React.ReactNode }) {
+function ScreenShell({ title, icon, onBack, action, children }: { title: string; icon?: React.ReactNode; onBack?: () => void; action?: React.ReactNode; children: React.ReactNode }) {
   const { t } = useLang();
   return (
     <div>
       <div className="mb-3 flex items-center gap-2">
         {onBack && (
-          <button onClick={onBack} aria-label={t("portalApp.back")} className="grid size-8 shrink-0 place-items-center rounded-lg border bg-white shadow-sm transition hover:bg-muted dark:bg-card">
+          <button onClick={onBack} aria-label={t("portalApp.back")} className="grid size-8 shrink-0 place-items-center rounded-lg border bg-white shadow-sm transition hover:bg-muted active:scale-95 dark:bg-card">
             <Icons.ArrowLeft className="size-4" />
           </button>
         )}
         {icon}
         <h2 className="text-sm font-bold">{title}</h2>
+        {action && <span className="ml-auto shrink-0">{action}</span>}
       </div>
       {children}
     </div>

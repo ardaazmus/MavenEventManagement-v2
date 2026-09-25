@@ -1,0 +1,547 @@
+  1260→    <ScreenShell title={t("portalApp.sponsors.title")} icon={<Icons.Handshake className="size-4" />}>
+  1261→      {sponsors.length === 0 ? (
+  1262→        <EmptyMini text={t("portalApp.sponsors.empty")} />
+  1263→      ) : (
+  1264→        <div className="space-y-4">
+  1265→          {tiers.map(([tier, items]) => (
+  1266→            <div key={tier}>
+  1267→              <h3 className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">{tier}</h3>
+  1268→              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+  1269→                {items.map((s) => (
+  1270→                  <div key={s.organizationId} className="rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
+  1271→                    <div className="flex items-center gap-2.5">
+  1272→                      <div className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted">
+  1273→                        {s.logoUrl ? (
+  1274→                          <img src={s.logoUrl} alt={s.name} className="size-full object-contain p-0.5" />
+  1275→                        ) : (
+  1276→                          <Icons.Building2 className="size-4 text-muted-foreground" />
+  1277→                        )}
+  1278→                      </div>
+  1279→                      <div className="min-w-0 flex-1">
+  1280→                        <p className="truncate text-xs font-semibold">{s.name}</p>
+  1281→                        <p className="truncate text-[10px] text-muted-foreground">{[s.city, s.country].filter(Boolean).join(", ") || "—"}</p>
+  1282→                      </div>
+  1283→                    </div>
+  1284→                    {s.description && <p className="mt-2 line-clamp-2 text-[11px] text-muted-foreground">{s.description}</p>}
+  1285→                    {s.website && (
+  1286→                      <a href={s.website.startsWith("http") ? s.website : `https://${s.website}`} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-teal-700 hover:underline dark:text-teal-300">
+  1287→                        <Icons.ExternalLink className="size-3" /> {t("portalApp.sponsors.website")}
+  1288→                      </a>
+  1289→                    )}
+  1290→                  </div>
+  1291→                ))}
+  1292→              </div>
+  1293→            </div>
+  1294→          ))}
+  1295→        </div>
+  1296→      )}
+  1297→    </ScreenShell>
+  1298→  );
+  1299→}
+  1300→
+  1301→// ─── YER PLANI (§3.3 nav-4) ─────────────────────────────────────────────────
+  1302→function VenueMapScreen({ content }: { content: PortalContent }) {
+  1303→  const { t } = useLang();
+  1304→  const map = content.config!.venueMap;
+  1305→  return (
+  1306→    <ScreenShell title={t("portalApp.map.title")} icon={<Icons.Map className="size-4" />}>
+  1307→      {content.edition.venueName && (
+  1308→        <div className="mb-2 flex items-center gap-2 rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
+  1309→          <Icons.MapPin className="size-4 shrink-0 text-teal-600" />
+  1310→          <div className="min-w-0">
+  1311→            <p className="truncate text-xs font-semibold">{content.edition.venueName}</p>
+  1312→            {content.edition.city && <p className="truncate text-[11px] text-muted-foreground">{content.edition.city}</p>}
+  1313→          </div>
+  1314→        </div>
+  1315→      )}
+  1316→      {map.enabled && map.url ? (
+  1317→        <div className="overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card">
+  1318→          <img src={map.url} alt={t("portalApp.map.alt")} className="max-h-[70vh] w-full object-contain" />
+  1319→        </div>
+  1320→      ) : (
+  1321→        <EmptyMini text={t("portalApp.map.empty")} />
+  1322→      )}
+  1323→    </ScreenShell>
+  1324→  );
+  1325→}
+  1326→
+  1327→// ─── Q&A (§3.2 widget) ──────────────────────────────────────────────────────
+  1328→function QaScreen({ content, sessionKey, onSubmitted }: { content: PortalContent; sessionKey: string | null; onSubmitted?: () => void }) {
+  1329→  const { t } = useLang();
+  1330→  const { toast } = useToast();
+  1331→  const program = content.program ?? [];
+  1332→  const [sessionId, setSessionId] = useState<string>("general");
+  1333→  const [body, setBody] = useState("");
+  1334→  const [anon, setAnon] = useState(false);
+  1335→  const [name, setName] = useState("");
+  1336→  const [busy, setBusy] = useState(false);
+  1337→  const mine = content.myQuestions ?? [];
+  1338→
+  1339→  const submit = async () => {
+  1340→    if (!sessionKey) return;
+  1341→    setBusy(true);
+  1342→    try {
+  1343→      await portalSend(
+  1344→        "/api/portal/interact",
+  1345→        {
+  1346→          action: "QA_SUBMIT",
+  1347→          programSessionId: sessionId === "general" ? undefined : sessionId,
+  1348→          body: body.trim(),
+  1349→          isAnonymous: anon,
+  1350→          displayName: name.trim() || undefined,
+  1351→        },
+  1352→        sessionKey,
+  1353→      );
+  1354→      setBody("");
+  1355→      toast({ title: t("portalApp.qa.sent"), description: t("portalApp.qa.sentDesc") });
+  1356→      onSubmitted?.(); // ekran korunur, soru listesi tazelenir
+  1357→    } catch (e) {
+  1358→      toast({ title: t("portalApp.qa.fail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+  1359→    } finally {
+  1360→      setBusy(false);
+  1361→    }
+  1362→  };
+  1363→
+  1364→  return (
+  1365→    <ScreenShell title={t("portalApp.qa.title")} icon={<Icons.MessageCircleQuestion className="size-4" />}>
+  1366→      <div className="rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
+  1367→        <div className="space-y-2.5">
+  1368→          <div className="space-y-1.5">
+  1369→            <Label>{t("portalApp.qa.target")}</Label>
+  1370→            <Select value={sessionId} onValueChange={setSessionId}>
+  1371→              <SelectTrigger><SelectValue /></SelectTrigger>
+  1372→              <SelectContent>
+  1373→                <SelectItem value="general">{t("portalApp.qa.general")}</SelectItem>
+  1374→                {program.map((s) => (
+  1375→                  <SelectItem key={s.id} value={s.id}>
+  1376→                    {new Date(s.startTime).toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" })} · {s.title}
+  1377→                  </SelectItem>
+  1378→                ))}
+  1379→              </SelectContent>
+  1380→            </Select>
+  1381→          </div>
+  1382→          <div className="space-y-1.5">
+  1383→            <Label htmlFor="qa-body">{t("portalApp.qa.question")}</Label>
+  1384→            <Textarea id="qa-body" value={body} onChange={(e) => setBody(e.target.value)} placeholder={t("portalApp.qa.ph")} rows={3} maxLength={500} />
+  1385→          </div>
+  1386→          <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
+  1387→            <Label htmlFor="qa-anon" className="text-[11px] font-normal text-muted-foreground">{t("portalApp.qa.anon")}</Label>
+  1388→            <Switch id="qa-anon" checked={anon} onCheckedChange={setAnon} />
+  1389→          </div>
+  1390→          {anon ? null : (
+  1391→            content.session?.kind === "AUTH" ? (
+  1392→              <p className="text-[11px] text-muted-foreground">{t("portalApp.qa.authName")}</p>
+  1393→            ) : (
+  1394→              <div className="space-y-1.5">
+  1395→                <Label htmlFor="qa-name">{t("portalApp.qa.guestName")}</Label>
+  1396→                <Input id="qa-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("portalApp.qa.guestNamePh")} maxLength={80} />
+  1397→              </div>
+  1398→            )
+  1399→          )}
+  1400→          <Button className="w-full" onClick={() => void submit()} disabled={busy || body.trim().length < 5}>
+  1401→            {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Send className="size-4" />} {t("portalApp.qa.submit")}
+  1402→          </Button>
+  1403→        </div>
+  1404→      </div>
+  1405→
+  1406→      {mine.length > 0 && (
+  1407→        <div className="mt-3">
+  1408→          <h3 className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">{t("portalApp.qa.mine")}</h3>
+  1409→          <div className="space-y-2">
+  1410→            {mine.map((q) => (
+  1411→              <div key={q.id} className="rounded-lg border bg-white p-2.5 shadow-sm dark:bg-card">
+  1412→                <div className="flex items-start justify-between gap-2">
+  1413→                  <p className="text-[11px] leading-snug">{q.body}</p>
+  1414→                  <span className={cn("shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium", q.status === "ANSWERED" ? "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200" : q.status === "HIDDEN" ? "bg-muted text-muted-foreground" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200")}>
+  1415→                    {t(`portalApp.qa.status.${q.status}`)}
+  1416→                  </span>
+  1417→                </div>
+  1418→                <p className="mt-1 text-[10px] text-muted-foreground">{fmtDateTime(q.createdAt)}</p>
+  1419→              </div>
+  1420→            ))}
+  1421→          </div>
+  1422→        </div>
+  1423→      )}
+  1424→    </ScreenShell>
+  1425→  );
+  1426→}
+  1427→
+  1428→// ─── FORMLAR & QUIZLER (§3.2 widget hedefi) ─────────────────────────────────
+  1429→function FormsScreen({ content, onOpenForm }: { content: PortalContent; onOpenForm: (id: string | null) => void }) {
+  1430→  const { t } = useLang();
+  1431→  const forms = content.forms ?? [];
+  1432→  return (
+  1433→    <ScreenShell title={t("portalApp.forms.title")} icon={<Icons.ClipboardList className="size-4" />}>
+  1434→      {forms.length === 0 ? (
+  1435→        <EmptyMini text={t("portalApp.forms.empty")} />
+  1436→      ) : (
+  1437→        <div className="space-y-2" role="list">
+  1438→          {forms.map((f) => (
+  1439→            <button key={f.id} role="listitem" onClick={() => onOpenForm(f.slug ?? f.id)} className="flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 dark:bg-card">
+  1440→              <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-teal-50 text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
+  1441→                <Icons.FileText className="size-5" />
+  1442→              </div>
+  1443→              <div className="min-w-0 flex-1">
+  1444→                <p className="truncate text-xs font-semibold">{f.name}</p>
+  1445→                {f.description && <p className="line-clamp-1 text-[11px] text-muted-foreground">{f.description}</p>}
+  1446→              </div>
+  1447→              <Icons.ExternalLink className="size-4 shrink-0 text-muted-foreground" />
+  1448→            </button>
+  1449→          ))}
+  1450→        </div>
+  1451→      )}
+  1452→    </ScreenShell>
+  1453→  );
+  1454→}
+  1455→
+  1456→// ─── B2B GÖRÜŞMELER (§4.1 — yalnız AUTH) ────────────────────────────────────
+  1457→function B2bScreen({ content, sessionKey, onChanged }: { content: PortalContent; sessionKey: string | null; onChanged: () => void }) {
+  1458→  const { t } = useLang();
+  1459→  const { toast } = useToast();
+  1460→  const meetings = content.b2b ?? [];
+  1461→  const [resched, setResched] = useState<B2bMeeting | null>(null);
+  1462→  const [note, setNote] = useState("");
+  1463→  const [busyId, setBusyId] = useState<string | null>(null);
+  1464→
+  1465→  if (content.session?.kind !== "AUTH") {
+  1466→    return (
+  1467→      <ScreenShell title={t("portalApp.b2b.title")} icon={<Icons.Handshake className="size-4" />}>
+  1468→        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center dark:border-amber-900 dark:bg-amber-950/40">
+  1469→          <Icons.Lock className="mx-auto size-5 text-amber-600" />
+  1470→          <p className="mt-1.5 text-xs font-medium">{t("portalApp.b2b.authOnly")}</p>
+  1471→          <p className="mt-1 text-[11px] text-muted-foreground">{t("portalApp.b2b.authOnlyDesc")}</p>
+  1472→        </div>
+  1473→      </ScreenShell>
+  1474→    );
+  1475→  }
+  1476→
+  1477→  const respond = async (m: B2bMeeting, response: "ACCEPTED" | "DECLINED" | "RESCHEDULE", extra?: string) => {
+  1478→    if (!sessionKey) return;
+  1479→    setBusyId(m.assignmentId);
+  1480→    try {
+  1481→      await portalSend("/api/portal/interact", { action: "B2B_RESPOND", assignmentId: m.assignmentId, response, note: extra }, sessionKey);
+  1482→      toast({ title: t(`portalApp.b2b.done.${response}`) });
+  1483→      setResched(null);
+  1484→      setNote("");
+  1485→      onChanged();
+  1486→    } catch (e) {
+  1487→      toast({ title: t("portalApp.b2b.fail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+  1488→    } finally {
+  1489→      setBusyId(null);
+  1490→    }
+  1491→  };
+  1492→
+  1493→  return (
+  1494→    <ScreenShell title={t("portalApp.b2b.title")} icon={<Icons.Handshake className="size-4" />}>
+  1495→      {meetings.length === 0 ? (
+  1496→        <EmptyMini text={t("portalApp.b2b.empty")} />
+  1497→      ) : (
+  1498→        <div className="space-y-2">
+  1499→          {meetings.map((m) => (
+  1500→            <div key={m.assignmentId} className="rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
+  1501→              <div className="flex items-start justify-between gap-2">
+  1502→                <div className="min-w-0">
+  1503→                  <p className="text-xs font-semibold">{m.subject}</p>
+  1504→                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+  1505→                    {.startsAt ? fmtDateTime(m.startsAt) : null, m.location ? `${t("portalApp.b2b.table")}: ${m.location}` : null].filter(Boolean).join(" · ") || "—"}
+  1506→                  </p>
+  1507→                </div>
+  1508→                <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[9px] font-medium",
+  1509→                  m.status === "ACCEPTED" || m.status === "COMPLETED" ? "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200" : m.status === "DECLINED" ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200")}>
+  1510→                  {t(`portalApp.b2b.status.${m.status}`)}
+  1511→                </span>
+  1512→              </div>
+  1513→              {m.counterpart.length > 0 && (
+  1514→                <p className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+  1515→                  <Icons.Users className="size-3 shrink-0" />
+  1516→                  <span className="truncate">{m.counterpart.map((c) => [c.name, c.company].filter(Boolean).join(" · ")).join(", ")}</span>
+  1517→                </p>
+  1518→              )}
+  1519→              {m.venue && <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground"><Icons.MapPin className="size-3 shrink-0" /> {m.venue}</p>}
+  1520→              {m.status !== "DECLINED" && m.status !== "COMPLETED" && (
+  1521→                <div className="mt-2 flex flex-wrap gap-1.5">
+  1522→                  {m.status !== "ACCEPTED" && (
+  1523→                    <Button size="sm" className="h-7 text-[11px]" disabled={busyId === m.assignmentId} onClick={() => void respond(m, "ACCEPTED")}>
+  1524→                      <Icons.Check className="size-3" /> {t("portalApp.b2b.accept")}
+  1525→                    </Button>
+  1526→                  )}
+  1527→                  <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busyId === m.assignmentId} onClick={() => setResched(m)}>
+  1528→                    <Icons.Clock className="size-3" /> {t("portalApp.b2b.reschedule")}
+  1529→                  </Button>
+  1530→                  {m.status !== "DECLINED" && (
+  1531→                    <Button size="sm" variant="ghost" className="h-7 text-[11px] text-red-600 hover:text-red-700" disabled={busyId === m.assignmentId} onClick={() => void respond(m, "DECLINED")}>
+  1532→                      <Icons.X className="size-3" /> {t("portalApp.b2b.decline")}
+  1533→                    </Button>
+  1534→                  )}
+  1535→                </div>
+  1536→              )}
+  1537→            </div>
+  1538→          ))}
+  1539→        </div>
+  1540→      )}
+  1541→
+  1542→      <Dialog open={Boolean(resched)} onOpenChange={(o) => !o && setResched(null)}>
+  1543→        <DialogContent className="sm:max-w-sm">
+  1544→          <DialogHeader>
+  1545→            <DialogTitle className="text-sm">{t("portalApp.b2b.reschedTitle")}</DialogTitle>
+  1546→            <DialogDescription className="text-xs">{t("portalApp.b2b.reschedDesc")}</DialogDescription>
+  1547→          </DialogHeader>
+  1548→          <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder={t("portalApp.b2b.reschedPh")} rows={3} maxLength={300} />
+  1549→          <DialogFooter>
+  1550→            <Button variant="outline" size="sm" onClick={() => setResched(null)}>{t("portalApp.b2b.cancel")}</Button>
+  1551→            <Button size="sm" disabled={busyId !== null} onClick={() => resched && void respond(resched, "RESCHEDULE", note.trim())}>
+  1552→              {busyId ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Send className="size-3" />} {t("portalApp.b2b.reschedSend")}
+  1553→            </Button>
+  1554→          </DialogFooter>
+  1555→        </DialogContent>
+  1556→      </Dialog>
+  1557→    </ScreenShell>
+  1558→  );
+  1559→}
+  1560→
+  1561→// ─── PROFİL (§2 Profil Sayfası Mantığı) ─────────────────────────────────────
+  1562→function ProfileScreen({
+  1563→  content,
+  1564→  kind,
+  1565→  accent,
+  1566→  onLogout,
+  1567→  onNavigate,
+  1568→  onOpenForm,
+  1569→  onGotoLogin,
+  1570→  deferredPrompt,
+  1571→  onInstall,
+  1572→}: {
+  1573→  content: PortalContent;
+  1574→  kind: "GUEST" | "AUTH" | null;
+  1575→  accent: string;
+  1576→  onLogout: () => void;
+  1577→  onNavigate: (s: string) => void;
+  1578→  onOpenForm: (id: string | null) => void;
+  1579→  onGotoLogin: () => void;
+  1580→  deferredPrompt: { prompt: () => void } | null;
+  1581→  onInstall: () => void;
+  1582→}) {
+  1583→  const { t } = useLang();
+  1584→  const e, setMe] = useState<MeData | null>(null);
+  1585→  const eError, setMeError] = useState<string | null>(null);
+  1586→  // izin durumu — lazy init (SSR güvenli) + aksiyonlarda güncellenir
+  1587→  const [notifState, setNotifState] = useState<string>(() =>
+  1588→    typeof Notification === "undefined" ? "default" : Notification.permission,
+  1589→  );
+  1590→
+  1591→  useEffect(() => {
+  1592→    if (kind !== "AUTH") return;
+  1593→    let alive = true;
+  1594→    apiGet<MeData>("/api/portal/me", { headers: { "x-portal-session": localStorage.getItem(sessionKeyStorage(content.edition.slug)) ?? "" } })
+  1595→      .then((d) => alive && setMe(d))
+  1596→      .catch((e) => alive && setMeError(e instanceof Error ? e.message : "Profil alınamadı"));
+  1597→    return () => {
+  1598→      alive = false;
+  1599→    };
+  1600→  }, [kind, content.edition.slug]);
+  1601→
+  1602→  const askNotifications = async () => {
+  1603→    if (typeof Notification === "undefined") return;
+  1604→    const p = await Notification.requestPermission();
+  1605→    setNotifState(p);
+  1606→    if (p === "granted") {
+  1607→      try {
+  1608→        new Notification(t("portalApp.profile.notifTestTitle"), { body: t("portalApp.profile.notifTestBody"), icon: "/portal-icon-192.png" });
+  1609→      } catch {
+  1610→        /* yoksay */
+  1611→      }
+  1612→    }
+  1613→  };
+  1614→
+  1615→  const REG_STATUS_COLORS: Record<string, string> = {
+  1616→    CONFIRMED: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200",
+  1617→    PENDING: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+  1618→    REJECTED: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200",
+  1619→    CANCELLED: "bg-muted text-muted-foreground",
+  1620→  };
+  1621→
+  1622→  return (
+  1623→    <ScreenShell title={t("portalApp.profile.title")} icon={<Icons.UserRound className="size-4" />}>
+  1624→      {kind === "GUEST" || kind === null ? (
+  1625→        /* ── ANONİM: giriş çağrısı + kayıt formu (§2) ── */
+  1626→        <div className="space-y-3">
+  1627→          <div className="rounded-xl border border-dashed bg-white p-4 text-center shadow-sm dark:bg-card">
+  1628→            <div className="mx-auto grid size-12 place-items-center rounded-full bg-muted">
+  1629→              <Icons.UserRound className="size-6 text-muted-foreground" />
+  1630→            </div>
+  1631→            <p className="mt-2 text-xs font-semibold">{t("portalApp.profile.guestTitle")}</p>
+  1632→            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{t("portalApp.profile.guestDesc")}</p>
+  1633→            <Button size="sm" className="mt-3" onClick={onGotoLogin}>
+  1634→              <Icons.LogIn className="size-4" /> {t("portalApp.profile.guestLogin")}
+  1635→            </Button>
+  1636→          </div>
+  1637→          {content.config?.allowRegistrationRedirect && (
+  1638→            <button onClick={() => onOpenForm(content.config?.registrationFormId ?? null)} className="flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm dark:bg-card">
+  1639→              <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-teal-50 text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
+  1640→                <Icons.UserPlus className="size-5" />
+  1641→              </div>
+  1642→              <div className="min-w-0 flex-1">
+  1643→                <p className="text-xs font-semibold">{t("portalApp.profile.registerTitle")}</p>
+  1644→                <p className="text-[11px] text-muted-foreground">{t("portalApp.profile.registerDesc")}</p>
+  1645→              </div>
+  1646→              <Icons.ChevronRight className="size-4 text-muted-foreground" />
+  1647→            </button>
+  1648→          )}
+  1649→          <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">{t("portalApp.profile.guestRights")}</p>
+  1650→        </div>
+  1651→      ) : (
+  1652→        /* ── DOĞRULANMIŞ: bilet/kayıt + haklar + sponsorluk (§2) ── */
+  1653→        <div className="space-y-3">
+  1654→          <div className="rounded-xl border bg-white p-4 shadow-sm dark:bg-card">
+  1655→            <div className="flex items-center gap-3">
+  1656→              <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-full border bg-muted">
+  1657→                {me?.person.photoUrl ? (
+  1658→                  <img src={me.person.photoUrl} alt="" className="size-full object-cover" />
+  1659→                ) : (
+  1660→                  <span className="text-sm font-bold text-muted-foreground">
+  1661→                    {`${me?.person.firstName ?? "?"} ${me?.person.lastName ?? ""}`.trim().split(" ").map((p) => p[0]).slice(0, 2).join("")}
+  1662→                  </span>
+  1663→                )}
+  1664→              </div>
+  1665→              <div className="min-w-0 flex-1">
+  1666→                <p className="truncate text-sm font-bold">{me ? `${me.person.firstName} ${me.person.lastName}` : "…"}</p>
+  1667→                <p className="truncate text-[11px] text-muted-foreground">{e?.person.title, me?.person.company].filter(Boolean).join(" · ") || me?.person.email || "—"}</p>
+  1668→              </div>
+  1669→              <span className="shrink-0 rounded-full bg-teal-100 px-2 py-0.5 text-[9px] font-medium text-teal-800 dark:bg-teal-900/40 dark:text-teal-200">{t("portalApp.badge.auth")}</span>
+  1670→            </div>
+  1671→            {meError && <p className="mt-2 text-[11px] text-red-600">{meError}</p>}
+  1672→          </div>
+  1673→
+  1674→          {/* bilet / kayıt bilgileri */}
+  1675→          <div>
+  1676→            <h3 className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">{t("portalApp.profile.tickets")}</h3>
+  1677→            {me && me.registrations.length === 0 && <EmptyMini text={t("portalApp.profile.noRegs")} />}
+  1678→            <div className="space-y-2">
+  1679→              {me?.registrations.map((r) => (
+  1680→                <div key={r.id} className="rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
+  1681→                  <div className="flex items-center justify-between gap-2">
+  1682→                    <p className="text-xs font-semibold">{r.confirmationNo ?? t("portalApp.profile.noConf")}</p>
+  1683→                    <span className={cn("rounded-full px-2 py-0.5 text-[9px] font-medium", REG_STATUS_COLORS[r.status] ?? "bg-muted text-muted-foreground")}>
+  1684→                      {t(`portalApp.regStatus.${r.status}`)}
+  1685→                    </span>
+  1686→                  </div>
+  1687→                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+  1688→                    {[r.categoryName, r.basePrice > 0 ? fmtMoney(r.basePrice, r.currency) : null].filter(Boolean).join(" · ")}
+  1689→                  </p>
+  1690→                </div>
+  1691→              ))}
+  1692→            </div>
+  1693→          </div>
+  1694→
+  1695→          {/* erişim hakları — roller + yaka */}
+  1696→          {me?.participation && (me.participation.roles.length > 0 || me.participation.badges.length > 0) && (
+  1697→            <div>
+  1698→              <h3 className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">{t("portalApp.profile.rights")}</h3>
+  1699→              <div className="flex flex-wrap gap-1.5 rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
+  1700→                {me.participation.roles.map((r) => (
+  1701→                  <span key={r} className="rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">{t(`portalApp.role.${r}`)}</span>
+  1702→                ))}
+  1703→                {me.participation.badges.map((b, i) => (
+  1704→                  <span key={i} className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+  1705→                    {t("portalApp.profile.badgeShort")}{b.badgeNo ? ` · ${b.badgeNo}` : ""}
+  1706→                  </span>
+  1707→                ))}
+  1708→              </div>
+  1709→            </div>
+  1710→          )}
+  1711→
+  1712→          {/* bağlı sponsorluk */}
+  1713→          {me?.sponsorship && (
+  1714→            <div className="flex items-center gap-3 rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
+  1715→              <div className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted">
+  1716→                {me.sponsorship.logoUrl ? <img src={me.sponsorship.logoUrl} alt="" className="size-full object-contain p-0.5" /> : <Icons.Building2 className="size-4 text-muted-foreground" />}
+  1717→              </div>
+  1718→              <div className="min-w-0 flex-1">
+  1719→                <p className="truncate text-xs font-semibold">{me.sponsorship.name}</p>
+  1720→                {me.sponsorship.tierName && <p className="text-[10px] text-muted-foreground">{me.sponsorship.tierName}</p>}
+  1721→              </div>
+  1722→            </div>
+  1723→          )}
+  1724→
+  1725→          {/* bildirim tercihleri (§4.2) */}
+  1726→          {content.config?.notifications.enabled && (
+  1727→            <div className="rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
+  1728→              <div className="flex items-center justify-between gap-2">
+  1729→                <div>
+  1730→                  <p className="text-xs font-semibold">{t("portalApp.profile.notifTitle")}</p>
+  1731→                  <p className="text-[11px] text-muted-foreground">{t("portalApp.profile.notifDesc", { offsets: content.config.notifications.offsets.join(", ") })}</p>
+  1732→                </div>
+  1733→                {notifState === "granted" ? (
+  1734→                  <span className="flex items-center gap-1 rounded-full bg-teal-50 px-2 py-1 text-[10px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
+  1735→                    <Icons.BellRing className="size-3" /> {t("portalApp.profile.notifOn")}
+  1736→                  </span>
+  1737→                ) : notifState === "denied" ? (
+  1738→                  <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">
+  1739→                    <Icons.BellOff className="size-3" /> {t("portalApp.profile.notifBlocked")}
+  1740→                  </span>
+  1741→                ) : (
+  1742→                  <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => void askNotifications()}>
+  1743→                    <Icons.Bell className="size-3" /> {t("portalApp.profile.notifEnable")}
+  1744→                  </Button>
+  1745→                )}
+  1746→              </div>
+  1747→            </div>
+  1748→          )}
+  1749→
+  1750→          {/* B2B kısayolu */}
+  1751→          {(content.b2b?.length ?? 0) > 0 && (
+  1752→            <button onClick={() => onNavigate("b2b")} className="flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm dark:bg-card">
+  1753→              <div className="grid size-10 shrink-0 place-items-center rounded-lg" style={{ backgroundColor: `${accent}1a`, color: accent }}>
+  1754→                <Icons.Handshake className="size-5" />
+  1755→              </div>
+  1756→              <div className="min-w-0 flex-1">
+  1757→                <p className="text-xs font-semibold">{t("portalApp.widget.b2b")}</p>
+  1758→                <p className="text-[11px] text-muted-foreground">{t("portalApp.widget.b2bSub", { count: content.b2b?.length ?? 0 })}</p>
+  1759→              </div>
+  1760→              <Icons.ChevronRight className="size-4 text-muted-foreground" />
+  1761→            </button>
+  1762→          )}
+  1763→
+  1764→          {/* PWA kurulum */}
+  1765→          {content.config?.pwaEnabled && deferredPrompt && (
+  1766→            <Button variant="outline" className="w-full" onClick={onInstall}>
+  1767→              <Icons.Smartphone className="size-4" /> {t("portalApp.install.btn")}
+  1768→            </Button>
+  1769→          )}
+  1770→
+  1771→          <Button variant="outline" className="w-full text-red-600 hover:text-red-700" onClick={onLogout}>
+  1772→            <Icons.LogOut className="size-4" /> {t("portalApp.profile.logout")}
+  1773→          </Button>
+  1774→        </div>
+  1775→      )}
+  1776→    </ScreenShell>
+  1777→  );
+  1778→}
+  1779→
+  1780→// ─── küçük parçalar ─────────────────────────────────────────────────────────
+  1781→function ScreenShell({ title, icon, onBack, children }: { title: string; icon?: React.ReactNode; onBack?: () => void; children: React.ReactNode }) {
+  1782→  const { t } = useLang();
+  1783→  return (
+  1784→    <div>
+  1785→      <div className="mb-3 flex items-center gap-2">
+  1786→        {onBack && (
+  1787→          <button onClick={onBack} aria-label={t("portalApp.back")} className="grid size-8 shrink-0 place-items-center rounded-lg border bg-white shadow-sm transition hover:bg-muted dark:bg-card">
+  1788→            <Icons.ArrowLeft className="size-4" />
+  1789→          </button>
+  1790→        )}
+  1791→        {icon}
+  1792→        <h2 className="text-sm font-bold">{title}</h2>
+  1793→      </div>
+  1794→      {children}
+  1795→    </div>
+  1796→  );
+  1797→}
+  1798→
+  1799→function EmptyMini({ text }: { text: string }) {
+  1800→  return (
+  1801→    <div className="rounded-xl border border-dashed bg-white/60 p-6 text-center dark:bg-card/60">
+  1802→      <Icons.Inbox className="mx-auto size-5 text-muted-foreground" />
+  1803→      <p className="mt-1.5 text-xs text-muted-foreground">{text}</p>
+  1804→    </div>
+  1805→  );
+  1806→}

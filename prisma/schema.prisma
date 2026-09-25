@@ -336,6 +336,7 @@ model EventEdition {
   portalAnalyticsLogs PortalAnalyticsLog[]
   portalAnnouncements PortalAnnouncement[]
   portalQuestions     PortalQuestion[]
+  portalGameProgress  PortalGameProgress[] // oyunlaştırma ilerlemesi (oturum başına tek)
 
   @@index([status])
   @@index([startDate])
@@ -2090,14 +2091,38 @@ model EventPortalConfig {
   portalSponsorName         String? // sponsor adı
   portalSponsorUrl          String? // sponsor web adresi (tıklanınca açılır)
   // İkon özelleştirme: lucide ikon yerine SVG logo + grid konum düzeni
-  iconOverridesJson         String? // {navKey: {svg?: string, color?: string}} — SVG logo desteği
+  iconOverridesJson         String? // {navKey: {icon?, svg?, color?}} — ikon kütüphanesi + SVG logo desteği
   iconLayoutJson            String? // {navKey: order} — kanvas grid mantığıyla konum/sıra
+  // Ekran üst-bant görünürlüğü (kullanıcı isteği: "Ana sayfa haricinde Maven ın üst bandı
+  // görünmesin; her ekranda custom karar") — {topHeader:{screen:bool}, eventBar:{screen:bool}}
+  chromeJson                String?
+  // Oyunlaştırma (kullanıcı isteği: modüllerdeki formlarla etkileşimli gamification)
+  gameEnabled               Boolean @default(false)
+  gameConfigJson            String? // {points:{FORM_SUBMIT,QA_SUBMIT,B2B_ACCEPT}, levels:[{name,min}]}
   // PWA
   pwaEnabled                Boolean   @default(true)
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
 
   edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+}
+
+// Oyunlaştırma ilerlemesi — oturum (GUEST veya AUTH) başına tek satır; puan ve
+// aksiyon sayaçları actionsJson içinde tutulur (additive — mevcut tablolar BOZULMAZ).
+model PortalGameProgress {
+  id          String   @id @default(cuid())
+  editionId   String
+  sessionId   String // PortalSession.id — puan oturuma yazılır (misafir de puan toplar)
+  personId    String? // AUTH oturumdaysa kişi (liderlik tablosu maskeli ad için)
+  points      Int      @default(0)
+  actionsJson String? // {"FORM_SUBMIT:formId":1, "QA_SUBMIT":2, "B2B_ACCEPT:assignmentId":1}
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@unique([editionId, sessionId])
+  @@index([editionId, points])
 }
 
 // Portal oturumu — GUEST (anonim katılımcı) veya AUTH (doğrulanmış katılımcı).

@@ -10,6 +10,7 @@ import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/auth/request-context";
 import { generateEventCode, normalizeEventCode } from "@/lib/api/portal-access";
+import { ALL_FONT_KEYS } from "@/lib/portal-fonts";
 
 function guardJson(e: unknown) {
   if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
@@ -172,8 +173,13 @@ export async function PUT(req: NextRequest) {
       portalSponsorLogoUrl?: string | null;
       portalSponsorName?: string | null;
       portalSponsorUrl?: string | null;
-      iconOverrides?: Record<string, { svg?: string; color?: string }> | null;
+      iconOverrides?: Record<string, { icon?: string; svg?: string; color?: string }> | null;
       iconLayout?: Record<string, number> | null;
+      // ── Ekran üst-bant görünürlüğü (her ekran için custom karar) ──
+      chrome?: { topHeader?: Record<string, boolean>; eventBar?: Record<string, boolean> } | null;
+      // ── Oyunlaştırma (§ gamification — formlarla etkileşimli) ──
+      gameEnabled?: boolean;
+      gameConfig?: { points?: Record<string, number>; levels?: { name: string; min: number }[]; qaCap?: number } | null;
     };
     if (!body.editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
     const ctx = await resolveEditionContext(body.editionId, { required: true });
@@ -232,9 +238,8 @@ export async function PUT(req: NextRequest) {
     if (body.pwaEnabled !== undefined) data.pwaEnabled = Boolean(body.pwaEnabled);
 
     // ── tasarım alanları (§5.2+) ──
-    const FONT_FAMILIES = new Set(["system", "serif", "rounded", "mono", "condensed"]);
     if (body.fontFamily !== undefined) {
-      data.fontFamily = body.fontFamily && FONT_FAMILIES.has(body.fontFamily) ? body.fontFamily : null;
+      data.fontFamily = body.fontFamily && ALL_FONT_KEYS.has(body.fontFamily) ? body.fontFamily : null;
     }
     if (body.fontScale !== undefined) {
       const n = Number(body.fontScale);
@@ -257,15 +262,16 @@ export async function PUT(req: NextRequest) {
     if (body.iconOverrides !== undefined) {
       const obj = toJsonObject(body.iconOverrides);
       if (obj) {
-        // biçim doğrulama: {navKey: {svg?: string(≤2MB), color?: hex}} — svg yalnız data:image/(svg|png|jpeg|webp)
-        const parsed = JSON.parse(obj) as Record<string, { svg?: unknown; color?: unknown }>;
-        const clean: Record<string, { svg?: string; color?: string }> = {};
+        // biçim doğrulama: {navKey: {icon?, svg?, color?}} — icon kütüphane adı, svg yalnız data:image/(svg|png|jpeg|webp)
+        const parsed = JSON.parse(obj) as Record<string, { icon?: unknown; svg?: unknown; color?: unknown }>;
+        const clean: Record<string, { icon?: string; svg?: string; color?: string }> = {};
         for (const [k, v] of Object.entries(parsed)) {
           if (!v || typeof v !== "object") continue;
-          const e: { svg?: string; color?: string } = {};
+          const e: { icon?: string; svg?: string; color?: string } = {};
+          if (typeof v.icon === "string" && /^[A-Za-z][A-Za-z0-9]{0,39}$/.test(v.icon)) e.icon = v.icon;
           if (typeof v.svg === "string" && /^data:image\/(svg\+xml|png|jpeg|webp);base64,/.test(v.svg) && v.svg.length <= 2_000_000) e.svg = v.svg;
           if (typeof v.color === "string" && /^#[0-9a-fA-F]{6}$/.test(v.color)) e.color = v.color.toLowerCase();
-          if (e.svg || e.color) clean[k] = e;
+          if (e.icon || e.svg || e.color) clean[k] = e;
         }
         data.iconOverridesJson = JSON.stringify(clean);
       } else {
@@ -285,6 +291,52 @@ export async function PUT(req: NextRequest) {
         data.iconLayoutJson = JSON.stringify(clean);
       } else {
         data.iconLayoutJson = null;
+      }
+    }
+
+    // ── ekran üst-bant görünürlüğü (chrome) — bilinen ekran anahtarlarıyla beyaz-liste ──
+    if (body.chrome !== undefined) {
+      const CHROME_SCREENS = new Set(["home", "program", "speakers", "forms", "qa", "sponsors", "map", "b2b", "profile"]);
+      if (body.chrome && typeof body.chrome === "object") {
+        const clean: { topHeader: Record<string, boolean>; eventBar: Record<string, boolean> } = { topHeader: {}, eventBar: {} };
+        for (const [screen, on] of Object.entries(body.chrome.topHeader ?? {})) {
+          if (CHROME_SCREENS.has(screen)) clean.topHeader[screen] = Boolean(on);
+        }
+        for (const [screen, on] of Object.entries(body.chrome.eventBar ?? {})) {
+          if (CHROME_SCREENS.has(screen)) clean.eventBar[screen] = Boolean(on);
+        }
+        data.chromeJson = JSON.stringify(clean);
+      } else {
+        data.chromeJson = null;
+      }
+    }
+
+    // ── oyunlaştırma yapılandırması ──
+    if (body.gameEnabled !== undefined) data.gameEnabled = Boolean(body.gameEnabled);
+    if (body.gameConfig !== undefined) {
+      if (body.gameConfig && typeof body.gameConfig === "object") {
+        const points: Record<string, number> = {};
+        for (const [k, v] of Object.entries(body.gameConfig.points ?? {})) {
+          if (!"FORM_SUBMIT,QA_SUBMIT,B2B_ACCEPT".split(",").includes(k)) continue;
+          const n = Number(v);
+          if (Number.isFinite(n) && n >= 0 && n <= 10_000) points[k] = Math.round(n);
+        }
+        const levels: { name: string; min: number }[] = [];
+        const rawLevels = Array.isArray(body.gameConfig.levels) ? body.gameConfig.levels : [];
+        for (const l of rawLevels) {
+          if (!l || typeof l !== "object") continue;
+          const name = String((l as { name?: unknown }).name ?? "").trim().slice(0, 40);
+          const min = Number((l as { min?: unknown }).min);
+          if (!name || !Number.isFinite(min) || min < 0 || min > 1_000_000) continue;
+          levels.push({ name, min: Math.round(min) });
+        }
+        levels.sort((a, b) => a.min - b.min);
+        const qaCap = Number((body.gameConfig as { qaCap?: unknown }).qaCap);
+        const cleanGame: Record<string, unknown> = { points, levels: levels.length >= 2 ? levels : [] };
+        if (Number.isFinite(qaCap)) cleanGame.qaCap = Math.max(1, Math.min(50, Math.round(qaCap)));
+        if (levels.length >= 2) data.gameConfigJson = JSON.stringify(cleanGame);
+      } else {
+        data.gameConfigJson = null;
       }
     }
 

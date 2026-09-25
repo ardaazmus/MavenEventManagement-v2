@@ -23,6 +23,7 @@ const DEFAULT_WIDGETS: WidgetCfg[] = [
   { key: "qa", enabled: true, visibility: "ALL", order: 3 },
   { key: "map", enabled: true, visibility: "ALL", order: 4 },
   { key: "b2b", enabled: true, visibility: "AUTH", order: 5 }, // §5.3: B2B zorunlu AUTH
+  { key: "game", enabled: true, visibility: "ALL", order: 6 }, // oyunlaştırma — form/QA/B2B etkileşimli puan
 ];
 const WIDGET_KEYS = new Set(DEFAULT_WIDGETS.map((w) => w.key));
 
@@ -95,6 +96,32 @@ function parseJsonObject(raw: string | null | undefined): Record<string, unknown
   } catch {
     return null;
   }
+}
+
+// oyunlaştırma kuralları — config.gameConfigJson + gameEnabled → istemci sözleşmesi
+type GameConfigView = { enabled: boolean; points: Record<string, number>; levels: { name: string; min: number }[] };
+function parseGameConfig(config: {
+  gameEnabled?: boolean; gameConfigJson?: string | null;
+} | null): GameConfigView {
+  const out: GameConfigView = {
+    enabled: config?.gameEnabled ?? false,
+    points: { FORM_SUBMIT: 20, QA_SUBMIT: 10, B2B_ACCEPT: 15 },
+    levels: [
+      { name: "Bronz", min: 0 },
+      { name: "Gümüş", min: 50 },
+      { name: "Altın", min: 150 },
+      { name: "Elmas", min: 300 },
+    ],
+  };
+  if (!config?.gameConfigJson) return out;
+  try {
+    const p = JSON.parse(config.gameConfigJson) as { points?: Record<string, number>; levels?: { name: string; min: number }[] };
+    if (p.points && typeof p.points === "object") out.points = { ...out.points, ...p.points };
+    if (Array.isArray(p.levels) && p.levels.length >= 2) out.levels = p.levels;
+  } catch {
+    /* bozuk json → varsayılanlar */
+  }
+  return out;
 }
 
 export async function GET(req: NextRequest) {
@@ -178,6 +205,11 @@ export async function GET(req: NextRequest) {
             contentBgImage: config?.contentBgImage ?? null,
             iconOverrides: null,
             iconLayout: null,
+          },
+          game: {
+            enabled: false,
+            points: {},
+            levels: [],
           },
           portalSponsor: {
             logoUrl: config?.portalSponsorLogoUrl ?? null,
@@ -383,9 +415,13 @@ export async function GET(req: NextRequest) {
           headerBgImage: config?.headerBgImage ?? null,
           footerBgImage: config?.footerBgImage ?? null,
           contentBgImage: config?.contentBgImage ?? null,
-          iconOverrides: parseJsonObject(config?.iconOverridesJson),
+            iconOverrides: parseJsonObject(config?.iconOverridesJson),
           iconLayout: parseJsonObject(config?.iconLayoutJson),
         },
+        // ── ekran üst-bant görünürlüğü (her ekran için custom karar) ──
+        chrome: parseJsonObject(config?.chromeJson),
+        // ── oyunlaştırma kuralları (istici hedefler + seviyeler) ──
+        game: parseGameConfig(config),
         portalSponsor: {
           logoUrl: config?.portalSponsorLogoUrl ?? null,
           name: config?.portalSponsorName ?? null,

@@ -22,6 +22,8 @@ import { useLang, t } from "@/lib/i18n";
 import { apiGet, apiSend } from "@/lib/client";
 import { fmtDate } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { fontStackFor, loadGoogleFont, GOOGLE_FONTS } from "@/lib/portal-fonts";
+import { PORTAL_ICON_LIBRARY, resolvePortalIcon, type LibraryIcon } from "@/components/maven/portal-icon-library";
 
 // ─── tipler ─────────────────────────────────────────────────────────────────
 type PortalConfig = {
@@ -39,6 +41,8 @@ type PortalConfig = {
   headerBgImage: string | null; footerBgImage: string | null; contentBgImage: string | null;
   portalSponsorLogoUrl: string | null; portalSponsorName: string | null; portalSponsorUrl: string | null;
   iconOverridesJson: string | null; iconLayoutJson: string | null;
+  chromeJson: string | null;
+  gameEnabled: boolean; gameConfigJson: string | null;
 };
 type Lookups = {
   editions: { id: string; name: string; editionLabel: string | null; startDate: string | null; isPublished: boolean }[];
@@ -67,13 +71,34 @@ const WIDGET_ORDER: { key: string; icon: typeof Icons.Home }[] = [
   { key: "qa", icon: Icons.MessageCircleQuestion },
   { key: "map", icon: Icons.Map },
   { key: "b2b", icon: Icons.Handshake },
+  { key: "game", icon: Icons.Trophy },
 ];
 const THEME_PRESETS = ["#0d9488", "#7c3aed", "#dc2626", "#ea580c", "#16a34a", "#0891b2"];
 
 // ── tasarım sabitleri (§5.2+) ──
 const NAV_KEYS = ["home", "program", "sponsors", "map", "profile"] as const;
+const WIDGET_ICON_KEYS = ["agenda", "speakers", "forms", "qa", "map", "b2b", "game"] as const;
 const DEFAULT_ICON_LAYOUT: Record<string, number> = { home: 0, program: 1, sponsors: 2, map: 3, profile: 4 };
-type IconOverride = { svg?: string; color?: string };
+type IconOverride = { icon?: string; svg?: string; color?: string };
+// ekran üst-bant görünürlüğü (chrome) — her ekran için custom karar
+const CHROME_SCREENS = ["home", "program", "speakers", "forms", "qa", "sponsors", "map", "b2b", "profile"] as const;
+const DEFAULT_CHROME: { topHeader: Record<string, boolean>; eventBar: Record<string, boolean> } = {
+  // kullanıcı isteği: "Ana sayfa haricinde Maven ın üst bandı görünmesin" — varsayılan
+  topHeader: { home: true, program: false, speakers: false, forms: false, qa: false, sponsors: false, map: false, b2b: false, profile: false },
+  eventBar: Object.fromEntries(CHROME_SCREENS.map((s) => [s, true])),
+};
+// oyunlaştırma varsayılanları — formlar + Q&A + B2B puanları ve seviye eşikleri
+const DEFAULT_GAME_CONFIG = {
+  points: { FORM_SUBMIT: 20, QA_SUBMIT: 10, B2B_ACCEPT: 15 },
+  levels: [
+    { name: "Bronz", min: 0 },
+    { name: "Gümüş", min: 50 },
+    { name: "Altın", min: 150 },
+    { name: "Elmas", min: 300 },
+  ],
+  qaCap: 5,
+};
+type GameLevel = { name: string; min: number };
 const FONT_OPTIONS = ["system", "serif", "rounded", "mono", "condensed"] as const;
 
 function parseIconOverrides(raw: string | null): Record<string, IconOverride> {
@@ -184,6 +209,9 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
     headerBgImage: string; footerBgImage: string; contentBgImage: string;
     portalSponsorLogoUrl: string; portalSponsorName: string; portalSponsorUrl: string;
     iconOverrides: Record<string, IconOverride>; iconLayout: Record<string, number>;
+    // ── ekran üst-bantları + oyunlaştırma ──
+    chrome: { topHeader: Record<string, boolean>; eventBar: Record<string, boolean> };
+    gameEnabled: boolean; gamePoints: Record<string, number>; gameLevels: GameLevel[]; gameQaCap: number;
   }>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [magicOpen, setMagicOpen] = useState(false);
@@ -237,6 +265,28 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
         portalSponsorUrl: data.config.portalSponsorUrl ?? "",
         iconOverrides: parseIconOverrides(data.config.iconOverridesJson),
         iconLayout: parseIconLayout(data.config.iconLayoutJson),
+        // ekran üst-bantları — kayıtlı chromeJson veya varsayılanlar
+        chrome: (() => {
+          const saved = parseJsonObj<{ topHeader?: Record<string, boolean>; eventBar?: Record<string, boolean> }>(data.config.chromeJson, {});
+          return {
+            topHeader: { ...DEFAULT_CHROME.topHeader, ...(typeof saved.topHeader === "object" && saved.topHeader ? saved.topHeader : {}) },
+            eventBar: { ...DEFAULT_CHROME.eventBar, ...(typeof saved.eventBar === "object" && saved.eventBar ? saved.eventBar : {}) },
+          };
+        })(),
+        // oyunlaştırma — kayıtlı gameConfigJson veya varsayılanlar
+        gameEnabled: data.config.gameEnabled ?? false,
+        gamePoints: (() => {
+          const g = parseJsonObj<{ points?: Record<string, number> }>(data.config.gameConfigJson, {});
+          return { ...DEFAULT_GAME_CONFIG.points, ...(g.points ?? {}) };
+        })(),
+        gameLevels: (() => {
+          const g = parseJsonObj<{ levels?: GameLevel[] }>(data.config.gameConfigJson, {});
+          return Array.isArray(g.levels) && g.levels.length >= 2 ? g.levels : DEFAULT_GAME_CONFIG.levels.map((l) => ({ ...l }));
+        })(),
+        gameQaCap: (() => {
+          const g = parseJsonObj<{ qaCap?: number }>(data.config.gameConfigJson, {});
+          return Number.isFinite(g.qaCap) ? Math.max(1, Math.min(50, Math.round(Number(g.qaCap)))) : DEFAULT_GAME_CONFIG.qaCap;
+        })(),
       });
       setDirty(false);
     } catch (e) {
@@ -314,6 +364,14 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
         portalSponsorUrl: draft.portalSponsorUrl || null,
         iconOverrides: draft.iconOverrides,
         iconLayout: draft.iconLayout,
+        // ekran üst-bantları + oyunlaştırma
+        chrome: draft.chrome,
+        gameEnabled: draft.gameEnabled,
+        gameConfig: {
+          points: draft.gamePoints,
+          levels: draft.gameLevels,
+          qaCap: draft.gameQaCap,
+        },
       });
       toast({ title: t("portalSettings.saved"), description: t("portalSettings.savedDesc") });
       await load();
@@ -649,6 +707,154 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
               </div>
             );
           })}
+        </div>
+      </SectionCard>
+
+      {/* ── Ekran Üst Bantları — her ekran için custom karar (kullanıcı isteği) ── */}
+      <SectionCard title={t("portalSettings.chrome.title")} desc={t("portalSettings.chrome.desc")}>
+        <div className="space-y-3">
+          <div className="overflow-x-auto">
+            <div className="min-w-[640px]">
+              <div className="grid grid-cols-[150px_repeat(9,1fr)] gap-1 border-b pb-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("portalSettings.chrome.screen")}</span>
+                {CHROME_SCREENS.map((s) => (
+                  <span key={s} className="truncate text-center text-[10px] font-medium text-muted-foreground">{t(`portalSettings.chrome.screen_${s}`)}</span>
+                ))}
+              </div>
+              {([
+                { row: "topHeader" as const, icon: Icons.Building2, label: t("portalSettings.chrome.topHeader"), hint: t("portalSettings.chrome.topHeaderHint") },
+                { row: "eventBar" as const, icon: Icons.CalendarRange, label: t("portalSettings.chrome.eventBar"), hint: t("portalSettings.chrome.eventBarHint") },
+              ]).map((r) => (
+                <div key={r.row} className="grid grid-cols-[150px_repeat(9,1fr)] items-center gap-1 border-b py-2 last:border-b-0">
+                  <div className="flex min-w-0 items-center gap-1.5 pr-1">
+                    <r.icon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <p className="truncate text-[11px] font-medium">{r.label}</p>
+                      <p className="truncate text-[9px] text-muted-foreground">{r.hint}</p>
+                    </div>
+                  </div>
+                  {CHROME_SCREENS.map((s) => (
+                    <div key={s} className="flex justify-center">
+                      <Switch
+                        checked={draft.chrome[r.row][s] ?? (r.row === "topHeader" ? s === "home" : true)}
+                        onCheckedChange={(v) => {
+                          patch("chrome", { ...draft.chrome, [r.row]: { ...draft.chrome[r.row], [s]: v } });
+                        }}
+                        aria-label={`${r.label} — ${t(`portalSettings.chrome.screen_${s}`)}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">{t("portalSettings.chrome.hint")}</p>
+        </div>
+      </SectionCard>
+
+      {/* ── Oyunlaştırma — formlarla etkileşimli mobil app gamification (kullanıcı isteği) ── */}
+      <SectionCard title={t("portalSettings.game.title")} desc={t("portalSettings.game.desc")}>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+            <div>
+              <Label className="text-xs">{t("portalSettings.game.enabled")}</Label>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.game.enabledHint")}</p>
+            </div>
+            <Switch checked={draft.gameEnabled} onCheckedChange={(v) => patch("gameEnabled", v)} aria-label={t("portalSettings.game.enabled")} />
+          </div>
+          {draft.gameEnabled && (
+            <>
+              <div>
+                <Label className="text-xs">{t("portalSettings.game.points")}</Label>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  {([
+                    { key: "FORM_SUBMIT", icon: Icons.ClipboardList, label: t("portalSettings.game.pointForm") },
+                    { key: "QA_SUBMIT", icon: Icons.MessageCircleQuestion, label: t("portalSettings.game.pointQa") },
+                    { key: "B2B_ACCEPT", icon: Icons.Handshake, label: t("portalSettings.game.pointB2b") },
+                  ]).map((p) => (
+                    <div key={p.key} className="flex items-center gap-2 rounded-lg border bg-muted/10 p-2.5">
+                      <p.icon className="size-4 shrink-0 text-teal-600" />
+                      <span className="min-w-0 flex-1 truncate text-[11px]">{p.label}</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={10000}
+                        value={draft.gamePoints[p.key] ?? 0}
+                        onChange={(e) => {
+                          const n = Math.max(0, Math.min(10000, Math.round(Number(e.target.value) || 0)));
+                          patch("gamePoints", { ...draft.gamePoints, [p.key]: n });
+                        }}
+                        className="h-8 w-20 shrink-0 text-center text-xs"
+                        aria-label={p.label}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 flex items-center gap-2 rounded-lg border border-dashed p-2.5">
+                  <p className="min-w-0 flex-1 text-[11px] text-muted-foreground">{t("portalSettings.game.qaCap")}</p>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={draft.gameQaCap}
+                    onChange={(e) => {
+                      const n = Math.max(1, Math.min(50, Math.round(Number(e.target.value) || 5)));
+                      patch("gameQaCap", n);
+                    }}
+                    className="h-8 w-20 shrink-0 text-center text-xs"
+                    aria-label={t("portalSettings.game.qaCap")}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">{t("portalSettings.game.levels")}</Label>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" className="size-7" disabled={draft.gameLevels.length <= 2} onClick={() => patch("gameLevels", draft.gameLevels.slice(0, -1))} aria-label={t("portalSettings.game.levelRemove")}>
+                      <Icons.Minus className="size-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="size-7" disabled={draft.gameLevels.length >= 6} onClick={() => patch("gameLevels", [...draft.gameLevels, { name: t("portalSettings.game.levelNew"), min: (draft.gameLevels[draft.gameLevels.length - 1]?.min ?? 0) + 100 }])} aria-label={t("portalSettings.game.levelAdd")}>
+                      <Icons.Plus className="size-3.5" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="mt-2 space-y-1.5">
+                  {draft.gameLevels.map((l, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="grid size-7 shrink-0 place-items-center rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: ["#b45309", "#64748b", "#ca8a04", "#0891b2", "#7c3aed", "#dc2626"][i % 6] }}>
+                        {i + 1}
+                      </span>
+                      <Input
+                        value={l.name}
+                        onChange={(e) => {
+                          const next = [...draft.gameLevels];
+                          next[i] = { ...l, name: e.target.value.slice(0, 40) };
+                          patch("gameLevels", next);
+                        }}
+                        className="h-8 flex-1 text-xs"
+                        aria-label={`${t("portalSettings.game.levels")} ${i + 1} ad`}
+                      />
+                      <span className="shrink-0 text-[10px] text-muted-foreground">min</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={l.min}
+                        onChange={(e) => {
+                          const next = [...draft.gameLevels];
+                          next[i] = { ...l, min: Math.max(0, Math.min(1_000_000, Math.round(Number(e.target.value) || 0))) };
+                          patch("gameLevels", next);
+                        }}
+                        className="h-8 w-24 shrink-0 text-center text-xs"
+                        aria-label={`${t("portalSettings.game.levels")} ${i + 1} min`}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">{t("portalSettings.game.levelsHint")}</p>
+              </div>
+            </>
+          )}
         </div>
       </SectionCard>
 
@@ -992,14 +1198,15 @@ type DesignFields = {
   iconOverrides: Record<string, IconOverride>; iconLayout: Record<string, number>;
 };
 
-// font ailesi → CSS stack eşlemesi (portal uygulamasıyla birebir aynı)
-export const PORTAL_FONT_CSS: Record<string, string> = {
-  system: "inherit",
-  serif: "Georgia, 'Times New Roman', serif",
-  rounded: "ui-rounded, 'Nunito', 'SF Pro Rounded', system-ui, sans-serif",
-  mono: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-  condensed: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif",
-};
+// font ailesi → CSS stack eşlemesi — lib/portal-fonts tek kaynak (sistem + Google Fonts)
+const fontCss = (key: string) => fontStackFor(key) ?? "inherit";
+
+// ikon kütüphanesi arama — TR/EN anahtar kelimeler üzerinden normalize arama
+function searchLibraryIcons(query: string): LibraryIcon[] {
+  const q = query.trim().toLocaleLowerCase("tr-TR");
+  if (!q) return PORTAL_ICON_LIBRARY;
+  return PORTAL_ICON_LIBRARY.filter((i) => i.n.toLocaleLowerCase("tr-TR").includes(q) || i.k.includes(q));
+}
 
 const NAV_ICONS: Record<string, typeof Icons.Home> = {
   home: Icons.Home,
@@ -1023,6 +1230,7 @@ function DesignSectionContent({
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [sel, setSel] = useState<string>("home");
+  const [picker, setPicker] = useState<{ kind: "nav" | "widget"; key: string } | null>(null);
   const dragKey = useRef<string | null>(null);
 
   const ordered = ([...NAV_KEYS] as string[]).sort((a, b) => (draft.iconLayout[a] ?? 0) - (draft.iconLayout[b] ?? 0));
@@ -1039,7 +1247,7 @@ function DesignSectionContent({
   };
   const setOverride = (key: string, next: IconOverride) => {
     const clean = { ...draft.iconOverrides };
-    if (next.svg || next.color) clean[key] = next;
+    if (next.svg || next.color || next.icon) clean[key] = next;
     else delete clean[key];
     onField("iconOverrides", clean);
   };
@@ -1057,21 +1265,38 @@ function DesignSectionContent({
 
   return (
     <div className="space-y-5">
-      {/* ── Tipografi ── */}
+      {/* ── Tipografi — sistem yığınları + Google Fonts (kullanıcı isteği) ── */}
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label className="text-xs">{t("portalSettings.design.fontFamily")}</Label>
-          <Select value={draft.fontFamily} onValueChange={(v) => onField("fontFamily", v)}>
+          <Select
+            value={draft.fontFamily}
+            onValueChange={(v) => {
+              if (v.startsWith("gf-")) loadGoogleFont(v); // canlı önizleme için fontu yükle
+              onField("fontFamily", v);
+            }}
+          >
             <SelectTrigger aria-label={t("portalSettings.design.fontFamily")}><SelectValue /></SelectTrigger>
             <SelectContent>
-              {FONT_OPTIONS.map((f) => (
+              <SelectItem value="system">
+                <span>{t("portalSettings.design.font_system")}</span>
+              </SelectItem>
+              {FONT_OPTIONS.filter((f) => f !== "system").map((f) => (
                 <SelectItem key={f} value={f}>
-                  <span style={{ fontFamily: PORTAL_FONT_CSS[f] }}>{t(`portalSettings.design.font_${f}`)}</span>
+                  <span style={{ fontFamily: fontCss(f) }}>{t(`portalSettings.design.font_${f}`)}</span>
+                </SelectItem>
+              ))}
+              <div className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {t("portalSettings.design.googleFontsGroup")}
+              </div>
+              {GOOGLE_FONTS.map((f) => (
+                <SelectItem key={f.key} value={f.key}>
+                  <span style={{ fontFamily: `'${f.family}', system-ui, sans-serif` }}>{f.name}</span>
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <p className="truncate rounded border bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground" style={{ fontFamily: PORTAL_FONT_CSS[draft.fontFamily] }}>
+          <p className="truncate rounded border bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground" style={{ fontFamily: fontCss(draft.fontFamily) }}>
             {t("portalSettings.design.fontPreview")}
           </p>
         </div>
@@ -1277,7 +1502,7 @@ function DesignSectionContent({
           </div>
         </div>
 
-        {/* seçili ikon kontrolleri */}
+        {/* seçili ikon kontrolleri — kütüphane + SVG yükleme (kullanıcı isteği) */}
         <div className="mx-auto mt-3 flex max-w-md flex-wrap items-center justify-center gap-2">
           <span className="rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
             {t("portalSettings.design.selected")}: {t(`portalSettings.design.nav_${sel}`)}
@@ -1287,6 +1512,9 @@ function DesignSectionContent({
           </Button>
           <Button variant="outline" size="icon" className="size-8" onClick={() => moveSelected(1)} aria-label={t("portalSettings.design.moveRight")}>
             <Icons.ArrowRight className="size-4" />
+          </Button>
+          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setPicker({ kind: "nav", key: sel })}>
+            <Icons.Sparkles className="size-3.5" /> {t("portalSettings.design.pickLibrary")}
           </Button>
           <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-muted/50">
             <Icons.Upload className="size-3.5" />
@@ -1305,15 +1533,167 @@ function DesignSectionContent({
               }}
             />
           </label>
-          {draft.iconOverrides[sel]?.svg && (
+          {(draft.iconOverrides[sel]?.svg || draft.iconOverrides[sel]?.icon) && (
             <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setOverride(sel, {}); onTouch(); }}>
               <Icons.Eraser className="size-3.5" /> {t("portalSettings.design.clearSvg")}
             </Button>
           )}
         </div>
         <p className="mt-2 text-center text-[10px] text-muted-foreground">{t("portalSettings.design.canvasHint")}</p>
+
+        {/* ── Panel Widget İkonları — kütüphane/SVG (kütüphane tüm ikonlara uygulanır) ── */}
+        <div className="mt-4 rounded-lg border bg-muted/10 p-3">
+          <div className="flex items-center gap-1.5">
+            <Icons.Sparkles className="size-3.5 text-teal-600" />
+            <p className="text-xs font-semibold">{t("portalSettings.design.widgetIconsTitle")}</p>
+          </div>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.design.widgetIconsDesc")}</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {WIDGET_ICON_KEYS.map((wk) => {
+              const o = draft.iconOverrides[wk];
+              const W = NAV_ICONS[wk];
+              const O = o?.icon ? resolvePortalIcon(o.icon) : null;
+              const I = O ?? (W ?? Icons.Sparkles);
+              return (
+                <div key={wk} className="flex items-center gap-2 rounded-lg border bg-white p-2 dark:bg-card">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-lg text-white" style={{ backgroundColor: draft.iconOverrides[wk]?.svg ? "transparent" : "#0d9488" }}>
+                    {o?.svg ? (
+                      <img src={o.svg} alt="" className="size-7 object-contain" />
+                    ) : (
+                      <I className="size-4" style={{ color: o?.color || undefined }} />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs">{t(`portalApp.widget.${wk}`)}</span>
+                  <Button variant="outline" size="sm" className="h-7 shrink-0 text-[11px]" onClick={() => setPicker({ kind: "widget", key: wk })}>
+                    <Icons.Palette className="size-3" /> {t("portalSettings.design.pickShort")}
+                  </Button>
+                  {o && (
+                    <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => { setOverride(wk, {}); onTouch(); }} aria-label={t("portalSettings.design.clearSvg")}>
+                      <Icons.Eraser className="size-3.5 text-muted-foreground" />
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ikon seçici diyalog — kütüphane + yükleme sekmeleri */}
+        {picker && (
+          <IconPickerDialog
+            open
+            onOpenChange={(o) => !o && setPicker(null)}
+            value={draft.iconOverrides[picker.key]}
+            onPick={(next) => {
+              setOverride(picker.key, next);
+              onTouch();
+              setPicker(null);
+            }}
+            pickImage={pickImage}
+            t={t}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+// ═══ İKON SEÇİCİ DİYALOGU — kütüphane (122 ikon, aramalı) + SVG/PNG yükleme ═══
+function IconPickerDialog({
+  open,
+  onOpenChange,
+  value,
+  onPick,
+  pickImage,
+  t,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  value: IconOverride | undefined;
+  onPick: (next: IconOverride) => void;
+  pickImage: (file: File, maxBytes: number, apply: (url: string) => void) => Promise<void>;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const [tab, setTab] = useState<"library" | "upload">("library");
+  const [query, setQuery] = useState("");
+  const results = searchLibraryIcons(query);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="text-sm">{t("portalSettings.design.libraryTitle")}</DialogTitle>
+          <DialogDescription className="text-xs">{t("portalSettings.design.libraryDesc")}</DialogDescription>
+        </DialogHeader>
+        <div className="mb-2 flex rounded-lg bg-muted p-1" role="tablist">
+          <button role="tab" aria-selected={tab === "library"} onClick={() => setTab("library")} className={cn("flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition", tab === "library" ? "bg-background shadow-sm" : "text-muted-foreground")}>
+            {t("portalSettings.design.libraryTab")}
+          </button>
+          <button role="tab" aria-selected={tab === "upload"} onClick={() => setTab("upload")} className={cn("flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition", tab === "upload" ? "bg-background shadow-sm" : "text-muted-foreground")}>
+            {t("portalSettings.design.uploadTab")}
+          </button>
+        </div>
+        {tab === "library" ? (
+          <>
+            <div className="relative">
+              <Icons.Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("portalSettings.design.searchPh")} className="pl-8 h-9 text-xs" />
+            </div>
+            <div className="maven-scroll max-h-72 overflow-y-auto rounded-lg border bg-muted/10 p-2">
+              <div className="grid grid-cols-6 gap-1.5 sm:grid-cols-8" role="listbox" aria-label={t("portalSettings.design.libraryTitle")}>
+                {results.map((ic) => {
+                  const I = resolvePortalIcon(ic.n);
+                  if (!I) return null;
+                  const selected = value?.icon === ic.n;
+                  return (
+                    <button
+                      key={ic.n}
+                      role="option"
+                      aria-selected={selected}
+                      title={ic.n}
+                      onClick={() => onPick({ ...(value ?? {}), icon: ic.n, svg: undefined })}
+                      className={cn(
+                        "grid aspect-square cursor-pointer place-items-center rounded-lg border transition hover:bg-muted/60",
+                        selected ? "border-teal-500 bg-teal-50 ring-2 ring-teal-500/40 dark:bg-teal-900/30" : "border-transparent",
+                      )}
+                    >
+                      <I className="size-4.5 text-foreground" style={{ width: 18, height: 18 }} />
+                    </button>
+                  );
+                })}
+                {results.length === 0 && <p className="col-span-full py-6 text-center text-xs text-muted-foreground">{t("portalSettings.design.noResults")}</p>}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{t("portalSettings.design.uploadDesc")}</p>
+            <div className="flex items-center gap-3">
+              <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted">
+                {value?.svg ? (
+                  <img src={value.svg} alt="" className="size-full object-contain p-1" />
+                ) : (
+                  <Icons.ImageIcon className="size-5 text-muted-foreground" />
+                )}
+              </div>
+              <label className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md border px-3 text-xs hover:bg-muted/50">
+                <Icons.Upload className="size-3.5" />
+                {t("portalSettings.design.uploadSvg")}
+                <input
+                  type="file"
+                  className="sr-only"
+                  accept=".svg,.png,image/svg+xml,image/png"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    void pickImage(f, 300_000, (url) => onPick({ ...(value ?? {}), svg: url, icon: undefined }));
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

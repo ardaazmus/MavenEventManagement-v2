@@ -2844,7 +2844,10 @@
       "mapSub": "See the layout",
       "b2b": "B2B Meetings",
       "b2bSub": "{count} appointments",
-      "authOnly": "Registered only"
+      "authOnly": "Registered only",
+      "game": "Quests & Badges",
+      "gameSub": "{points} points",
+      "gameEmpty": "Earn points"
     },
     "home": {
       "upNext": "Up next",
@@ -3031,6 +3034,29 @@
     "design": {
       "sponsorLabel": "Mobile Portal Sponsor",
       "sponsorVisit": "Visit"
+    },
+    "game": {
+      "title": "Quests & Badges",
+      "disabled": "Gamification is disabled for this event.",
+      "refresh": "Refresh",
+      "currentLevel": "Level",
+      "points": "{points} points",
+      "nextLevel": "Next: {level} ({min} pts)",
+      "quests": "Quests",
+      "noQuests": "No quests right now.",
+      "questQa": "Ask a question in Q&A",
+      "questB2b": "Accept your B2B meetings",
+      "leaderboard": "Leaderboard",
+      "leaderEmpty": "Nobody has points yet — be the first!",
+      "guest": "Guest",
+      "you": "you",
+      "levelUp": "Level up!",
+      "levelUpDesc": "Congratulations — you are now at {level} level.",
+      "pointsWon": "Points earned!",
+      "pointsWonDesc": "+{points} points added to your account."
+    },
+    "form": {
+      "title": "Form"
     }
   },
   "portalSettings": {
@@ -3218,7 +3244,19 @@
       "nav_program": "Program",
       "nav_sponsors": "Sponsors",
       "nav_map": "Venue Map",
-      "nav_profile": "Profile"
+      "nav_profile": "Profile",
+      "googleFontsGroup": "Google Fonts",
+      "pickLibrary": "Icon Library",
+      "pickShort": "Pick",
+      "widgetIconsTitle": "Widget Icons",
+      "widgetIconsDesc": "Pick dashboard card icons from the library or upload SVG/PNG.",
+      "libraryTitle": "Icon Library",
+      "libraryDesc": "Search and pick an icon — or upload your own SVG/PNG logo.",
+      "libraryTab": "Library",
+      "uploadTab": "Upload",
+      "searchPh": "Search icon (e.g. calendar, sponsor, heart)",
+      "noResults": "No results — try another word or upload one.",
+      "uploadDesc": "Upload your own icon — SVG (recommended) or PNG, up to 300KB."
     },
     "channels": {
       "title": "Notification Channels — WhatsApp & SMS",
@@ -3273,6 +3311,41 @@
       "savedDesc": "Notification channels updated.",
       "saveFail": "Failed to save channels",
       "loadFail": "Failed to load channel config"
+    },
+    "chrome": {
+      "title": "Screen Top Bars",
+      "desc": "Decide per screen whether the Maven top band and event title appear.",
+      "screen": "Screen",
+      "screen_home": "Home",
+      "screen_program": "Program",
+      "screen_speakers": "Speakers",
+      "screen_forms": "Forms",
+      "screen_qa": "Q&A",
+      "screen_sponsors": "Sponsors",
+      "screen_map": "Venue Map",
+      "screen_b2b": "B2B",
+      "screen_profile": "Profile",
+      "topHeader": "Maven Top Band",
+      "topHeaderHint": "Organizer + other events",
+      "eventBar": "Event Title",
+      "eventBarHint": "Hero on Home, compact bar elsewhere",
+      "hint": "Default: the Maven band appears only on Home; the event title on all screens. Disabled bars are not rendered on that screen at all."
+    },
+    "game": {
+      "title": "Gamification",
+      "desc": "Participants earn points and levels by completing forms and asking questions — leaderboard and badges for a native app feel.",
+      "enabled": "Gamification",
+      "enabledHint": "When on, the 'Quests & Badges' card and game screen appear in the portal.",
+      "points": "Action Points",
+      "pointForm": "Form submission",
+      "pointQa": "Question submitted",
+      "pointB2b": "B2B acceptance",
+      "qaCap": "Question point cap (how many questions earn points)",
+      "levels": "Levels",
+      "levelsHint": "Thresholds must be ascending — passing a threshold levels the participant up with a confetti celebration.",
+      "levelAdd": "Add level",
+      "levelRemove": "Remove last level",
+      "levelNew": "New Level"
     }
   }
 }

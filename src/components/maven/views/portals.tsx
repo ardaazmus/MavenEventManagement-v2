@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useLang, t } from "@/lib/i18n";
+import { PortalSettingsTab } from "@/components/maven/views/portal-settings";
 import { cn } from "@/lib/utils";
 
 // ─── tipler ─────────────────────────────────────────────────────────────────
@@ -1401,12 +1402,19 @@ export function PortalsView() {
             <TabsTrigger value="participant" className="gap-1.5"><Icons.UserRound className="size-3.5" /> Katılımcı</TabsTrigger>
             <TabsTrigger value="sponsor" className="gap-1.5"><Icons.Handshake className="size-3.5" /> Sponsor</TabsTrigger>
             <TabsTrigger value="vitrin" className="gap-1.5"><Icons.Store className="size-3.5" /> Firma Vitrini</TabsTrigger>
+            <TabsTrigger value="ayarlar" className="gap-1.5"><Icons.SlidersHorizontal className="size-3.5" /> Portal Ayarları</TabsTrigger>
           </TabsList>
         </Tabs>
       </PageHeader>
 
       {tab === "vitrin" ? (
         <FirmaVitrin />
+      ) : tab === "ayarlar" ? (
+        !edition ? (
+          <EmptyState title="Edisyon seçin" desc="Portal ayarları için bir edisyon gerekli." />
+        ) : (
+          <PortalSettingsTab editionId={edition.id} portalSlug={edition.slug} />
+        )
       ) : !edition ? (
         <EmptyState title="Edisyon seçin" desc="Portal önizlemesi için bir edisyon gerekli." />
       ) : (

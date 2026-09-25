@@ -57,5 +57,370 @@
     "noParticipationDesc": "Kayıt formuyla başvurduğunuzda katılımınız oluşturulur ve bu ekrancan takip edebilirsiniz.",
     "hdrSubtitlePh": "örn. Kayıt, ödeme ve programınız tek yerde",
     "firmIdentityHint": "Ayarlar → Firma Kimliği bölümünden eklenebilir."
+  },
+  "portalApp": {
+    "loading": "Portal yükleniyor…",
+    "back": "Geri",
+    "error": {
+      "title": "Portal yüklenemedi",
+      "retry": "Yeniden dene",
+      "content": "Portal içeriği alınamadı"
+    },
+    "badge": {
+      "auth": "Kayıtlı Katılımcı",
+      "guest": "Misafir"
+    },
+    "otherEvents": "Organizatörün diğer etkinlikleri",
+    "bannerAlt": "kapak görseli",
+    "logoAlt": "logosu",
+    "nav": {
+      "home": "Anasayfa",
+      "program": "Program",
+      "sponsors": "Sponsorlar",
+      "map": "Yer Planı",
+      "profile": "Profil",
+      "aria": "Ana gezinme"
+    },
+    "widget": {
+      "aria": "Modüller",
+      "agenda": "Genel Program",
+      "agendaEmpty": "Akışı görüntüle",
+      "speakers": "Konuşmacılar",
+      "speakersSub": "{count} konuşmacı",
+      "forms": "Formlar & Quizler",
+      "formsSub": "{count} açık form",
+      "qa": "Soru-Cevap",
+      "qaSub": "Sorunuzu gönderin",
+      "map": "Mekan & Kroki",
+      "mapSub": "Yerleşimi görün",
+      "b2b": "B2B Görüşmeler",
+      "b2bSub": "{count} randevu",
+      "authOnly": "Yalnız kayıtlı"
+    },
+    "home": {
+      "upNext": "Sıradaki oturum",
+      "sponsorsTitle": "Sponsorlarımız",
+      "sponsorsDesc": "{count} destekçi kurum"
+    },
+    "announce": {
+      "dismiss": "Duyuruyu kapat"
+    },
+    "install": {
+      "title": "Uygulamayı yükle",
+      "desc": "Ana ekranınıza ekleyin, uygulama gibi kullanın.",
+      "btn": "Yükle",
+      "doneTitle": "Kurulum başlatıldı",
+      "doneDesc": "Tarayıcı kurulum adımlarını gösterecek."
+    },
+    "sessionType": {
+      "KEYNOTE": "Açılış Konuşması",
+      "TALK": "Sunum",
+      "PANEL": "Panel",
+      "WORKSHOP": "Atölye",
+      "BREAK": "Ara",
+      "NETWORKING": "Ağ Kurma",
+      "POSTER_SESSION": "Poster Oturumu"
+    },
+    "role": {
+      "SPEAKER": "Konuşmacı",
+      "MODERATOR": "Moderatör",
+      "SESSION_CHAIR": "Oturum Başkanı",
+      "PANELIST": "Panelist",
+      "HOST": "Ev Sahibi",
+      "GUEST": "Davetli",
+      "PARTICIPANT": "Katılımcı",
+      "AUTHOR": "Yazar",
+      "REVIEWER": "Hakem",
+      "COMMITTEE_MEMBER": "Kurul Üyesi",
+      "ATTENDEE": "Katılımcı",
+      "EXHIBITOR_STAFF": "Stand Görevlisi",
+      "VIP": "VIP",
+      "PRESS": "Basın",
+      "STAFF": "Ekip"
+    },
+    "program": {
+      "title": "Genel Program",
+      "empty": "Yayınlanmış oturum bulunmuyor — program yakında burada.",
+      "speakers": "Konuşmacılar"
+    },
+    "speakers": {
+      "title": "Konuşmacılar",
+      "detail": "Konuşmacı Detayı",
+      "empty": "Programa atanan konuşmacı bulunmuyor.",
+      "sessions": "Katıldığı oturumlar ({count})",
+      "noSession": "Atanmış oturum yok"
+    },
+    "sponsors": {
+      "title": "Sponsorlar",
+      "empty": "Bu etkinlik için görünen sponsor bulunmuyor.",
+      "untiered": "Destekçiler",
+      "website": "Web sitesi"
+    },
+    "map": {
+      "title": "Yer Planı",
+      "alt": "Etkinlik alan krokisi",
+      "empty": "Kroki henüz eklenmedi — organizatör eklediğinde burada görünecek."
+    },
+    "qa": {
+      "title": "Soru-Cevap",
+      "target": "Hedef",
+      "general": "Genel — tüm konuşmacılara",
+      "question": "Sorunuz",
+      "ph": "Sorunuzu yazın…",
+      "anon": "Anonim gönder",
+      "authName": "Sorunuz profil adınızla gönderilir.",
+      "guestName": "Görünen adınız",
+      "guestNamePh": "örn. Ayşe Yılmaz",
+      "submit": "Soruyu Gönder",
+      "sent": "Sorunuz alındı",
+      "sentDesc": "Ekibimiz en kısa sürede yanıtlayacak.",
+      "fail": "Soru gönderilemedi",
+      "mine": "Sorularım",
+      "status": {
+        "PENDING": "Yanıt bekliyor",
+        "ANSWERED": "Yanıtlandı",
+        "HIDDEN": "Gizlendi"
+      }
+    },
+    "forms": {
+      "title": "Formlar & Quizler",
+      "empty": "Açık form bulunmuyor."
+    },
+    "b2b": {
+      "title": "B2B Görüşmelerim",
+      "authOnly": "Bu modül yalnız kayıtlı katılımcılara açıktır",
+      "authOnlyDesc": "Kişisel B2B randevularınızı görmek için e-posta bilgilerinizle giriş yapın.",
+      "empty": "Planlanmış görüşmeniz yok.",
+      "table": "Masa",
+      "accept": "Onayla",
+      "decline": "Reddet",
+      "reschedule": "Zaman Talebi",
+      "reschedTitle": "Zaman değişikliği talebi",
+      "reschedDesc": "Organizatöre hangi saatlerin uygun olduğunu kısaca yazın.",
+      "reschedPh": "örn. 14:00 sonrası uygunum…",
+      "reschedSend": "Talebi Gönder",
+      "cancel": "Vazgeç",
+      "fail": "İşlem başarısız",
+      "done": {
+        "ACCEPTED": "Görüşme onaylandı",
+        "DECLINED": "Görüşme reddedildi",
+        "RESCHEDULE": "Zaman talebiniz iletildi"
+      },
+      "status": {
+        "ASSIGNED": "Yanıt bekliyor",
+        "ACCEPTED": "Onaylandı",
+        "DECLINED": "Reddedildi",
+        "COMPLETED": "Tamamlandı",
+        "CANCELLED": "İptal"
+      }
+    },
+    "profile": {
+      "title": "Profil",
+      "guestTitle": "Misafir oturumu",
+      "guestDesc": "Kayıt olduysanız, size gönderilen e-postadaki bilgiler ile giriş yapabilirsiniz.",
+      "guestLogin": "Giriş Yap",
+      "registerTitle": "Etkinliğe kayıt olun",
+      "registerDesc": "Kayıt formu hâlâ açık — dakikalar içinde başvurun.",
+      "guestRights": "Misafir olarak genel programı, konuşmacıları, sponsorları ve krokileri görebilirsiniz. Kimlikli oylamalar, kişisel B2B takvimi ve bilet bilgileri kayıtlı katılımcılara açıktır.",
+      "tickets": "Bilet / Kayıt",
+      "noRegs": "Kayıt bulunmuyor — henüz kayıt oluşturmadınız.",
+      "noConf": "Onay numarası yok",
+      "rights": "Erişim Hakları",
+      "badgeShort": "Yaka",
+      "notifTitle": "Bildirimler",
+      "notifDesc": "Oturum ve randevu hatırlatıcıları ({offsets} dk önce) bildirilir.",
+      "notifOn": "Açık",
+      "notifBlocked": "Engelli",
+      "notifEnable": "İzin Ver",
+      "notifTestTitle": "Bildirimler açık",
+      "notifTestBody": "Etkinlik hatırlatıcılarını burada göreceksiniz.",
+      "logout": "Çıkış Yap"
+    },
+    "regStatus": {
+      "DRAFT": "Taslak",
+      "SUBMITTED": "Gönderildi",
+      "PENDING_APPROVAL": "Onay bekliyor",
+      "CONFIRMED": "Onaylandı",
+      "APPROVED": "Onaylandı",
+      "REJECTED": "Reddedildi",
+      "CANCELLED": "İptal"
+    },
+    "reminder": {
+      "b2bTitle": "B2B randevu hatırlatıcısı",
+      "sessionTitle": "Oturum hatırlatıcısı",
+      "add": "Hatırlat",
+      "remove": "Hatırlatıcıyı kaldır",
+      "on": "Hatırlatıcı eklendi",
+      "off": "Hatırlatıcı kaldırıldı",
+      "in": "kaldı",
+      "hours": "saat",
+      "minutes": "dk",
+      "disabledTitle": "Bildirimler kapalı",
+      "disabledDesc": "Organizatör bu etkinlik için hatırlatıcıları kapatmış."
+    },
+    "login": {
+      "methodAria": "Giriş yöntemi",
+      "codeTab": "Etkinlik Kodu",
+      "emailTab": "E-posta ile Giriş",
+      "codeLabel": "Etkinlik Kodu",
+      "emailLabel": "E-posta adresiniz",
+      "emailPh": "ornek@firma.com",
+      "submit": "Portala Gir",
+      "emailHint": "Davet e-postanızda kayıtlı adresinizle girin — bilet ve B2B randevularınıza erişin.",
+      "codeHint": "Organizatörün paylaştığı etkinlik koduyla giriş yapın — program, konuşmacılar ve sponsorlar açılır.",
+      "registerHint": "Kayıt Formuna yönlendir",
+      "registerBtn": "Kayıt Formu",
+      "poweredBy": "Maven Etkinlik Portalı",
+      "fail": "Giriş başarısız"
+    },
+    "countdown": {
+      "desc": "Portalın açılmasına kalan süre",
+      "started": "Portal açılıyor…",
+      "maintenance": "Portal şu anda bakımda — kısa süre içinde tekrar deneyin.",
+      "dayUnit": "g"
+    }
+  },
+  "portalSettings": {
+    "openPortal": "Mobil Portalı Aç",
+    "statusActive": "Portal AKTİF",
+    "statusPassive": "Portal PASİF",
+    "unsaved": "Kaydedilmemiş değişiklikler var",
+    "save": "Ayarları Kaydet",
+    "saved": "Ayarlar kaydedildi",
+    "savedDesc": "Portal yapılandırması güncellendi.",
+    "saveFail": "Kaydedilemedi",
+    "formStatus": {
+      "PUBLISHED": "Yayında",
+      "DRAFT": "Taslak",
+      "CLOSED": "Kapalı"
+    },
+    "access": {
+      "title": "Erişim ve Güvenlik Yönetimi",
+      "desc": "Portal durumu, giriş kodu ve magic link yönetimi.",
+      "status": "Portal Durumu",
+      "statusOn": "Portal aktif — katılımcılar giriş yapabilir.",
+      "statusOff": "Portal pasif — bakım mesajı veya geri sayım gösterilir.",
+      "maintMsg": "Bakım mesajı",
+      "maintPh": "örn. Portal kısa bir bakımdadır…",
+      "countdown": "Başlama geri sayımı (opsiyonel)",
+      "code": "Genel Etkinlik Kodu",
+      "codeGen": "Kod üret",
+      "codeHint": "Misafir girişi ve e-posta girişi bu kodla açılır. Boşsa kod girişi kapatılır.",
+      "magicTitle": "Magic Link / Özel Kod",
+      "magicBtn": "Katılımcılara Anahtar Üret",
+      "magicHint": "Kayıtlı katılımcılara kişiye özel, tek görünlük erişim anahtarı üretir.",
+      "regRedirect": "Kayıt Formuna Yönlendir",
+      "regRedirectHint": "Giriş ekranı ve misafir profilinde kayıt formu butonu gösterilir.",
+      "regForm": "Kayıt formu seçimi",
+      "regFormPh": "Form seçin",
+      "regFormNone": "Form seçilmedi"
+    },
+    "brand": {
+      "title": "Görsel Yapılandırma ve Tema",
+      "desc": "Portal logosu, banner, tema rengi ve menü özelleştirme.",
+      "logo": "Portal Logosu",
+      "banner": "Arka Plan Görseli (Banner)",
+      "clear": "Kaldır",
+      "imgErr": "Görsel hatası",
+      "theme": "Tema Rengi",
+      "themeCustom": "Özel renk",
+      "headerTitle": "Portal Başlığı",
+      "headerTitlePh": "örn. No-Dig Turkey 2027",
+      "headerSubtitle": "Portal Alt Başlığı",
+      "headerSubtitlePh": "örn. Kayıt, program ve B2B tek yerde",
+      "headerEvents": "Top Header — Diğer Etkinlikler",
+      "headerEventsHint": "Seçilen etkinlikler portala giren katılımcının üst şeridinde carousel olarak görünür. Boş bırakılırsa yayındaki tüm etkinlikler gösterilir.",
+      "noOtherEvents": "Diğer etkinlik bulunmuyor.",
+      "bottomNav": "Alt Menü İkonları",
+      "bottomNavHint": "Anasayfa ve Profil sabittir; diğer ikonları gizleyebilirsiniz.",
+      "imgSize": "Görsel çok büyük — en fazla {kb} KB",
+      "imgRead": "Dosya okunamadı"
+    },
+    "widgets": {
+      "title": "Dinamik Widget ve Modül Yönetimi",
+      "desc": "Ana sayfa kartlarını aç/kapat, görünürlük ata, sırala.",
+      "toggle": "Modülü aç/kapat",
+      "visAll": "Herkes görebilir (Misafir dahil)",
+      "visAuth": "Yalnız kayıtlı kullanıcılar",
+      "b2bLocked": "B2B zorunlu olarak yalnız kayıtlı kullanıcılara açıktır",
+      "up": "Yukarı taşı",
+      "down": "Aşağı taşı"
+    },
+    "notify": {
+      "title": "Bildirim Yönetimi",
+      "desc": "Hatırlatıcı tetikleri ve canlı duyuru paneli.",
+      "enabled": "Zamanlanmış hatırlatıcılar",
+      "enabledHint": "B2B randevuları ve hatırlatma eklenen oturumlar için bildirim gönderilir.",
+      "offsets": "Tetiklenme zamanları",
+      "offsetsHint": "Etkinlikten / randevudan kaç dk önce bildirim düşeceği. En fazla 5 tetik.",
+      "addOffset": "Tetik ekle…",
+      "offsetMin": "{n} dakika önce",
+      "removeOffset": "Tetiki kaldır"
+    },
+    "announce": {
+      "title": "Canlı Duyuru Paneli",
+      "desc": "Tüm aktif portal kullanıcılarına anlık duyuru gönderin.",
+      "titlePh": "örn. Ana salonda kahve molası başlamıştır",
+      "levelInfo": "Bilgi",
+      "levelWarning": "Uyarı",
+      "levelUrgent": "Acil",
+      "targetAll": "Herkes",
+      "targetAuth": "Yalnız kayıtlı",
+      "targetGuest": "Yalnız misafir",
+      "msgPh": "Duyuru metni…",
+      "send": "Duyuruyu Gönder",
+      "sent": "Duyuru gönderildi",
+      "sentDesc": "Portal açık olan kullanıcılara anında düşer.",
+      "fail": "Duyuru gönderilemedi",
+      "sentCount": "Bugüne kadar {count} duyuru gönderildi"
+    },
+    "content": {
+      "title": "İçerik Bağlama",
+      "desc": "Portalda görünecek sponsorlar ve krokiyi seçin — veriler kopyalanmaz, mevcut kayıtlara bağlanır.",
+      "sponsors": "Sponsorlar",
+      "sponsorsSelected": "{count} sponsor seçili — yalnız seçilenler portalda görünür",
+      "sponsorsAll": "Hiçbiri seçili değil — tüm aktif sponsorlar görünür",
+      "noSponsors": "Aktif sponsorluk sözleşmesi bulunmuyor.",
+      "map": "Yer Planı (Kroki)",
+      "mapActive": "Aktif",
+      "pwaHint": "PWA açıksa portal mobil tarayıcıda uygulamaya yüklenebilir (ana ekrana ekle + çevrimdışı kabuk)."
+    },
+    "analytics": {
+      "title": "Canlı Portal İstatistikleri",
+      "desc": "Tekil ziyaretçi, widget tıklama, PWA kurulum, form ve B2B metrikleri.",
+      "unique": "Tekil Kullanıcı",
+      "guest": "Misafir:",
+      "auth": "Kayıtlı:",
+      "visits": "Ziyaret",
+      "visitUnit": "oturum-bazlı",
+      "installs": "PWA Kurulum",
+      "questions": "Q&A Soru",
+      "pending": "bekleyen:",
+      "visitsTrend": "Son 14 gün — günlük ziyaret",
+      "clicks": "Widget tıklanma oranları",
+      "noClicks": "Henüz tıklama verisi yok.",
+      "b2bDone": "{completed}/{total} tamamlandı",
+      "b2bAccepted": "{accepted} onay · {declined} ret",
+      "forms": "Form Katılımı",
+      "formOpens": "{opens} form açılışı"
+    },
+    "magic": {
+      "title": "Magic Link / Özel Kod Üretimi",
+      "desc": "Seçilen katılımcılar için kişiye özel erişim anahtarı üretilir.",
+      "onceWarning": "Anahtarlar yalnız BİR KEZ gösterilir — kopyalayıp güvenli kanaldan paylaşın.",
+      "mailed": "Mail gönderildi",
+      "copy": "Anahtarı kopyala",
+      "copied": "Kopyalandı",
+      "skipped": "Atlandı",
+      "select": "{count} kişi seçili",
+      "all": "Tümü",
+      "none": "Temizle",
+      "noPeople": "Bu etkinlikte katılımcı bulunmuyor.",
+      "sendMail": "Mail modülüyle de gönder",
+      "close": "Kapat",
+      "generate": "Anahtarları Üret",
+      "issued": "{count} anahtar üretildi",
+      "fail": "Anahtarlar üretilemedi"
+    }
   }
 }

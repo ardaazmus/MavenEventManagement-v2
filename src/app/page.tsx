@@ -56,6 +56,11 @@ const PublicFormPage = dynamic(
   () => import("@/components/maven/public-form").then((m) => ({ default: m.PublicFormPage })),
   { loading: ModuleSkeleton, ssr: false },
 ) as React.ComponentType<{ idOrSlug: string; embed?: boolean }>;
+// PWA Katılımcı Dış Portalı — ?portal=<slug> yüzeyi (Shell'siz, mobil-öncelikli)
+const PortalAppPage = dynamic(
+  () => import("@/components/maven/portal-app").then((m) => ({ default: m.PortalApp })),
+  { loading: ModuleSkeleton, ssr: false },
+) as React.ComponentType<{ editionSlug: string; magicToken?: string }>;
 
 export default function Home() {
   // F-EXP: ?form= parametresi Suspense sınırıyla okunur (SSR-güvenli, effect'siz)
@@ -71,11 +76,18 @@ function HomeClient() {
   const searchParams = useSearchParams();
   const publicFormRef = searchParams.get("form");
   const embedMode = searchParams.get("embed") === "1";
+  const portalSlug = searchParams.get("portal");
+  const portalToken = searchParams.get("t") ?? undefined;
 
   useEffect(() => {
     bootstrap();
 
   }, []);
+
+  // PWA Katılımcı Dış Portalı — yönetici Shell'i olmadan bağımsız yüzey
+  if (portalSlug) {
+    return <PortalAppPage editionSlug={portalSlug} magicToken={portalToken} />;
+  }
 
   if (publicFormRef) {
     return <PublicFormPage idOrSlug={publicFormRef} embed={embedMode} />;

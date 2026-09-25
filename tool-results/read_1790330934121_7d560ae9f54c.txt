@@ -1,0 +1,1603 @@
+     1→"use client";
+     2→// Dış Portal — sponsor ve katılımcı self-servis önizlemesi.
+     3→// Mimari (§20, §60): dış portallar ayrı uygulama, ortak kimlik. Maven veri sahibi;
+     4→// bu ekran, dış kullanıcının göreceği portalı gerçek verilerle önizler ve
+     5→// portal aksiyonlarını (teklif yanıtı, teslim gönderimi, ödeme linki) çalıştırır.
+     6→import { useEffect, useMemo, useState } from "react";
+     7→import * as Icons from "lucide-react";
+     8→import { useApp } from "@/lib/store";
+     9→import { listEntity, apiGet, apiSend } from "@/lib/client";
+    10→import {
+    11→  REGISTRATION_STATUS, WAITLIST_STATUS, PAYMENT_STATUS, PAYMENT_METHODS, ORDER_STATUS,
+    12→  ATTENDANCE_STATUS, DELIVERABLE_STATUS, EVENT_ROLES, REG_SOURCES, FUNDING_SOURCES,
+    13→  BOOTH_STATUS, label, fmtMoney, fmtDate,
+    14→} from "@/lib/constants";
+    15→import { PageHeader, SectionCard, StatusBadge, Chip, EmptyState, Loading, ErrorState, useApi } from "@/components/maven/bits";
+    16→import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    17→import { Button } from "@/components/ui/button";
+    18→import { Input } from "@/components/ui/input";
+    19→import { Label } from "@/components/ui/label";
+    20→import { Textarea } from "@/components/ui/textarea";
+    21→import { Switch } from "@/components/ui/switch";
+    22→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+    23→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    24→import { useToast } from "@/hooks/use-toast";
+    25→import { useLang, t } from "@/lib/i18n";
+    26→import { cn } from "@/lib/utils";
+    27→
+    28→// ─── tipler ─────────────────────────────────────────────────────────────────
+    29→type PersonRow = { id: string; firstName: string; lastName: string; title?: string | null; company?: string | null };
+    30→type ParticipationRow = { id: string; person: PersonRow; registrations?: { status: string }[] };
+    31→type AgreementRow = { id: string; organization: { id: string; name: string }; status: string; tier?: { name: string } | null };
+    32→
+    33→// R10-c: dış portal üst bant tasarımı — EventEdition üzerindeki portalHeader* skalerleri
+    34→type PortalHeaderDraft = { title: string; subtitle: string; imageUrl: string; accent: string };
+    35→type EditionRow = {
+    36→  id: string; name: string;
+    37→  portalHeaderTitle?: string | null; portalHeaderSubtitle?: string | null;
+    38→  portalHeaderImageUrl?: string | null; portalHeaderAccent?: string | null;
+    39→};
+    40→
+    41→type PortalOrder = {
+    42→  id: string; orderNo: string; status: string; totalAmount: number; currency: string; payerName?: string | null;
+    43→  lines: { id: string; description: string; quantity: number; total: number; personName?: string | null }[];
+    44→  payments: { id: string; amount: number; source: string; status: string; reference?: string | null; paidAt?: string | null }[];
+    45→  paid: number; pending: number; remaining: number;
+    46→};
+    47→
+    48→// TASK-B 25: portal bloğu — portal yanıtı yalnız {id,type,title,payloadJson,order} döner
+    49→// (düzenleyici CRUD yüzeyi /api/portal/blocks'tadır; API select disiplini korunur)
+    50→type PortalBlockPublic = { id: string; type: string; title: string; payloadJson?: string | null; order: number };
+    51→// düzenleyici yüzeyi satırı (tam kolon seti)
+    52→type PortalBlockRow = PortalBlockPublic & { editionId: string; audience: string; isVisible: boolean; createdAt: string; updatedAt: string };
+    53→type BlockPayload = { text?: string; url?: string; imageUrl?: string; linkLabel?: string };
+    54→
+    55→type ParticipantData = {
+    56→  edition: { id: string; name: string; startDate: string; endDate: string; venueName?: string | null; city?: string | null; seriesName?: string | null } | null;
+    57→  // TASK-B 25: düzenleyici kontrollü içerik blokları (görünür + PARTICIPANT|BOTH)
+    58→  blocks: PortalBlockPublic[];
+    59→  // TASK-A F1: portalToken alanı kaldırıldı — belirteç yanıtlarda dolaşmaz; yönetici
+    60→  // önizlemesi kısa ömürlü belirteci /api/portal/preview-token ile bellekte tutar
+    61→  person: { id: string; firstName: string; lastName: string; email?: string | null; title?: string | null; organizationName?: string | null };
+    62→  participation: {
+    63→    id: string; source: string; attendance: string; notes?: string | null;
+    64→    roleAssignments: { id: string; role: string }[];
+    65→    badges: { id: string; status: string; badgeNo: string; profileName?: string | null }[];
+    66→    certificates: { id: string; status: string; note?: string | null; definitionName?: string | null; generatedAt?: string | null; deliveredAt?: string | null }[];
+    67→    snapshot?: { badgeName: string; company?: string | null; title?: string | null } | null;
+    68→    reservations: { id: string; guestName?: string | null; checkIn: string; checkOut: string; status: string; payerType?: string | null; payerName?: string | null; roomType?: string | null; hotel?: string | null }[];
+    69→    program: { id: string; role: string; sessionTitle?: string | null; sessionType?: string | null; startTime?: string | null; endTime?: string | null; room?: string | null; cmeCredits?: number }[];
+    70→    claims: { id: string; status: string; guestName?: string | null; entitlementLabel?: string | null }[];
+    71→  } | null;
+    72→  registrations: { id: string; confirmationNo: string; status: string; source: string; fundingSource: string; submittedAt?: string | null; decidedAt?: string | null; cancelReason?: string | null; notes?: string | null; categoryName?: string | null; categoryCode?: string | null; basePrice: number; currency: string }[];
+    73→  orders: PortalOrder[];
+    74→  // TASK-B 26: yaka kartı önizlemesi — yalnız verilmış yaka kartı (ISSUED|PRINTED|REPRINTED)
+    75→  badgePreview: { badgeNo: string; status: string; profileName?: string | null; profile?: { id: string; name: string } | null } | null;
+    76→  // TASK-B 26: CV — konuşmacı/hakem kişinin kendi kayıtları (boş dizi = rol yok / kayıt yok)
+    77→  cv: { id: string; kind: string; title: string; organization?: string | null; startDate?: string | null; endDate?: string | null; isCurrent: boolean; description?: string | null }[];
+    78→  // TASK-B 26: kalan bakiye toplamı (kuruş)
+    79→  balanceTotal: number;
+    80→  waitlist: { id: string; status: string; priority: number; notes?: string | null; offeredAt?: string | null; offerExpiresAt?: string | null; respondedAt?: string | null; categoryName: string; categoryCode?: string | null; convertedRegistrationNo?: string | null }[];
+    81→};
+    82→
+    83→type SponsorData = {
+    84→  edition: { id: string; name: string; startDate: string; endDate: string; venueName?: string | null; city?: string | null; seriesName?: string | null } | null;
+    85→  // TASK-B 25: düzenleyici kontrollü içerik blokları (görünür + SPONSOR|BOTH)
+    86→  blocks: PortalBlockPublic[];
+    87→  // TASK-A F1: portalToken alanı kaldırıldı (belirteç yaşam döngüsü PortalToken tablosunda)
+    88→  organization: { id: string; name: string; type: string; city?: string | null; country?: string | null; website?: string | null };
+    89→  agreements: {
+    90→    id: string; status: string; amount: number; currency: string; signedAt?: string | null; notes?: string | null;
+    91→    tierName?: string | null; packageName?: string | null; rightsSpec?: string | null;
+    92→    deliverables: { id: string; name: string; type: string; status: string; dueDate?: string | null; responsible?: string | null }[];
+    93→    booths: { id: string; status: string; code?: string | null; sizeSqm?: number | null; boothStatus?: string | null; price?: number | null; currency: string }[];
+    94→  }[];
+    95→  entitlements: { id: string; label: string; type: string; granted: number; consumed: number; reserved: number; total: number; claimed: number; restrictions?: string | null; claims: { id: string; status: string; guestName?: string | null }[] }[];
+    96→  // TASK-B 26: stant tahsislerinin düz listesi (sözleşme bağımsız hızlı görünüm)
+    97→  booths: { id: string; agreementId: string; agreementStatus: string; status: string; code?: string | null; sizeSqm?: number | null; boothStatus?: string | null; price?: number | null; currency: string }[];
+    98→  orders: PortalOrder[];
+    99→  staff: { participationId: string; source: string; personName: string; personTitle?: string | null; registrationStatus?: string | null; categoryCode?: string | null; badgeStatus?: string | null }[];
+   100→};
+   101→
+   102→// ─── yardımcılar ────────────────────────────────────────────────────────────
+   103→const initials = (name: string) => name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+   104→
+   105→function useNow(intervalMs = 30_000) {
+   106→  const [now, setNow] = useState(() => Date.now());
+   107→  useEffect(() => {
+   108→    const t = setInterval(() => setNow(Date.now()), intervalMs);
+   109→    return () => clearInterval(t);
+   110→  }, [intervalMs]);
+   111→  return now;
+   112→}
+   113→
+   114→function offerCountdown(expiresAt?: string | null, now = Date.now()) {
+   115→  if (!expiresAt) return null;
+   116→  const diff = new Date(expiresAt).getTime() - now;
+   117→  if (diff <= 0) return { text: "Süresi doldu", expired: true as const, hours: 0 };
+   118→  const h = Math.floor(diff / 3_600_000);
+   119→  const m = Math.floor((diff % 3_600_000) / 60_000);
+   120→  return { text: `${h} sa ${m} dk kaldı`, expired: false as const, hours: h };
+   121→}
+   122→
+   123→// portal durumu adımları: Katılım → Kayıt → Onay → Yaka Kartı → Giriş
+   124→function buildSteps(p: NonNullable<ParticipantData["participation"]>, regs: ParticipantData["registrations"]) {
+   125→  const activeReg = regs.find((r) => r.status !== "CANCELLED") ?? regs[0];
+   126→  const badge = p.badges[0];
+   127→  const steps: { key: string; title: string; state: "done" | "current" | "pending" | "error"; hint?: string }[] = [
+   128→    { key: "part", title: "Katılım", state: "done", hint: label(REG_SOURCES, p.source) },
+   129→    activeReg
+   130→      ? {
+   131→          key: "reg", title: t("portal.stepReg"),
+   132→          state: ["REJECTED", "CANCELLED"].includes(activeReg.status) ? "error" : "done",
+   133→          hint: activeReg.confirmationNo,
+   134→        }
+   135→      : { key: "reg", title: t("portal.stepReg"), state: "pending", hint: "Henüz kayıt yok" },
+   136→    activeReg && ["CONFIRMED"].includes(activeReg.status)
+   137→      ? { key: "appr", title: "Onay", state: "done", hint: activeReg.decidedAt ? fmtDate(activeReg.decidedAt) : undefined }
+   138→      : activeReg && ["SUBMITTED", "PENDING_APPROVAL"].includes(activeReg.status)
+   139→        ? { key: "appr", title: "Onay", state: "current", hint: "İncelemede" }
+   140→        : { key: "appr", title: "Onay", state: activeReg ? "pending" : "pending" },
+   141→    badge
+   142→      ? { key: "badge", title: "Yaka Kartı", state: ["READY", "PRINTED", "REPRINTED", "ISSUED"].includes(badge.status) ? "done" : "current", hint: badge.badgeNo }
+   143→      : { key: "badge", title: "Yaka Kartı", state: "pending" },
+   144→    p.attendance === "CHECKED_IN" || p.attendance === "CHECKED_OUT"
+   145→      ? { key: "in", title: "Giriş", state: "done", hint: label(ATTENDANCE_STATUS, p.attendance) }
+   146→      : { key: "in", title: "Giriş", state: "pending", hint: label(ATTENDANCE_STATUS, p.attendance) },
+   147→  ];
+   148→  return steps;
+   149→}
+   150→
+   151→// ─── portal çerçevesi: tarayıcı mock'u + önizleme damgası ───────────────────
+   152→function PortalFrame({ url, children }: { url: string; children: React.ReactNode }) {
+   153→  return (
+   154→    <div className="maven-portal-frame overflow-hidden rounded-2xl border bg-card shadow-xl ring-1 ring-black/[0.03]">
+   155→      <div className="flex items-center gap-2 border-b bg-muted/60 px-3 py-2">
+   156→        <span className="flex gap-1.5" aria-hidden>
+   157→          <span className="size-2.5 rounded-full bg-rose-400/90" />
+   158→          <span className="size-2.5 rounded-full bg-amber-400/90" />
+   159→          <span className="size-2.5 rounded-full bg-emerald-400/90" />
+   160→        </span>
+   161→        <span className="mx-auto hidden max-w-md flex-1 items-center gap-1.5 truncate rounded-full border bg-background px-3 py-1 text-[11px] text-muted-foreground shadow-sm sm:flex">
+   162→          <Icons.Lock className="size-3 text-emerald-500" aria-hidden />
+   163→          <span className="truncate font-mono">{url}</span>
+   164→        </span>
+   165→        <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+   166→          <Icons.Eye className="size-3" aria-hidden /> Önizleme
+   167→        </span>
+   168→      </div>
+   169→      {children}
+   170→    </div>
+   171→  );
+   172→}
+   173→
+   174→// ─── portal üst bandı: etkinlik kimliği + ziyaretçi ─────────────────────────
+   175→// R10-c: edition üzerindeki portalHeader* alanlarıyla üst bant özelleştirilir
+   176→// (arka plan görseli + koyu degrade, başlık/alt başlık, vurgu rengi). Alanlar
+   177→// null ise mevcut görünüm aynen korunur.
+   178→function PortalHero({
+   179→  name, dates, venue, seriesName, avatarText, visitorName, visitorSub, badge, design,
+   180→}: {
+   181→  name: string; dates: string; venue?: string | null; seriesName?: string | null;
+   182→  avatarText: string; visitorName: string; visitorSub?: string | null; badge?: React.ReactNode;
+   183→  design?: PortalHeaderDraft | null;
+   184→}) {
+   185→  const title = design?.title?.trim() ? design.title : name;
+   186→  const subtitle = design?.subtitle?.trim() ? design.subtitle : null;
+   187→  const accent = design?.accent?.trim() || null;
+   188→  return (
+   189→    <div className="maven-portal-hero relative overflow-hidden px-5 pb-5 pt-6 text-white sm:px-7">
+   190→      {design?.imageUrl && (
+   191→        <>
+   192→          <img src={design.imageUrl} alt="" aria-hidden className="absolute inset-0 size-full object-cover" />
+   193→          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/40 to-black/25" aria-hidden />
+   194→        </>
+   195→      )}
+   196→      <div className="relative flex flex-wrap items-start justify-between gap-4">
+   197→        <div className="min-w-0">
+   198→          {seriesName && <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/70">{seriesName}</p>}
+   199→          <h3 className="mt-0.5 text-xl font-bold tracking-tight sm:text-2xl">{title}</h3>
+   200→          {accent && <div className="mt-1.5 h-1 w-14 rounded-full" style={{ backgroundColor: accent }} aria-hidden />}
+   201→          {subtitle && <p className="mt-2 max-w-xl text-xs text-white/85 sm:text-sm">{subtitle}</p>}
+   202→          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/85">
+   203→            <span className="inline-flex items-center gap-1.5"><Icons.CalendarDays className="size-3.5" /> {dates}</span>
+   204→            {venue && <span className="inline-flex items-center gap-1.5"><Icons.MapPin className="size-3.5" /> {venue}</span>}
+   205→          </div>
+   206→          {badge && <div className="mt-3 flex flex-wrap gap-1.5">{badge}</div>}
+   207→        </div>
+   208→        <div className="flex items-center gap-3 rounded-xl border border-white/20 bg-white/10 p-3 backdrop-blur-sm">
+   209→          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-white/90 text-sm font-bold text-teal-700 shadow-sm">{avatarText}</span>
+   210→          <div className="min-w-0">
+   211→            <p className="truncate text-sm font-semibold leading-tight">{visitorName}</p>
+   212→            {visitorSub && <p className="truncate text-[11px] text-white/75">{visitorSub}</p>}
+   213→          </div>
+   214→        </div>
+   215→      </div>
+   216→    </div>
+   217→  );
+   218→}
+   219→
+   220→// ─── durum zaman çizelgesi ──────────────────────────────────────────────────
+   221→function Steps({ steps }: { steps: ReturnType<typeof buildSteps> }) {
+   222→  return (
+   223→    <ol className="flex flex-col gap-0 sm:flex-row sm:items-start sm:gap-0" aria-label={t("portal.stepsAria")}>
+   224→      {steps.map((s, i) => (
+   225→        <li key={s.key} className="flex flex-1 gap-3 sm:block sm:px-2 sm:text-center">
+   226→          <div className="flex flex-col items-center sm:flex-row">
+   227→            <span
+   228→              className={cn(
+   229→                "grid size-8 shrink-0 place-items-center rounded-full border-2 text-xs font-bold transition-all",
+   230→                s.state === "done" && "border-teal-500 bg-teal-500 text-white shadow-sm",
+   231→                s.state === "current" && "maven-step-pulse border-teal-500 bg-white text-teal-600",
+   232→                s.state === "pending" && "border-border bg-white text-muted-foreground",
+   233→                s.state === "error" && "border-rose-400 bg-rose-50 text-rose-500",
+   234→              )}
+   235→            >
+   236→              {s.state === "done" ? <Icons.Check className="size-4" aria-hidden /> : s.state === "error" ? <Icons.X className="size-4" aria-hidden /> : i + 1}
+   237→            </span>
+   238→            {i < steps.length - 1 && <span aria-hidden className={cn("ml-0 h-6 w-0.5 sm:ml-0 sm:h-0.5 sm:w-full", s.state === "done" ? "bg-teal-400" : "bg-border")} />}
+   239→          </div>
+   240→          <div className="pb-3 sm:pb-0 sm:pt-2">
+   241→            <p className={cn("text-xs font-semibold leading-none sm:mt-1", s.state === "pending" ? "text-muted-foreground" : "text-foreground")}>{s.title}</p>
+   242→            {s.hint && <p className="mt-1 line-clamp-1 text-[10px] text-muted-foreground">{s.hint}</p>}
+   243→          </div>
+   244→        </li>
+   245→      ))}
+   246→    </ol>
+   247→  );
+   248→}
+   249→
+   250→// ─── ödeme bloğu (katılımcı + sponsor ortak) ────────────────────────────────
+   251→const PAY_SOURCE_ICON: Record<string, typeof Icons.CreditCard> = {
+   252→  ONLINE_CARD: Icons.CreditCard, BANK_TRANSFER: Icons.Landmark, POS: Icons.Nfc,
+   253→  CASH: Icons.Banknote, PAYMENT_LINK: Icons.Link2, MANUAL_EXTERNAL: Icons.FilePenLine,
+   254→};
+   255→
+   256→function OrderBlock({ orders, onPayLink, busyId }: { orders: PortalOrder[]; onPayLink: (o: PortalOrder) => void; busyId?: string | null }) {
+   257→  if (orders.length === 0) return <p className="text-xs text-muted-foreground">Sipariş bulunmuyor.</p>;
+   258→  return (
+   259→    <div className="space-y-3">
+   260→      {orders.map((o) => (
+   261→        <div key={o.id} className="rounded-lg border bg-background/60 p-3 transition-colors hover:bg-background">
+   262→          <div className="flex flex-wrap items-center justify-between gap-2">
+   263→            <div className="flex items-center gap-2">
+   264→              <span className="font-mono text-xs font-semibold text-foreground">{o.orderNo}</span>
+   265→              <StatusBadge map={ORDER_STATUS as unknown as Record<string, string>} value={o.status} />
+   266→            </div>
+   267→            <span className="text-sm font-semibold tabular-nums">{fmtMoney(o.totalAmount, o.currency)}</span>
+   268→          </div>
+   269→          {o.lines.length > 0 && (
+   270→            <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+   271→              {o.lines.map((l) => (
+   272→                <li key={l.id} className="flex justify-between gap-2">
+   273→                  <span className="truncate">{l.quantity}× {l.description}{l.personName ? ` — ${l.personName}` : ""}</span>
+   274→                  <span className="tabular-nums">{fmtMoney(l.total, o.currency)}</span>
+   275→                </li>
+   276→              ))}
+   277→            </ul>
+   278→          )}
+   279→          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-dashed pt-2">
+   280→            <div className="flex flex-wrap gap-1.5">
+   281→              {o.payments.slice(0, 3).map((p) => {
+   282→                const I = PAY_SOURCE_ICON[p.source] ?? Icons.CreditCard;
+   283→                return (
+   284→                  <span key={p.id} className={cn(
+   285→                    "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px]",
+   286→                    p.status === "SUCCEEDED" && "border-emerald-200 bg-emerald-50 text-emerald-700",
+   287→                    p.status === "PENDING" && "border-amber-200 bg-amber-50 text-amber-700",
+   288→                    p.status === "FAILED" && "border-rose-200 bg-rose-50 text-rose-700",
+   289→                  )}>
+   290→                    <I className="size-3" aria-hidden /> {label(PAYMENT_METHODS, p.source)} · {fmtMoney(p.amount, o.currency)}
+   291→                  </span>
+   292→                );
+   293→              })}
+   294→            </div>
+   295→            <div className="flex items-center gap-2">
+   296→              <span className={cn("text-xs font-medium tabular-nums", o.remaining > 0 ? "text-amber-600" : "text-emerald-600")}>
+   297→                {o.remaining > 0 ? `Kalan: ${fmtMoney(o.remaining, o.currency)}` : "Bakiye kapalı"}
+   298→              </span>
+   299→              {o.remaining > 0 && (
+   300→                <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" disabled={busyId === o.id} onClick={() => onPayLink(o)}>
+   301→                  {busyId === o.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Link2 className="size-3.5" />} Ödeme bağlantısı
+   302→                </Button>
+   303→              )}
+   304→            </div>
+   305→          </div>
+   306→        </div>
+   307→      ))}
+   308→    </div>
+   309→  );
+   310→}
+   311→
+   312→// ─── beklenmeyen durumlar için ortak kutu ───────────────────────────────────
+   313→function PortalEmpty({ icon: I, title, desc }: { icon: typeof Icons.Inbox; title: string; desc?: string }) {
+   314→  return (
+   315→    <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-muted/20 p-6 text-center">
+   316→      <I className="size-7 text-muted-foreground/50" aria-hidden />
+   317→      <p className="text-sm font-medium">{title}</p>
+   318→      {desc && <p className="max-w-xs text-xs text-muted-foreground">{desc}</p>}
+   319→    </div>
+   320→  );
+   321→}
+   322→
+   323→// ─── TASK-B 25: portal blokları ─────────────────────────────────────────────
+   324→// payloadJson güvenli ayrıştırma — dize/nesne/dizi/sahte biçimlerde boş nesneye düşer
+   325→function parseBlockPayload(raw?: string | null): BlockPayload {
+   326→  if (!raw) return {};
+   327→  try {
+   328→    const p = JSON.parse(raw) as unknown;
+   329→    return p && typeof p === "object" && !Array.isArray(p) ? (p as BlockPayload) : {};
+   330→  } catch {
+   331→    return {};
+   332→  }
+   333→}
+   334→
+   335→const BLOCK_ICON: Record<string, typeof Icons.Megaphone> = {
+   336→  ANNOUNCEMENT: Icons.Megaphone, BANNER: Icons.RectangleHorizontal, INFO: Icons.Info,
+   337→  LINK: Icons.Link2, CUSTOM: Icons.Sparkles,
+   338→};
+   339→
+   340→// portal önizlemesindeki blok şeridi — düzenleyicinin eklediği içerik ziyaretçi görüşüyle görünür
+   341→function PortalBlocks({ blocks }: { blocks: PortalBlockPublic[] }) {
+   342→  if (!blocks.length) return null;
+   343→  return (
+   344→    <div className="space-y-2" role="region" aria-label={t("portal.previewTitle")}>
+   345→      {blocks.map((b, i) => {
+   346→        const I = BLOCK_ICON[b.type] ?? Icons.Info;
+   347→        const payload = parseBlockPayload(b.payloadJson);
+   348→        return (
+   349→          <div
+   350→            key={b.id}
+   351→            className="maven-portal-enter flex items-start gap-3 rounded-xl border border-primary/20 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-3.5 shadow-sm"
+   352→            style={{ animationDelay: `${i * 40}ms` }}
+   353→          >
+   354→            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/15 text-primary"><I className="size-4.5" aria-hidden /></span>
+   355→            <div className="min-w-0 flex-1">
+   356→              <p className="flex items-center gap-2 text-sm font-semibold">
+   357→                <span className="truncate">{b.title}</span>
+   358→                <Chip tone={b.type === "ANNOUNCEMENT" ? "amber" : b.type === "LINK" ? "teal" : "neutral"}>{t(`portal.typ${b.type}`)}</Chip>
+   359→              </p>
+   360→              {payload.text && <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{payload.text}</p>}
+   361→              {payload.url && (
+   362→                <a
+   363→                  href={payload.url}
+   364→                  target="_blank"
+   365→                  rel="noreferrer"
+   366→                  className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+   367→                >
+   368→                  <Icons.ExternalLink className="size-3" aria-hidden /> {payload.linkLabel || t("portal.openLink")}
+   369→                </a>
+   370→              )}
+   371→            </div>
+   372→          </div>
+   373→        );
+   374→      })}
+   375→    </div>
+   376→  );
+   377→}
+   378→
+   379→// ═══ KATILIMCI PORTALI ═══════════════════════════════════════════════════════
+   380→function ParticipantPortal({ editionId, headerDesign }: { editionId: string; headerDesign?: PortalHeaderDraft | null }) {
+   381→  useLang(); // dil değişiminde re-render
+   382→  const { toast } = useToast();
+   383→  const now = useNow();
+   384→  const [selectedId, setSelectedId] = useState<string | null>(null);
+   385→  const [query, setQuery] = useState("");
+   386→  const [busy, setBusy] = useState<string | null>(null);
+   387→
+   388→  const people = useApi(() => listEntity<ParticipationRow>("participations", { editionId, limit: "500" }), [editionId]);
+   389→
+   390→  // TASK-A F1: portal verisi gerçek kapıyla alınır — seçilen katılımcı için kısa ömürlü
+   391→  // önizleme yetenek belirteci çıkarılır (yanıtta bir kez döner, yalnız bellekte yaşar);
+   392→  // GET x-portal-token başlığıyla yapılır (URL'e yazılmaz)
+   393→  const [previewToken, setPreviewToken] = useState<string | null>(null);
+   394→  useEffect(() => {
+   395→    setPreviewToken(null);
+   396→    if (!selectedId) return;
+   397→    let alive = true;
+   398→    void apiSend<{ token: string }>("/api/portal/preview-token", "POST", { editionId, personId: selectedId })
+   399→      .then((r) => { if (alive) setPreviewToken(r.token); })
+   400→      .catch(() => { if (alive) setPreviewToken(null); });
+   401→    return () => { alive = false; };
+   402→  }, [editionId, selectedId]);
+   403→
+   404→  // varsayılan seçim: yönetim ekranından "portalda gör" deep-link'i, yoksa ilk katılımcı
+   405→  useEffect(() => {
+   406→    if (!people.data || selectedId) return;
+   407→    let deep: string | null = null;
+   408→    try { deep = sessionStorage.getItem("maven.portal.person"); sessionStorage.removeItem("maven.portal.person"); } catch { /* yoksay */ }
+   409→    const exists = deep && people.data.some((p) => p.person.id === deep);
+   410→    const first = exists ? people.data.find((p) => p.person.id === deep) : people.data[0];
+   411→    if (first) setSelectedId(first.person.id);
+   412→  }, [people.data, selectedId]);
+   413→
+   414→  const filtered = useMemo(() => {
+   415→    const items = people.data ?? [];
+   416→    if (!query.trim()) return items.slice(0, 80);
+   417→    const q = query.toLocaleLowerCase("tr");
+   418→    return items
+   419→      .filter((p) => `${p.person.firstName} ${p.person.lastName}`.toLocaleLowerCase("tr").includes(q) || (p.person.company ?? "").toLocaleLowerCase("tr").includes(q))
+   420→      .slice(0, 80);
+   421→  }, [people.data, query]);
+   422→
+   423→  const data = useApi<ParticipantData | null>(
+   424→    () => (selectedId && previewToken
+   425→      ? apiGet<ParticipantData>(`/api/portal/participant?editionId=${editionId}&personId=${selectedId}`, { headers: { "x-portal-token": previewToken } })
+   426→      : Promise.resolve(null)),
+   427→    [editionId, selectedId, previewToken],
+   428→  );
+   429→
+   430→  const respond = async (entryId: string, response: "ACCEPT" | "DECLINE") => {
+   431→    if (!data.data) return;
+   432→    const name = `${data.data.person.firstName} ${data.data.person.lastName}`;
+   433→    setBusy(entryId);
+   434→    try {
+   435→      const r = await apiSend<{ registration?: { confirmationNo: string }; chained?: unknown[] }>("/api/waitlist", "POST", { action: "respond", entryId, response, actor: `Katılımcı Portalı — ${name}` });
+   436→      toast({
+   437→        title: response === "ACCEPT" ? "Teklif kabul edildi" : "Teklif reddedildi",
+   438→        description: response === "ACCEPT"
+   439→          ? t("portal.regOpened", { no: r.registration?.confirmationNo ?? "—" })
+   440→          : "Yanıtınız kaydedildi; sıradaki kişiye teklif gidecek.",
+   441→      });
+   442→      data.reload();
+   443→    } catch (e) {
+   444→      toast({ title: "İşlem başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   445→    } finally {
+   446→      setBusy(null);
+   447→    }
+   448→  };
+   449→
+   450→  const payLink = async (o: PortalOrder) => {
+   451→    if (!data.data) return;
+   452→    const name = `${data.data.person.firstName} ${data.data.person.lastName}`;
+   453→    setBusy(o.id);
+   454→    try {
+   455→      // G0-c: aksiyon portal yetenek belirteciyle imzalanır (ödeyenin belirteci —
+   456→      // TASK-A F1: önizleme belirteci bellekten gönderilir, yanıttan okunmaz)
+   457→      const r = await apiSend<{ link: string }>("/api/portal/action", "POST", { action: "payment-link", orderId: o.id, actor: `Katılımcı Portalı — ${name}`, token: previewToken });
+   458→      await navigator.clipboard?.writeText(r.link).catch(() => undefined);
+   459→      toast({ title: "Ödeme bağlantısı üretildi", description: `${r.link} — panoya kopyalandı (simülasyon)` });
+   460→      data.reload();
+   461→    } catch (e) {
+   462→      toast({ title: "İşlem başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   463→    } finally {
+   464→      setBusy(null);
+   465→    }
+   466→  };
+   467→
+   468→  const d = data.data;
+   469→  const steps = d?.participation ? buildSteps(d.participation, d.registrations) : [];
+   470→  const activeOffer = d?.waitlist.find((w) => w.status === "OFFERED");
+   471→  const waitingEntry = d?.waitlist.find((w) => w.status === "WAITING");
+   472→
+   473→  return (
+   474→    <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+   475→      {/* kimlik rayı */}
+   476→      <div className="flex flex-col gap-2 rounded-xl border bg-card p-3 shadow-sm">
+   477→        <p className="flex items-center gap-1.5 px-1 text-xs font-semibold text-muted-foreground"><Icons.Users className="size-3.5" /> Katılımcı seç — portal kimliği</p>
+   478→        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="İsim veya kurum ara…" className="h-8 text-xs" aria-label="Katılımcı ara" />
+   479→        <div className="maven-scroll -mx-1 max-h-[420px] min-h-24 overflow-y-auto px-1 lg:max-h-[calc(100vh-320px)]">
+   480→          {people.loading && <Loading rows={5} />}
+   481→          {people.error && <ErrorState message={people.error} onRetry={people.reload} />}
+   482→          {!people.loading && filtered.length === 0 && <p className="px-2 py-6 text-center text-xs text-muted-foreground">Eşleşen katılımcı yok</p>}
+   483→          <ul className="space-y-1">
+   484→            {filtered.map((p) => {
+   485→              const name = `${p.person.firstName} ${p.person.lastName}`;
+   486→              const active = selectedId === p.person.id;
+   487→              return (
+   488→                <li key={p.id}>
+   489→                  <button
+   490→                    onClick={() => setSelectedId(p.person.id)}
+   491→                    className={cn(
+   492→                      "flex w-full items-center gap-2.5 rounded-lg border px-2 py-1.5 text-left transition-all",
+   493→                      active ? "border-primary/40 bg-primary/10 shadow-sm" : "border-transparent hover:border-border hover:bg-muted/50",
+   494→                    )}
+   495→                    aria-current={active ? "true" : undefined}
+   496→                  >
+   497→                    <span className={cn("grid size-7 shrink-0 place-items-center rounded-full text-[10px] font-bold", active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>{initials(name)}</span>
+   498→                    <span className="min-w-0 flex-1">
+   499→                      <span className="block truncate text-xs font-medium leading-tight">{name}</span>
+   500→                      <span className="block truncate text-[10px] text-muted-foreground">{p.person.company ?? p.person.title ?? "—"}</span>
+   501→                    </span>
+   502→                    {p.registrations?.some((r) => r.status === "CONFIRMED") && <Icons.BadgeCheck className="size-3.5 shrink-0 text-emerald-500" aria-label="Onaylı kayıt" />}
+   503→                  </button>
+   504→                </li>
+   505→              );
+   506→            })}
+   507→          </ul>
+   508→        </div>
+   509→        <p className="px-1 text-[10px] text-muted-foreground">{people.data?.length ?? 0} katılımcı · portala gerçek veriyle bakılır</p>
+   510→      </div>
+   511→
+   512→      {/* portal gövdesi */}
+   513→      <div className="min-w-0">
+   514→        {!selectedId || data.loading ? (
+   515→          <div className="grid min-h-72 place-items-center rounded-2xl border bg-card"><Icons.Loader2 className="size-7 animate-spin text-primary" /></div>
+   516→        ) : data.error ? (
+   517→          <ErrorState message={data.error} onRetry={data.reload} />
+   518→        ) : !d ? null : (
+   519→          <PortalFrame url={`portal.maven.events/katilimci/${d.person.firstName.toLocaleLowerCase("tr")}-${d.person.lastName.toLocaleLowerCase("tr")}`}>
+   520→            <PortalHero
+   521→              name={d.edition?.name ?? "Etkinlik"}
+   522→              dates={`${fmtDate(d.edition?.startDate)} — ${fmtDate(d.edition?.endDate)}`}
+   523→              venue={d.edition?.venueName ? `${d.edition.venueName}${d.edition.city ? `, ${d.edition.city}` : ""}` : null}
+   524→              seriesName={d.edition?.seriesName}
+   525→              avatarText={initials(`${d.person.firstName} ${d.person.lastName}`)}
+   526→              visitorName={`${d.person.firstName} ${d.person.lastName}`}
+   527→              visitorSub={d.person.organizationName ?? d.person.title ?? "Katılımcı"}
+   528→              design={headerDesign}
+   529→              badge={
+   530→                d.participation ? (
+   531→                  <>
+   532→                    <span className="rounded-full border border-white/25 bg-white/10 px-2 py-0.5 text-[10px] font-medium">{label(REG_SOURCES, d.participation.source)}</span>
+   533→                    <span className="rounded-full border border-white/25 bg-white/10 px-2 py-0.5 text-[10px] font-medium">{label(ATTENDANCE_STATUS, d.participation.attendance)}</span>
+   534→                  </>
+   535→                ) : null
+   536→              }
+   537→            />
+   538→
+   539→            <div className="maven-portal-body space-y-4 bg-muted/20 p-4 sm:p-5">
+   540→              {/* TASK-B 25: düzenleyici blokları — ziyaretçi görüşünün en üstünde */}
+   541→              <PortalBlocks blocks={d.blocks} />
+   542→              {!d.participation ? (
+   543→                <PortalEmpty icon={Icons.UserPlus} title="Bu edisyonda katılımınız bulunmuyor" desc={t("portal.noParticipationDesc")} />
+   544→              ) : (
+   545→                <>
+   546→                  {/* durum adımları */}
+   547→                  <div className="maven-portal-enter rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "0ms" }}>
+   548→                    <p className="mb-3 text-xs font-semibold text-muted-foreground">KAYIT SÜRECİNİZ</p>
+   549→                    <Steps steps={steps} />
+   550→                  </div>
+   551→
+   552→                  {/* bekleme teklifi — canlı aksiyon */}
+   553→                  {activeOffer && (
+   554→                    <div className="maven-portal-enter rounded-xl border border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50 p-4 shadow-sm ring-1 ring-amber-200/60" style={{ animationDelay: "40ms" }}>
+   555→                      <div className="flex flex-wrap items-start justify-between gap-3">
+   556→                        <div className="flex gap-3">
+   557→                          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-600"><Icons.MailCheck className="size-5" aria-hidden /></span>
+   558→                          <div>
+   559→                            <p className="text-sm font-semibold text-amber-900">Kontenjan açıldı — size teklif gönderildi!</p>
+   560→                            <p className="mt-0.5 text-xs text-amber-800">
+   561→                              <b>{activeOffer.categoryName}</b> kategorisine davetlisiniz · #{activeOffer.priority} öncelik
+   562→                            </p>
+   563→                            <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-amber-700">
+   564→                              <Icons.Timer className="size-3" /> {offerCountdown(activeOffer.offerExpiresAt, now)?.text ?? ""} içinde yanıtlayın
+   565→                            </p>
+   566→                          </div>
+   567→                        </div>
+   568→                        <div className="flex gap-2">
+   569→                          <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700" disabled={busy === activeOffer.id} onClick={() => respond(activeOffer.id, "ACCEPT")}>
+   570→                            {busy === activeOffer.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Check className="size-3.5" />} Kabul et
+   571→                          </Button>
+   572→                          <Button size="sm" variant="outline" className="border-rose-300 text-rose-600 hover:bg-rose-50" disabled={busy === activeOffer.id} onClick={() => respond(activeOffer.id, "DECLINE")}>
+   573→                            Reddet
+   574→                          </Button>
+   575→                        </div>
+   576→                      </div>
+   577→                    </div>
+   578→                  )}
+   579→                  {waitingEntry && !activeOffer && (
+   580→                    <div className="maven-portal-enter flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "40ms" }}>
+   581→                      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"><Icons.Hourglass className="size-5" aria-hidden /></span>
+   582→                      <div>
+   583→                        <p className="text-sm font-medium">Bekleme listesindesiniz — {waitingEntry.categoryName}</p>
+   584→                        <p className="text-xs text-muted-foreground">#{waitingEntry.priority} öncelik · kontenjan açıldığında burada teklif göreceksiniz</p>
+   585→                      </div>
+   586→                      <StatusBadge map={WAITLIST_STATUS as unknown as Record<string, string>} value="WAITING" className="ml-auto" />
+   587→                    </div>
+   588→                  )}
+   589→
+   590→                  <div className="grid gap-4 xl:grid-cols-2">
+   591→                    {/* kayıt kartı */}
+   592→                    <section className="maven-portal-enter rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "80ms" }}>
+   593→                      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.ClipboardCheck className="size-4 text-primary" /> Kaydınız</h4>
+   594→                      {d.registrations.length === 0 ? (
+   595→                        <p className="mt-3 text-xs text-muted-foreground">Henüz kayıt oluşturulmadı.</p>
+   596→                      ) : (
+   597→                        <div className="mt-3 space-y-3">
+   598→                          {d.registrations.map((r) => (
+   599→                            <div key={r.id} className="rounded-lg border bg-background/60 p-3">
+   600→                              <div className="flex flex-wrap items-center justify-between gap-2">
+   601→                                <span className="font-mono text-sm font-bold tracking-tight text-foreground">{r.confirmationNo}</span>
+   602→                                <StatusBadge map={REGISTRATION_STATUS as unknown as Record<string, string>} value={r.status} />
+   603→                              </div>
+   604→                              <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+   605→                                <dt className="text-muted-foreground">Kategori</dt><dd className="font-medium">{r.categoryName ?? "—"}</dd>
+   606→                                <dt className="text-muted-foreground">Kaynak</dt><dd>{label(REG_SOURCES, r.source)}</dd>
+   607→                                <dt className="text-muted-foreground">Fon</dt><dd>{label(FUNDING_SOURCES, r.fundingSource)}</dd>
+   608→                                <dt className="text-muted-foreground">Ücret</dt><dd className="tabular-nums">{r.basePrice > 0 ? fmtMoney(r.basePrice, r.currency) : "Ücretsiz"}</dd>
+   609→                              </dl>
+   610→                              {r.cancelReason && <p className="mt-2 rounded-md bg-rose-50 px-2 py-1 text-[11px] text-rose-700">İptal gerekçesi: {r.cancelReason}</p>}
+   611→                            </div>
+   612→                          ))}
+   613→                        </div>
+   614→                      )}
+   615→                    </section>
+   616→
+   617→                    {/* ödeme kartı */}
+   618→                    <section className="maven-portal-enter rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "120ms" }}>
+   619→                      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.Wallet className="size-4 text-primary" /> Ödemeleriniz</h4>
+   620→                      {/* TASK-B 26: kalan bakiye toplamı — tüm siparişlerin kalanı (kuruş → görüntü) */}
+   621→                      <p className={cn("mt-2 rounded-md px-2 py-1.5 text-xs font-medium", d.balanceTotal > 0 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700")}>
+   622→                        {t("portal.balanceTotal")}: <b className="tabular-nums">{fmtMoney(d.balanceTotal, d.orders[0]?.currency ?? "TRY")}</b>
+   623→                      </p>
+   624→                      <div className="mt-3"><OrderBlock orders={d.orders} onPayLink={payLink} busyId={busy} /></div>
+   625→                    </section>
+   626→
+   627→                    {/* programım */}
+   628→                    <section className="maven-portal-enter rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "160ms" }}>
+   629→                      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.Clock className="size-4 text-primary" /> Programınız</h4>
+   630→                      {d.participation.program.length === 0 ? (
+   631→                        <p className="mt-3 text-xs text-muted-foreground">Size atanmış oturum bulunmuyor.</p>
+   632→                      ) : (
+   633→                        <ul className="maven-scroll mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+   634→                          {d.participation.program.map((s) => (
+   635→                            <li key={s.id} className="flex items-start gap-2.5 rounded-lg border bg-background/60 p-2.5 transition-colors hover:bg-background">
+   636→                              <span className="mt-0.5 shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-primary">
+   637→                                {s.startTime ? new Date(s.startTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "—"}
+   638→                              </span>
+   639→                              <div className="min-w-0 flex-1">
+   640→                                <p className="truncate text-xs font-medium">{s.sessionTitle ?? "Oturum"}</p>
+   641→                                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] text-muted-foreground">
+   642→                                  {s.room && <span className="inline-flex items-center gap-0.5"><Icons.DoorOpen className="size-3" /> {s.room}</span>}
+   643→                                  {s.cmeCredits ? <span className="inline-flex items-center gap-0.5"><Icons.GraduationCap className="size-3" /> {s.cmeCredits} CME</span> : null}
+   644→                                </p>
+   645→                              </div>
+   646→                              <Chip tone="teal">{label(EVENT_ROLES, s.role)}</Chip>
+   647→                            </li>
+   648→                          ))}
+   649→                        </ul>
+   650→                      )}
+   651→                      {d.participation.roleAssignments.length > 0 && (
+   652→                        <div className="mt-3 flex flex-wrap gap-1.5 border-t pt-2.5">
+   653→                          {d.participation.roleAssignments.map((r) => <Chip key={r.id} tone="violet">{label(EVENT_ROLES, r.role)}</Chip>)}
+   654→                        </div>
+   655→                      )}
+   656→                    </section>
+   657→
+   658→                    {/* konaklama + yaka kartı + belgeler */}
+   659→                    <section className="maven-portal-enter space-y-4 rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "200ms" }}>
+   660→                      <div>
+   661→                        <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.BedDouble className="size-4 text-primary" /> Konaklama</h4>
+   662→                        {d.participation.reservations.length === 0 ? (
+   663→                          <p className="mt-2 text-xs text-muted-foreground">Rezervasyon bulunmuyor.</p>
+   664→                        ) : (
+   665→                          <ul className="mt-2 space-y-2">
+   666→                            {d.participation.reservations.map((r) => (
+   667→                              <li key={r.id} className="rounded-lg border bg-background/60 p-2.5 text-xs">
+   668→                                <div className="flex items-center justify-between gap-2">
+   669→                                  <span className="truncate font-medium">{r.hotel ?? "Otel"} · {r.roomType ?? "Oda"}</span>
+   670→                                  <StatusBadge map={{ NOT_REQUESTED: "Talep yok", REQUESTED: "Talep", WAITLIST: "Bekleme", RESERVED: "Ayrıldı", CONFIRMED: "Teyit", CHECKED_IN: "Giriş", CHECKED_OUT: "Çıkış", CANCELLED: "İptal" }} value={r.status} />
+   671→                                </div>
+   672→                                <p className="mt-1 text-[10px] text-muted-foreground">{fmtDate(r.checkIn)} — {fmtDate(r.checkOut)}{r.payerName ? ` · Ödeyen: ${r.payerName}` : ""}</p>
+   673→                              </li>
+   674→                            ))}
+   675→                          </ul>
+   676→                        )}
+   677→                      </div>
+   678→                      <div className="border-t pt-3">
+   679→                        <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.IdCard className="size-4 text-primary" /> Yaka Kartı & Belgeler</h4>
+   680→                        <div className="mt-2 flex flex-wrap gap-1.5">
+   681→                          {d.participation.badges.map((b) => <StatusBadge key={b.id} map={{ NOT_ELIGIBLE: "Hak yok", READY: "Hazır", PRINTED: "Basıldı", REPRINTED: "Yeniden basıldı", ISSUED: "Verildi", VOID: "İptal" }} value={b.status} />)}
+   682→                          {d.participation.certificates.map((c) => <StatusBadge key={c.id} map={{ NOT_ELIGIBLE: "Hak yok", ELIGIBLE: "Hak kazandı", GENERATED: "Üretildi", DELIVERED: "Teslim edildi", REVOKED: "İptal" }} value={c.status} />)}
+   683→                          {d.participation.badges.length === 0 && d.participation.certificates.length === 0 && <p className="text-xs text-muted-foreground">Henüz belge üretilmedi.</p>}
+   684→                        </div>
+   685→                        {/* TASK-B 26: yaka kartı önizlemesi — yalnız verilmış yaka kartı için */}
+   686→                        {d.badgePreview && (
+   687→                          <div className="mt-2.5 flex items-center gap-3 rounded-lg border border-primary/25 bg-primary/5 p-2.5">
+   688→                            <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/15 text-primary"><Icons.IdCard className="size-4.5" aria-hidden /></span>
+   689→                            <div className="min-w-0 flex-1">
+   690→                              <p className="text-xs font-semibold">{d.badgePreview.profileName ?? t("portal.badgePreviewFallback")}</p>
+   691→                              <p className="font-mono text-[10px] text-muted-foreground">{d.badgePreview.badgeNo}</p>
+   692→                            </div>
+   693→                            <StatusBadge map={{ NOT_ELIGIBLE: "Hak yok", READY: "Hazır", PRINTED: "Basıldı", REPRINTED: "Yeniden basıldı", ISSUED: "Verildi", VOID: "İptal" }} value={d.badgePreview.status} />
+   694→                          </div>
+   695→                        )}
+   696→                      </div>
+   697→                      {d.participation.claims.length > 0 && (
+   698→                        <div className="border-t pt-3">
+   699→                          <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.Gift className="size-4 text-primary" /> Haklarınız</h4>
+   700→                          <ul className="mt-2 space-y-1">
+   701→                            {d.participation.claims.map((c) => (
+   702→                              <li key={c.id} className="flex items-center justify-between gap-2 text-xs">
+   703→                                <span className="truncate">{c.entitlementLabel ?? "Hak"}{c.guestName ? ` — ${c.guestName}` : ""}</span>
+   704→                                <Chip tone={c.status === "CONSUMED" ? "emerald" : c.status === "RESERVED" ? "amber" : "neutral"}>{c.status === "CONSUMED" ? "Kullanıldı" : c.status === "RESERVED" ? "Ayrıldı" : label({ RESERVED: "Ayrıldı", CONSUMED: "Kullanıldı", RELEASED: "Serbest", EXPIRED: "Süre aşımı" }, c.status)}</Chip>
+   705→                              </li>
+   706→                            ))}
+   707→                          </ul>
+   708→                        </div>
+   709→                      )}
+   710→                    </section>
+   711→                  </div>
+   712→
+   713→                  {/* TASK-B 26: CV — konuşmacı/hakem kişinin kendi zaman çizelgesi */}
+   714→                  {d.cv.length > 0 && (
+   715→                    <section className="maven-portal-enter rounded-xl border bg-card p-4 shadow-sm" aria-label={t("portal.cvTitle")}>
+   716→                      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.ScrollText className="size-4 text-primary" /> {t("portal.cvTitle")}</h4>
+   717→                      <ul className="maven-scroll mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+   718→                        {d.cv.map((c) => (
+   719→                          <li key={c.id} className="rounded-lg border bg-background/60 p-2.5">
+   720→                            <div className="flex flex-wrap items-center justify-between gap-2">
+   721→                              <p className="truncate text-xs font-medium">{c.title}</p>
+   722→                              <Chip tone="violet">{t(`portal.cvKind.${c.kind}`)}</Chip>
+   723→                            </div>
+   724→                            <p className="mt-0.5 text-[10px] text-muted-foreground">
+   725→                              {c.organization ? `${c.organization} · ` : ""}
+   726→                              {c.startDate ? fmtDate(c.startDate) : "—"}{c.isCurrent ? ` — ${t("portal.cvCurrent")}` : c.endDate ? ` — ${fmtDate(c.endDate)}` : ""}
+   727→                            </p>
+   728→                            {c.description && <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{c.description}</p>}
+   729→                          </li>
+   730→                        ))}
+   731→                      </ul>
+   732→                    </section>
+   733→                  )}
+   734→                </>
+   735→              )}
+   736→            </div>
+   737→          </PortalFrame>
+   738→        )}
+   739→      </div>
+   740→    </div>
+   741→  );
+   742→}
+   743→// ═══ SPONSOR PORTALI ═══════════════════════════════════════════════════════
+   744→const DELIVERABLE_ICON: Record<string, typeof Icons.FileImage> = {
+   745→  LOGO: Icons.Image, BANNER: Icons.RectangleHorizontal, GUEST_LIST: Icons.ListOrdered,
+   746→  STAND_DESIGN: Icons.DraftingCompass, DESCRIPTION: Icons.FileText, AD: Icons.Megaphone,
+   747→};
+   748→// portaldan gönderilebilir teslim durumları
+   749→const SUBMITTABLE = ["NOT_STARTED", "WAITING_SPONSOR", "REJECTED"];
+   750→
+   751→function SponsorPortal({ editionId, headerDesign }: { editionId: string; headerDesign?: PortalHeaderDraft | null }) {
+   752→  useLang(); // dil değişiminde re-render
+   753→  const { toast } = useToast();
+   754→  const [orgId, setOrgId] = useState<string | null>(null);
+   755→  const [busy, setBusy] = useState<string | null>(null);
+   756→
+   757→  const agreements = useApi(() => listEntity<AgreementRow>("sponsor-agreements", { editionId }), [editionId]);
+   758→  const orgs = useMemo(() => {
+   759→    const map = new Map<string, AgreementRow["organization"]>();
+   760→    for (const a of agreements.data ?? []) map.set(a.organization.id, a.organization);
+   761→    return Array.from(map.values());
+   762→  }, [agreements.data]);
+   763→
+   764→  useEffect(() => {
+   765→    if (!orgs.length || orgId) return;
+   766→    setOrgId(orgs[0].id);
+   767→  }, [orgs, orgId]);
+   768→
+   769→  // TASK-A F1: kısa ömürlü önizleme belirteci — kurum seçimine göre çıkarılır, bellekte yaşar
+   770→  const [previewToken, setPreviewToken] = useState<string | null>(null);
+   771→  useEffect(() => {
+   772→    setPreviewToken(null);
+   773→    if (!orgId) return;
+   774→    let alive = true;
+   775→    void apiSend<{ token: string }>("/api/portal/preview-token", "POST", { editionId, organizationId: orgId })
+   776→      .then((r) => { if (alive) setPreviewToken(r.token); })
+   777→      .catch(() => { if (alive) setPreviewToken(null); });
+   778→    return () => { alive = false; };
+   779→  }, [editionId, orgId]);
+   780→
+   781→  const data = useApi<SponsorData | null>(
+   782→    () => (orgId && previewToken
+   783→      ? apiGet<SponsorData>(`/api/portal/sponsor?editionId=${editionId}&organizationId=${orgId}`, { headers: { "x-portal-token": previewToken } })
+   784→      : Promise.resolve(null)),
+   785→    [editionId, orgId, previewToken],
+   786→  );
+   787→
+   788→  const submitDeliverable = async (id: string, name: string) => {
+   789→    if (!data.data) return;
+   790→    setBusy(id);
+   791→    try {
+   792→      // G0-c: aksiyon portal yetenek belirteciyle imzalanır (sözleşme kurumunun belirteci —
+   793→      // TASK-A F1: önizleme belirteci bellekten gönderilir)
+   794→      await apiSend("/api/portal/action", "POST", { action: "deliverable-submit", deliverableId: id, actor: `Sponsor Portalı — ${data.data.organization.name}`, token: previewToken });
+   795→      toast({ title: "Teslim gönderildi", description: `${name} incelemeye alındı — organizasyon ekibi bildirim alır.` });
+   796→      data.reload();
+   797→    } catch (e) {
+   798→      toast({ title: "İşlem başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   799→    } finally {
+   800→      setBusy(null);
+   801→    }
+   802→  };
+   803→
+   804→  const payLink = async (o: PortalOrder) => {
+   805→    if (!data.data) return;
+   806→    setBusy(o.id);
+   807→    try {
+   808→      // G0-c: aksiyon portal yetenek belirteciyle imzalanır (ödeyen kurumun belirteci)
+   809→      const r = await apiSend<{ link: string }>("/api/portal/action", "POST", { action: "payment-link", orderId: o.id, actor: `Sponsor Portalı — ${data.data.organization.name}`, token: previewToken });
+   810→      await navigator.clipboard?.writeText(r.link).catch(() => undefined);
+   811→      toast({ title: "Ödeme bağlantısı üretildi", description: `${r.link} — panoya kopyalandı (simülasyon)` });
+   812→      data.reload();
+   813→    } catch (e) {
+   814→      toast({ title: "İşlem başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+   815→    } finally {
+   816→      setBusy(null);
+   817→    }
+   818→  };
+   819→
+   820→  const d = data.data;
+   821→
+   822→  return (
+   823→    <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+   824→      <div className="flex flex-col gap-2 rounded-xl border bg-card p-3 shadow-sm">
+   825→        <p className="flex items-center gap-1.5 px-1 text-xs font-semibold text-muted-foreground"><Icons.Handshake className="size-3.5" /> Sponsor seç — portal kimliği</p>
+   826→        <div className="maven-scroll -mx-1 max-h-[420px] min-h-16 overflow-y-auto px-1 lg:max-h-[calc(100vh-320px)]">
+   827→          {agreements.loading && <Loading rows={4} />}
+   828→          {agreements.error && <ErrorState message={agreements.error} onRetry={agreements.reload} />}
+   829→          <ul className="space-y-1">
+   830→            {orgs.map((o) => {
+   831→              const active = orgId === o.id;
+   832→              return (
+   833→                <li key={o.id}>
+   834→                  <button
+   835→                    onClick={() => setOrgId(o.id)}
+   836→                    className={cn(
+   837→                      "flex w-full items-center gap-2.5 rounded-lg border px-2 py-2 text-left transition-all",
+   838→                      active ? "border-primary/40 bg-primary/10 shadow-sm" : "border-transparent hover:border-border hover:bg-muted/50",
+   839→                    )}
+   840→                  >
+   841→                    <span className={cn("grid size-7 shrink-0 place-items-center rounded-lg text-[10px] font-bold", active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>{initials(o.name)}</span>
+   842→                    <span className="truncate text-xs font-medium">{o.name}</span>
+   843→                  </button>
+   844→                </li>
+   845→              );
+   846→            })}
+   847→          </ul>
+   848→          {!agreements.loading && orgs.length === 0 && <p className="px-2 py-6 text-center text-xs text-muted-foreground">Bu edisyonda sponsor sözleşmesi yok</p>}
+   849→        </div>
+   850→      </div>
+   851→
+   852→      <div className="min-w-0">
+   853→        {!orgId || data.loading ? (
+   854→          <div className="grid min-h-72 place-items-center rounded-2xl border bg-card"><Icons.Loader2 className="size-7 animate-spin text-primary" /></div>
+   855→        ) : data.error ? (
+   856→          <ErrorState message={data.error} onRetry={data.reload} />
+   857→        ) : !d ? null : (
+   858→          <PortalFrame url={`portal.maven.events/sponsor/${d.organization.name.toLocaleLowerCase("tr").replaceAll(" ", "-")}`}>
+   859→            <PortalHero
+   860→              name={d.edition?.name ?? "Etkinlik"}
+   861→              dates={`${fmtDate(d.edition?.startDate)} — ${fmtDate(d.edition?.endDate)}`}
+   862→              venue={d.edition?.venueName ? `${d.edition.venueName}${d.edition.city ? `, ${d.edition.city}` : ""}` : null}
+   863→              seriesName={d.edition?.seriesName}
+   864→              avatarText={initials(d.organization.name)}
+   865→              visitorName={d.organization.name}
+   866→              visitorSub={d.agreements[0]?.tierName ?? "Sponsor"}
+   867→              design={headerDesign}
+   868→              badge={d.agreements.map((a) => (
+   869→                <span key={a.id} className="rounded-full border border-white/25 bg-white/10 px-2 py-0.5 text-[10px] font-medium">
+   870→                  {a.tierName ?? a.packageName ?? "Sponsor"} · {label({ PROSPECT: "Aday", NEGOTIATION: "Görüşme", CONTRACTED: "Sözleşmeli", ACTIVE: "Aktif", COMPLETED: "Tamamlandı", CANCELLED: "İptal" }, a.status)}
+   871→                </span>
+   872→              ))}
+   873→            />
+   874→
+   875→            <div className="maven-portal-body space-y-4 bg-muted/20 p-4 sm:p-5">
+   876→              {/* TASK-B 25: düzenleyici blokları — ziyaretçi görüşünün en üstünde */}
+   877→              <PortalBlocks blocks={d.blocks} />
+   878→              {d.agreements.length === 0 ? (
+   879→                <PortalEmpty icon={Icons.FileSignature} title="Sözleşme bulunamadı" desc="Bu kurumun edisyonda aktif sponsor sözleşmesi yok." />
+   880→              ) : (
+   881→                <>
+   882→                  <div className="grid gap-4 xl:grid-cols-2">
+   883→                    {/* sözleşme + stantlar */}
+   884→                    <section className="maven-portal-enter rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "0ms" }}>
+   885→                      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.FileSignature className="size-4 text-primary" /> Sözleşmeniz</h4>
+   886→                      <div className="mt-3 space-y-3">
+   887→                        {d.agreements.map((a) => (
+   888→                          <div key={a.id} className="rounded-lg border bg-background/60 p-3">
+   889→                            <div className="flex flex-wrap items-center justify-between gap-2">
+   890→                              <span className="text-sm font-semibold">{a.tierName ?? a.packageName ?? "Sponsorluk"}</span>
+   891→                              <StatusBadge map={{ PROSPECT: "Aday", NEGOTIATION: "Görüşme", CONTRACTED: "Sözleşmeli", ACTIVE: "Aktif", COMPLETED: "Tamamlandı", CANCELLED: "İptal" }} value={a.status} />
+   892→                            </div>
+   893→                            <p className="mt-1 text-lg font-bold tabular-nums tracking-tight">{fmtMoney(a.amount, a.currency)}</p>
+   894→                            {a.signedAt && <p className="text-[11px] text-muted-foreground">İmza: {fmtDate(a.signedAt)}</p>}
+   895→                            {a.rightsSpec && <p className="mt-1.5 rounded-md bg-muted/60 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">{a.rightsSpec}</p>}
+   896→                            {a.booths.length > 0 && (
+   897→                              <div className="mt-2 flex flex-wrap gap-1.5 border-t border-dashed pt-2">
+   898→                                {a.booths.map((b) => (
+   899→                                  <span key={b.id} className="inline-flex items-center gap-1.5 rounded-md border bg-card px-2 py-1 text-[11px]">
+   900→                                    <Icons.MapPin className="size-3 text-primary" aria-hidden />
+   901→                                    <b className="font-mono">{b.code}</b> · {b.sizeSqm} m² · {label(BOOTH_STATUS, b.boothStatus)}
+   902→                                  </span>
+   903→                                ))}
+   904→                              </div>
+   905→                            )}
+   906→                          </div>
+   907→                        ))}
+   908→                      </div>
+   909→                    </section>
+   910→
+   911→                    {/* haklar & kullanım */}
+   912→                    <section className="maven-portal-enter rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "40ms" }}>
+   913→                      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.Gift className="size-4 text-primary" /> Haklarınız & Kullanım</h4>
+   914→                      {d.entitlements.length === 0 ? (
+   915→                        <p className="mt-3 text-xs text-muted-foreground">Bu kuruma tanımlı hak bulunmuyor.</p>
+   916→                      ) : (
+   917→                        <div className="mt-3 space-y-3">
+   918→                          {d.entitlements.map((e) => {
+   919→                            const total = Math.max(1, e.granted);
+   920→                            const consumedPct = Math.min(100, Math.round((e.consumed / total) * 100));
+   921→                            const reservedPct = Math.min(100 - consumedPct, Math.round((e.reserved / total) * 100));
+   922→                            return (
+   923→                              <div key={e.id} className="rounded-lg border bg-background/60 p-3">
+   924→                                <div className="flex flex-wrap items-center justify-between gap-2">
+   925→                                  <p className="text-xs font-semibold">{e.label}</p>
+   926→                                  <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{e.consumed}+{e.reserved}/{e.granted}</span>
+   927→                                </div>
+   928→                                <div className="mt-2 flex h-2.5 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label={`${e.consumed} kullanıldı, ${e.reserved} ayrılmış, ${e.granted} toplam`}>
+   929→                                  <span className="h-full bg-teal-500 transition-all duration-500" style={{ width: `${consumedPct}%` }} />
+   930→                                  <span className="h-full bg-amber-400 transition-all duration-500" style={{ width: `${reservedPct}%` }} />
+   931→                                </div>
+   932→                                <div className="mt-1.5 flex flex-wrap gap-3 text-[10px] text-muted-foreground">
+   933→                                  <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-teal-500" /> {e.consumed} kullanıldı</span>
+   934→                                  <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-amber-400" /> {e.reserved} ayrılmış</span>
+   935→                                  <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-muted-foreground/30" /> {Math.max(0, e.granted - e.consumed - e.reserved)} boş</span>
+   936→                                  {/* TASK-B 26: havuz özeti — kalan = total - claimed */}
+   937→                                  <span className="inline-flex items-center gap-1 font-medium text-foreground"><Icons.Scale className="size-3" aria-hidden /> {t("portal.entRemaining")}: {Math.max(0, e.total - e.claimed)}</span>
+   938→                                </div>
+   939→                                {e.claims.length > 0 && (
+   940→                                  <ul className="mt-2 space-y-0.5 border-t border-dashed pt-1.5">
+   941→                                    {e.claims.slice(0, 4).map((c) => (
+   942→                                      <li key={c.id} className="flex items-center justify-between gap-2 text-[11px]">
+   943→                                        <span className="truncate text-muted-foreground">{c.guestName ?? "İsimsiz misafir"}</span>
+   944→                                        <Chip tone={c.status === "CONSUMED" ? "emerald" : c.status === "RESERVED" ? "amber" : "neutral"}>{c.status === "CONSUMED" ? "Kullanıldı" : c.status === "RESERVED" ? "Davette" : label({ RELEASED: "Serbest", EXPIRED: "Süre aşımı" }, c.status)}</Chip>
+   945→                                      </li>
+   946→                                    ))}
+   947→                                  </ul>
+   948→                                )}
+   949→                              </div>
+   950→                            );
+   951→                          })}
+   952→                        </div>
+   953→                      )}
+   954→                    </section>
+   955→
+   956→                    {/* teslim edilecekler */}
+   957→                    <section className="maven-portal-enter rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "80ms" }}>
+   958→                      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.FileUp className="size-4 text-primary" /> Teslim Edilecekler</h4>
+   959→                      <ul className="mt-3 space-y-2">
+   960→                        {d.agreements.flatMap((a) => a.deliverables).map((dl) => {
+   961→                          const I = DELIVERABLE_ICON[dl.type] ?? Icons.File;
+   962→                          const canSubmit = SUBMITTABLE.includes(dl.status);
+   963→                          return (
+   964→                            <li key={dl.id} className="flex flex-wrap items-center gap-2 rounded-lg border bg-background/60 p-2.5 transition-colors hover:bg-background">
+   965→                              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><I className="size-4" aria-hidden /></span>
+   966→                              <div className="min-w-0 flex-1">
+   967→                                <p className="truncate text-xs font-medium">{dl.name}</p>
+   968→                                <p className="text-[10px] text-muted-foreground">Termin: {dl.dueDate ? fmtDate(dl.dueDate) : "—"}{dl.responsible ? ` · ${dl.responsible}` : ""}</p>
+   969→                              </div>
+   970→                              <StatusBadge map={DELIVERABLE_STATUS as unknown as Record<string, string>} value={dl.status} />
+   971→                              {canSubmit && (
+   972→                                <Button size="sm" variant="outline" className="h-7 gap-1 text-[11px]" disabled={busy === dl.id} onClick={() => submitDeliverable(dl.id, dl.name)}>
+   973→                                  {busy === dl.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Upload className="size-3" />} Teslim et
+   974→                                </Button>
+   975→                              )}
+   976→                            </li>
+   977→                          );
+   978→                        })}
+   979→                      </ul>
+   980→                    </section>
+   981→
+   982→                    {/* siparişler + ekip */}
+   983→                    <section className="maven-portal-enter space-y-4 rounded-xl border bg-card p-4 shadow-sm" style={{ animationDelay: "120ms" }}>
+   984→                      <div>
+   985→                        <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.Wallet className="size-4 text-primary" /> Siparişleriniz</h4>
+   986→                        <div className="mt-3"><OrderBlock orders={d.orders} onPayLink={payLink} busyId={busy} /></div>
+   987→                      </div>
+   988→                      {d.staff.length > 0 && (
+   989→                        <div className="border-t pt-3">
+   990→                          <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Icons.Users className="size-4 text-primary" /> Ekibiniz</h4>
+   991→                          <ul className="maven-scroll mt-2 max-h-44 space-y-1 overflow-y-auto pr-1">
+   992→                            {d.staff.map((s) => (
+   993→                              <li key={s.participationId} className="flex items-center gap-2 rounded-md px-1 py-1 text-xs hover:bg-muted/50">
+   994→                                <span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted text-[9px] font-bold text-muted-foreground">{initials(s.personName)}</span>
+   995→                                <span className="min-w-0 flex-1 truncate">{s.personName}{s.personTitle ? <span className="text-muted-foreground"> · {s.personTitle}</span> : null}</span>
+   996→                                {s.registrationStatus ? <StatusBadge map={REGISTRATION_STATUS as unknown as Record<string, string>} value={s.registrationStatus} /> : <span className="text-[10px] text-muted-foreground">kayıt yok</span>}
+   997→                              </li>
+   998→                            ))}
+   999→                          </ul>
+  1000→                        </div>
+  1001→                      )}
+  1002→                    </section>
+  1003→                  </div>
+  1004→                </>
+  1005→              )}
+  1006→            </div>
+  1007→          </PortalFrame>
+  1008→        )}
+  1009→      </div>
+  1010→    </div>
+  1011→  );
+  1012→}
+  1013→
+  1014→// ═══ PORTAL HEADER TASARIMCISI (R10-c) ══════════════════════════════════════
+  1015→// EventEdition.portalHeader* skaler alanlarını düzenler; canlı önizleme yazarken
+  1016→// güncellenir, "Kaydet" PUT /api/editions/{id} ile kalıcılaştırır.
+  1017→function PortalHeaderDesigner({
+  1018→  editionId, editionName, draft, setDraft,
+  1019→}: {
+  1020→  editionId: string; editionName: string;
+  1021→  draft: PortalHeaderDraft; setDraft: React.Dispatch<React.SetStateAction<PortalHeaderDraft>>;
+  1022→}) {
+  1023→  const { toast } = useToast();
+  1024→  const [saving, setSaving] = useState(false);
+  1025→  const [mediaBusy, setMediaBusy] = useState(false);
+  1026→
+  1027→  const validAccent = /^#[0-9a-fA-F]{3,8}$/.test(draft.accent.trim()) ? draft.accent.trim() : "#0d9488";
+  1028→
+  1029→  const onImagePick = (file: File) => {
+  1030→    if (file.size > 600 * 1024) {
+  1031→      toast({ title: "Dosya 600KB sınırı aşılıyor", description: "Daha küçük bir görsel seçin — arşive gömme tavanı 600KB'dir.", variant: "destructive" });
+  1032→      return;
+  1033→    }
+  1034→    const reader = new FileReader();
+  1035→    reader.onload = async () => {
+  1036→      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+  1037→      if (!dataUrl.startsWith("data:")) return;
+  1038→      setMediaBusy(true);
+  1039→      try {
+  1040→        const r = await apiSend<{ asset: { id: string; dataUrl: string | null } }>("/api/media/upload-linked", "POST", {
+  1041→          editionId, systemFolder: "PORTAL", linkedType: "PORTAL", name: "portal-header-arkaplan", dataUrl,
+  1042→        });
+  1043→        setDraft((d) => ({ ...d, imageUrl: r.asset.dataUrl ?? dataUrl }));
+  1044→        toast({ title: "Arka plan görseli yüklendi", description: "Medya Arşivi → Portal Görselleri klasörüne benzersiz adla kaydedildi." });
+  1045→      } catch (e) {
+  1046→        toast({ title: "Görsel yüklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+  1047→      } finally {
+  1048→        setMediaBusy(false);
+  1049→      }
+  1050→    };
+  1051→    reader.readAsDataURL(file);
+  1052→  };
+  1053→
+  1054→  const save = async () => {
+  1055→    setSaving(true);
+  1056→    try {
+  1057→      await apiSend(`/api/editions/${editionId}`, "PUT", {
+  1058→        portalHeaderTitle: draft.title.trim(),
+  1059→        portalHeaderSubtitle: draft.subtitle.trim(),
+  1060→        portalHeaderImageUrl: draft.imageUrl.trim() || null,
+  1061→        portalHeaderAccent: draft.accent.trim() || null,
+  1062→      });
+  1063→      toast({ title: "Portal header kaydedildi", description: "Katılımcı ve sponsor portalının üst bandı bu tasarımı kullanır." });
+  1064→    } catch (e) {
+  1065→      toast({ title: "Kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+  1066→    } finally {
+  1067→      setSaving(false);
+  1068→    }
+  1069→  };
+  1070→
+  1071→  return (
+  1072→    <SectionCard
+  1073→      title="Portal Header Tasarımcısı"
+  1074→      desc="Dış portalın üst bandını tasarlayın — kaydedilen başlık, alt başlık, vurgu rengi ve arka plan katılımcı + sponsor portalında görünür."
+  1075→    >
+  1076→      <div className="grid gap-4 lg:grid-cols-2">
+  1077→        {/* form */}
+  1078→        <div className="min-w-0 space-y-3">
+  1079→          <div className="space-y-1.5">
+  1080→            <Label htmlFor="ph-title">Portal başlığı</Label>
+  1081→            <Input id="ph-title" value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} maxLength={120} placeholder="Boş bırakılırsa etkinlik adı kullanılır" />
+  1082→          </div>
+  1083→          <div className="space-y-1.5">
+  1084→            <Label htmlFor="ph-subtitle">Alt başlık</Label>
+  1085→            <Input id="ph-subtitle" value={draft.subtitle} onChange={(e) => setDraft((d) => ({ ...d, subtitle: e.target.value }))} maxLength={160} placeholder={t("portal.hdrSubtitlePh")} />
+  1086→          </div>
+  1087→          <div className="grid gap-3 sm:grid-cols-2">
+  1088→            <div className="space-y-1.5">
+  1089→              <Label htmlFor="ph-accent">Vurgu rengi</Label>
+  1090→              <div className="flex items-center gap-2">
+  1091→                <input
+  1092→                  type="color"
+  1093→                  value={validAccent}
+  1094→                  onChange={(e) => setDraft((d) => ({ ...d, accent: e.target.value }))}
+  1095→                  aria-label="Vurgu rengi seçici"
+  1096→                  className="size-9 shrink-0 cursor-pointer rounded-md border bg-card p-1"
+  1097→                />
+  1098→                <Input id="ph-accent" value={draft.accent} onChange={(e) => setDraft((d) => ({ ...d, accent: e.target.value }))} placeholder="#0d9488" className="w-28 font-mono text-xs uppercase" />
+  1099→              </div>
+  1100→            </div>
+  1101→            <div className="space-y-1.5">
+  1102→              <Label htmlFor="ph-image">Arka plan görseli</Label>
+  1103→              <div className="flex items-center gap-2">
+  1104→                <label htmlFor="ph-image" className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground">
+  1105→                  {mediaBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ImagePlus className="size-3.5" aria-hidden />}
+  1106→                  {draft.imageUrl ? "Değiştir" : "Görsel yükle"}
+  1107→                </label>
+  1108→                {draft.imageUrl && (
+  1109→                  <Button type="button" size="sm" variant="ghost" className="h-9 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => setDraft((d) => ({ ...d, imageUrl: "" }))}>
+  1110→                    Kaldır
+  1111→                  </Button>
+  1112→                )}
+  1113→              </div>
+  1114→              <Input
+  1115→                id="ph-image"
+  1116→                type="file"
+  1117→                accept="image/*"
+  1118→                className="hidden"
+  1119→                aria-label="Portal arka plan görseli yükle"
+  1120→                onChange={(e) => { const f = e.target.files?.[0]; if (f) onImagePick(f); e.target.value = ""; }}
+  1121→              />
+  1122→            </div>
+  1123→          </div>
+  1124→          <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+  1125→            <Icons.Info className="mt-0.5 size-3 shrink-0" aria-hidden />
+  1126→            Görsel Medya Arşivi → Portal Görselleri klasörüne benzersiz adla kaydedilir (≤600KB). Önizleme yazarken canlı güncellenir.
+  1127→          </p>
+  1128→          <Button onClick={save} disabled={saving}>
+  1129→            {saving ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Save className="size-4" aria-hidden />} Kaydet
+  1130→          </Button>
+  1131→        </div>
+  1132→
+  1133→        {/* canlı önizleme */}
+  1134→        <div className="min-w-0">
+  1135→          <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"><Icons.Eye className="size-3.5" aria-hidden /> Canlı önizleme</p>
+  1136→          <div className="overflow-hidden rounded-xl border shadow-sm">
+  1137→            <div className={cn("relative flex min-h-44 flex-col justify-center px-5 py-6 text-white sm:px-7", !draft.imageUrl && "maven-portal-hero")}>
+  1138→              {draft.imageUrl && (
+  1139→                <>
+  1140→                  <img src={draft.imageUrl} alt="" aria-hidden className="absolute inset-0 size-full object-cover" />
+  1141→                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/40 to-black/25" aria-hidden />
+  1142→                </>
+  1143→              )}
+  1144→              <div className="relative min-w-0">
+  1145→                <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/70">{editionName}</p>
+  1146→                <h4 className="mt-0.5 truncate text-2xl font-bold tracking-tight">{draft.title.trim() || editionName}</h4>
+  1147→                <div className="mt-1.5 h-1 w-16 rounded-full" style={{ backgroundColor: validAccent }} aria-hidden />
+  1148→                {draft.subtitle.trim() && <p className="mt-2 max-w-lg text-xs text-white/85 sm:text-sm">{draft.subtitle}</p>}
+  1149→                <div className="mt-3 flex flex-wrap gap-2">
+  1150→                  <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-semibold text-white shadow-sm" style={{ backgroundColor: validAccent }}>
+  1151→                    <Icons.CalendarDays className="size-3" aria-hidden /> Kayıt & Giriş
+  1152→                  </span>
+  1153→                </div>
+  1154→              </div>
+  1155→            </div>
+  1156→          </div>
+  1157→          <p className="mt-1.5 text-[10px] text-muted-foreground">Arka plan görseline koyu degrade bindirilir — beyaz tipografi her görselde okunur.</p>
+  1158→        </div>
+  1159→      </div>
+  1160→    </SectionCard>
+  1161→  );
+  1162→}
+  1163→
+  1164→// ═══ PORTAL BLOKLARI YÖNETİMİ (TASK-B 25) ═════════════════════════════════
+  1165→// Düzenleyici CRUD yüzeyi: /api/portal/blocks (liste + oluştur + görünürlük + sil).
+  1166→// Bu bölüm yalnız organizatör görünümündedir (Dış Portal modülü = yönetici ekranı).
+  1167→function PortalBlocksManager({ editionId }: { editionId: string }) {
+  1168→  useLang();
+  1169→  const { toast } = useToast();
+  1170→  const blocks = useApi<PortalBlockRow[]>(
+  1171→    () => apiGet<{ items: PortalBlockRow[] }>(`/api/portal/blocks?editionId=${editionId}`).then((r) => r.items),
+  1172→    [editionId],
+  1173→  );
+  1174→  const [dlgOpen, setDlgOpen] = useState(false);
+  1175→  const [busy, setBusy] = useState(false);
+  1176→  const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+  1177→  const emptyForm = { audience: "BOTH", type: "ANNOUNCEMENT", title: "", text: "", order: "0", isVisible: true };
+  1178→  const [form, setForm] = useState(emptyForm);
+  1179→
+  1180→  const openCreate = () => { setForm(emptyForm); setDlgOpen(true); };
+  1181→
+  1182→  const createBlock = async () => {
+  1183→    if (!form.title.trim()) return;
+  1184→    setBusy(true);
+  1185→    try {
+  1186→      await apiSend("/api/portal/blocks", "POST", {
+  1187→        editionId,
+  1188→        audience: form.audience,
+  1189→        type: form.type,
+  1190→        title: form.title.trim(),
+  1191→        payloadJson: JSON.stringify({ text: form.text.trim() }),
+  1192→        order: Math.max(0, Math.round(Number(form.order) || 0)),
+  1193→        isVisible: form.isVisible,
+  1194→      });
+  1195→      toast({ title: t("portal.createdToast"), description: t("portal.createdDesc", { title: form.title.trim() }) });
+  1196→      setDlgOpen(false);
+  1197→      blocks.reload();
+  1198→    } catch (e) {
+  1199→      toast({ title: t("portal.actionFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+  1200→    } finally {
+  1201→      setBusy(false);
+  1202→    }
+  1203→  };
+  1204→
+  1205→  const toggleVisible = async (row: PortalBlockRow) => {
+  1206→    setRowBusyId(row.id);
+  1207→    try {
+  1208→      await apiSend("/api/portal/blocks", "PATCH", { id: row.id, isVisible: !row.isVisible });
+  1209→      toast({ title: !row.isVisible ? t("portal.visibleOnToast") : t("portal.visibleOffToast"), description: row.title });
+  1210→      blocks.reload();
+  1211→    } catch (e) {
+  1212→      toast({ title: t("portal.actionFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+  1213→    } finally {
+  1214→      setRowBusyId(null);
+  1215→    }
+  1216→  };
+  1217→
+  1218→  const removeBlock = async (row: PortalBlockRow) => {
+  1219→    setRowBusyId(row.id);
+  1220→    try {
+  1221→      await apiSend(`/api/portal/blocks?id=${row.id}`, "DELETE");
+  1222→      toast({ title: t("portal.deletedToast"), description: t("portal.deletedDesc", { title: row.title }) });
+  1223→      blocks.reload();
+  1224→    } catch (e) {
+  1225→      toast({ title: t("portal.actionFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+  1226→    } finally {
+  1227→      setRowBusyId(null);
+  1228→    }
+  1229→  };
+  1230→
+  1231→  const items = blocks.data ?? [];
+  1232→
+  1233→  return (
+  1234→    <SectionCard
+  1235→      title={t("portal.blocksSectionTitle")}
+  1236→      desc={t("portal.blocksSectionDesc")}
+  1237→      action={
+  1238→        <div className="flex items-center gap-2">
+  1239→          <Chip tone="teal">{t("portal.blockCount", { count: items.length })}</Chip>
+  1240→          <Button size="sm" className="h-8 gap-1.5" onClick={openCreate}>
+  1241→            <Icons.Plus className="size-3.5" aria-hidden /> {t("portal.btnNewBlock")}
+  1242→          </Button>
+  1243→        </div>
+  1244→      }
+  1245→    >
+  1246→      {blocks.loading ? (
+  1247→        <Loading rows={3} />
+  1248→      ) : blocks.error ? (
+  1249→        <ErrorState message={blocks.error} onRetry={blocks.reload} />
+  1250→      ) : items.length === 0 ? (
+  1251→        <EmptyState title={t("portal.emptyTitle")} desc={t("portal.emptyDesc")} />
+  1252→      ) : (
+  1253→        <ul className="maven-scroll max-h-96 space-y-2 overflow-y-auto pr-1">
+  1254→          {items.map((b) => {
+  1255→            const I = BLOCK_ICON[b.type] ?? Icons.Info;
+  1256→            const payload = parseBlockPayload(b.payloadJson);
+  1257→            return (
+  1258→              <li
+  1259→                key={b.id}
+  1260→                className={cn(
+  1261→                  "flex flex-wrap items-center gap-3 rounded-lg border bg-background/60 p-3 transition-colors hover:bg-background",
+  1262→                  !b.isVisible && "opacity-60",
+  1263→                )}
+  1264→              >
+  1265→                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><I className="size-4" aria-hidden /></span>
+  1266→                <div className="min-w-0 flex-1">
+  1267→                  <p className="truncate text-xs font-semibold">{b.title}</p>
+  1268→                  {payload.text && <p className="mt-0.5 line-clamp-1 text-[10px] text-muted-foreground">{payload.text}</p>}
+  1269→                </div>
+  1270→                <div className="flex flex-wrap items-center gap-1.5">
+  1271→                  <Chip tone={b.audience === "BOTH" ? "violet" : b.audience === "SPONSOR" ? "amber" : "teal"}>{t(`portal.aud${b.audience}`)}</Chip>
+  1272→                  <Chip tone="neutral">{t(`portal.typ${b.type}`)}</Chip>
+  1273→                  <span className="rounded-md border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground" aria-label={t("portal.fldOrder")}>
+  1274→                    #{b.order}
+  1275→                  </span>
+  1276→                </div>
+  1277→                <div className="flex items-center gap-2">
+  1278→                  <Switch
+  1279→                    checked={b.isVisible}
+  1280→                    disabled={rowBusyId === b.id}
+  1281→                    onCheckedChange={() => toggleVisible(b)}
+  1282→                    aria-label={`${t("portal.switchAria")} — ${b.title}`}
+  1283→                  />
+  1284→                  <Button
+  1285→                    size="sm"
+  1286→                    variant="ghost"
+  1287→                    className="h-8 w-8 p-0 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+  1288→                    disabled={rowBusyId === b.id}
+  1289→                    onClick={() => removeBlock(b)}
+  1290→                    aria-label={`${t("portal.btnDeleteAria")} — ${b.title}`}
+  1291→                  >
+  1292→                    {rowBusyId === b.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Trash2 className="size-3.5" aria-hidden />}
+  1293→                  </Button>
+  1294→                </div>
+  1295→              </li>
+  1296→            );
+  1297→          })}
+  1298→        </ul>
+  1299→      )}
+  1300→
+  1301→      {/* oluştur diyaloğu — payloadJson istemcide {text} nesnesi olarak yazılır */}
+  1302→      <Dialog open={dlgOpen} onOpenChange={setDlgOpen}>
+  1303→        <DialogContent className="sm:max-w-md">
+  1304→          <DialogHeader>
+  1305→            <DialogTitle className="flex items-center gap-2"><Icons.LayoutList className="size-4 text-primary" /> {t("portal.dlgCreateTitle")}</DialogTitle>
+  1306→            <DialogDescription>{t("portal.dlgCreateDesc")}</DialogDescription>
+  1307→          </DialogHeader>
+  1308→          <div className="grid gap-3">
+  1309→            <div className="grid gap-3 sm:grid-cols-2">
+  1310→              <div className="space-y-1.5">
+  1311→                <Label htmlFor="pb-audience">{t("portal.fldAudience")}</Label>
+  1312→                <Select value={form.audience} onValueChange={(v) => setForm((f) => ({ ...f, audience: v }))}>
+  1313→                  <SelectTrigger id="pb-audience"><SelectValue /></SelectTrigger>
+  1314→                  <SelectContent>
+  1315→                    <SelectItem value="PARTICIPANT">{t("portal.audPARTICIPANT")}</SelectItem>
+  1316→                    <SelectItem value="SPONSOR">{t("portal.audSPONSOR")}</SelectItem>
+  1317→                    <SelectItem value="BOTH">{t("portal.audBOTH")}</SelectItem>
+  1318→                  </SelectContent>
+  1319→                </Select>
+  1320→              </div>
+  1321→              <div className="space-y-1.5">
+  1322→                <Label htmlFor="pb-type">{t("portal.fldType")}</Label>
+  1323→                <Select value={form.type} onValueChange={(v) => setForm((f) => ({ ...f, type: v }))}>
+  1324→                  <SelectTrigger id="pb-type"><SelectValue /></SelectTrigger>
+  1325→                  <SelectContent>
+  1326→                    <SelectItem value="ANNOUNCEMENT">{t("portal.typANNOUNCEMENT")}</SelectItem>
+  1327→                    <SelectItem value="BANNER">{t("portal.typBANNER")}</SelectItem>
+  1328→                    <SelectItem value="INFO">{t("portal.typINFO")}</SelectItem>
+  1329→                    <SelectItem value="LINK">{t("portal.typLINK")}</SelectItem>
+  1330→                    <SelectItem value="CUSTOM">{t("portal.typCUSTOM")}</SelectItem>
+  1331→                  </SelectContent>
+  1332→                </Select>
+  1333→              </div>
+  1334→            </div>
+  1335→            <div className="space-y-1.5">
+  1336→              <Label htmlFor="pb-title">{t("portal.fldTitle")} *</Label>
+  1337→              <Input id="pb-title" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} maxLength={120} placeholder={t("portal.fldTitlePh")} />
+  1338→            </div>
+  1339→            <div className="space-y-1.5">
+  1340→              <Label htmlFor="pb-text">{t("portal.fldText")}</Label>
+  1341→              <Textarea id="pb-text" rows={3} value={form.text} onChange={(e) => setForm((f) => ({ ...f, text: e.target.value }))} placeholder={t("portal.fldTextPh")} />
+  1342→            </div>
+  1343→            <div className="grid gap-3 sm:grid-cols-2">
+  1344→              <div className="space-y-1.5">
+  1345→                <Label htmlFor="pb-order">{t("portal.fldOrder")}</Label>
+  1346→                <Input id="pb-order" type="number" min={0} step={1} value={form.order} onChange={(e) => setForm((f) => ({ ...f, order: e.target.value }))} />
+  1347→              </div>
+  1348→              <div className="space-y-1.5">
+  1349→                <Label htmlFor="pb-visible">{t("portal.fldVisible")}</Label>
+  1350→                <div className="flex h-9 items-center gap-2">
+  1351→                  <Switch id="pb-visible" checked={form.isVisible} onCheckedChange={(v) => setForm((f) => ({ ...f, isVisible: v }))} />
+  1352→                  <span className="text-[11px] text-muted-foreground">{t("portal.fldVisibleHint")}</span>
+  1353→                </div>
+  1354→              </div>
+  1355→            </div>
+  1356→          </div>
+  1357→          <DialogFooter>
+  1358→            <Button variant="outline" onClick={() => setDlgOpen(false)}>{t("portal.btnCancel")}</Button>
+  1359→            <Button onClick={createBlock} disabled={busy || !form.title.trim()}>
+  1360→              {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Plus className="size-4" aria-hidden />} {t("portal.btnCreate")}
+  1361→            </Button>
+  1362→          </DialogFooter>
+  1363→        </DialogContent>
+  1364→      </Dialog>
+  1365→    </SectionCard>
+  1366→  );
+  1367→}
+  1368→
+  1369→// ═══ MODÜL KÖKÜ ══════════════════════════════════════════════════════════════
+  1370→export function PortalsView() {
+  1371→  const { currentEditionId, editions } = useApp();
+  1372→  const edition = editions.find((e) => e.id === currentEditionId);
+  1373→  const [tab, setTab] = useState("participant");
+  1374→
+  1375→  // R10-c: portal header taslağı — edisyon kaydı geldiğinde sunucudaki değerlerle doldurulur
+  1376→  const [headerDraft, setHeaderDraft] = useState<PortalHeaderDraft>({ title: "", subtitle: "", imageUrl: "", accent: "#0d9488" });
+  1377→  useEffect(() => {
+  1378→    if (!currentEditionId) return;
+  1379→    let alive = true;
+  1380→    listEntity<EditionRow>("editions", { limit: 100 }).then((rows) => {
+  1381→      if (!alive) return;
+  1382→      const src = rows.find((e) => e.id === currentEditionId);
+  1383→      setHeaderDraft({
+  1384→        title: src?.portalHeaderTitle ?? "",
+  1385→        subtitle: src?.portalHeaderSubtitle ?? "",
+  1386→        imageUrl: src?.portalHeaderImageUrl ?? "",
+  1387→        accent: src?.portalHeaderAccent ?? "#0d9488",
+  1388→      });
+  1389→    }).catch(() => undefined);
+  1390→    return () => { alive = false; };
+  1391→  }, [currentEditionId]);
+  1392→
+  1393→  return (
+  1394→    <div>
+  1395→      <PageHeader
+  1396→        title="Dış Portal"
+  1397→        desc="Sponsor ve katılımcı self-servis görünümü — ayrı uygulama, ortak kimlik ilkesiyle gerçek verilerin dışarıdan hali."
+  1398→      >
+  1399→        <Tabs value={tab} onValueChange={setTab}>
+  1400→          <TabsList>
+  1401→            <TabsTrigger value="participant" className="gap-1.5"><Icons.UserRound className="size-3.5" /> Katılımcı</TabsTrigger>
+  1402→            <TabsTrigger value="sponsor" className="gap-1.5"><Icons.Handshake className="size-3.5" /> Sponsor</TabsTrigger>
+  1403→            <TabsTrigger value="vitrin" className="gap-1.5"><Icons.Store className="size-3.5" /> Firma Vitrini</TabsTrigger>
+  1404→          </TabsList>
+  1405→        </Tabs>
+  1406→      </PageHeader>
+  1407→
+  1408→      {tab === "vitrin" ? (
+  1409→        <FirmaVitrin />
+  1410→      ) : !edition ? (
+  1411→        <EmptyState title="Edisyon seçin" desc="Portal önizlemesi için bir edisyon gerekli." />
+  1412→      ) : (
+  1413→        <div className="space-y-4">
+  1414→          <PortalHeaderDesigner editionId={edition.id} editionName={edition.name} draft={headerDraft} setDraft={setHeaderDraft} />
+  1415→          {/* TASK-B 25: düzenleyici kontrollü portal blokları — her iki portal yüzeyi için */}
+  1416→          <PortalBlocksManager editionId={edition.id} />
+  1417→          {tab === "participant" ? (
+  1418→            <ParticipantPortal editionId={edition.id} headerDesign={headerDraft} />
+  1419→          ) : (
+  1420→            <SponsorPortal editionId={edition.id} headerDesign={headerDraft} />
+  1421→          )}
+  1422→        </div>
+  1423→      )}
+  1424→    </div>
+  1425→  );
+  1426→}
+  1427→
+  1428→// ─── Firma Vitrini (Faz C / R11) — /api/public/tenant kamu yüzeyinin önizlemesi ──
+  1429→// Kural: bu görünüm public uçtan beslenir (kişisel veri YOK); isimler tenant-içi kalır.
+  1430→interface PublicTenantData {
+  1431→  company: {
+  1432→    name: string; slug: string; tagline?: string | null; aboutText?: string | null;
+  1433→    logoUrl?: string | null; website?: string | null; country?: string | null;
+  1434→    contact: { name?: string | null; phone?: string | null; email?: string | null };
+  1435→  };
+  1436→  stats: { editionTotal: number; archiveCount: number; participantTotal: number; mediaCount: number };
+  1437→  nextEdition: { id: string; name: string; startDate?: string | null; endDate?: string | null; city?: string | null; venueName?: string | null; editionLabel?: string | null } | null;
+  1438→  archive: { id: string; name: string; slug: string; editionLabel?: string | null; startDate?: string | null; endDate?: string | null; city?: string | null; venueName?: string | null; participantCount: number }[];
+  1439→  note: string;
+  1440→}
+  1441→
+  1442→export function FirmaVitrin() {
+  1443→  const { tenant, setModule } = useApp();
+  1444→  const slug = tenant?.slug ?? null;
+  1445→
+  1446→  const { data, error, loading } = useApi<PublicTenantData | null>(() => {
+  1447→    if (!slug) return Promise.resolve(null);
+  1448→    return apiGet<PublicTenantData>(`/api/public/tenant?slug=${encodeURIComponent(slug)}`);
+  1449→  }, [slug]);
+  1450→
+  1451→  if (!slug) return <EmptyState title="Kiracı bulunamadı" desc="Vitrin için demo verisini yükleyin." />;
+  1452→  if (loading && !data) return <Loading rows={6} />;
+  1453→  if (error || !data) return <ErrorState message={error ?? "Vitrin verisi alınamadı"} onRetry={() => window.location.reload()} />;
+  1454→
+  1455→  const c = data.company;
+  1456→  const s = data.stats;
+  1457→
+  1458→  return (
+  1459→    <div className="space-y-4">
+  1460→      {/* Kamu yüzeyi bilgi şeridi */}
+  1461→      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-teal-200 bg-teal-50/60 px-4 py-2.5 text-xs text-teal-900">
+  1462→        <Icons.ShieldCheck className="size-4 shrink-0 text-teal-600" />
+  1463→        <span className="min-w-0 flex-1">Public URL önizlemesi — <span className="font-mono">/api/public/tenant?slug={c.slug}</span> · kişisel veri çıkmaz, katılımcılar yalnız adet olarak görünür (KVKK).</span>
+  1464→      </div>
+  1465→
+  1466→      {/* HERO — vitrin girişi */}
+  1467→      <section className="overflow-hidden rounded-2xl border bg-gradient-to-br from-teal-600 via-teal-700 to-emerald-800 text-white shadow-sm">
+  1468→        <div className="relative p-6 md:p-10">
+  1469→          <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
+  1470→            {c.logoUrl ? (
+  1471→              <img src={c.logoUrl} alt={`${c.name} logosu`} className="size-20 rounded-2xl border-2 border-white/30 bg-white object-cover shadow-lg" />
+  1472→            ) : (
+  1473→              <div className="grid size-20 shrink-0 place-items-center rounded-2xl border-2 border-white/30 bg-white/10 text-3xl font-bold shadow-lg backdrop-blur">
+  1474→                {c.name.slice(0, 1)}
+  1475→              </div>
+  1476→            )}
+  1477→            <div className="min-w-0">
+  1478→              <p className="text-xs font-medium uppercase tracking-wider text-white/70">Firma Vitrini</p>
+  1479→              <h2 className="mt-1 text-2xl font-bold leading-tight md:text-3xl">{c.name}</h2>
+  1480→              {c.tagline && <p className="mt-1.5 max-w-xl text-sm text-white/85 md:text-base">{c.tagline}</p>}
+  1481→              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+  1482→                {c.website && (
+  1483→                  <a href={c.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 font-medium backdrop-blur transition hover:bg-white/25">
+  1484→                    <Icons.Globe className="size-3.5" /> {c.website.replace(/^https?:\/\//, "")}
+  1485→                  </a>
+  1486→                )}
+  1487→                {c.country && (
+  1488→                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-white/85">
+  1489→                    <Icons.MapPin className="size-3.5" /> {c.country}
+  1490→                  </span>
+  1491→                )}
+  1492→              </div>
+  1493→            </div>
+  1494→          </div>
+  1495→        </div>
+  1496→      </section>
+  1497→
+  1498→      {/* İstatistik — agregat sayılar (kişisel veri yok) */}
+  1499→      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+  1500→        {[
+  1501→          { label: "Etkinlik", value: s.editionTotal, icon: <Icons.CalendarRange className="size-4" />, tone: "text-teal-600 bg-teal-50" },
+  1502→          { label: "Arşiv", value: s.archiveCount, icon: <Icons.Archive className="size-4" />, tone: "text-amber-600 bg-amber-50" },
+  1503→          { label: "Katılımcı (toplam)", value: s.participantTotal, icon: <Icons.Users className="size-4" />, tone: "text-violet-600 bg-violet-50" },
+  1504→          { label: "Arşiv Medyası", value: s.mediaCount, icon: <Icons.Images className="size-4" />, tone: "text-emerald-600 bg-emerald-50" },
+  1505→        ].map((k) => (
+  1506→          <div key={k.label} className="rounded-xl border bg-card p-4 shadow-sm">
+  1507→            <div className={cn("inline-flex size-8 items-center justify-center rounded-lg", k.tone)}>{k.icon}</div>
+  1508→            <p className="mt-2 text-2xl font-bold tabular-nums leading-none">{k.value}</p>
+  1509→            <p className="mt-1 text-xs text-muted-foreground">{k.label}</p>
+  1510→          </div>
+  1511→        ))}
+  1512→      </div>
+  1513→
+  1514→      <div className="grid gap-4 lg:grid-cols-3">
+  1515→        {/* Hakkında */}
+  1516→        <SectionCard title="Hakkında" desc="firmanın kamu bilgilendirme metni" className="lg:col-span-2">
+  1517→          {c.aboutText ? (
+  1518→            <p className="text-sm leading-relaxed text-muted-foreground">{c.aboutText}</p>
+  1519→          ) : (
+  1520→            <EmptyState title="Hakkında metni yok" desc={t("portal.firmIdentityHint")} />
+  1521→          )}
+  1522→          {data.nextEdition && (
+  1523→            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+  1524→              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+  1525→                <Icons.Sparkles className="size-3.5" /> Sıradaki Etkinlik
+  1526→              </p>
+  1527→              <p className="mt-1.5 text-sm font-semibold">{data.nextEdition.name}{data.nextEdition.editionLabel ? ` · ${data.nextEdition.editionLabel}` : ""}</p>
+  1528→              <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+  1529→                <span className="inline-flex items-center gap-1"><Icons.CalendarDays className="size-3.5" /> {fmtDate(data.nextEdition.startDate)}{data.nextEdition.endDate ? ` — ${fmtDate(data.nextEdition.endDate)}` : ""}</span>
+  1530→                {data.nextEdition.city && <span className="inline-flex items-center gap-1"><Icons.MapPin className="size-3.5" /> {data.nextEdition.city}</span>}
+  1531→              </p>
+  1532→            </div>
+  1533→          )}
+  1534→        </SectionCard>
+  1535→
+  1536→        {/* Yetkili kartı — tel:/mailto: */}
+  1537→        <SectionCard title="Yetkili" desc="vitrin iletişim kartı">
+  1538→          {c.contact.name || c.contact.phone || c.contact.email ? (
+  1539→            <div className="flex items-start gap-3">
+  1540→              <div className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/10 text-base font-semibold text-primary">
+  1541→                {(c.contact.name ?? "?").slice(0, 1)}
+  1542→              </div>
+  1543→              <div className="min-w-0 space-y-1.5">
+  1544→                <p className="text-sm font-semibold">{c.contact.name ?? "—"}</p>
+  1545→                <p className="text-xs text-muted-foreground">Vitrin yetkilisi</p>
+  1546→                {c.contact.phone && (
+  1547→                  <a href={`tel:${c.contact.phone.replace(/\s+/g, "")}`} className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline">
+  1548→                    <Icons.Phone className="size-3.5 shrink-0" /> <span className="truncate">{c.contact.phone}</span>
+  1549→                  </a>
+  1550→                )}
+  1551→                {c.contact.email && (
+  1552→                  <a href={`mailto:${c.contact.email}`} className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline">
+  1553→                    <Icons.Mail className="size-3.5 shrink-0" /> <span className="truncate">{c.contact.email}</span>
+  1554→                  </a>
+  1555→                )}
+  1556→              </div>
+  1557→            </div>
+  1558→          ) : (
+  1559→            <EmptyState title="Yetkili bilgisi yok" desc={t("portal.firmIdentityHint")} />
+  1560→          )}
+  1561→          <div className="mt-4 rounded-lg border border-dashed border-amber-300 bg-amber-50/60 p-3 text-[11px] leading-relaxed text-amber-800">
+  1562→            <span className="font-semibold">TODO-auth:</span> &quot;Yönetime giriş&quot; yetkili oturumu ile korunacak — şimdilik dashboard&apos;a yönlendirir.
+  1563→          </div>
+  1564→          <Button className="mt-3 w-full" variant="outline" onClick={() => setModule("dashboard")}>
+  1565→            <Icons.LogIn className="size-4" /> Yönetime giriş
+  1566→          </Button>
+  1567→        </SectionCard>
+  1568→      </div>
+  1569→
+  1570→      {/* Arşiv girişleri — public: yalnız sayı, isim yok */}
+  1571→      <SectionCard
+  1572→        title="Arşiv"
+  1573→        desc="tamamlanan etkinliklerin kamu kaydı — katılımcı sayısı gösterilir, isim listesi tenant-içidir"
+  1574→        action={<Chip tone="amber">{data.archive.length} kayıt</Chip>}
+  1575→      >
+  1576→        {data.archive.length === 0 ? (
+  1577→          <EmptyState title="Arşiv kaydı yok" desc="POST_EVENT / RECONCILIATION / ARCHIVED durumdaki etkinlikler burada listelenir." />
+  1578→        ) : (
+  1579→          <div className="grid gap-3 sm:grid-cols-2">
+  1580→            {data.archive.map((e) => (
+  1581→              <div key={e.id} className="rounded-xl border p-4 transition hover:border-primary/30">
+  1582→                <div className="flex items-start justify-between gap-2">
+  1583→                  <div className="min-w-0">
+  1584→                    <p className="truncate text-sm font-semibold">{e.name}{e.editionLabel ? ` · ${e.editionLabel}` : ""}</p>
+  1585→                    <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+  1586→                      <span className="inline-flex items-center gap-1"><Icons.CalendarDays className="size-3.5" /> {fmtDate(e.startDate)}{e.endDate ? ` — ${fmtDate(e.endDate)}` : ""}</span>
+  1587→                      {e.city && <span className="inline-flex items-center gap-1"><Icons.MapPin className="size-3.5" /> {e.city}</span>}
+  1588→                    </p>
+  1589→                  </div>
+  1590→                  <Chip tone="violet">{e.participantCount} katılımcı</Chip>
+  1591→                </div>
+  1592→                <p className="mt-2 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+  1593→                  <Icons.ShieldCheck className="size-3 text-emerald-500" /> İsim listesi kamu yüzeyinde gösterilmez (KVKK md.5/6)
+  1594→                </p>
+  1595→              </div>
+  1596→            ))}
+  1597→          </div>
+  1598→        )}
+  1599→      </SectionCard>
+  1600→    </div>
+  1601→  );
+  1602→}
+  1603→

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
@@ -19,7 +19,23 @@ export const metadata: Metadata = {
   keywords: ["Maven", "Event Management", "Etkinlik", "Kongre", "Fuar", "Entitlement"],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    // PWA simgeleri — Katılımcı Dış Portalı (manifest + apple-touch)
+    apple: "/portal-icon-180.png",
   },
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Maven Portal",
+  },
+};
+
+// PWA tarayıcı çubuğu rengi — iOS Safari + Android Chrome standalone uyumu
+export const viewport: Viewport = {
+  themeColor: "#0d9488",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

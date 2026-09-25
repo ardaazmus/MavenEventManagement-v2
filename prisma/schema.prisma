@@ -230,6 +230,7 @@ model Person {
   socialAnnouncements SocialPlanAnnouncement[]
   b2bAssignments   B2bAssignment[]
   portalTokens     PortalToken[]
+  portalSessions   PortalSession[] // PWA portal AUTH oturumları
 
   @@index([email])
   @@index([lastName])
@@ -329,6 +330,12 @@ model EventEdition {
   socialPlans      SocialPlan[]
   b2bPlans         B2bPlan[]
   incomes          Income[]
+  // — PWA Katılımcı Dış Portalı: modüler ek tablolar (mevcut tablolar BOZULMAZ) —
+  portalConfig        EventPortalConfig?
+  portalSessions      PortalSession[]
+  portalAnalyticsLogs PortalAnalyticsLog[]
+  portalAnnouncements PortalAnnouncement[]
+  portalQuestions     PortalQuestion[]
 
   @@index([status])
   @@index([startDate])
@@ -1202,6 +1209,7 @@ model ProgramSession {
   assignments ProgramAssignment[]
   materials   SessionMaterial[]
   scanEvents ScanEvent[]
+  portalQuestions PortalQuestion[] // PWA portal Q&A soruları
 
   @@index([editionId])
 }
@@ -1986,4 +1994,123 @@ model PortalToken {
   @@index([personId])
   @@index([organizationId])
   @@index([editionId])
+}
+
+// ═══ PWA / MOBILE-FIRST KATILIMCI DIŞ PORTALI — modüler ek tablolar ═════════
+// Kural (§Teknik Gereksinimler 1): mevcut tablolar (Tenants, Events, Users,
+// Sessions, Sponsors, Speakers…) KESİNLİKLE bozulmaz; portal yapılandırması bu
+// modüler tablolarla FK bağlarıyla yönetilir. Veriler kopyalanmaz — yalnız
+// "görünürlük ve davranış" kuralları burada yaşar.
+
+// Admin Yapılandırma Modülü (§5): edisyon başına TEK kayıt — Görünürlük ve
+// Davranış kuralları. Tümü düzenleyici (üst firma) kontrolündedir.
+model EventPortalConfig {
+  id           String   @id @default(cuid())
+  editionId    String   @unique
+  // §5.1 Erişim ve güvenlik yönetimi
+  portalEnabled     Boolean @default(false) // pasifken bakım / geri sayım sayfası
+  maintenanceMessage String?
+  countdownTo       DateTime? // pasifken "başlama geri sayımı" hedefi
+  eventCode         String? // etkinlik özel genel giriş kodu (GUEST girişi)
+  allowRegistrationRedirect Boolean @default(true) // "Kayıt Formuna Yönlendir" butonu
+  registrationFormId String? // yönlendirme hedefi (edition FormDefinition, isPublic)
+  // §5.2 Görsel yapılandırma ve tema
+  portalLogoUrl     String? // portal logosu (edition logoUrl'den BAĞIMSIZ)
+  portalBannerUrl   String? // arka plan görseli (banner)
+  themeColor        String? // tema rengi hex (alt menü vurgusu)
+  headerEventsJson  String? // ["editionId",…] — Top Header diğer-etkinlik carousel seçimi
+  bottomNavJson     String? // {"program":true,"sponsors":true,"map":true} — ikon aç/kapat
+  // §5.3 Dinamik widget ve modül yönetimi (feature toggles)
+  widgetsJson       String? // {key:{enabled,visibility,order}} — visibility ALL|AUTH
+  // §5.4 Bildirim yönetimi
+  notificationsEnabled Boolean @default(true)
+  notifyOffsetsJson String? // [60,30,10] — dakika cinsinden hatırlatma tetikleri
+  // §5.5 İçerik bağlama
+  sponsorIdsJson    String? // ["organizationId",…] — boşsa tüm aktif sponsorlar
+  venueMapUrl       String? // SVG/görsel kroki
+  venueMapEnabled   Boolean @default(false)
+  // PWA
+  pwaEnabled        Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+}
+
+// Portal oturumu — GUEST (anonim katılımcı) veya AUTH (doğrulanmış katılımcı).
+// OWASP çizgisi (TASK-A F1 ile uyumlu): ham anahtar ps_<hex> yalnız giriş anında
+// döner; DB'de yalnız sha256 hash yaşar. Kimlikli oturum kişiye bağlanır.
+model PortalSession {
+  id         String    @id @default(cuid())
+  editionId  String
+  kind       String // GUEST | AUTH
+  personId   String? // AUTH — kimlikli katılımcı
+  tokenHash  String    @unique // sha256 hex — ham anahtar saklanmaz
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+
+  edition   EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  person    Person?      @relation(fields: [personId], references: [id], onDelete: Cascade)
+  logs      PortalAnalyticsLog[]
+  questions PortalQuestion[]
+
+  @@index([editionId])
+  @@index([personId])
+}
+
+// §4.3 İstatistik ve analitik: tekil erişim, widget tıklama, PWA kurulum,
+// form/quiz katılımı ve B2B aksiyon izleri — raporlama tabanı.
+model PortalAnalyticsLog {
+  id        String   @id @default(cuid())
+  editionId String
+  sessionId String?
+  kind      String // VISIT|WIDGET_CLICK|PWA_INSTALL|FORM_OPEN|B2B_ACTION|QA_SUBMIT|REMINDER_SET
+  widgetKey String? // agenda|forms|qa|map|b2b|speakers|sponsors|profile|program
+  meta      String? // kısa yapılandırılmış özet (PII yok)
+  createdAt DateTime @default(now())
+
+  edition EventEdition   @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  session PortalSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([editionId, kind])
+  @@index([createdAt])
+}
+
+// §5.4 Canlı Duyuru Paneli: yöneticinin anlık duyurusu ("Ana salonda kahve…").
+// Portal istemcileri polling ile yeni duyuruları alır; hedef kitle filtrelenebilir.
+model PortalAnnouncement {
+  id        String   @id @default(cuid())
+  editionId String
+  title     String
+  message   String
+  level     String   @default("INFO") // INFO|WARNING|URGENT
+  target    String   @default("ALL") // ALL|AUTH|GUEST
+  sentBy    String   @default("ADMIN") // ADMIN|AUTO
+  createdAt DateTime @default(now())
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([editionId, createdAt])
+}
+
+// §3.2 Soru-Cevap (Q&A): konuşmacılara/oturumlara soru gönderme — anonim veya
+// kimlikli; moderasyon durumu düzenleyicide.
+model PortalQuestion {
+  id               String  @id @default(cuid())
+  editionId        String
+  sessionId        String? // hangi portal oturumu sordu
+  programSessionId String? // hedef oturum
+  body             String
+  displayName      String? // anonim değilse görünen ad
+  isAnonymous      Boolean @default(false)
+  status           String  @default("PENDING") // PENDING|ANSWERED|HIDDEN
+  createdAt        DateTime @default(now())
+
+  edition        EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  session        PortalSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  programSession ProgramSession? @relation(fields: [programSessionId], references: [id], onDelete: SetNull)
+
+  @@index([editionId, status])
 }

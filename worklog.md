@@ -2041,3 +2041,59 @@ Stage Summary:
 - Kalan riskler: (1) dev server OOM dalgalanması sürüyor — health-poll+restart protokolü; (2) EventIdentityCard'ta slug/seri/şablon bilinçli düzenlenmiyor (slug çakışma riski); (3) dataURL görseller bootstrap payload'ını büyütür (600KB sınırı mevcut; ileride medya sistemi URL'ine taşınabilir).
 - Sonraki adım önerileri: Form yanıt sayfası sayfalama, PHASE 6/7 (K1 Lead Retrieval, K8 PromoCode, K5 live-poll), edition header görselinin Dış Portal vitrinine de yansıtılması.
 - Cron: 15 dk webDevReview job aktif.
+---
+Task ID: PORTAL-PWA (PWA/Mobile-First Katılımcı Dış Portalı + Admin Yapılandırma Modülü)
+Agent: Z.ai Code (ana ajan)
+Task: Kullanıcının tam modül şartnamesi — mevcut şema/kiracı izolasyonunu KORUYARAK PWA mobil-öncelikli katılımcı dış portalı + Admin "Katılımcı Portalı Ayarları" yapılandırma modülü (§1-§6).
+
+Work Log:
+## MİMARİ KARAR ✓
+- Portal YENİ yüzey `/?portal=<slug>` (mevcut ?form= deseniyle aynı — tek-route kuralı korunur, Shell'siz).
+- Şema ADDİTİF: 5 yeni model (EventPortalConfig, PortalSession, PortalAnalyticsLog, PortalAnnouncement, PortalQuestion) — mevcut tablolar sıfır değişiklik; veri KOPYALANMAZ (program/sponsor/konuşmacı FK'dan okunur).
+- Oturum modeli (TASK-A F1 çizgisi): ps_<hex> ham anahtar yalnız girişte döner, DB'de sha256 hash. GUEST (kod) | AUTH (magic-link PortalToken veya e-posta+kod).
+- Portala özel portalSend() yardımcısı — apiSend header taşımadığı için (paylaşılan lib'e dokunulmadı).
+
+## SCHEMA ✓ (db:push + restart)
+- EventPortalConfig: portalEnabled, maintenanceMessage, countdownTo, eventCode, allowRegistrationRedirect(+registrationFormId), portalLogoUrl/portalBannerUrl/themeColor, headerEventsJson, bottomNavJson, widgetsJson, notificationsEnabled(+notifyOffsetsJson), sponsorIdsJson, venueMapUrl(+enabled), pwaEnabled.
+- PortalSession (kind GUEST|AUTH, personId, tokenHash @unique, expiresAt, revokedAt, lastSeenAt) · PortalAnalyticsLog (VISIT|WIDGET_CLICK|PWA_INSTALL|FORM_OPEN|B2B_ACTION|QA_SUBMIT|REMINDER_SET) · PortalAnnouncement (level INFO|WARNING|URGENT, target ALL|AUTH|GUEST) · PortalQuestion (anonim, programSession hedefli, PENDING|ANSWERED|HIDDEN).
+
+## API (8 yeni uç) ✓
+- POST/GET /api/portal/access — CODE→GUEST, TOKEN→AUTH (PortalToken), EMAIL+CODE→AUTH (case-insensitif e-posta + edisyon katılım eşleşmesi); pasif portal 403 PORTAL_DISABLED(countdown/maintenance); yayınlanmamış→404; rate 20/dk.
+- GET /api/portal/content — oturumsuz LOGIN bağlamı; oturumlu tam paket: edisyon+tenant+otherEvents carousel, program(PUBLISHED+isVisible), konuşmacılar(atamalardan türetilmiş), sponsorlar(agreement→org), public formlar, duyurular, PortalBlock'lar, RBAC-filtreli widgets (B2B zorunlu AUTH — sunucu tarafı), B2B randevuları+karşı taraf, soru geçmişi (AUTH kişi-bağlı kalıcı).
+- GET /api/portal/me (yalnız AUTH: kişi, kayıtlar, roller/yaka, sipariş+bakiye, sponsorluk) · POST /api/portal/interact (VISIT günlük dedupe, click, install, QA_SUBMIT 5-500 krk, B2B_RESPOND ACCEPTED|DECLINED|RESCHEDULE — IDOR kapalı kendi ataması) · GET /api/portal/announcements (since polling, hedef filtresi) + POST (admin canlı duyuru).
+- Admin: GET/PUT /api/portal/config (upsert + lookups + B2B AUTH kilidi + ActivityLog), GET /api/portal/analytics (unique guest/auth, 14g ziyaret eğrisi, widget tıklama, kurulum, form katılımı, B2B tamamlama %), POST /api/portal/magic-links (toplu PortalToken, single-display, dispatchMail opsiyonlu). Tümü requireAdmin + resolveEditionContext + rate limit.
+
+## PORTAL UI (portal-app.tsx) ✓
+- Giriş: kod / e-posta+kod sekmeleri, magic token URL'den otomatik (?t= → URL'den silinir), pasifte geri sayım (canlı sayaç)/bakım ekranı.
+- Top Header: organizatör + diğer etkinlikler carousel; Event Header: banner+logo(-mt-7 bindirme; başlık mobilde kesilmez) + tarih/mekân.
+- Dashboard widget grid (admin sıra/görünürlük), canlı duyuru şeridi (seviye renkli, kapatılabilir), yaklaşan oturum şeridi, PWA kurulum kartı.
+- Ekranlar: Program (gün gruplu, açılır detay, konuşmacı rolleri, CME, Hatırlat toggle→localStorage), Konuşmacılar (liste→detay: bio, LinkedIn, oturumlar), Sponsorlar (seviye gruplu, web), Yer Planı (kroki görseli), Q&A (hedef seçim, anonim, durum çipleri), Formlar (→/?form=), B2B (onayla/reddet/zaman talebi diyaloğu), Profil (GUEST: "Kayıt olduysanız e-postadaki bilgilerle giriş yapabilirsiniz" + kayıt formu; AUTH: bilet/kayıt/roller/yaka/sponsorluk/bildirim izni/çıkış — Giriş Yap oturum yükseltme akışı).
+- Sabit alt menü 5 ikon (safe-area-inset-bottom, 44px touch), admin gizleyebilir (map yalnız kroki aktifse).
+- Bildirim motoru: Notification izni, B2B+hatırlatmalı oturumlar için 60/30/10 dk tetikler (admin yapılandırır), fired-set localStorage dedupe; duyuru polling 20sn.
+- PWA: manifest.webmanifest + sw.js (API network-first, statik cache-first) + AI-üretimli ikonlar (512/192/180) + layout metadata(manifest/appleWebApp/themeColor viewport) + beforeinstallprompt→kurulum analitiği.
+
+## ADMIN UI (portal-settings.tsx — yeni "Portal Ayarları" sekmesi) ✓
+- §5.1 durum+bakım+geri sayım, kod (üret/düzenle), magic-link diyaloğu (29 kişi listesi, tek-görünlük sonuç+copy, mail opsiyonu), kayıt formu yönlendirme.
+- §5.2 logo/banner (dataURL kotalı), tema (preset+color), header başlık/alt başlık (edition.portalHeader* ile paylaşır), diğer-etkinlik multi-select, alt menü ikon switch'leri.
+- §5.3 widget satırları: aç/kapat + görünürlük (B2B kilitli AUTH) + sıra okları. §5.4 hatırlatıcı tetik çipleri (ekle/sil) + Canlı Duyuru Paneli (seviye/hedef, gönder→toast). §5.5 sponsor multi-select + kroki upload+Aktif + PWA switch. §5.6 canlı istatistikler (unique, 14g çubuk eğri, widget tıklama bar'ları, B2B %tamamlama, form katılımı, PWA kurulum).
+- "Mobil Portalı Aç" → yeni sekmede /?portal=slug.
+- Ayrıca: portals.tsx'te bozulmuş satır onarıldı (const [headerDraft... — tsc'i kıran syntax hatası).
+
+## DÜZELTMELER (testlerde yakalandı) ✓
+- portalSend: apiSend header taşımadığı için 401'ler → oturum-başlıklı lokal yardımcı.
+- Profil "Giriş Yap" ana sayfaya gidiyordu → gerçek LOGIN akışına (oturum yükseltme) bağlandı.
+- Q&A sonrası location.reload() ana sayfaya atıyordu → refreshContent (ekran korunur); soru geçmişi AUTH'ta kişi-bağlı yapıldı (oturumlar arası kalıcı).
+- Lint: setState-in-effect (Notification lazy init, bootstrap microtask), ref-in-render (sessionKey state'e aynalandı), useCallback deps.
+- SectionCard icon prop yok → kaldırıldı; REG_STATUS CONFIRMED rengi; role sözlüğü 8 rol genişletildi.
+
+## i18n ✓
+- portalApp.* + portalSettings.* ~250 yeni yaprak; tr+en SİMETRİK; bake 2954 yaprak; hardcoded-scan 78 dosya 0 ihlal.
+
+## KAPILAR ✓
+- tsc 0; lint 0; i18n 0. E2E (agent-browser): GUEST kod girişi→dashboard (B2B gizli, RBAC doğru), Program/gün gruplama+detay+Hatırlat(localStorage kanıtlı), Konuşmacı detay (bio/oturumlar), Profil misafir metni, AUTH yükseltme (e-posta+kod), B2B (karşı taraf, masa, Onayla→DB ACCEPTED→UI), Q&A gönderimi (DB kanıtlı, geçmiş kalıcı), admin ayarlar tüm bölümler, QA widget kapat→portala yansıma, kroki Aktif→Yer Planı nav+ekran (800x560 render), canlı duyuru admin→portal şeridi, magic-link üretim pt_..., analitik canlı sayımlar (14 tekil, tıklama, kurulum). pageErrors 0.
+- Ekran görüntüleri: tool-results/portal-{mobile-dashboard,mobile-program,mobile-program2,mobile-map,desktop-dashboard,admin-settings}.png.
+
+## DEMO DURUM / OPERASYON
+- scripts/portal-demo-setup.mjs (yeni, idempotent): seed sonrası portal demo durumunu kurar (aktif portal+DEMO26+kroki(public/portal-kroki-demo.png URL olarak)+2 B2B planı+3 atama+karşılama duyurusu). /api/seed portal config'i SIFIRLAR — seed sonrası bu betik çalıştırılmalı (worklog notu: Playwright+seed rutinlerinin sonuna eklenmeli).
+- Kalan riskler: (1) seed portal demo verisini temizler (betik çözüyor); (2) agent-browser upload sıfır-byte dosya — gerçek tarayıcıda input onChange standart (kod doğru, tooling kısıtı); (3) B2B "tamamlandı" durumu saha modülüyle bağlanabilir (ileride); (4) web-push server tarafı yerine client scheduler — PWA açıkken çalışır, kapalıyken bildirim düşmez (spec "browser-based" ile uyumlu; gerçek FCM/webpush A4 sonrası).
+- Sonraki adım önerileri: portal ayarlarına Q&A moderasyon listesi (yanıtla/gizle), sponsor kurum detay kartı, program "takvime ekle" (ICS), PWA offline fallback sayfası, portal dil tercihine tenant dillerinin entegrasyonu.

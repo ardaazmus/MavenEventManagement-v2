@@ -25,6 +25,8 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { useLang, t, tLabel } from "@/lib/i18n";
 import * as Icons from "lucide-react";
+import { FieldPalette, FieldPropertiesPanel, SharePanel, type FieldDraft } from "../form-studio";
+import { parseLogicRules } from "@/lib/form-logic";
 
 // ─── API tipleri (sözleşme: UI AGENT SÖZLEŞMESİ / registry) ─────────────────
 
@@ -33,12 +35,15 @@ interface FormFieldDef {
   required: string; options?: string | null; placeholder?: string | null; helpText?: string | null;
   sensitivity: string; mobileInteractive: boolean; conditionField?: string | null; conditionValue?: string | null;
   correctAnswer?: string | null;
+  logicRules?: string | null; logicMode?: string | null; logicAction?: string | null;
+  points?: number | null; columns?: string | null;
 }
 interface FormDef {
   id: string; editionId: string; name: string; type: string; status: string;
   description?: string | null; successMessage?: string | null; isPublic: boolean; autoApprove: boolean;
   honeypotEnabled: boolean; minSubmitSeconds: number | null; maxPerEmailPerDay: number | null;
   blockedDomains?: string | null; enableOnlinePayment: boolean; defaultCategoryId?: string | null;
+  captchaEnabled: boolean; hasPublicResults: boolean; slug?: string | null;
   fields: FormFieldDef[]; _count?: { submissions: number };
 }
 interface SubmissionRow {
@@ -74,16 +79,6 @@ interface FormStats {
   fields: FieldStat[];
   quiz?: QuizStats | null;
 }
-interface RegisterResult {
-  // Public DTO — izin listeli: submissionId/status/quiz özeti + kayıt/sipariş/ödeme referansı.
-  // spamScore/spamReasons/chainError BİLİNÇLİ YOK (anti-spam keşif sinyali + iç hata sızmasi yasak).
-  submissionId: string; status: string;
-  quizScore?: number | null; quizCorrect?: number | null; quizTotal?: number | null;
-  registration?: { confirmationNo: string | null; status: string | null } | null;
-  order?: { orderNo: string | null; status: string | null; totalAmount: number | null; currency: string | null } | null;
-  payment?: { id: string; status: string } | null;
-}
-interface PayProcessResult { outcome: string; message: string; payment?: { id: string; status: string; reference?: string | null } }
 interface CategoryRow { id: string; name: string }
 
 // ─── Yerel sabitler & yardımcılar ───────────────────────────────────────────
@@ -103,9 +98,9 @@ const TYPE_TONE: Record<string, ChipTone> = {
   REGISTRATION: "teal", SURVEY: "violet", FEEDBACK: "emerald", QA_MOBILE: "amber", CUSTOM: "neutral",
 };
 // options (satır bazlı seçenekler) giren alan türleri
-const OPTION_FIELD_TYPES = ["SINGLE_CHOICE", "MULTI_CHOICE", "QA_QUIZ", "COUNTRY"];
+const OPTION_FIELD_TYPES = ["SINGLE_CHOICE", "MULTI_CHOICE", "QA_QUIZ", "COUNTRY", "VOTE", "RANKING", "MATRIX"];
 // mobil interaktif öge olarak otomatik açılan türler
-const MOBILE_TYPES = ["RATING", "NPS", "QA_QUIZ"];
+const MOBILE_TYPES = ["RATING", "NPS", "QA_QUIZ", "VOTE"];
 const PAY_METHOD_OPTS = [
   { value: "ONLINE_CARD", label: "Online Kart" },
   { value: "BANK_TRANSFER", label: "Havale / EFT" },
@@ -177,9 +172,9 @@ export function FormCenterView() {
   // Alan ekleme dialogu
   const [fieldOpen, setFieldOpen] = useState(false);
   const emptyNewField = {
-    label: "", type: "TEXT", placeholder: "", helpText: "", options: "",
+    label: "", type: "TEXT", placeholder: "", helpText: "", options: "", columns: "",
     required: "OPTIONAL", conditionField: "", conditionValue: "",
-    sensitivity: "STANDARD", mobileInteractive: false, correctAnswer: "",
+    sensitivity: "STANDARD", mobileInteractive: false, correctAnswer: "", points: "1",
   };
   const [newField, setNewField] = useState(emptyNewField);
 
@@ -189,6 +184,7 @@ export function FormCenterView() {
     honeypotEnabled: true, minSubmitSeconds: "4", maxPerEmailPerDay: "5",
     blockedDomains: "", autoApprove: false,
     enableOnlinePayment: false, defaultCategoryId: "AUTO",
+    captchaEnabled: true, hasPublicResults: false, slug: "",
   });
 
   // Yanıtlar sekmesi filtreleri + detay dialogu
@@ -198,18 +194,12 @@ export function FormCenterView() {
   const [detail, setDetail] = useState<SubmissionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // Canlı kayıt masası durumu
+  // Canlı kayıt masası — dış sayfa motorunun birebir iframe önizlemesi (F-EXP)
   const [liveFormId, setLiveFormId] = useState("");
-  const [ans, setAns] = useState<Record<string, string>>({});
-  const [multi, setMulti] = useState<Record<string, string[]>>({});
-  const [visitor, setVisitor] = useState({ name: "", email: "", phone: "", organization: "" });
-  const [honeypot, setHoneypot] = useState("");
-  const [payMethod, setPayMethod] = useState("ONLINE_CARD");
-  const [liveResult, setLiveResult] = useState<RegisterResult | null>(null);
-  const [pay, setPay] = useState({ cardHolder: "", cardNumber: "", expiry: "", cvc: "" });
-  const [payOutcome, setPayOutcome] = useState<PayProcessResult | null>(null);
-  const [resetTick, setResetTick] = useState(0);
-  const startRef = useRef<number>(Date.now());
+
+  // Stüdyo — seçili alan (özellik paneli)
+  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const selectedField = selectedForm?.fields.find((f) => f.id === selectedFieldId) ?? null;
 
   const liveForms = useMemo(
     () => formList.filter((f) => f.status === "PUBLISHED" && f.isPublic),
@@ -270,13 +260,16 @@ export function FormCenterView() {
       autoApprove: f.autoApprove,
       enableOnlinePayment: f.enableOnlinePayment,
       defaultCategoryId: f.defaultCategoryId ?? "AUTO",
+      captchaEnabled: f.captchaEnabled,
+      hasPublicResults: f.hasPublicResults,
+      slug: f.slug ?? "",
     });
   }, [selectedFormId, formList]);
 
-  // Zaman tuzağı: form göründüğünde sayaç başlat
+  // Form değişince alan seçimini temizle
   useEffect(() => {
-    startRef.current = Date.now();
-  }, [liveFormId, resetTick]);
+    setSelectedFieldId(null);
+  }, [selectedFormId]);
 
   // ── Aksiyonlar ────────────────────────────────────────────────────────────
 
@@ -365,6 +358,77 @@ export function FormCenterView() {
     }
   };
 
+  // F-EXP: captcha / herkese açık sonuç anahtarları — anında PUT (paylaşım paneli)
+  const toggleFormFlag = async (flag: "captchaEnabled" | "hasPublicResults", v: boolean) => {
+    if (!selectedForm) return;
+    setBusy(`flag-${flag}`);
+    try {
+      await apiSend(`/api/forms/${selectedForm.id}`, "PUT", { [flag]: v });
+      toast({ title: t("forms.toastSettingsSaved"), description: selectedForm.name });
+      reload();
+      bump();
+    } catch (e) {
+      toast({ title: t("forms.toastSettingsError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // F-EXP: kısa paylaşım adresi (slug) — benzersiz; çakışırsa 409 toast ile bildirilir
+  const saveSlug = async () => {
+    if (!selectedForm) return;
+    setBusy("slug");
+    try {
+      await apiSend(`/api/forms/${selectedForm.id}`, "PUT", { slug: settings.slug.trim() });
+      toast({ title: t("forms.slugSaved"), description: `/?form=${settings.slug.trim()}` });
+      reload();
+      bump();
+    } catch (e) {
+      toast({ title: t("forms.slugSaveError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // F-EXP: palet tıklaması — türü ön-seçili Alan Ekle dialogu açar
+  const pickFieldType = (tp: string) => {
+    setNewField({ ...emptyNewField, type: tp, mobileInteractive: MOBILE_TYPES.includes(tp), points: "1" });
+    setFieldOpen(true);
+  };
+
+  // F-EXP: seçili alanın tüm özelliklerini kaydet (mantık kapıları dahil)
+  const saveField = async (draft: FieldDraft) => {
+    if (!selectedField) return;
+    setBusy(`field-${selectedField.id}`);
+    try {
+      await apiSend(`/api/form-fields/${selectedField.id}`, "PUT", {
+        label: draft.label,
+        type: draft.type,
+        placeholder: draft.placeholder,
+        helpText: draft.helpText,
+        options: draft.options,
+        columns: draft.type === "MATRIX" ? draft.columns : null,
+        required: draft.required,
+        conditionField: draft.conditionField,
+        conditionValue: draft.conditionValue,
+        sensitivity: draft.sensitivity,
+        mobileInteractive: draft.mobileInteractive,
+        correctAnswer: draft.type === "QA_QUIZ" ? (draft.correctAnswer || null) : null,
+        points: draft.type === "QA_QUIZ" ? numOr(draft.points, 1) : null,
+        logicRules: draft.logicRules.length > 0 ? JSON.stringify(draft.logicRules) : null,
+        logicMode: draft.logicRules.length > 0 ? draft.logicMode : null,
+        logicAction: draft.logicRules.length > 0 ? draft.logicAction : null,
+      });
+      toast({ title: t("forms.fieldSavedToast"), description: draft.label });
+      reload();
+      bump();
+    } catch (e) {
+      toast({ title: t("forms.fieldSaveErrorToast"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const addField = async () => {
     if (!selectedForm) return;
     setBusy("field");
@@ -376,12 +440,14 @@ export function FormCenterView() {
         placeholder: newField.placeholder,
         helpText: newField.helpText,
         options: newField.options,
+        columns: newField.type === "MATRIX" ? newField.columns : null,
         required: newField.required,
         conditionField: newField.conditionField,
         conditionValue: newField.conditionValue,
         sensitivity: newField.sensitivity,
         mobileInteractive: newField.mobileInteractive,
         correctAnswer: newField.type === "QA_QUIZ" ? (newField.correctAnswer || null) : null,
+        points: newField.type === "QA_QUIZ" ? numOr(newField.points, 1) : null,
         order: selectedForm.fields.length + 1,
       });
       toast({ title: t("forms.toastFieldAdded"), description: t("forms.toastFieldAddedDesc", { name: newField.label, order: selectedForm.fields.length + 1 }) });
@@ -483,239 +549,6 @@ export function FormCenterView() {
       setDetailId(null);
     } finally {
       setDetailLoading(false);
-    }
-  };
-
-  // Çoklu seçim yanıtları JSON dizi olarak saklanır
-  const toggleMulti = (fieldId: string, opt: string, on: boolean) => {
-    setMulti((m) => {
-      const cur = m[fieldId] ?? [];
-      return { ...m, [fieldId]: on ? [...cur, opt] : cur.filter((x) => x !== opt) };
-    });
-  };
-
-  // Koşullu alan görünürlüğü: conditionField etiketine uyan önceki sorunun yanıtına bakılır
-  const isLiveVisible = (f: FormFieldDef): boolean => {
-    if (!liveForm || !f.conditionField) return true;
-    const src = liveForm.fields.find((x) => x.label === f.conditionField);
-    if (!src) return true;
-    const val = ans[src.id] ?? "";
-    if (f.conditionValue === "true") return val === "true";
-    return val !== "" && val === (f.conditionValue ?? "");
-  };
-
-  const submitLive = async () => {
-    if (!liveForm) return;
-    setBusy("live");
-    try {
-      const answers: Record<string, string> = {};
-      for (const f of liveForm.fields) {
-        if (f.type === "SECTION") continue;
-        if (f.type === "MULTI_CHOICE") {
-          answers[f.id] = JSON.stringify(multi[f.id] ?? []);
-          continue;
-        }
-        const v = ans[f.id];
-        if (v !== undefined && v !== "") answers[f.id] = v;
-      }
-      const res = await apiSend<RegisterResult>("/api/public-register", "POST", {
-        formId: liveForm.id,
-        respondentName: visitor.name,
-        respondentEmail: visitor.email,
-        phone: visitor.phone,
-        organization: visitor.organization,
-        answers,
-        honeypotValue: honeypot,
-        elapsedSeconds: Math.round((Date.now() - startRef.current) / 1000),
-        paymentMethod: payMethod,
-        source: "WEB_PUBLIC",
-      });
-      setLiveResult(res);
-      setPayOutcome(null);
-      bump();
-      if (res.status === "SPAM") {
-        // DÜZELTME: skor/gerekçe public DTO'dan bilinçli çıkarıldı (keşif sinyali yasak) —
-        // ayrıntılı puan yalnız yönetim gelen-kutusunda görüntülenir.
-        toast({ title: t("forms.toastSpamFlagged"), variant: "destructive" });
-      } else {
-        toast({
-          title: res.status === "APPROVED" ? t("forms.liveApprovedToast") : t("forms.livePendingToast"),
-          description: res.status === "PENDING" ? t("forms.livePendingToastDesc") : undefined,
-        });
-      }
-    } catch (e) {
-      toast({ title: t("forms.toastSubmitError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const processPayment = async () => {
-    if (!liveResult?.payment) return;
-    setBusy("pay");
-    try {
-      const res = await apiSend<PayProcessResult>(`/api/payments/${liveResult.payment.id}/process`, "POST", {
-        cardHolder: pay.cardHolder,
-        cardNumber: pay.cardNumber,
-        expiry: pay.expiry,
-        cvc: pay.cvc,
-      });
-      setPayOutcome(res);
-      bump();
-      if (res.outcome === "SUCCEEDED") {
-        toast({ title: t("forms.payOk"), description: res.message });
-      } else {
-        toast({ title: t("forms.payFail"), description: res.message, variant: "destructive" });
-      }
-    } catch (e) {
-      toast({ title: t("forms.toastPayError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const resetLive = () => {
-    setAns({});
-    setMulti({});
-    setVisitor({ name: "", email: "", phone: "", organization: "" });
-    setHoneypot("");
-    setPayMethod("ONLINE_CARD");
-    setLiveResult(null);
-    setPayOutcome(null);
-    setPay({ cardHolder: "", cardNumber: "", expiry: "", cvc: "" });
-    setResetTick((t) => t + 1);
-  };
-
-  // ── Canlı masada alan render'ı (tip bazlı) ────────────────────────────────
-
-  const renderLiveField = (f: FormFieldDef) => {
-    const opts = (f.options ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
-    const value = ans[f.id] ?? "";
-    const reqStar = f.required === "ALWAYS" ? <span className="text-rose-500"> *</span> : null;
-
-    const wrap = (children: ReactNode) => (
-      <div key={f.id} className="grid gap-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <Label className="text-xs font-medium">
-            {f.label}
-            {reqStar}
-          </Label>
-          {f.mobileInteractive && <Badge variant="outline" className="text-[10px]">{t("forms.mobileItem")}</Badge>}
-        </div>
-        {children}
-        {f.helpText && <p className="text-xs text-muted-foreground">{f.helpText}</p>}
-      </div>
-    );
-
-    switch (f.type) {
-      case "SECTION":
-        return (
-          <div key={f.id} className="border-b pb-1.5">
-            <p className="text-sm font-semibold">{f.label}</p>
-            {f.helpText && <p className="text-xs text-muted-foreground">{f.helpText}</p>}
-          </div>
-        );
-      case "LONGTEXT":
-        return wrap(
-          <Textarea rows={3} value={value} placeholder={f.placeholder ?? ""} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
-        );
-      case "NUMBER":
-        return wrap(
-          <Input type="number" value={value} placeholder={f.placeholder ?? ""} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
-        );
-      case "EMAIL":
-        return wrap(
-          <Input type="email" value={value} placeholder={f.placeholder ?? t("forms.phEmail")} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
-        );
-      case "PHONE":
-        return wrap(
-          <Input type="tel" value={value} placeholder={f.placeholder ?? t("forms.phPhone")} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
-        );
-      case "DATE":
-        return wrap(<Input type="date" value={value} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />);
-      case "SINGLE_CHOICE":
-      case "QA_QUIZ":
-        return wrap(
-          <Select value={value} onValueChange={(v) => setAns({ ...ans, [f.id]: v })}>
-            <SelectTrigger><SelectValue placeholder={t("forms.select")} /></SelectTrigger>
-            <SelectContent>
-              {opts.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
-            </SelectContent>
-          </Select>,
-        );
-      case "MULTI_CHOICE":
-        return wrap(
-          <div className="grid gap-1.5 rounded-lg border p-2.5">
-            {opts.map((o) => (
-              <label key={o} className="flex cursor-pointer items-center gap-2 text-sm">
-                <Checkbox
-                  checked={multi[f.id]?.includes(o) ?? false}
-                  onCheckedChange={(c) => toggleMulti(f.id, o, c === true)}
-                />
-                {o}
-              </label>
-            ))}
-            {opts.length === 0 && <p className="text-xs text-muted-foreground">{t("forms.noOptions")}</p>}
-          </div>,
-        );
-      case "CHECKBOX":
-        return wrap(
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <Checkbox checked={value === "true"} onCheckedChange={(c) => setAns({ ...ans, [f.id]: c ? "true" : "false" })} />
-            {f.helpText ? f.label : f.label}
-          </label>,
-        );
-      case "COUNTRY":
-        return wrap(
-          <Input value={value} placeholder={t("forms.phCountry")} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
-        );
-      case "FILE":
-        return wrap(<Input disabled placeholder={t("forms.phFileDisabled")} />);
-      case "RATING":
-        return wrap(
-          <div className="flex items-center gap-1">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                type="button"
-                aria-label={t("forms.stars", { n })}
-                onClick={() => setAns({ ...ans, [f.id]: String(n) })}
-                className="rounded-md p-1 transition hover:bg-amber-50"
-              >
-                <Icons.Star className={`size-5 ${Number(value) >= n ? "fill-amber-400 text-amber-500" : "text-muted-foreground/40"}`} />
-              </button>
-            ))}
-            {value && <span className="ml-1 text-xs text-muted-foreground">{value}/5</span>}
-          </div>,
-        );
-      case "NPS":
-        return wrap(
-          <div className="grid gap-1">
-            <div className="grid grid-cols-11 gap-1">
-              {Array.from({ length: 11 }, (_, n) => (
-                <button
-                  key={n}
-                  type="button"
-                  aria-pressed={Number(value) === n}
-                  onClick={() => setAns({ ...ans, [f.id]: String(n) })}
-                  className={`h-8 min-w-0 rounded-md border text-xs font-medium tabular-nums transition ${
-                    Number(value) === n ? "border-teal-600 bg-teal-600 text-white" : "hover:border-teal-400"
-                  }`}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-            <div className="flex justify-between text-[10px] text-muted-foreground">
-              <span>{t("forms.npsLow")}</span>
-              <span>{t("forms.npsHigh")}</span>
-            </div>
-          </div>,
-        );
-      default:
-        return wrap(
-          <Input value={value} placeholder={f.placeholder ?? ""} onChange={(e) => setAns({ ...ans, [f.id]: e.target.value })} />,
-        );
     }
   };
 
@@ -891,9 +724,18 @@ export function FormCenterView() {
               </div>
 
               {selectedForm && (
-                <div className="grid gap-4 lg:grid-cols-5">
-                  {/* SOL — Alan listesi */}
-                  <div className="min-w-0 lg:col-span-3">
+                <div className="grid gap-4 lg:grid-cols-12">
+                  {/* SOL — Bileşen paleti (F-EXP: tıkla-ekle kataloğu) */}
+                  <div className="min-w-0 lg:col-span-2">
+                    <SectionCard title={t("forms.paletteTitle")} desc={t("forms.paletteDesc")}>
+                      <div className="max-h-[420px] overflow-y-auto maven-scroll pr-1">
+                        <FieldPalette onPick={pickFieldType} />
+                      </div>
+                    </SectionCard>
+                  </div>
+
+                  {/* ORTA — Alan listesi */}
+                  <div className="min-w-0 lg:col-span-5">
                     <SectionCard
                       title={t("forms.fieldsTitle")}
                       desc={t("forms.fieldsDesc", { n: selectedForm.fields.length })}
@@ -912,9 +754,19 @@ export function FormCenterView() {
                             .map((f, i) => (
                               <div
                                 key={f.id}
-                                className={`flex items-center gap-2 rounded-lg border p-2.5 ${
-                                  f.type === "SECTION" ? "bg-muted/40 border-l-4 border-l-teal-500" : ""
-                                }`}
+                                role="button"
+                                tabIndex={0}
+                                aria-pressed={selectedFieldId === f.id}
+                                onClick={() => setSelectedFieldId(selectedFieldId === f.id ? null : f.id)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    setSelectedFieldId(selectedFieldId === f.id ? null : f.id);
+                                  }
+                                }}
+                                className={`flex cursor-pointer items-center gap-2 rounded-lg border p-2.5 transition hover:border-teal-400 ${
+                                  selectedFieldId === f.id ? "border-teal-500 ring-2 ring-teal-500/20" : ""
+                                } ${f.type === "SECTION" ? "bg-muted/40 border-l-4 border-l-teal-500" : ""}`}
                               >
                                 <span className="w-6 shrink-0 text-center text-xs font-medium tabular-nums text-muted-foreground">
                                   {i + 1}
@@ -934,6 +786,22 @@ export function FormCenterView() {
                                     {f.mobileInteractive && <Chip tone="teal">{t("forms.mobileChip")}</Chip>}
                                     {f.sensitivity !== "STANDARD" && (
                                       <Chip tone="violet">{tLabel(SENSITIVITY_MAP, f.sensitivity)}</Chip>
+                                    )}
+                                    {/* F-EXP: mantık kapısı + puan + matris rozetleri */}
+                                    {parseLogicRules(f.logicRules).length > 0 && (
+                                      <span className="inline-flex items-center gap-0.5 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">
+                                        <Icons.GitBranch className="size-3" />
+                                        {f.logicAction === "HIDE" ? t("forms.logicHideShort") : t("forms.logicShowShort")}
+                                        · {parseLogicRules(f.logicRules).length}
+                                      </span>
+                                    )}
+                                    {f.type === "QA_QUIZ" && f.points != null && f.points > 0 && (
+                                      <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">{f.points} {t("forms.pts")}</span>
+                                    )}
+                                    {f.type === "MATRIX" && f.columns && (
+                                      <span className="rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                                        {(f.options ?? "").split("\n").filter((s) => s.trim()).length}×{(f.columns ?? "").split("\n").filter((s) => s.trim()).length}
+                                      </span>
                                     )}
                                   </div>
                                   {f.required === "CONDITIONAL" && f.conditionField && (
@@ -992,7 +860,25 @@ export function FormCenterView() {
                   </div>
 
                   {/* SAĞ — Ayar panelleri */}
-                  <div className="space-y-4 min-w-0 lg:col-span-2">
+                  <div className="space-y-4 min-w-0 lg:col-span-5">
+                    {/* F-EXP: seçili alan özellik paneli (mantık kapıları dahil) */}
+                    <SectionCard
+                      title={<span className="flex items-center gap-2"><Icons.SlidersHorizontal className="size-4 text-teal-600" /> {selectedField ? t("forms.propsTitle") : t("forms.propsNoneTitle")}</span>}
+                      desc={selectedField ? t("forms.propsDesc", { label: selectedField.label }) : t("forms.propsNoneDesc")}
+                    >
+                      {selectedField ? (
+                        <FieldPropertiesPanel
+                          field={selectedField}
+                          allFields={selectedForm.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+                          busy={busy}
+                          onSave={saveField}
+                          onCancel={() => setSelectedFieldId(null)}
+                        />
+                      ) : (
+                        <EmptyState title={t("forms.propsNoneTitle")} desc={t("forms.propsNoneDesc")} />
+                      )}
+                    </SectionCard>
+
                     <SectionCard title={t("forms.settingsTitle")} desc={t("forms.settingsDesc")}>
                       <div className="grid gap-3">
                         <div className="grid gap-1">
@@ -1113,6 +999,24 @@ export function FormCenterView() {
                         </div>
                       </SectionCard>
                     )}
+
+                    {/* F-EXP: Paylaşım paneli — bağlantı, iframe gömme, QR, captcha, oylama sonuçları */}
+                    <SectionCard
+                      title={<span className="flex items-center gap-2"><Icons.Share2 className="size-4 text-teal-600" /> {t("forms.shareTitle")}</span>}
+                      desc={t("forms.shareDesc")}
+                    >
+                      <SharePanel
+                        form={{ id: selectedForm.id, name: selectedForm.name, type: selectedForm.type }}
+                        busy={busy}
+                        slug={settings.slug}
+                        onSlugChange={(v) => setSettings({ ...settings, slug: v })}
+                        captchaEnabled={settings.captchaEnabled}
+                        hasPublicResults={settings.hasPublicResults}
+                        onToggleCaptcha={(v) => toggleFormFlag("captchaEnabled", v)}
+                        onToggleResults={(v) => toggleFormFlag("hasPublicResults", v)}
+                        onSlugSave={saveSlug}
+                      />
+                    </SectionCard>
                   </div>
                 </div>
               )}
@@ -1492,212 +1396,46 @@ export function FormCenterView() {
         {/* ══ TAB 4 — CANLI KAYIT MASASI ═══════════════════════════════════ */}
         <TabsContent value="live" className="mt-4 space-y-4">
           <p className="text-sm text-muted-foreground">
-            Halkaya açık kayıt sayfasının birebir önizlemesi — spam koruması ve online ödeme akışı canlı test edilir.
+            {t("forms.liveIframeDesc")}
           </p>
           <div className="flex flex-wrap items-end gap-2">
             <div className="grid gap-1">
-              <Label className="text-xs">Yayındaki form</Label>
+              <Label className="text-xs">{t("forms.liveFormLabel")}</Label>
               <Select value={liveFormId} onValueChange={setLiveFormId}>
                 <SelectTrigger className="w-64"><SelectValue placeholder={t("forms.selectForm")} /></SelectTrigger>
                 <SelectContent>
                   {liveForms.map((f) => (
                     <SelectItem key={f.id} value={f.id}>
-                      {f.name} · {label(FORM_TYPES, f.type)}
+                      {f.name} · {tLabel(FORM_TYPES, f.type)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <Chip tone="teal">Ziyaretçi görünümü</Chip>
+            <Chip tone="teal">{t("forms.liveVisitorChip")}</Chip>
+            {liveForm && (
+              <a href={`/?form=${liveForm.slug || liveForm.id}`} target="_blank" rel="noopener noreferrer">
+                <Button size="sm" variant="outline"><Icons.ExternalLink className="size-3.5" /> {t("forms.openExternal")}</Button>
+              </a>
+            )}
           </div>
 
           {liveForms.length === 0 ? (
             <EmptyState
-              title="Yayında herkese açık form yok"
-              desc="Formlar sekmesinde formu yayınlayın ve Herkese Açık anahtarını açın."
+              title={t("forms.noPublicFormsTitle")}
+              desc={t("forms.noPublicFormsDesc")}
             />
           ) : !liveForm ? (
-            <EmptyState title="Form seçin" desc="Önizlemek için yukarıdan yayındaki bir form seçin." />
+            <EmptyState title={t("forms.selectForm")} desc={t("forms.selectFormEmptyDesc")} />
           ) : (
-            <div className="mx-auto w-full max-w-2xl space-y-4">
-              <SectionCard title={liveForm.name} desc={liveForm.description ?? undefined}>
-                <div className="relative space-y-4">
-                  {liveForm.fields.filter(isLiveVisible).map((f) => renderLiveField(f))}
-
-                  <Separator />
-
-                  {/* Ziyaretçi bilgileri — REGISTRATION'da tam, diğerlerinde ad + e-posta */}
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="grid gap-1">
-                      <Label className="text-xs">Ad Soyad</Label>
-                      <Input value={visitor.name} onChange={(e) => setVisitor({ ...visitor, name: e.target.value })} />
-                    </div>
-                    <div className="grid gap-1">
-                      <Label className="text-xs">E-posta<span className="text-rose-500"> *</span></Label>
-                      <Input type="email" value={visitor.email} onChange={(e) => setVisitor({ ...visitor, email: e.target.value })} />
-                    </div>
-                    {liveForm.type === "REGISTRATION" && (
-                      <>
-                        <div className="grid gap-1">
-                          <Label className="text-xs">Telefon</Label>
-                          <Input type="tel" value={visitor.phone} onChange={(e) => setVisitor({ ...visitor, phone: e.target.value })} />
-                        </div>
-                        <div className="grid gap-1">
-                          <Label className="text-xs">Kurum</Label>
-                          <Input value={visitor.organization} onChange={(e) => setVisitor({ ...visitor, organization: e.target.value })} />
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Ödeme yöntemi — sadece online ödemeli kayıt formu */}
-                  {liveForm.type === "REGISTRATION" && liveForm.enableOnlinePayment && (
-                    <div className="grid gap-1">
-                      <Label className="text-xs">Ödeme yöntemi</Label>
-                      <Select value={payMethod} onValueChange={setPayMethod}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {PAY_METHOD_OPTS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-
-                  {/* Honeypot — gizli alan, ekran okuyuculardan da saklanır */}
-                  {liveForm.honeypotEnabled && (
-                    <div className="absolute -left-[9999px] top-auto h-px w-px overflow-hidden" aria-hidden>
-                      <Input
-                        value={honeypot}
-                        name="website"
-                        autoComplete="off"
-                        tabIndex={-1}
-                        onChange={(e) => setHoneypot(e.target.value)}
-                      />
-                    </div>
-                  )}
-
-                  <Button
-                    className="w-full"
-                    disabled={busy !== null || !visitor.email.trim()}
-                    onClick={submitLive}
-                  >
-                    <Icons.Send className="size-4" /> {busy === "live" ? "Gönderiliyor…" : liveForm.type === "REGISTRATION" ? "Kaydımı Gönder" : "Yanıtı Gönder"}
-                  </Button>
-                  <p className="text-center text-[11px] text-muted-foreground">
-                    Spam koruması aktif: {liveForm.honeypotEnabled ? "honeypot, " : ""}
-                    zaman tuzağı {liveForm.minSubmitSeconds ?? 4} sn, e-posta günlük limit {liveForm.maxPerEmailPerDay ?? 5}
-                  </p>
-                </div>
-              </SectionCard>
-
-              {/* Gönderim sonucu */}
-              {liveResult && (
-                <SectionCard title="Gönderim Sonucu" desc={`Gönderi no: ${liveResult.submissionId.slice(0, 12)}…`}>
-                  <div className="space-y-3">
-                    {liveResult.status === "SPAM" ? (
-                      <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-                        <p className="flex items-center gap-2 font-semibold">
-                          <Icons.ShieldAlert className="size-4" /> Spam şüphesi — gönderi incelemeye alındı
-                        </p>
-                        <p className="mt-1 text-xs">Detaylı puan/ gerekçe listesi yalnız yönetim ekranında görüntülenir.</p>
-                      </div>
-                    ) : (
-                      <div className={`rounded-lg border p-4 text-sm ${liveResult.status === "APPROVED" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                        <p className="flex items-center gap-2 font-semibold">
-                          <Icons.CheckCircle2 className="size-4" />
-                          {liveResult.status === "APPROVED" ? "Kaydınız onaylandı" : "Başvurunuz alındı — incelemede"}
-                        </p>
-                        {liveForm.successMessage && <p className="mt-1 text-xs">{liveForm.successMessage}</p>}
-                        {liveResult.registration && (
-                          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                            <span>Kayıt No: <span className="font-mono font-semibold">{liveResult.registration.confirmationNo}</span></span>
-                            <StatusBadge map={REG_STATUS_MAP} value={liveResult.registration.status} />
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    {/* QA quiz anında puan — doğru cevabı işaretlenmiş sorular için */}
-                    {liveResult.quizScore != null && liveResult.status !== "SPAM" && (
-                      <div className="rounded-lg border border-teal-200 bg-teal-50/60 p-3 text-sm text-teal-800">
-                        <p className="flex items-center gap-2 font-semibold">
-                          <Icons.Sigma className="size-4" /> Quiz sonucu: %{Math.round(liveResult.quizScore)}
-                          {liveResult.quizCorrect != null && liveResult.quizTotal ? ` — ${liveResult.quizCorrect}/${liveResult.quizTotal} doğru` : ""}
-                        </p>
-                        <p className="mt-0.5 text-xs">Yanıtınız mobil QA motorunca otomatik puanlandı.</p>
-                      </div>
-                    )}
-
-                    {/* Online ödeme simülasyonu */}
-                    {liveResult.payment && liveResult.status !== "SPAM" && payOutcome?.outcome !== "SUCCEEDED" && (
-                      <div className="rounded-lg border p-4">
-                        <p className="flex items-center gap-2 text-sm font-semibold">
-                          <Icons.CreditCard className="size-4" /> Online Ödeme
-                        </p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {/* DÜZELTME: tutar ödeme nesnesinden değil, çağırana ait SİPARİŞ özetinden okunur (public DTO) */}
-                          Tutar: <span className="font-semibold text-foreground">{liveResult.order ? fmtMoney(liveResult.order.totalAmount ?? 0, liveResult.order.currency ?? "TRY") : "—"}</span>
-                          {liveResult.order && <> · Sipariş {liveResult.order.orderNo}</>}
-                        </p>
-                        {payOutcome?.outcome === "FAILED" && (
-                          <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
-                            {payOutcome.message} — kart bilgilerini düzeltip tekrar deneyin.
-                          </p>
-                        )}
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          <div className="grid gap-1 sm:col-span-2">
-                            <Label className="text-xs">Kart üzerindeki isim</Label>
-                            <Input value={pay.cardHolder} onChange={(e) => setPay({ ...pay, cardHolder: e.target.value })} />
-                          </div>
-                          <div className="grid gap-1 sm:col-span-2">
-                            <Label className="text-xs">Kart numarası</Label>
-                            <Input
-                              inputMode="numeric" placeholder="4242 4242 4242 4242"
-                              value={pay.cardNumber}
-                              onChange={(e) => setPay({ ...pay, cardNumber: e.target.value })}
-                            />
-                          </div>
-                          <div className="grid gap-1">
-                            <Label className="text-xs">Son kullanma</Label>
-                            <Input placeholder="AA/YY" value={pay.expiry} onChange={(e) => setPay({ ...pay, expiry: e.target.value })} />
-                          </div>
-                          <div className="grid gap-1">
-                            <Label className="text-xs">CVC</Label>
-                            <Input placeholder="123" value={pay.cvc} onChange={(e) => setPay({ ...pay, cvc: e.target.value })} />
-                          </div>
-                        </div>
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <Button
-                            size="sm"
-                            disabled={busy !== null || !pay.cardHolder.trim() || !pay.cardNumber.trim() || !pay.expiry.trim() || !pay.cvc.trim()}
-                            onClick={processPayment}
-                          >
-                            <Icons.Lock className="size-3.5" /> {busy === "pay" ? "İşleniyor…" : "Ödemeyi Tamamla"}
-                          </Button>
-                          <Chip tone="teal">4242 4242 4242 4242 → Başarılı</Chip>
-                          <Chip tone="neutral">**0000 → Red</Chip>
-                        </div>
-                      </div>
-                    )}
-                    {payOutcome?.outcome === "SUCCEEDED" && (
-                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
-                        <p className="flex items-center gap-2 font-semibold">
-                          <Icons.CheckCircle2 className="size-4" /> Ödeme başarılı
-                        </p>
-                        <p className="mt-1 text-xs">
-                          Referans: <span className="font-mono">{payOutcome.payment?.reference ?? "—"}</span>
-                          {payOutcome.message ? ` · ${payOutcome.message}` : ""}
-                        </p>
-                      </div>
-                    )}
-
-                    <div className="flex justify-end">
-                      <Button variant="outline" size="sm" onClick={resetLive}>
-                        <Icons.RotateCcw className="size-3.5" /> Yeni Gönderim
-                      </Button>
-                    </div>
-                  </div>
-                </SectionCard>
-              )}
+            <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+              <iframe
+                key={liveForm.id}
+                title={liveForm.name}
+                src={`/?form=${encodeURIComponent(liveForm.slug || liveForm.id)}&embed=1`}
+                className="h-[760px] w-full bg-background"
+                loading="lazy"
+              />
             </div>
           )}
         </TabsContent>
@@ -1863,6 +1601,23 @@ export function FormCenterView() {
                   placeholder={t("forms.optionsPh")}
                   onChange={(e) => setNewField({ ...newField, options: e.target.value })}
                 />
+              </div>
+            )}
+            {newField.type === "MATRIX" && (
+              <div className="grid gap-1">
+                <Label className="text-xs">{t("forms.propsColumns")}</Label>
+                <Textarea
+                  rows={3}
+                  value={newField.columns}
+                  placeholder={t("forms.propsColumnsPh")}
+                  onChange={(e) => setNewField({ ...newField, columns: e.target.value })}
+                />
+              </div>
+            )}
+            {newField.type === "QA_QUIZ" && (
+              <div className="grid gap-1">
+                <Label className="text-xs">{t("forms.propsPoints")}</Label>
+                <Input type="number" min={1} value={newField.points} onChange={(e) => setNewField({ ...newField, points: e.target.value })} />
               </div>
             )}
             <div className="grid grid-cols-2 gap-3">

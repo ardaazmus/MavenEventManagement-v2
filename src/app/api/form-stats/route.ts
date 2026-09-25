@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
         responseRate: valid.length > 0 ? Math.round((answers.length / valid.length) * 100) : 0,
       };
 
-      if (["SINGLE_CHOICE", "MULTI_CHOICE", "CHECKBOX", "QA_QUIZ"].includes(field.type)) {
+      if (["SINGLE_CHOICE", "MULTI_CHOICE", "CHECKBOX", "QA_QUIZ", "VOTE", "YESNO"].includes(field.type)) {
         const dist: Record<string, number> = {};
         for (const a of answers) {
           for (const v of field.type === "SINGLE_CHOICE" ? [a] : parseMulti(a)) {

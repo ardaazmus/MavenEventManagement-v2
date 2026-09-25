@@ -551,6 +551,10 @@ model FormDefinition {
   enableOnlinePayment Boolean @default(false) // online ödeme seçenekleri gösterilsin
   defaultCategoryId   String? // kayıtta ön seçilecek kategori
   successMessage  String?
+  // — F-EXP: dış sayfa paylaşımı + gerçek captcha —
+  slug            String? @unique // kısa paylaşım bağlantısı: /?form=<slug>
+  captchaEnabled  Boolean @default(true) // HMAC imzalı doğrulama sorusu (bot kapısı)
+  hasPublicResults Boolean @default(false) // oylama/anket sonuçları herkese açık
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -576,6 +580,12 @@ model FormField {
   mobileInteractive Boolean @default(false) // mobil uygulamada interaktif öge (anket QA, NPS, rating)
   correctAnswer   String? // QA_QUIZ: seçeneklerden doğru cevap (mobil QA scoring)
   order           Int     @default(0)
+  // — F-EXP: mantık kapıları + genişletilmiş bileşenler —
+  logicRules      String? // JSON: [{"field":<fieldId>,"op":EQ|NEQ|CONTAINS|GT|LT|EMPTY|NOT_EMPTY,"value":string}] — çoklu koşul
+  logicMode       String? // ANY|ALL — koşulların birleşim biçimi (OR/AND kapısı)
+  logicAction     String? // SHOW|HIDE — koşul sağlanınca alan gösterilir/gizlenir
+  points          Int?    // QA_QUIZ ağırlık puanı (varsayılan 1; puanlama ağırlıklı)
+  columns         String? // MATRIX: satır-bazlı kolonlar (options=satırlar)
 
   form    FormDefinition @relation(fields: [formId], references: [id], onDelete: Cascade)
   answers FormAnswer[]

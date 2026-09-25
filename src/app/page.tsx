@@ -3,8 +3,11 @@
 // P2: modül parçalama — ağır modüller next/dynamic ile ilk boyamadan çıkarılır
 // (form-center, portals, media, floors, onsite, badges en ağır paketler); dashboard + editions
 // statik kalır (ilk boyama hedefi). Yüklenme anında hafif iskelet gösterilir.
-import { useEffect } from "react";
+// F-EXP: ?form=<id|slug> → dış paylaşım sayfası (shell'siz form motoru); embed=1 → iframe gömme modu.
+import { Suspense, useEffect } from "react";
+import type React from "react";
 import dynamic from "next/dynamic";
+import { useSearchParams } from "next/navigation";
 import { useApp, hasCapability } from "@/lib/store";
 import { MODULES } from "@/lib/constants";
 import { Shell } from "@/components/maven/shell";
@@ -49,14 +52,34 @@ const MediaArchiveView = dyn(() => import("@/components/maven/views/media").then
 const ArchiveView = dyn(() => import("@/components/maven/views/archive").then((m) => ({ default: m.ArchiveView })));
 const ApiGatewayView = dyn(() => import("@/components/maven/views/integrations").then((m) => ({ default: m.ApiGatewayView })));
 const ComplianceView = dyn(() => import("@/components/maven/views/compliance").then((m) => ({ default: m.ComplianceView })));
+const PublicFormPage = dynamic(
+  () => import("@/components/maven/public-form").then((m) => ({ default: m.PublicFormPage })),
+  { loading: ModuleSkeleton, ssr: false },
+) as React.ComponentType<{ idOrSlug: string; embed?: boolean }>;
 
 export default function Home() {
+  // F-EXP: ?form= parametresi Suspense sınırıyla okunur (SSR-güvenli, effect'siz)
+  return (
+    <Suspense fallback={<ModuleSkeleton />}>
+      <HomeClient />
+    </Suspense>
+  );
+}
+
+function HomeClient() {
   const { module, bootstrap, currentEditionId, editions, setModule } = useApp();
+  const searchParams = useSearchParams();
+  const publicFormRef = searchParams.get("form");
+  const embedMode = searchParams.get("embed") === "1";
 
   useEffect(() => {
     bootstrap();
-     
+
   }, []);
+
+  if (publicFormRef) {
+    return <PublicFormPage idOrSlug={publicFormRef} embed={embedMode} />;
+  }
 
   // yetenek kapalıysa modül içeriği yerine açıklama göster (§03 menü ilkesi)
   const mod = MODULES.find((m) => m.id === module);

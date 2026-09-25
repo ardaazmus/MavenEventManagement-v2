@@ -1,9 +1,12 @@
 // Herkese açık kayıt endpoint'i — Form Merkezi'nde tasarlanan kayıt formu buradan akar.
-// Spam koruması: honeypot + zaman tuzağı + hız limiti + engelli domain (bkz. src/lib/spam-guard.ts)
+// Spam koruması: honeypot + zaman tuzağı + hız limiti + engelli/ıskarta domain + URL doldurma +
+// mükerrer içerik + HMAC doğrulama challenge'ı (bkz. src/lib/spam-guard.ts, form-challenge.ts)
 // Başarılı gönderim → FormSubmission + (REGISTRATION ise) kayıt zinciri: Person → Participation → Registration → Order/Payment
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { evaluateSpam, registerSubmissionHits } from "@/lib/spam-guard";
+import { verifyChallenge } from "@/lib/form-challenge";
+import { filterVisibleAnswers, isFieldVisible } from "@/lib/form-logic";
 import { createRegistrationFromSubmission } from "@/lib/api/registration-chain";
 import { ActivityType } from "@/lib/api/activity";
 import { enforceRateLimit, enforceRateLimitById, clientIp } from "@/lib/rate-limit";
@@ -27,6 +30,9 @@ export async function POST(req: NextRequest) {
       elapsedSeconds?: number;
       paymentMethod?: string;
       source?: string;
+      // F-EXP: HMAC doğrulama challenge'ı (captchaEnabled formlar için zorunlu)
+      challengeToken?: string;
+      challengeAnswer?: string;
       // TASK-B 14: ASGARİ RIZA — gerekli-bilgilendirme onayı (gönderim = onay kaydı) +
       // fonksiyonel seçimli iletişim onayı (zorunlu DEĞİL). Üçüncü taraf script yoktur.
       commsOptIn?: boolean;
@@ -37,8 +43,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "formId ve respondentEmail zorunludur" }, { status: 400 });
     }
 
-    const form = await db.formDefinition.findUnique({
-      where: { id: formId },
+    // F-EXP: id VEYA slug ile çöz — paylaşım bağlantıları kısa slug taşır (?form=kayit-2026)
+    const form = await db.formDefinition.findFirst({
+      where: { OR: [{ id: formId }, { slug: formId }] },
       include: { fields: { orderBy: { order: "asc" } } },
     });
     if (!form) return NextResponse.json({ error: "Form bulunamadı" }, { status: 404 });
@@ -55,9 +62,24 @@ export async function POST(req: NextRequest) {
     if (deniedEmail) return deniedEmail;
     const answers = body.answers ?? {};
 
-    // Zorunlu alan kontrolü (ALWAYS required)
+    // F-EXP: GERÇEK CAPTCHA — captchaEnabled formda HMAC challenge zorunlu.
+    // Başarısızlık 400 (gönderi OLUŞTURULMAZ) — bot trafiği veritabanına hiç ulaşmaz.
+    if (form.captchaEnabled && !verifyChallenge(body.challengeToken, body.challengeAnswer)) {
+      return NextResponse.json({ error: "İnsan doğrulaması başarısız — lütfen soruyu tekrar yanıtlayın" }, { status: 400 });
+    }
+
+    // F-EXP: MANTIK KAPILARI (sunucu tarafı) — gizlenen alanların cevapları TEMİZLENİR;
+    // botların gizli alana değer enjekte etmesi anlamsızlaşır.
+    const visibleAnswers = filterVisibleAnswers(form.fields, answers);
+
+    // Zorunlu alan kontrolü (ALWAYS required, yalnız MANTIK KAPISINDAN GÖRÜNÜR alanlar —
+    // koşulla gizlenen zorunlu alan hata üretmez; görünür koşullu zorunlu alan üretilir)
+    const labelIndex = new Map(form.fields.map((f) => [f.label, f.id]));
     const missing = form.fields.filter(
-      (f) => f.required === "ALWAYS" && f.type !== "SECTION" && !String(answers[f.id] ?? "").trim()
+      (f) =>
+        f.required === "ALWAYS" && f.type !== "SECTION" &&
+        isFieldVisible(f, answers, labelIndex) &&
+        !String(answers[f.id] ?? "").trim()
     );
     if (missing.length > 0) {
       return NextResponse.json(
@@ -66,10 +88,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Spam değerlendirmesi
+    // Spam değerlendirmesi (F-EXP: form-kapsamlı IP sayacı + URL doldurma + içerik karması)
     const existingApproved = await db.formSubmission.count({
       where: { formId: form.id, respondentEmail: email, status: "APPROVED" },
     });
+    const answerText = Object.entries(visibleAnswers)
+      .filter(([fid]) => fid !== "")
+      .map(([, v]) => String(v))
+      .join("\n");
     const verdict = evaluateSpam({
       honeypotValue: body.honeypotValue,
       elapsedSeconds: body.elapsedSeconds,
@@ -79,20 +105,27 @@ export async function POST(req: NextRequest) {
       maxPerEmailPerDay: form.maxPerEmailPerDay,
       blockedDomains: form.blockedDomains,
       existingApprovedCount: existingApproved,
+      formId: form.id,
+      answerText,
     });
-    registerSubmissionHits(email, ip);
+    registerSubmissionHits(email, ip, form.id, answerText);
 
     const status = verdict.isSpam ? "SPAM" : form.autoApprove ? "APPROVED" : "PENDING";
 
-    // QA_QUIZ scoring — mobil QA motoru: doğru cevabı işaretlenmiş quiz alanları puanlanır
+    // QA_QUIZ scoring — mobil QA motoru: doğru cevabı işaretlenmiş quiz alanları puanlanır.
+    // F-EXP: points alanı ile AĞIRLIKLI puanlama (points yoksa 1) — kolay soru 1, zor soru 5.
     const quizFields = form.fields.filter((f) => f.type === "QA_QUIZ" && f.correctAnswer);
     let quizScore: number | null = null;
     let quizCorrect: number | null = null;
     let quizTotal: number | null = null;
     if (quizFields.length > 0) {
       quizTotal = quizFields.length;
-      quizCorrect = quizFields.filter((f) => String(answers[f.id] ?? "").trim() === f.correctAnswer).length;
-      quizScore = Math.round((quizCorrect / quizTotal) * 100);
+      const totalWeight = quizFields.reduce((s, f) => s + Math.max(1, f.points ?? 1), 0);
+      const earnedWeight = quizFields
+        .filter((f) => String(visibleAnswers[f.id] ?? "").trim() === f.correctAnswer)
+        .reduce((s, f) => s + Math.max(1, f.points ?? 1), 0);
+      quizCorrect = quizFields.filter((f) => String(visibleAnswers[f.id] ?? "").trim() === f.correctAnswer).length;
+      quizScore = totalWeight > 0 ? Math.round((earnedWeight / totalWeight) * 100) : 0;
     }
 
     const submission = await db.formSubmission.create({
@@ -116,8 +149,8 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Yanıtları sakla
-    const answerRows = Object.entries(answers)
+    // Yanıtları sakla — F-EXP: yalnız MANTIK KAPILARINDAN GEÇEN cevaplar yazılır
+    const answerRows = Object.entries(visibleAnswers)
       .filter(([fieldId]) => form.fields.some((f) => f.id === fieldId))
       .map(([fieldId, value]) => ({
         formId: form.id,

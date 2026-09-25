@@ -30,6 +30,7 @@ const PUBLIC_RULES: PublicRule[] = [
   { prefix: "/api/auth/" },
   { exact: "/api/public-register" },
   { prefix: "/api/public/" },
+  { prefix: "/api/public-forms/" }, // F-EXP: dış sayfa form verisi + oylama sonuçları (kendi kapılarıyla korunur),
   { exact: "/api/health" },
   { prefix: "/api/portal/" },
   { exact: "/api/scan" },

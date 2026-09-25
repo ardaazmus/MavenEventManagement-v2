@@ -139,20 +139,28 @@ export const FORM_FIELD_TYPES: Record<string, string> = {
   NUMBER: "Sayı",
   EMAIL: "E-posta",
   PHONE: "Telefon",
+  URL: "Web Adresi",
   DATE: "Tarih",
+  TIME: "Saat",
   SINGLE_CHOICE: "Tek Seçim",
   MULTI_CHOICE: "Çok Seçim",
   CHECKBOX: "Onay Kutusu",
+  YESNO: "Evet / Hayır",
   COUNTRY: "Ülke",
   FILE: "Dosya",
   RATING: "Puanlama (1-5)",
   NPS: "NPS (0-10)",
   QA_QUIZ: "Quiz / QA",
+  VOTE: "Oylama",
+  RANKING: "Sıralama",
+  MATRIX: "Matris (Likert)",
+  SIGNATURE: "El İmzası",
+  TERMS: "Rıza Metni",
   SECTION: "Bölüm Başlığı",
 };
 
 // istatistikte dağılım hesaplanan alanlar
-export const CHOICE_FIELD_TYPES = ["SINGLE_CHOICE", "MULTI_CHOICE", "CHECKBOX", "RATING", "NPS"];
+export const CHOICE_FIELD_TYPES = ["SINGLE_CHOICE", "MULTI_CHOICE", "CHECKBOX", "YESNO", "RATING", "NPS", "VOTE", "QA_QUIZ"];
 
 export const FORM_SUBMISSION_STATUS = {
   PENDING: "İnceleniyor",

@@ -1809,3 +1809,50 @@ Stage Summary:
 - Değişen: prisma/schema.prisma, src/app/api/form-fields/reorder/route.ts (YENİ), src/app/api/public-forms/[idOrSlug]/route.ts, src/lib/form-challenge.ts, src/components/maven/{form-studio.tsx, public-form.tsx, views/form-center.tsx}, src/i18n/_new/forms.{tr,en}.json + bake (src/i18n/{tr,en}.json), tests/corrections.spec.ts.
 - Kalan riskler: (1) dev server OOM — tekrar düşebilir, restart pattern gerekli; (2) phase2/3/4 test kalıntıları DB birikimi — goldens öncesi temizlik; (3) stüdyo HTML5 DnD dokunmatikte çalışmaz (buton yedeği var); (4) paralel Playwright dosya koşuları DB yarışı yapar — sıralı koşun.
 - Sonraki adım önerileri: form şablon kütüphanesi (hazır kayıt/anket/oylama şablonları), alan kopyala-çiftle, çoklu sayfa (multi-step) formlar, yanıt e-posta bildirimi.
+
+---
+Task ID: FORM-EXP2 (kalan işler: şablon kütüphanesi + alan çoğaltma + çok-adımlı form + gönderim bildirimi)
+Agent: Z.ai Code (ana ajan)
+Task: Form sisteminin kalan genişletmesi — hazır şablonlar (kayıt/quiz/oylama/anket/RSVP/geri bildirim), alan çoğaltma, adım-adım (multi-step) formlar, gönderim e-posta bildirimi; kapılar yeşil kalacak.
+
+Work Log:
+
+## SCHEMA ✓
+- FormField.step Int @default(1) (adım/sayfa 1..20; enableSteps kapalıyken yoksayılır), FormDefinition.enableSteps Boolean @default(false), FormDefinition.notifyEmail String? — db:push ✓ + dev server RESTART zorunlu (çalışan süreç eski Prisma client'ı cache'liyor; yenisi olmadan yeni kolonlar "Unknown argument" verir).
+
+## MAIL MOTORU (paylaşımlı çekirdek) ✓
+- YENİ src/lib/mail-dispatch.ts: dispatchMail() — bağlam→sağlayıcı→günlük kota→bastırma listesi→60sn alıcı soğuması→IntegrationLog. Hata FIRLATMAZ, result.error döner (fire-and-forget çağıranlar için güvenli). providerId seçeneği korundu.
+- /api/mail/send POST yeniden yazıldı — motoru çağırır; davranış/yanıt sözleşmesi BİREBİR korunur (404 sağlayıcı yok, 429 kota, maskeli accepted, quota, provider). GET/PUT (bastırma listesi) dokunulmadı. Smoke: 200 maskeli+quota ✓, gövdesiz 400 ✓.
+- public-register: spam-olmayan gönderimde form.notifyEmail varsa ATEŞLE-UNUT bildirim (void dispatchMail().catch — gönderi akışını ASLA etkilemez; log PII'siz). KANIT: gönderim → IntegrationLog "Gönderim: 1 kabul... Yeni form gönderisi: EXP2 Test Form" (250).
+- P3.13 dersi korundu: iç HTTP self-request YOK — lib'e çıkarım yeterli.
+
+## ŞABLON KÜTÜPHANESİ ✓
+- YENİ src/lib/form-templates.ts: 6 şablon SAF VERİ (i18n yaprak anahtarlarıyla): reg (REGISTRATION, 7 alan, 2 adımlı), quiz (QA_MOBILE, 4 puanlı QA_QUIZ + doğru cevaplar: 1/1/2/3 puan), vote (CUSTOM VOTE + hasPublicResults+autoApprove), survey (SURVEY NPS+MATRIX+mantık kapısı: NPS<7 → neden-sorusu SHOW), rsvp (YESNO=Evet → misafir sayısı SHOW), feedback (FEEDBACK RATING+NPS).
+- applyTemplate (form-center): POST /api/forms (enableSteps/hasPublicResults/autoApprove ayarlarıyla) → sıralı POST /api/form-fields (etiketler GEÇERLİ DİLDE çözülür; width/step/points/correctAnswer) → mantık kapıları PUT'ları (oluşturma SONRASI gerçek alan-id'leriyle bağlanır). Yeni sunucu rotası YOK — mevcut genel API'ler.
+- UI: PageHeader'a "Şablondan Oluştur" + dialog (6 kart: ikon, açıklama, çipler "{n} alan / {n} adımlı / Puanlı / Açık sonuç", Uygula butonu, busy durumu).
+
+## ALAN ÇOĞALTMA ✓
+- duplicateField: tüm özellikler (label+"(kopya)" i18n'li, options, logicRules, width, step, correctAnswer...) ile POST + reorder ile orijinalin HEMEN ARDINA yerleşim. Kartta Copy butonu (aria/ title i18n). KANIT: 8 kart → DB order 2:Full Name, 3:Full Name (copy) w50 s1.
+
+## ÇOK-ADIMLI FORM ✓
+- Stüdyo: ayarlarda "Adım adım form" switch + Kaydet (saveFormSettings gövdesine enableSteps+notifyEmail eklendi); özellik panelinde Adım (sayfa) seçici (yalnız enableSteps açıkken; 1..20); tuvalde adım değişiminde tam-satır ayırıcı ("① STEP 1 — 1/2" teal bar) + kartlarda "Adım n" rozeti (yalnız n>1).
+- Public (public-form.tsx): enableSteps DTO'dan okunur; progress bar + "Adım n / m" + % göstergesi; yalnız geçerli adımın (ve mantık kapısından görünen) alanları; İleri → adım-içi ALWAYS-required denetimi (eksiklerde hata mesajı, adım atlamaz); Geri; kimlik/kvkk/ödeme/captcha/gönder blokları yalnız SON adımda (enableSteps=false'ta maxStep=1 → her şey eski düzeninde — regresyon yok); again()/load() stepNo=1.
+- KANIT (agent-browser): Step1 zorunlu boş → "Required fields missing on this step: Full Name, Full Name (copy), Email" ✓; doldur→Step 2 (%100 bar, Attendance Type radyo, TERMS switch, kimlik bloğu, captcha) ✓; gönderim → "response was received — under review" + teyit no + ödeme bloğu ✓.
+
+## DÜZELTME (kök nedenli, önceden var olan yarış) ✓
+- form-center otomatik-seçim effect'i: setSelectedFormId(created.id) STALE formList ile effect'i tetikliyor → seçim formList[0]'a GERİ DÖNÜYORDU (createForm'da da var olan gizli hata). autoPickedRef: otomatik seçim edisyon-başına BİR KEZ; açık seçimler (şablon/oluştur) korunur; geçersiz id temizleme aynen.
+
+## i18n ✓
+- forms.* +33 grup/yaprak (tpl.* 6 şablon içeriği dahil: tplCreateBtn/tplDialog*/tplApply*/tplFieldsCount/tplStepsCount/tplQuizTag/tplPublicTag, copyField/duplicateSuffix/toastDuplicated*, enableSteps*/step*/notifyEmail*/stepsModeBadge) tr+en; bake ✓ (2586 yaprak SİMETRİK); hardcoded-scan: 76 dosya 0 ihlal.
+
+## KAPILAR (SIRALI koşu) ✓
+- tsc 0; lint 0.
+- Playwright SIRALI: corrections 22 + ui-corrections 6 + goldens 4 + flow 6 (ilk denemede "did not run" → bilinen OOM dalgalanması; server sağlıktı, tekrar → 6/6) + phase0 16 + phase2 9 + phase3 11 + phase4 14 = **88 PASS / 0 FAIL**.
+- Test sonrası: POST /api/seed ile demo baseline'a dönüldü (registrations SUBMITTED:3, forms:4, people:28, mailLogs:0) — goldens-parite korunur. Bu oturumun kalıntıları (5 test formu + 2 test kişi zinciri) seed ÖNCESİ manuel temizlendi (OrderLine.registrationId üzerinden sipariş zinciri silme — Order.registrationId YOKTUR, OrderLine taşır).
+
+Stage Summary:
+- Form sistemi artık uçtan uca üretim-kalitesinde: 6 hazır şablonla saniyeler içinde kayıt/quiz/oylama/anket/RSVP/geri-bildirim formu kurulur (etiketler aktif dilde, mantık kapıları ve puanlama dahil), her alan tek tıkla çoğaltılır, uzun formlar adımlara bölünüp dış sayfada ilerleme çubuğuyla doldurulur, her gönderimde organizatöre kota/bastırma-denetimli e-posta bildirimi gider.
+- Değişen: prisma/schema.prisma, src/lib/mail-dispatch.ts (YENİ), src/lib/form-templates.ts (YENİ), src/app/api/mail/send/route.ts (motor lib'den), src/app/api/public-register/route.ts (bildirim), src/app/api/public-forms/[idOrSlug]/route.ts (enableSteps+step DTO), src/components/maven/{form-studio.tsx, public-form.tsx, views/form-center.tsx}, src/i18n/_new/forms.{tr,en}.json + bake.
+- Kalan riskler: (1) dev server OOM dalgalanması — health-poll + restart protokolü gerekli; (2) SIRALI Playwright zorunlu (paralel dosyalar DB yarışı); (3) şablon alan etiketleri uygulama anındaki dile göre yazılır (sonradan dil değişimi formları çevirmez — içeriğe gömülü veri); (4) çok-adımlı + mantık kapısı birlikte kullanımında adım atlanabilir alan boş kalırsa sunucu yine ALWAYS-required'ı denetler (istemci adım-içi denetimi UX için).
+- Sonraki adım önerileri: adımlar arası dallanma (step branching), yanıtlayana onay e-postası, form yanıtları CSV/Excel dışa aktarım, şablonu düzenle/kaydet (kullanıcı şablonu), PHASE 6/7 maddeleri.
+- Cron: 15 dk webDevReview job 413251 yeniden kuruldu (eski 410685 exec-limit nedeniyle donmuştu).

@@ -44,6 +44,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       points: f.points,
       mobileInteractive: f.mobileInteractive,
       width: f.width, // STUDIO-DND: dış sayfada birebir yerleşim (yalnız sunum verisi)
+      step: f.step, // FORM-EXP2: çok-adımlı form — alanın adımı (yalnız sunum verisi)
     }));
 
   const challenge = form.captchaEnabled ? issueChallenge() : null;
@@ -59,6 +60,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     honeypotEnabled: form.honeypotEnabled,
     hasPublicResults: form.hasPublicResults,
     enableOnlinePayment: form.enableOnlinePayment,
+    enableSteps: form.enableSteps, // FORM-EXP2: adım-adım doldurma modu
     // minSubmitSeconds BİLİNÇLİ YOK — zaman tuzağı eşiği keşif sinyali değildir
     fields,
     challenge: challenge ? { question: challenge.question, token: challenge.token } : null,

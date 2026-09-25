@@ -11,18 +11,10 @@
 // motor sağlayıcı ayarlarını doğrular, tüm istismar denetimlerini çalıştırır ve
 // gönderim kaydını üretir — gerçek taşıyıcı (nodemailer/API) A4 sonrası bağlanır.
 import { NextRequest, NextResponse } from "next/server";
+import { dispatchMail, maskEmail, EMAIL_RE } from "@/lib/mail-dispatch";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 import { resolveContext } from "@/lib/api/tenant-guard";
-import { enforceRateLimit } from "@/lib/rate-limit";
-
-const RECIPIENT_COOLDOWN_MS = 60_000;
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-
-// alıcı adresi logda maskeli: a***@d***.com
-const maskEmail = (email: string) => {
-  const [local, domain] = email.split("@");
-  return `${local.slice(0, 1)}***@${(domain ?? "").split(".")[0].slice(0, 1)}***.${(domain ?? "").split(".").slice(1).join(".") || "com"}`;
-};
 
 export async function POST(req: NextRequest) {
   // 1) oran sınırı
@@ -46,77 +38,32 @@ export async function POST(req: NextRequest) {
     const bad = recipients.filter((e) => !EMAIL_RE.test(e));
     if (bad.length > 0) return NextResponse.json({ error: `Geçersiz adres: ${bad.length} adet` }, { status: 422 });
 
-    // 2) bağlam + sağlayıcı
-    const ctx = await resolveContext(null);
-    const provider = body.providerId
-      ? await db.mailProviderConfig.findFirst({ where: { id: body.providerId, tenantId: ctx } })
-      : await db.mailProviderConfig.findFirst({ where: { tenantId: ctx, status: "ACTIVE", isDefault: true } })
-        ?? await db.mailProviderConfig.findFirst({ where: { tenantId: ctx, status: "ACTIVE" } });
-    if (!provider) return NextResponse.json({ error: "Aktif mail sağlayıcısı yok — Ayarlar → Entegrasyonlardan tanımlayın" }, { status: 404 });
-
-    // 3) günlük kota
-    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-    const sentToday = await db.integrationLog.count({
-      where: { direction: "OUTBOUND", method: "MAIL", ok: true, createdAt: { gte: dayStart } },
+    // 2-6) motor: bağlam + sağlayıcı + kota + bastırma + soğuma + denetim kaydı
+    // (FORM-EXP2: çekirdek src/lib/mail-dispatch.ts'e taşındı — form gönderim bildirimi
+    // aynı motoru kullanır; davranış ve yanıt sözleşmesi birebir korunur)
+    const result = await dispatchMail({
+      recipients,
+      subject: body.subject.trim(),
+      text: body.text,
+      html: body.html,
+      providerId: body.providerId,
     });
-    const dailyLimit = provider.dailyLimit ?? 1000;
-    if (sentToday + recipients.length > dailyLimit) {
-      return NextResponse.json(
-        { error: `Günlük kota aşıldı (${sentToday}/${dailyLimit}) — gönderim reddedildi` },
-        { status: 429 },
-      );
+    if (result.error && !result.provider) {
+      // sağlayıcı yok → 404 (mevcut sözleşme)
+      return NextResponse.json({ error: result.error }, { status: 404 });
     }
-
-    // 4) bastırma listesi — liste'dekilere ASLA gönderim
-    const suppressed = await db.mailSuppression.findMany({
-      where: { tenantId: ctx, email: { in: recipients } },
-      select: { email: true, reason: true },
-    });
-    const suppressedMap = new Map(suppressed.map((s) => [s.email, s.reason]));
-    const deliverable = recipients.filter((e) => !suppressedMap.has(e));
-
-    // 5) alıcı soğuması — son 60 sn içinde gönderim yapılan adresler
-    const recentLogs = await db.integrationLog.findMany({
-      where: { direction: "OUTBOUND", method: "MAIL", createdAt: { gte: new Date(Date.now() - RECIPIENT_COOLDOWN_MS) } },
-      select: { payload: true },
-      take: 500,
-    });
-    const cooled = new Set<string>();
-    for (const log of recentLogs) {
-      try {
-        const payload = JSON.parse(log.payload ?? "{}") as { recipients?: string[] };
-        for (const r of payload.recipients ?? []) cooled.add(r);
-      } catch { /* bozuk payload yoksayılır */ }
+    if (result.error) {
+      // kota aşıldı → 429 (mevcut sözleşme)
+      return NextResponse.json({ error: result.error }, { status: 429 });
     }
-
-    const accepted: string[] = [];
-    const skipped: { email: string; reason: string }[] = [];
-    for (const email of deliverable) {
-      if (cooled.has(email)) skipped.push({ email: maskEmail(email), reason: "COOLDOWN" });
-      else accepted.push(email);
-    }
-
-    // 6) gönderim kaydı (simülasyon) — payload yalnız adres kümesi (soğuma denetimi için)
-    const durationMs = 1; // taşıyıcı bağlandığında gerçek süre yazılır
-    await db.integrationLog.create({
-      data: {
-        direction: "OUTBOUND", method: "MAIL",
-        endpoint: `${provider.kind}:${provider.host ?? provider.kind}`,
-        statusCode: accepted.length > 0 ? 250 : 550,
-        ok: accepted.length > 0,
-        durationMs,
-        summary: `Gönderim: ${accepted.length} kabul, ${skipped.length + suppressedMap.size} atlandı (bastırma: ${suppressedMap.size}, soğuma: ${skipped.length}) — "${body.subject.slice(0, 80)}"`,
-        payload: JSON.stringify({ recipients: accepted, subject: body.subject.slice(0, 120) }),
-      },
-    });
 
     return NextResponse.json({
       ok: true,
-      accepted: accepted.map(maskEmail),
-      skipped,
-      suppressedCount: suppressedMap.size,
-      quota: { used: sentToday + accepted.length, dailyLimit },
-      provider: { id: provider.id, name: provider.name, kind: provider.kind },
+      accepted: result.accepted.map(maskEmail),
+      skipped: result.skipped,
+      suppressedCount: result.suppressedCount,
+      quota: result.quota,
+      provider: result.provider,
     });
   } catch (e) {
     console.error("POST /api/mail/send", e);

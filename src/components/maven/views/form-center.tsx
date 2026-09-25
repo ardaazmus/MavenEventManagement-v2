@@ -2,7 +2,7 @@
 // Form Merkezi — kayıt formları, anketler ve mobil interaktif QA öğeleri tek merkezde.
 // 4 sekme: Formlar (liste) · Tasarım Stüdyosu (alan editörü + spam/ödeme ayarları) ·
 // Yanıtlar & İstatistik (inceleme kuyruğu + dağılım analizi) · Canlı Kayıt Masası (halka açık önizleme).
-import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -27,6 +27,7 @@ import { useLang, t, tLabel } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { FieldPalette, FieldPropertiesPanel, SharePanel, PALETTE_MIME, type FieldDraft } from "../form-studio";
 import { parseLogicRules } from "@/lib/form-logic";
+import { FORM_TEMPLATES, type FormTemplate } from "@/lib/form-templates";
 
 // ─── API tipleri (sözleşme: UI AGENT SÖZLEŞMESİ / registry) ─────────────────
 
@@ -38,6 +39,7 @@ interface FormFieldDef {
   logicRules?: string | null; logicMode?: string | null; logicAction?: string | null;
   points?: number | null; columns?: string | null;
   width?: number | null; // STUDIO-DND: tuvaldeki genişlik %
+  step?: number | null; // FORM-EXP2: adım/sayfa numarası (enableSteps açıkken)
 }
 interface FormDef {
   id: string; editionId: string; name: string; type: string; status: string;
@@ -45,6 +47,7 @@ interface FormDef {
   honeypotEnabled: boolean; minSubmitSeconds: number | null; maxPerEmailPerDay: number | null;
   blockedDomains?: string | null; enableOnlinePayment: boolean; defaultCategoryId?: string | null;
   captchaEnabled: boolean; hasPublicResults: boolean; slug?: string | null;
+  enableSteps?: boolean; notifyEmail?: string | null; // FORM-EXP2
   fields: FormFieldDef[]; _count?: { submissions: number };
 }
 interface SubmissionRow {
@@ -186,6 +189,7 @@ export function FormCenterView() {
     blockedDomains: "", autoApprove: false,
     enableOnlinePayment: false, defaultCategoryId: "AUTO",
     captchaEnabled: true, hasPublicResults: false, slug: "",
+    enableSteps: false, notifyEmail: "", // FORM-EXP2
   });
 
   // Yanıtlar sekmesi filtreleri + detay dialogu
@@ -197,6 +201,9 @@ export function FormCenterView() {
 
   // Canlı kayıt masası — dış sayfa motorunun birebir iframe önizlemesi (F-EXP)
   const [liveFormId, setLiveFormId] = useState("");
+
+  // FORM-EXP2: şablon kütüphanesi dialogu
+  const [tplOpen, setTplOpen] = useState(false);
 
   // Stüdyo — seçili alan (özellik paneli)
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
@@ -244,10 +251,17 @@ export function FormCenterView() {
   );
 
   // İlk formu otomatik seç; edisyon değişince geçersiz seçimi temizle (stüdyo/yanıtlar ortak)
+  // FORM-EXP2 DÜZELTME (yarış): oluşturma/şablon uygulama sonrası setSelectedFormId(created.id)
+  // STALE formList ile bu effect'i tetikliyordu → seçim formList[0]'a geri dönüyordu.
+  // Otomatik seçim edisyon-başına BİR KEZ kısıtlandı — açık seçimler artık korunur.
+  const autoPickedRef = useRef<string>("");
   useEffect(() => {
     if (selectedFormId && !formList.some((f) => f.id === selectedFormId)) setSelectedFormId("");
-    else if (!selectedFormId && formList.length > 0) setSelectedFormId(formList[0].id);
-  }, [selectedFormId, formList]);
+    else if (!selectedFormId && formList.length > 0 && autoPickedRef.current !== (currentEditionId ?? "")) {
+      autoPickedRef.current = currentEditionId ?? "";
+      setSelectedFormId(formList[0].id);
+    }
+  }, [selectedFormId, formList, currentEditionId]);
 
   // Canlı masada yayında + herkese açık ilk formu seç; geçersiz seçimi temizle
   useEffect(() => {
@@ -273,6 +287,8 @@ export function FormCenterView() {
       captchaEnabled: f.captchaEnabled,
       hasPublicResults: f.hasPublicResults,
       slug: f.slug ?? "",
+      enableSteps: f.enableSteps ?? false,
+      notifyEmail: f.notifyEmail ?? "",
     });
   }, [selectedFormId, formList]);
 
@@ -363,6 +379,8 @@ export function FormCenterView() {
         autoApprove: settings.autoApprove,
         enableOnlinePayment: settings.enableOnlinePayment,
         defaultCategoryId: settings.defaultCategoryId === "AUTO" ? null : settings.defaultCategoryId,
+        enableSteps: settings.enableSteps, // FORM-EXP2
+        notifyEmail: settings.notifyEmail, // FORM-EXP2 — "" → null (sanitize)
       });
       toast({ title: t("forms.toastSettingsSaved"), description: selectedForm.name });
       reload();
@@ -435,6 +453,8 @@ export function FormCenterView() {
         logicAction: draft.logicRules.length > 0 ? draft.logicAction : null,
         // STUDIO-DND: elle ayarlanan genişlik (25..100 aralığına sabitlenir)
         width: draft.type === "SECTION" ? 100 : Math.min(100, Math.max(25, numOr(draft.width, 100))),
+        // FORM-EXP2: adım/sayfa (1..20; enableSteps kapalıyken sunucu yoksayar)
+        step: Math.min(20, Math.max(1, numOr(draft.step, 1))),
       });
       toast({ title: t("forms.fieldSavedToast"), description: draft.label });
       reload();
@@ -481,6 +501,112 @@ export function FormCenterView() {
       bump();
     } catch (e) {
       toast({ title: t("forms.toastFieldAddError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // FORM-EXP2: şablonu uygula — form + alanları (etiketler geçerli dilde) + mantık kapıları + ayarlar
+  const applyTemplate = async (tpl: FormTemplate) => {
+    setBusy(`tpl-${tpl.key}`);
+    try {
+      const created = await apiSend<{ id: string }>("/api/forms", "POST", {
+        editionId: currentEditionId,
+        name: t(`forms.${tpl.nameKey}`),
+        type: tpl.formType,
+        description: t(`forms.${tpl.descKey}`),
+        honeypotEnabled: true,
+        minSubmitSeconds: 4,
+        maxPerEmailPerDay: 5,
+        autoApprove: tpl.settings?.autoApprove ?? false,
+        hasPublicResults: tpl.settings?.hasPublicResults ?? false,
+        enableSteps: tpl.settings?.enableSteps ?? false,
+      });
+      const fieldIds: string[] = [];
+      for (let i = 0; i < tpl.fields.length; i++) {
+        const f = tpl.fields[i];
+        const opts = (f.optionsKeys ?? []).map((k) => t(`forms.${k}`));
+        const row = await apiSend<{ id: string }>("/api/form-fields", "POST", {
+          formId: created.id,
+          label: t(`forms.${f.labelKey}`),
+          type: f.type,
+          options: opts.length > 0 ? opts.join("\n") : null,
+          columns: (f.columnsKeys ?? []).length > 0 ? f.columnsKeys!.map((k) => t(`forms.${k}`)).join("\n") : null,
+          required: f.required ?? "OPTIONAL",
+          sensitivity: "STANDARD",
+          mobileInteractive: f.mobile ?? false,
+          correctAnswer: f.type === "QA_QUIZ" && f.correctIndex != null ? opts[f.correctIndex] ?? null : null,
+          points: f.type === "QA_QUIZ" ? f.points ?? 1 : null,
+          width: f.width ?? 100,
+          step: f.step ?? 1,
+          order: i + 1,
+        });
+        fieldIds.push(row.id);
+      }
+      // mantık kapıları — hedef alanlar oluştuktan sonra kimlikleriyle bağlanır
+      for (let i = 0; i < tpl.fields.length; i++) {
+        const logic = tpl.fields[i].logic;
+        if (!logic || logic.length === 0) continue;
+        await apiSend(`/api/form-fields/${fieldIds[i]}`, "PUT", {
+          logicRules: JSON.stringify(logic.map((l) => ({
+            field: fieldIds[l.toIndex], op: l.op,
+            value: l.valueKey ? t(`forms.${l.valueKey}`) : l.value ?? "",
+          }))),
+          logicMode: "ANY",
+          logicAction: logic[0].action ?? "SHOW",
+        });
+      }
+      toast({
+        title: t("forms.tplApplied"),
+        description: t("forms.tplAppliedDesc", { name: t(`forms.${tpl.nameKey}`), n: tpl.fields.length }),
+      });
+      setTplOpen(false);
+      setSelectedFormId(created.id);
+      setTab("studio");
+      reload();
+      bump();
+    } catch (e) {
+      toast({ title: t("forms.tplError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // FORM-EXP2: alan çoğalt — tüm özellikleriyle kopya; orijinalin HEMEN ardından yerleşir
+  const duplicateField = async (f: FormFieldDef) => {
+    if (!selectedForm) return;
+    setBusy(`dup-${f.id}`);
+    try {
+      const created = await apiSend<{ id: string }>("/api/form-fields", "POST", {
+        formId: selectedForm.id,
+        label: `${f.label} ${t("forms.duplicateSuffix")}`,
+        type: f.type,
+        placeholder: f.placeholder ?? null,
+        helpText: f.helpText ?? null,
+        options: f.options ?? null,
+        columns: f.columns ?? null,
+        required: f.required,
+        conditionField: f.conditionField ?? null,
+        conditionValue: f.conditionValue ?? null,
+        sensitivity: f.sensitivity,
+        mobileInteractive: f.mobileInteractive,
+        correctAnswer: f.correctAnswer ?? null,
+        points: f.points ?? null,
+        width: f.width ?? 100,
+        step: f.step ?? 1,
+        logicRules: f.logicRules ?? null,
+        logicMode: f.logicMode ?? null,
+        logicAction: f.logicAction ?? null,
+        order: selectedForm.fields.length + 1,
+      });
+      const ids = [...selectedForm.fields].sort((a, b) => a.order - b.order).map((x) => x.id);
+      ids.splice(ids.indexOf(f.id) + 1, 0, created.id);
+      await apiSend("/api/form-fields/reorder", "POST", { formId: selectedForm.id, orderedIds: ids });
+      toast({ title: t("forms.toastDuplicated"), description: t("forms.toastDuplicatedDesc", { name: f.label }) });
+      reload();
+      bump();
+    } catch (e) {
+      toast({ title: t("forms.toastDuplicateError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -751,9 +877,14 @@ export function FormCenterView() {
   return (
     <div className="space-y-5">
       <PageHeader title={t("forms.title")} desc={t("forms.desc")}>
-        <Button onClick={() => { setNewForm(emptyNewForm); setCreateOpen(true); }}>
-          <Icons.Plus className="size-4" /> {t("forms.newForm")}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={() => setTplOpen(true)}>
+            <Icons.LayoutTemplate className="size-4" /> {t("forms.tplCreateBtn")}
+          </Button>
+          <Button onClick={() => { setNewForm(emptyNewForm); setCreateOpen(true); }}>
+            <Icons.Plus className="size-4" /> {t("forms.newForm")}
+          </Button>
+        </div>
       </PageHeader>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)} className="space-y-4">
@@ -906,8 +1037,29 @@ export function FormCenterView() {
                         ) : (
                           <div>
                             <div ref={canvasRef} className="maven-scroll flex max-h-96 flex-wrap overflow-y-auto">
-                              {orderedFields.map((f, i) => (
-                                <div key={f.id} className="relative min-w-[120px] shrink-0 grow-0 p-1" style={{ width: `${fieldW(f)}%` }}>
+                              {orderedFields.map((f, i) => {
+                                // FORM-EXP2: adımlı mod — adım değişiminde tam-satır ayırıcı
+                                const fStep = f.step ?? 1;
+                                const prevStep = i > 0 ? orderedFields[i - 1].step ?? 1 : null;
+                                const showStepBar = Boolean(selectedForm.enableSteps) && (i === 0 || prevStep !== fStep);
+                                const maxStep = Math.max(1, ...orderedFields.map((x) => x.step ?? 1));
+                                return (
+                                  <Fragment key={f.id}>
+                                    {showStepBar && (
+                                      <div className="my-1.5 flex w-full items-center gap-2 px-1" role="separator" aria-label={t("forms.stepBadgeAria", { n: fStep })}>
+                                        <span className="grid size-5 shrink-0 place-items-center rounded-full bg-teal-600 text-[10px] font-bold text-white">
+                                          {fStep}
+                                        </span>
+                                        <span className="text-[11px] font-semibold uppercase tracking-wide text-teal-700">
+                                          {t("forms.stepLabel")} {fStep}
+                                        </span>
+                                        <span className="h-px min-w-4 flex-1 bg-teal-200" />
+                                        {maxStep > 1 && (
+                                          <span className="text-[10px] tabular-nums text-muted-foreground">{fStep}/{maxStep}</span>
+                                        )}
+                                      </div>
+                                    )}
+                                <div className="relative min-w-[120px] shrink-0 grow-0 p-1" style={{ width: `${fieldW(f)}%` }}>
                                   {dropTarget?.id === f.id && (
                                     <span
                                       aria-hidden
@@ -967,6 +1119,11 @@ export function FormCenterView() {
                                           </span>
                                         )}
                                         {f.mobileInteractive && <Chip tone="teal">{t("forms.mobileChip")}</Chip>}
+                                        {Boolean(selectedForm.enableSteps) && (f.step ?? 1) > 1 && (
+                                          <span className="inline-flex items-center gap-0.5 rounded-md bg-teal-600 px-1.5 py-0.5 text-[11px] font-semibold text-white" title={t("forms.stepBadgeAria", { n: f.step ?? 1 })}>
+                                            {t("forms.stepLabel")} {f.step ?? 1}
+                                          </span>
+                                        )}
                                         {f.sensitivity !== "STANDARD" && (
                                           <Chip tone="violet">{tLabel(SENSITIVITY_MAP, f.sensitivity)}</Chip>
                                         )}
@@ -1026,6 +1183,15 @@ export function FormCenterView() {
                                       >
                                         <Icons.ArrowDown className="size-3.5" />
                                       </Button>
+                                      {/* FORM-EXP2: alanı tüm özellikleriyle çoğalt */}
+                                      <Button
+                                        size="icon" variant="ghost" className="size-7" aria-label={t("forms.copyField")}
+                                        title={t("forms.copyField")}
+                                        disabled={busy !== null}
+                                        onClick={() => duplicateField(f)}
+                                      >
+                                        <Icons.Copy className="size-3.5" />
+                                      </Button>
                                       <Button
                                         size="icon" variant="ghost" className="size-7 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
                                         aria-label={t("forms.deleteFieldAria")}
@@ -1050,7 +1216,9 @@ export function FormCenterView() {
                                     )}
                                   </div>
                                 </div>
-                              ))}
+                                  </Fragment>
+                                );
+                              })}
                             </div>
                             <p className="mt-2 flex items-center gap-1.5 border-t pt-2 text-[11px] text-muted-foreground">
                               <Icons.Info className="size-3 shrink-0" /> {t("forms.canvasHint")}
@@ -1073,6 +1241,7 @@ export function FormCenterView() {
                           field={selectedField}
                           allFields={selectedForm.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
                           busy={busy}
+                          enableSteps={Boolean(selectedForm.enableSteps)}
                           onSave={saveField}
                           onCancel={() => setSelectedFieldId(null)}
                         />
@@ -1098,6 +1267,32 @@ export function FormCenterView() {
                             placeholder={t("forms.phSuccessMessage")}
                             onChange={(e) => setSettings({ ...settings, successMessage: e.target.value })}
                           />
+                        </div>
+                        {/* FORM-EXP2: adım adım form modu */}
+                        <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 p-2.5">
+                          <div className="min-w-0">
+                            <p className="flex items-center gap-1.5 text-sm font-medium">
+                              <Icons.Layers className="size-4 text-teal-600" /> {t("forms.enableStepsTitle")}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{t("forms.enableStepsDesc")}</p>
+                          </div>
+                          <Switch
+                            checked={settings.enableSteps}
+                            disabled={busy !== null}
+                            aria-label={t("forms.enableStepsTitle")}
+                            onCheckedChange={(v) => setSettings({ ...settings, enableSteps: v })}
+                          />
+                        </div>
+                        {/* FORM-EXP2: gönderim bildirimi e-postası */}
+                        <div className="grid gap-1">
+                          <Label className="text-xs">{t("forms.notifyEmailLabel")}</Label>
+                          <Input
+                            type="email"
+                            value={settings.notifyEmail}
+                            placeholder={t("forms.notifyEmailPh")}
+                            onChange={(e) => setSettings({ ...settings, notifyEmail: e.target.value })}
+                          />
+                          <p className="text-[11px] text-muted-foreground">{t("forms.notifyEmailDesc")}</p>
                         </div>
                         <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
                           <Icons.Check className="size-4" /> {t("forms.save")}
@@ -1749,6 +1944,57 @@ export function FormCenterView() {
               {busy === "create" ? "Oluşturuluyor…" : t("forms.createForm")}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ══ FORM-EXP2: ŞABLON KÜTÜPHANESİ DİALOGU ═════════════════════════ */}
+      <Dialog open={tplOpen} onOpenChange={(o) => !o && setTplOpen(false)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto maven-scroll sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Icons.LayoutTemplate className="size-5 text-teal-600" /> {t("forms.tplDialogTitle")}
+            </DialogTitle>
+            <DialogDescription>{t("forms.tplDialogDesc")}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {FORM_TEMPLATES.map((tpl) => {
+              const TplIcon = (Icons as unknown as Record<string, React.ComponentType<{ className?: string }>>)[tpl.icon] ?? Icons.FileInput;
+              const quizCount = tpl.fields.filter((f) => f.type === "QA_QUIZ").length;
+              const stepCount = Math.max(1, ...tpl.fields.map((f) => f.step ?? 1));
+              const isBusy = busy === `tpl-${tpl.key}`;
+              return (
+                <div key={tpl.key} className="flex flex-col rounded-xl border bg-card p-4 transition hover:border-teal-400">
+                  <div className="flex items-start gap-2.5">
+                    <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-teal-50">
+                      <TplIcon className="size-4.5 text-teal-700" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{t(`forms.${tpl.nameKey}`)}</p>
+                      <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{t(`forms.${tpl.descKey}`)}</p>
+                    </div>
+                  </div>
+                  <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                    <Chip tone="neutral">{t("forms.tplFieldsCount", { n: tpl.fields.length })}</Chip>
+                    {(tpl.settings?.enableSteps ?? false) && stepCount > 1 && (
+                      <Chip tone="teal"><Icons.Layers className="size-3" /> {t("forms.tplStepsCount", { n: stepCount })}</Chip>
+                    )}
+                    {quizCount > 0 && <Chip tone="emerald">{t("forms.tplQuizTag")} · {quizCount}</Chip>}
+                    {(tpl.settings?.hasPublicResults ?? false) && (
+                      <Chip tone="violet"><Icons.BarChart3 className="size-3" /> {t("forms.tplPublicTag")}</Chip>
+                    )}
+                  </div>
+                  <Button
+                    size="sm" className="mt-3 w-full"
+                    disabled={busy !== null}
+                    onClick={() => applyTemplate(tpl)}
+                  >
+                    {isBusy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Check className="size-4" />}
+                    {isBusy ? t("forms.tplApplying") : t("forms.tplApply")}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
         </DialogContent>
       </Dialog>
 

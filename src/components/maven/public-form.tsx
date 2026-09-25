@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Send, ShieldCheck, CheckCircle2, AlertTriangle, RotateCcw, RefreshCw } from "lucide-react";
+import { Loader2, Send, ShieldCheck, CheckCircle2, AlertTriangle, RotateCcw, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 
 // ─── API tipleri (public DTO — public-forms/[idOrSlug] sözleşmesi) ───────────
 
@@ -27,12 +27,14 @@ interface PublicField {
   conditionField?: string | null; conditionValue?: string | null;
   points?: number | null; mobileInteractive?: boolean;
   width?: number | null; // STUDIO-DND: tasarımcıdaki elle genişlik %
+  step?: number | null; // FORM-EXP2: adım/sayfa numarası
 }
 interface PublicForm {
   id: string; slug?: string | null; name: string; type: string;
   description?: string | null; successMessage?: string | null;
   captchaEnabled: boolean; honeypotEnabled: boolean; hasPublicResults: boolean;
   enableOnlinePayment?: boolean;
+  enableSteps?: boolean; // FORM-EXP2: adım-adım doldurma modu
   fields: PublicField[];
   challenge?: { question: string; token: string } | null;
 }
@@ -200,6 +202,7 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
   const [result, setResult] = useState<SubmitResult | null>(null);
   const [results, setResults] = useState<PublicResults | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stepNo, setStepNo] = useState(1); // FORM-EXP2: geçerli adım (enableSteps açıkken)
   const startRef = useRef<number>(Date.now());
 
   const load = async () => {
@@ -211,6 +214,7 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
       if (!res.ok) throw new Error(data.error ?? t("forms.publicNotFound"));
       setForm(data);
       setChallenge(data.challenge ?? null);
+      setStepNo(1); // FORM-EXP2: form her yüklendiğinde ilk adımdan başla
       startRef.current = Date.now();
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : t("forms.publicNotFound"));
@@ -320,6 +324,7 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
     setVisitor({ name: "", email: "", phone: "", organization: "" });
     setCaptchaAnswer("");
     setHoneypot("");
+    setStepNo(1); // FORM-EXP2: tekrar doldurmada ilk adıma dön
     startRef.current = Date.now();
     if (form?.captchaEnabled) load(); // tek-kullanım challenge tazele
   };
@@ -426,6 +431,25 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
 
   // ─── form ekranı ───
   const isReg = form.type === "REGISTRATION";
+
+  // FORM-EXP2: çok-adımlı form — adım matematiği + adım-içi zorunlu-alan denetimi
+  const stepsMode = Boolean(form.enableSteps);
+  const maxStep = Math.max(1, ...form.fields.map((f) => f.step ?? 1));
+  const isLast = stepNo >= maxStep;
+  const goNext = () => {
+    setError(null);
+    const missing = form.fields.filter(
+      (f) => f.required === "ALWAYS" && f.type !== "SECTION" &&
+        (f.step ?? 1) === stepNo && visible.has(f.id) &&
+        !(ans[f.id] ?? "").trim(),
+    );
+    if (missing.length > 0) {
+      setError(t("forms.stepMissing", { fields: missing.map((f) => f.label).join(", ") }));
+      return;
+    }
+    setStepNo((s) => Math.min(maxStep, s + 1));
+  };
+
   return wrap(
     <div className="space-y-4">
       <header className="rounded-xl border bg-card p-5 shadow-sm">
@@ -439,9 +463,30 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
 
       <div className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="relative space-y-5">
-          {/* STUDIO-DND: alanlar tasarımcıdaki genişlikleriyle flex satırlarına dizilir */}
+          {/* FORM-EXP2: adım göstergesi — ilerleme çubuğu + adım sayısı */}
+          {stepsMode && (
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <div className="flex items-center justify-between text-xs font-medium">
+                <span className="text-teal-800">{t("forms.stepOf", { n: stepNo, m: maxStep })}</span>
+                <span className="tabular-nums text-muted-foreground">{Math.round((stepNo / maxStep) * 100)}%</span>
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-teal-600 transition-all duration-300"
+                  style={{ width: `${(stepNo / maxStep) * 100}%` }}
+                  role="progressbar"
+                  aria-valuemin={1}
+                  aria-valuemax={maxStep}
+                  aria-valuenow={stepNo}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* STUDIO-DND: alanlar tasarımcıdaki genişlikleriyle flex satırlarına dizilir —
+              FORM-EXP2: adımlı modda yalnız geçerli adımın alanları gösterilir */}
           <div className="flex flex-wrap">
-            {form.fields.filter((f) => visible.has(f.id)).map((f) => {
+            {form.fields.filter((f) => visible.has(f.id) && (!stepsMode || (f.step ?? 1) === stepNo)).map((f) => {
               const w = f.type === "SECTION" ? 100 : Math.min(100, Math.max(25, Math.round(f.width ?? 100)));
               return (
                 <div
@@ -455,7 +500,8 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
             })}
           </div>
 
-          {/* ziyaretçi kimliği */}
+          {/* ziyaretçi kimliği — FORM-EXP2: adımlı modda yalnız SON adımda istenir */}
+          {isLast && (
           <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
             <div className="grid gap-1">
               <Label className="text-xs">{t("forms.publicName")}</Label>
@@ -478,15 +524,30 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
               </>
             )}
           </div>
+          )}
+
+          {/* FORM-EXP2: adım gezinmesi — Geri/İleri (yalnız adımlı mod, son adım hariç) */}
+          {stepsMode && !isLast && (
+            <div className="flex items-center gap-2">
+              <Button variant="outline" className="flex-1" disabled={stepNo <= 1 || busy} onClick={() => { setError(null); setStepNo((s) => Math.max(1, s - 1)); }}>
+                <ChevronLeft className="size-4" /> {t("forms.stepBack")}
+              </Button>
+              <Button className="flex-1" onClick={goNext}>
+                {t("forms.stepNext")} <ChevronRight className="size-4" />
+              </Button>
+            </div>
+          )}
 
           {/* KVKK rıza */}
+          {isLast && (
           <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-xs">
             <Checkbox checked={commsOptIn} onCheckedChange={(c) => setCommsOptIn(c === true)} className="mt-0.5" />
             <span className="text-muted-foreground">{t("forms.publicConsent")}</span>
           </label>
+          )}
 
-          {/* Ödeme yöntemi — sadece online ödemeli kayıt formu */}
-          {isReg && form.enableOnlinePayment && (
+          {/* Ödeme yöntemi — sadece online ödemeli kayıt formu (son adımda) */}
+          {isLast && isReg && form.enableOnlinePayment && (
             <div className="grid gap-1 rounded-lg border bg-muted/20 p-3">
               <Label className="text-xs">{t("forms.payMethodLabel")}</Label>
               <div className="grid gap-1.5">
@@ -504,8 +565,8 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
             </div>
           )}
 
-          {/* insan doğrulaması */}
-          {form.captchaEnabled && challenge && (
+          {/* insan doğrulaması — son adımda */}
+          {isLast && form.captchaEnabled && challenge && (
             <div className="rounded-lg border border-teal-200 bg-teal-50/50 p-3">
               <Label className="flex items-center gap-1.5 text-xs font-medium text-teal-900">
                 <ShieldCheck className="size-3.5" /> {t("forms.publicCaptchaTitle")}
@@ -538,6 +599,8 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
             <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>
           )}
 
+          {isLast && (
+          <>
           <Button className="w-full" disabled={busy} onClick={submit}>
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
             {isReg ? t("forms.publicSubmitReg") : t("forms.publicSubmit")}
@@ -546,6 +609,8 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
             <ShieldCheck className="mr-1 inline size-3" />
             {t("forms.publicSpamNote")}
           </p>
+          </>
+          )}
         </div>
       </div>
     </div>,

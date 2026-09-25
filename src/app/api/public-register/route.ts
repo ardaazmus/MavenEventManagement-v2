@@ -10,6 +10,7 @@ import { filterVisibleAnswers, isFieldVisible } from "@/lib/form-logic";
 import { createRegistrationFromSubmission } from "@/lib/api/registration-chain";
 import { ActivityType } from "@/lib/api/activity";
 import { enforceRateLimit, enforceRateLimitById, clientIp } from "@/lib/rate-limit";
+import { dispatchMail, EMAIL_RE } from "@/lib/mail-dispatch";
 
 export async function POST(req: NextRequest) {
   try {
@@ -202,6 +203,28 @@ export async function POST(req: NextRequest) {
           actorName: "Form Merkezi",
         },
       });
+
+      // FORM-EXP2: gönderim bildirimi — form ayarlarında notifyEmail varsa paylaşımlı
+      // mail motoruyla ATEŞLE-UNUT bildirim (kota/bastırma/soğuma denetimli). Bildirim
+      // hatası gönderi akışını ASLA etkilemez — yalnız sunucu günlüğüne düşer (PII yok).
+      const notifyTo = form.notifyEmail?.trim().toLowerCase() ?? "";
+      if (notifyTo && EMAIL_RE.test(notifyTo)) {
+        void dispatchMail({
+          recipients: [notifyTo],
+          subject: `Yeni form gönderisi: ${form.name}`,
+          text: [
+            `Form: ${form.name}`,
+            `Gönderen: ${submission.respondentName} <${submission.respondentEmail}>`,
+            `Durum: ${status}`,
+            `Gönderi no: ${submission.id}`,
+            ...(quizScore != null ? [`Quiz puanı: ${quizScore} (${quizCorrect}/${quizTotal})`] : []),
+            ...(chain?.registration as { confirmationNo?: string } | undefined)?.confirmationNo
+              ? [`Teyit no: ${(chain!.registration as { confirmationNo?: string }).confirmationNo}`] : [],
+          ].join("\n"),
+        }).then((r) => {
+          if (!r.ok) console.warn("POST /api/public-register [notify]", r.error ?? "bilinmiyor"); // PII yok
+        }).catch(() => undefined);
+      }
     }
 
     // DÜZELTME (public DTO): izin-listeli sabit yanıt sözleşmesi — ham Person/Participation/

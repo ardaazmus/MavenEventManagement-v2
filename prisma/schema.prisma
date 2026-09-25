@@ -555,6 +555,9 @@ model FormDefinition {
   slug            String? @unique // kısa paylaşım bağlantısı: /?form=<slug>
   captchaEnabled  Boolean @default(true) // HMAC imzalı doğrulama sorusu (bot kapısı)
   hasPublicResults Boolean @default(false) // oylama/anket sonuçları herkese açık
+  // — FORM-EXP2: çok-adımlı form + gönderim bildirimi —
+  enableSteps     Boolean @default(false) // alanlar adımlara (sayfalara) bölünür; dış sayfada adım adım doldurma
+  notifyEmail     String? // yeni gönderimde bildirim e-postası (boşsa bildirim yok; bastırma/kota denetimli)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -582,6 +585,8 @@ model FormField {
   order           Int     @default(0)
   // — STUDIO-DND: tasarımcı üzerinde elle konum/boyut —
   width           Int     @default(100) // alan genişliği % (25..100; 100=tam satır; sürükleyerek ayarlanır)
+  // — FORM-EXP2: çok-adımlı form — alanın bulunduğu adım (1..20; enableSteps=false iken yoksayılır)
+  step            Int     @default(1)
   // — F-EXP: mantık kapıları + genişletilmiş bileşenler —
   logicRules      String? // JSON: [{"field":<fieldId>,"op":EQ|NEQ|CONTAINS|GT|LT|EMPTY|NOT_EMPTY,"value":string}] — çoklu koşul
   logicMode       String? // ANY|ALL — koşulların birleşim biçimi (OR/AND kapısı)

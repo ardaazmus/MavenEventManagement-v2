@@ -87,6 +87,7 @@ export interface FieldDraft {
   mobileInteractive: boolean; correctAnswer: string; points: string;
   logicRules: LogicRule[]; logicMode: string; logicAction: string;
   width: string; // STUDIO-DND: % genişlik (25..100)
+  step: string; // FORM-EXP2: adım/sayfa numarası (1..20)
 }
 
 // STUDIO-DND: adlandırılmış genişlik ön ayarları (özellik paneli) — tuvalde serbest
@@ -106,7 +107,7 @@ export function draftFromField(f: {
   conditionField?: string | null; conditionValue?: string | null; sensitivity: string;
   mobileInteractive: boolean; correctAnswer?: string | null; points?: number | null;
   logicRules?: string | null; logicMode?: string | null; logicAction?: string | null;
-  width?: number | null;
+  width?: number | null; step?: number | null;
 }): FieldDraft {
   return {
     label: f.label, type: f.type, placeholder: f.placeholder ?? "", helpText: f.helpText ?? "",
@@ -116,6 +117,7 @@ export function draftFromField(f: {
     correctAnswer: f.correctAnswer ?? "", points: f.points != null ? String(f.points) : "1",
     logicRules: parseLogicRules(f.logicRules), logicMode: f.logicMode ?? "ANY", logicAction: f.logicAction ?? "SHOW",
     width: String(f.width ?? 100),
+    step: String(Math.max(1, f.step ?? 1)),
   };
 }
 
@@ -125,11 +127,12 @@ const OP_LABELS: Record<string, string> = {
 };
 
 export function FieldPropertiesPanel({
-  field, allFields, busy, onSave, onCancel,
+  field, allFields, busy, enableSteps = false, onSave, onCancel,
 }: {
   field: { id: string } & Parameters<typeof draftFromField>[0];
   allFields: { id: string; label: string; type: string }[];
   busy: string | null;
+  enableSteps?: boolean; // FORM-EXP2: form adım-adım modundaysa alanın sayfası seçilebilir
   onSave: (draft: FieldDraft) => void;
   onCancel: () => void;
 }) {
@@ -241,6 +244,22 @@ export function FieldPropertiesPanel({
           <p className="text-[11px] text-muted-foreground">{t("forms.widthHint")}</p>
         )}
       </div>
+
+      {/* ── FORM-EXP2: adım/sayfa (yalnız adım-adım modda) ── */}
+      {enableSteps && (
+        <div className="grid gap-1">
+          <Label className="text-xs">{t("forms.stepPropLabel")}</Label>
+          <Select value={draft.step} onValueChange={(v) => upd({ step: v })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
+                <SelectItem key={n} value={String(n)}>{t("forms.stepLabel")} {n}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-[11px] text-muted-foreground">{t("forms.stepHint")}</p>
+        </div>
+      )}
 
       {draft.type === "QA_QUIZ" && (
         <div className="grid gap-2 rounded-lg border bg-emerald-50/40 p-2.5">

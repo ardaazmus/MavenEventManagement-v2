@@ -2226,3 +2226,31 @@ Stage Summary:
 - Teslim edilenler: (1) Q&A moderasyonu — yanıtla/gizle/yayına al, katılımcıda yanıt gösterimi; (2) Program "Takvime Ekle" (ICS indirme); (3) Sponsor kurum detay kartı; (4) WhatsApp/SMS gönderim raporları (IntegrationLog görünümü); (5) liderlik ad-görünürlük politikası (maskeli/tam ad/gizli); (6) PWA offline fallback sayfası (sw v2). Hepsi additive, tek-route, kiracı/edisyon izolasyonlu, i18n simetrik.
 - Test: tüm e2e suitleri koşuldu — 88 PASS / 0 fail + goldens 4/4 (seed sonrası) + agent-browser uçtan uca kanıtlar; pageError 0.
 - Sonraki adım önerileri: B2B zaman-talebi organizatör onay ekranı, WhatsApp şablon-mesaj yönetimi, program-temelli oyun görevleri (QR check-in), haftalık liderlik sıfırlama cron'u, portal dil tercihine tenant dilleri entegrasyonu, ICS dosyasının Playwright download event'iyle otomatik testi.
+---
+Task ID: CRON-ORCHESTRATION
+Agent: Z.ai Code (ana oturum)
+Task: Kullanıcı talebi — "10 ayrı cron aç; her tur önceki turda eksik/olmayan iyileştirmeleri düşünüp portalın UI/UX akışını mantıklı ve kullanıcı dostu hale getirsin; 10 tur bitince tüm projeye bağımsız E2E testleri (modül modül, tüm hataları bulacak döngü) uygulansın."
+
+Work Log:
+- Eski 6 webDevReview cron'u (411442, 412119, 413159, 413251, 413859, 414137 — hepsi "exec limits exceeded" ile devre dışıydı) paralel tetiklenme riskine karşı SİLİNDİ.
+- Cron servisi saati ile sandbox saati arasında ~5 saat fark tespit edildi (sandbox 2026-09-25 22:04; servis binary-search probe'larla 2026-09-26 03:10–03:15). Takvimler SERVİS saatine göre kuruldu; PROBE-A..G job'ları oluşturulup temizlendi.
+- 10 sıralı iyileştirme turu + 1 bağımsız E2E turu one_time webDevReview olarak kuruldu (tz Europe/Istanbul, priority 10, 25 dk aralık; E2E son turdan +30 dk):
+  - CRON-1 (414600, 03:30) — Taze UX denetimi + kullanıcı-reported defekt regresyon doğrulaması (logo/header çakışması, Maven bandı görünürlük matrisi, form açılışında header/footer kalıcılığı) + ilk 3 sürtünme düzeltmesi
+  - CRON-2 (414598, 03:55) — Navigasyon & bilgi mimarisi (alt menü durumları, scroll restorasyonu, ölü-son yok, skeleton'lar, "neredeyim" deseni)
+  - CRON-3 (414602, 04:20) — Form yolculuğu + oyunlaştırma etkileşimi (görev ilerlemeleri, level-up cilası, puan toast tutarlılığı)
+  - CRON-4 (414599, 04:45) — Bildirim deneyimi (duyuru/hatırlatma görünürlüğü, WA/SMS kanal kartı + rapor UX, Canlı Duyuru dağıtım özeti)
+  - CRON-5 (414605, 05:10) — Tasarım ayarları derinliği (Google Fonts canlı önizleme, ikon kanvası geri bildirimi, arka plan görselleri, sponsor şeridi)
+  - CRON-6 (414604, 05:35) — Admin ayarlar IA (tutarlılık, dirty-state guard, kaydet geri bildirimi, DB&Migration salt-okunur güvenlik, config export/import)
+  - CRON-7 (414607, 06:00) — B2B & kapasite kayıt akışları (durum rozetleri, 409 dostu mesajlar, guest auth-gating CTA, organizatör netliği)
+  - CRON-8 (414608, 06:25) — App hissi & PWA (hareket tasarımı, safe-area, SW güncelleme toast'u, offline polish)
+  - CRON-9 (414612, 06:50) — Erişilebilirlik & i18n & durum kapsama taraması (scan 0, ARIA, her modülde loading/empty/error)
+  - CRON-10 (414611, 07:15) — Entegrasyon cilası + E2E hazırlığı (Playwright spec iskeletleri, deterministik baseline doğrulaması)
+  - CRON-E2E (414613, 07:45) — BAĞIMSIZ E2E DÖNGÜSÜ: modül başına bağımsız spec, SIRALI koşum, run→topla→kök-neden düzelt→tekrar döngüsü (max 6 iterasyon), her koşum sonrası POST /api/seed + portal-demo-setup; bitince 15dk'lık webDevReview bakım cron'unun yeniden kurulması (araç yoksa worklog'a 'NEXT SESSION MUST' notu).
+- Her turun mesajı: zorunlu webDevReview şablonu + proje bağlamı (portal slug no-dig-turkey-2026, DEMO26, bun-run-dev-only/build yasak, additive-only şema kuralı, tsc/lint/i18n kapıları, sıralı Playwright + seed restore, Fast-Refresh tuzağı) + tur-özel odak + worklog APPEND formatı (Task ID CRON-N).
+- Çakışma güvenliği: her tur önceki turun worklog Stage Summary'sini kontrol eder; eksikse ~3 dk bekleyip iki kez yeniden kontrol eder; önceki turun kalan öncelik işlerini kendi odağından önce kapatır.
+
+Stage Summary:
+- Kurulan düzen: 10 ayrı cron turu (her biri önceki turun çıktısından devam eder) + otomatik E2E final turu — kullanıcının "10 ayrı cron → ardından tüm projeye bağımsız e2e" talebi birebir kuruldu.
+- Dev sunucu sağlıklı (/api/health 200, uptime ~23 dk); baseline restore prosedürü tüm tur mesajlarına işlendi.
+- Riskler: (1) cron servisi geçmişte "exec limits exceeded" ile job'ları devre dışı bırakmıştı — turların tamamlanmaması ihtimalinde worklog'daki Task ID zinciri (CRON-1..10 → CRON-E2E) kesinti yerini gösterir; eksik tur elle yeniden oluşturulabilir. (2) Servis-saat/sandbox-saat farkı ~5 saat — takvimler servis saatine göre kuruldu. (3) Bir tur 25 dk'yı aşarsa sonraki turun bekleme+devam protokolü çakışmayı önler.
+- Sonraki adım: turlar otomatik ilerler; her tur worklog'a CRON-N bölümü bırakır. E2E bitiminde modül-bazlı PASS/FAIL tablosu CRON-E2E bölümünde olur.

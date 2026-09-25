@@ -1,0 +1,492 @@
+   588→  const sourceMap = Object.fromEntries(Object.entries(SUBMISSION_SOURCES).map(([k]) => [k, tLabel(SUBMISSION_SOURCES, k)]));
+   589→  const sensitivityMap = Object.fromEntries(Object.entries(SENSITIVITY_MAP).map(([k]) => [k, tLabel(SENSITIVITY_MAP, k)]));
+   590→  const payMethodMap = Object.fromEntries(Object.entries(PAY_METHOD_MAP).map(([k]) => [k, tLabel(PAY_METHOD_MAP, k)]));
+   591→  // FORM_SUBMISSION_STATUS.PENDING, taban sözlükteki status.PENDING ("Bekliyor") ile çakışıyor —
+   592→  // TR çıktı birebir kalsın diye bu map status.* köprüsü yerine forms.* anahtarlarından kurulur
+   593→  const subStatusMap: Record<string, string> = {
+   594→    PENDING: t("forms.statusPending"),
+   595→    APPROVED: t("forms.statusApproved"),
+   596→    REJECTED: t("forms.statusRejected"),
+   597→    SPAM: t("forms.statusSpam"),
+   598→  };
+   599→
+   600→  // ───────────────────────────────────────────────────────────── RENDER ─────
+   601→
+   602→  return (
+   603→    <div className="space-y-5">
+   604→      <PageHeader title={t("forms.title")} desc={t("forms.desc")}>
+   605→        <Button onClick={() => { setNewForm(emptyNewForm); setCreateOpen(true); }}>
+   606→          <Icons.Plus className="size-4" /> {t("forms.newForm")}
+   607→        </Button>
+   608→      </PageHeader>
+   609→
+   610→      <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)} className="space-y-4">
+   611→        <TabsList className="h-auto flex-wrap">
+   612→          <TabsTrigger value="list"><Icons.FileInput className="size-4" /> {t("forms.tabForms")}</TabsTrigger>
+   613→          <TabsTrigger value="studio"><Icons.PenTool className="size-4" /> {t("forms.tabStudio")}</TabsTrigger>
+   614→          <TabsTrigger value="inbox"><Icons.Inbox className="size-4" /> {t("forms.tabInbox")}</TabsTrigger>
+   615→          <TabsTrigger value="live"><Icons.MonitorSmartphone className="size-4" /> {t("forms.tabLive")}</TabsTrigger>
+   616→        </TabsList>
+   617→
+   618→        {/* ══ TAB 1 — FORMLAR ══════════════════════════════════════════════ */}
+   619→        <TabsContent value="list" className="mt-4 space-y-4">
+   620→          {loading ? (
+   621→            <Loading rows={4} />
+   622→          ) : error ? (
+   623→            <ErrorState message={error} onRetry={reload} />
+   624→          ) : formList.length === 0 ? (
+   625→            <EmptyState
+   626→              title={t("forms.emptyTitle")}
+   627→              desc={t("forms.emptyDesc")}
+   628→            />
+   629→          ) : (
+   630→            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+   631→              {formList.map((f) => (
+   632→                <div key={f.id} className="flex flex-col rounded-xl border bg-card p-4 shadow-sm">
+   633→                  <div className="flex items-start justify-between gap-2">
+   634→                    <div className="min-w-0">
+   635→                      <p className="truncate text-sm font-semibold">{f.name}</p>
+   636→                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{f.description ?? t("forms.noDescription")}</p>
+   637→                    </div>
+   638→                    <StatusBadge map={formStatusMap} value={f.status} />
+   639→                  </div>
+   640→                  <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+   641→                    <Chip tone={TYPE_TONE[f.type] ?? "neutral"}>{tLabel(FORM_TYPES, f.type)}</Chip>
+   642→                    {f.honeypotEnabled && (
+   643→                      <Chip tone="neutral"><Icons.ShieldCheck className="size-3" /> {t("forms.chipSpamProtection")}</Chip>
+   644→                    )}
+   645→                    {f.type === "REGISTRATION" && f.enableOnlinePayment && (
+   646→                      <Chip tone="emerald"><Icons.CreditCard className="size-3" /> {t("forms.chipOnlinePayment")}</Chip>
+   647→                    )}
+   648→                    {f.isPublic && (
+   649→                      <Chip tone="violet"><Icons.Globe className="size-3" /> {t("forms.chipPublic")}</Chip>
+   650→                    )}
+   651→                  </div>
+   652→                  <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+   653→                    <span className="inline-flex items-center gap-1">
+   654→                      <Icons.Inbox className="size-3.5" /> {t("forms.submissionCount", { n: f._count?.submissions ?? 0 })}
+   655→                    </span>
+   656→                    <span className="inline-flex items-center gap-1">
+   657→                      <Icons.List className="size-3.5" /> {t("forms.fieldCount", { n: f.fields.length })}
+   658→                    </span>
+   659→                  </div>
+   660→                  <Separator className="my-3" />
+   661→                  <div className="mt-auto flex flex-wrap items-center gap-2">
+   662→                    <Button
+   663→                      size="sm"
+   664→                      variant="outline"
+   665→                      onClick={() => { setSelectedFormId(f.id); setTab("studio"); }}
+   666→                    >
+   667→                      <Icons.PenTool className="size-3.5" /> {t("forms.editInStudio")}
+   668→                    </Button>
+   669→                    <Button
+   670→                      size="sm"
+   671→                      variant={f.status === "PUBLISHED" ? "ghost" : "default"}
+   672→                      disabled={busy !== null}
+   673→                      onClick={() => togglePublish(f)}
+   674→                    >
+   675→                      {f.status === "PUBLISHED"
+   676→                        ? <><Icons.Lock className="size-3.5" /> {t("forms.close")}</>
+   677→                        : <><Icons.Upload className="size-3.5" /> {t("forms.publish")}</>}
+   678→                    </Button>
+   679→                    <div className="ml-auto flex items-center gap-1.5">
+   680→                      <Switch
+   681→                        checked={f.isPublic}
+   682→                        disabled={busy !== null}
+   683→                        aria-label={t("forms.ariaPublic")}
+   684→                        onCheckedChange={(v) => togglePublic(f, v)}
+   685→                      />
+   686→                      <span className="text-xs text-muted-foreground">{t("forms.chipPublic")}</span>
+   687→                    </div>
+   688→                  </div>
+   689→                </div>
+   690→              ))}
+   691→            </div>
+   692→          )}
+   693→        </TabsContent>
+   694→
+   695→        {/* ══ TAB 2 — TASARIM STÜDYOSU ═════════════════════════════════════ */}
+   696→        <TabsContent value="studio" className="mt-4 space-y-4">
+   697→          {formList.length === 0 ? (
+   698→            <EmptyState
+   699→              title={t("forms.studioEmptyTitle")}
+   700→              desc={t("forms.studioEmptyDesc")}
+   701→            />
+   702→          ) : (
+   703→            <>
+   704→              <div className="flex flex-wrap items-end gap-2">
+   705→                <div className="grid gap-1">
+   706→                  <Label className="text-xs">{t("forms.editFormLabel")}</Label>
+   707→                  <Select value={selectedFormId} onValueChange={setSelectedFormId}>
+   708→                    <SelectTrigger className="w-64"><SelectValue placeholder={t("forms.selectForm")} /></SelectTrigger>
+   709→                    <SelectContent>
+   710→                      {formList.map((f) => (
+   711→                        <SelectItem key={f.id} value={f.id}>
+   712→                          {f.name} · {tLabel(FORM_TYPES, f.type)}
+   713→                        </SelectItem>
+   714→                      ))}
+   715→                    </SelectContent>
+   716→                  </Select>
+   717→                </div>
+   718→                {selectedForm && (
+   719→                  <div className="flex items-center gap-1.5 pb-1">
+   720→                    <StatusBadge map={formStatusMap} value={selectedForm.status} />
+   721→                    <Chip tone={TYPE_TONE[selectedForm.type] ?? "neutral"}>{tLabel(FORM_TYPES, selectedForm.type)}</Chip>
+   722→                  </div>
+   723→                )}
+   724→              </div>
+   725→
+   726→              {selectedForm && (
+   727→                <div className="grid gap-4 lg:grid-cols-12">
+   728→                  {/* SOL — Bileşen paleti (F-EXP: tıkla-ekle kataloğu) */}
+   729→                  <div className="min-w-0 lg:col-span-2">
+   730→                    <SectionCard title={t("forms.paletteTitle")} desc={t("forms.paletteDesc")}>
+   731→                      <div className="max-h-[420px] overflow-y-auto maven-scroll pr-1">
+   732→                        <FieldPalette onPick={pickFieldType} />
+   733→                      </div>
+   734→                    </SectionCard>
+   735→                  </div>
+   736→
+   737→                  {/* ORTA — Alan listesi */}
+   738→                  <div className="min-w-0 lg:col-span-5">
+   739→                    <SectionCard
+   740→                      title={t("forms.fieldsTitle")}
+   741→                      desc={t("forms.fieldsDesc", { n: selectedForm.fields.length })}
+   742→                      action={
+   743→                        <Button size="sm" onClick={() => { setNewField(emptyNewField); setFieldOpen(true); }}>
+   744→                          <Icons.Plus className="size-3.5" /> {t("forms.addField")}
+   745→                        </Button>
+   746→                      }
+   747→                    >
+   748→                      {selectedForm.fields.length === 0 ? (
+   749→                        <EmptyState title={t("forms.noFieldsTitle")} desc={t("forms.noFieldsDesc")} />
+   750→                      ) : (
+   751→                        <div className="max-h-96 space-y-2 overflow-y-auto maven-scroll pr-1">
+   752→                          {[...selectedForm.fields]
+   753→                            .sort((a, b) => a.order - b.order)
+   754→                            .map((f, i) => (
+   755→                              <div
+   756→                                key={f.id}
+   757→                                role="button"
+   758→                                tabIndex={0}
+   759→                                aria-pressed={selectedFieldId === f.id}
+   760→                                onClick={() => setSelectedFieldId(selectedFieldId === f.id ? null : f.id)}
+   761→                                onKeyDown={(e) => {
+   762→                                  if (e.key === "Enter" || e.key === " ") {
+   763→                                    e.preventDefault();
+   764→                                    setSelectedFieldId(selectedFieldId === f.id ? null : f.id);
+   765→                                  }
+   766→                                }}
+   767→                                className={`flex cursor-pointer items-center gap-2 rounded-lg border p-2.5 transition hover:border-teal-400 ${
+   768→                                  selectedFieldId === f.id ? "border-teal-500 ring-2 ring-teal-500/20" : ""
+   769→                                } ${f.type === "SECTION" ? "bg-muted/40 border-l-4 border-l-teal-500" : ""}`}
+   770→                              >
+   771→                                <span className="w-6 shrink-0 text-center text-xs font-medium tabular-nums text-muted-foreground">
+   772→                                  {i + 1}
+   773→                                </span>
+   774→                                <div className="min-w-0 flex-1">
+   775→                                  <div className="flex flex-wrap items-center gap-1.5">
+   776→                                    <span className={`truncate text-sm font-medium ${f.type === "SECTION" ? "font-semibold" : ""}`}>
+   777→                                      {f.label}
+   778→                                    </span>
+   779→                                    <span className="text-[11px] text-muted-foreground">{tLabel(FORM_FIELD_TYPES, f.type)}</span>
+   780→                                    {f.required === "ALWAYS" && <Chip tone="amber">{t("forms.required")}</Chip>}
+   781→                                    {f.required === "CONDITIONAL" && (
+   782→                                      <span className="inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700">
+   783→                                        {t("forms.conditional")}
+   784→                                      </span>
+   785→                                    )}
+   786→                                    {f.mobileInteractive && <Chip tone="teal">{t("forms.mobileChip")}</Chip>}
+   787→                                    {f.sensitivity !== "STANDARD" && (
+   788→                                      <Chip tone="violet">{tLabel(SENSITIVITY_MAP, f.sensitivity)}</Chip>
+   789→                                    )}
+   790→                                    {/* F-EXP: mantık kapısı + puan + matris rozetleri */}
+   791→                                    {parseLogicRules(f.logicRules).length > 0 && (
+   792→                                      <span className="inline-flex items-center gap-0.5 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">
+   793→                                        <Icons.GitBranch className="size-3" />
+   794→                                        {f.logicAction === "HIDE" ? t("forms.logicHideShort") : t("forms.logicShowShort")}
+   795→                                        · {parseLogicRules(f.logicRules).length}
+   796→                                      </span>
+   797→                                    )}
+   798→                                    {f.type === "QA_QUIZ" && f.points != null && f.points > 0 && (
+   799→                                      <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">{f.points} {t("forms.pts")}</span>
+   800→                                    )}
+   801→                                    {f.type === "MATRIX" && f.columns && (
+   802→                                      <span className="rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+   803→                                        {(f.options ?? "").split("\n").filter((s) => s.trim()).length}×{(f.columns ?? "").split("\n").filter((s) => s.trim()).length}
+   804→                                      </span>
+   805→                                    )}
+   806→                                  </div>
+   807→                                  {f.required === "CONDITIONAL" && f.conditionField && (
+   808→                                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+   809→                                      {t("forms.conditionLine", { field: f.conditionField, value: f.conditionValue ?? "—" })}
+   810→                                    </p>
+   811→                                  )}
+   812→                                  {f.type === "QA_QUIZ" && (
+   813→                                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+   814→                                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700">
+   815→                                        <Icons.KeyRound className="size-3" /> {t("forms.correctAnswerLabel")}
+   816→                                      </span>
+   817→                                      <Select value={f.correctAnswer ?? undefined} onValueChange={(v) => setCorrectAnswer(f.id, v)}>
+   818→                                        <SelectTrigger className="h-7 w-44 text-[11px]" disabled={busy !== null}>
+   819→                                          <SelectValue placeholder={t("forms.selectScoringOff")} />
+   820→                                        </SelectTrigger>
+   821→                                        <SelectContent>
+   822→                                          {(f.options ?? "").split("\n").map((s) => s.trim()).filter(Boolean).map((opt) => (
+   823→                                            <SelectItem key={opt} value={opt} className="text-xs">{opt}</SelectItem>
+   824→                                          ))}
+   825→                                        </SelectContent>
+   826→                                      </Select>
+   827→                                      {busy === `ca-${f.id}` && <Icons.Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+   828→                                    </div>
+   829→                                  )}
+   830→                                </div>
+   831→                                <div className="flex shrink-0 items-center gap-0.5">
+   832→                                  <Button
+   833→                                    size="icon" variant="ghost" className="size-7" aria-label={t("forms.moveUp")}
+   834→                                    disabled={i === 0 || busy !== null}
+   835→                                    onClick={() => moveField(f.id, -1)}
+   836→                                  >
+   837→                                    <Icons.ArrowUp className="size-3.5" />
+   838→                                  </Button>
+   839→                                  <Button
+   840→                                    size="icon" variant="ghost" className="size-7" aria-label={t("forms.moveDown")}
+   841→                                    disabled={i === selectedForm.fields.length - 1 || busy !== null}
+   842→                                    onClick={() => moveField(f.id, 1)}
+   843→                                  >
+   844→                                    <Icons.ArrowDown className="size-3.5" />
+   845→                                  </Button>
+   846→                                  <Button
+   847→                                    size="icon" variant="ghost" className="size-7 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+   848→                                    aria-label={t("forms.deleteFieldAria")}
+   849→                                    disabled={busy !== null}
+   850→                                    onClick={() => deleteField(f.id, f.label)}
+   851→                                  >
+   852→                                    <Icons.Trash2 className="size-3.5" />
+   853→                                  </Button>
+   854→                                </div>
+   855→                              </div>
+   856→                            ))}
+   857→                        </div>
+   858→                      )}
+   859→                    </SectionCard>
+   860→                  </div>
+   861→
+   862→                  {/* SAĞ — Ayar panelleri */}
+   863→                  <div className="space-y-4 min-w-0 lg:col-span-5">
+   864→                    {/* F-EXP: seçili alan özellik paneli (mantık kapıları dahil) */}
+   865→                    <SectionCard
+   866→                      title={<span className="flex items-center gap-2"><Icons.SlidersHorizontal className="size-4 text-teal-600" /> {selectedField ? t("forms.propsTitle") : t("forms.propsNoneTitle")}</span>}
+   867→                      desc={selectedField ? t("forms.propsDesc", { label: selectedField.label }) : t("forms.propsNoneDesc")}
+   868→                    >
+   869→                      {selectedField ? (
+   870→                        <FieldPropertiesPanel
+   871→                          field={selectedField}
+   872→                          allFields={selectedForm.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+   873→                          busy={busy}
+   874→                          onSave={saveField}
+   875→                          onCancel={() => setSelectedFieldId(null)}
+   876→                        />
+   877→                      ) : (
+   878→                        <EmptyState title={t("forms.propsNoneTitle")} desc={t("forms.propsNoneDesc")} />
+   879→                      )}
+   880→                    </SectionCard>
+   881→
+   882→                    <SectionCard title={t("forms.settingsTitle")} desc={t("forms.settingsDesc")}>
+   883→                      <div className="grid gap-3">
+   884→                        <div className="grid gap-1">
+   885→                          <Label className="text-xs">{t("forms.formName")}</Label>
+   886→                          <Input value={settings.name} onChange={(e) => setSettings({ ...settings, name: e.target.value })} />
+   887→                        </div>
+   888→                        <div className="grid gap-1">
+   889→                          <Label className="text-xs">{t("forms.descriptionLabel")}</Label>
+   890→                          <Textarea rows={2} value={settings.description} onChange={(e) => setSettings({ ...settings, description: e.target.value })} />
+   891→                        </div>
+   892→                        <div className="grid gap-1">
+   893→                          <Label className="text-xs">{t("forms.successMessageLabel")}</Label>
+   894→                          <Input
+   895→                            value={settings.successMessage}
+   896→                            placeholder={t("forms.phSuccessMessage")}
+   897→                            onChange={(e) => setSettings({ ...settings, successMessage: e.target.value })}
+   898→                          />
+   899→                        </div>
+   900→                        <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
+   901→                          <Icons.Check className="size-4" /> {t("forms.save")}
+   902→                        </Button>
+   903→                      </div>
+   904→                    </SectionCard>
+   905→
+   906→                    <SectionCard
+   907→                      title={<span className="flex items-center gap-2"><Icons.ShieldCheck className="size-4 text-teal-600" /> {t("forms.spamTitle")}</span>}
+   908→                      desc={t("forms.spamDesc")}
+   909→                    >
+   910→                      <div className="grid gap-3">
+   911→                        <div className="flex items-center justify-between gap-2">
+   912→                          <div>
+   913→                            <p className="text-sm font-medium">{t("forms.honeypotTitle")}</p>
+   914→                            <p className="text-xs text-muted-foreground">{t("forms.honeypotDesc")}</p>
+   915→                          </div>
+   916→                          <Switch
+   917→                            checked={settings.honeypotEnabled}
+   918→                            disabled={busy !== null}
+   919→                            aria-label={t("forms.ariaHoneypot")}
+   920→                            onCheckedChange={(v) => setSettings({ ...settings, honeypotEnabled: v })}
+   921→                          />
+   922→                        </div>
+   923→                        <div className="grid grid-cols-2 gap-3">
+   924→                          <div className="grid gap-1">
+   925→                            <Label className="text-xs">{t("forms.timeTrapLabel")}</Label>
+   926→                            <Input
+   927→                              type="number" min={0} value={settings.minSubmitSeconds}
+   928→                              onChange={(e) => setSettings({ ...settings, minSubmitSeconds: e.target.value })}
+   929→                            />
+   930→                          </div>
+   931→                          <div className="grid gap-1">
+   932→                            <Label className="text-xs">{t("forms.emailLimitLabel")}</Label>
+   933→                            <Input
+   934→                              type="number" min={1} value={settings.maxPerEmailPerDay}
+   935→                              onChange={(e) => setSettings({ ...settings, maxPerEmailPerDay: e.target.value })}
+   936→                            />
+   937→                          </div>
+   938→                        </div>
+   939→                        <div className="grid gap-1">
+   940→                          <Label className="text-xs">{t("forms.blockedDomainsLabel")}</Label>
+   941→                          <Input
+   942→                            value={settings.blockedDomains}
+   943→                            placeholder={t("forms.phBlockedDomains")}
+   944→                            onChange={(e) => setSettings({ ...settings, blockedDomains: e.target.value })}
+   945→                          />
+   946→                        </div>
+   947→                        <div className="flex items-center justify-between gap-2">
+   948→                          <div>
+   949→                            <p className="text-sm font-medium">{t("forms.autoApproveTitle")}</p>
+   950→                            <p className="text-xs text-muted-foreground">{t("forms.autoApproveDesc")}</p>
+   951→                          </div>
+   952→                          <Switch
+   953→                            checked={settings.autoApprove}
+   954→                            disabled={busy !== null}
+   955→                            aria-label={t("forms.ariaAutoApprove")}
+   956→                            onCheckedChange={(v) => setSettings({ ...settings, autoApprove: v })}
+   957→                          />
+   958→                        </div>
+   959→                        <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
+   960→                          <Icons.Check className="size-4" /> {t("forms.save")}
+   961→                        </Button>
+   962→                      </div>
+   963→                    </SectionCard>
+   964→
+   965→                    {selectedForm.type === "REGISTRATION" && (
+   966→                      <SectionCard
+   967→                        title={<span className="flex items-center gap-2"><Icons.CreditCard className="size-4 text-emerald-600" /> {t("forms.paymentTitle")}</span>}
+   968→                        desc={t("forms.paymentDesc")}
+   969→                      >
+   970→                        <div className="grid gap-3">
+   971→                          <div className="flex items-center justify-between gap-2">
+   972→                            <div>
+   973→                              <p className="text-sm font-medium">{t("forms.onlinePaymentActive")}</p>
+   974→                              <p className="text-xs text-muted-foreground">{t("forms.paymentStepDesc")}</p>
+   975→                            </div>
+   976→                            <Switch
+   977→                              checked={settings.enableOnlinePayment}
+   978→                              disabled={busy !== null}
+   979→                              aria-label={t("forms.ariaOnlinePayment")}
+   980→                              onCheckedChange={(v) => setSettings({ ...settings, enableOnlinePayment: v })}
+   981→                            />
+   982→                          </div>
+   983→                          <div className="grid gap-1">
+   984→                            <Label className="text-xs">{t("forms.defaultCategoryLabel")}</Label>
+   985→                            <Select
+   986→                              value={settings.defaultCategoryId || "AUTO"}
+   987→                              onValueChange={(v) => setSettings({ ...settings, defaultCategoryId: v })}
+   988→                            >
+   989→                              <SelectTrigger><SelectValue placeholder={t("forms.selectCategory")} /></SelectTrigger>
+   990→                              <SelectContent>
+   991→                                <SelectItem value="AUTO">{t("forms.categoryAuto")}</SelectItem>
+   992→                                {categoryList.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+   993→                              </SelectContent>
+   994→                            </Select>
+   995→                          </div>
+   996→                          <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
+   997→                            <Icons.Check className="size-4" /> {t("forms.save")}
+   998→                          </Button>
+   999→                        </div>
+  1000→                      </SectionCard>
+  1001→                    )}
+  1002→
+  1003→                    {/* F-EXP: Paylaşım paneli — bağlantı, iframe gömme, QR, captcha, oylama sonuçları */}
+  1004→                    <SectionCard
+  1005→                      title={<span className="flex items-center gap-2"><Icons.Share2 className="size-4 text-teal-600" /> {t("forms.shareTitle")}</span>}
+  1006→                      desc={t("forms.shareDesc")}
+  1007→                    >
+  1008→                      <SharePanel
+  1009→                        form={{ id: selectedForm.id, name: selectedForm.name, type: selectedForm.type }}
+  1010→                        busy={busy}
+  1011→                        slug={settings.slug}
+  1012→                        onSlugChange={(v) => setSettings({ ...settings, slug: v })}
+  1013→                        captchaEnabled={settings.captchaEnabled}
+  1014→                        hasPublicResults={settings.hasPublicResults}
+  1015→                        onToggleCaptcha={(v) => toggleFormFlag("captchaEnabled", v)}
+  1016→                        onToggleResults={(v) => toggleFormFlag("hasPublicResults", v)}
+  1017→                        onSlugSave={saveSlug}
+  1018→                      />
+  1019→                    </SectionCard>
+  1020→                  </div>
+  1021→                </div>
+  1022→              )}
+  1023→            </>
+  1024→          )}
+  1025→        </TabsContent>
+  1026→
+  1027→        {/* ══ TAB 3 — YANITLAR & İSTATİSTİK ════════════════════════════════ */}
+  1028→        <TabsContent value="inbox" className="mt-4 space-y-4">
+  1029→          <div className="flex flex-wrap items-end gap-2">
+  1030→            <div className="grid gap-1">
+  1031→              <Label className="text-xs">{t("forms.formLabel")}</Label>
+  1032→              <Select value={selectedFormId} onValueChange={setSelectedFormId}>
+  1033→                <SelectTrigger className="w-60"><SelectValue placeholder={t("forms.selectForm")} /></SelectTrigger>
+  1034→                <SelectContent>
+  1035→                  {formList.map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
+  1036→                </SelectContent>
+  1037→              </Select>
+  1038→            </div>
+  1039→            <div className="grid gap-1">
+  1040→              <Label className="text-xs">{t("forms.statusLabel")}</Label>
+  1041→              <Select value={statusFilter} onValueChange={setStatusFilter}>
+  1042→                <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+  1043→                <SelectContent>
+  1044→                  <SelectItem value="ALL">{t("forms.all")}</SelectItem>
+  1045→                  {Object.entries(subStatusMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+  1046→                </SelectContent>
+  1047→              </Select>
+  1048→            </div>
+  1049→            <div className="grid gap-1">
+  1050→              <Label className="text-xs">{t("forms.sourceLabel")}</Label>
+  1051→              <Select value={sourceFilter} onValueChange={setSourceFilter}>
+  1052→                <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+  1053→                <SelectContent>
+  1054→                  <SelectItem value="ALL">{t("forms.all")}</SelectItem>
+  1055→                  {Object.entries(sourceMap).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+  1056→                </SelectContent>
+  1057→              </Select>
+  1058→            </div>
+  1059→          </div>
+  1060→
+  1061→          <SectionCard title={t("forms.submissionsTitle")} desc={t("forms.submissionsDesc")}>
+  1062→            {!selectedFormId ? (
+  1063→              <EmptyState title={t("forms.selectForm")} desc={t("forms.selectFormEmptyDesc")} />
+  1064→            ) : subLoading ? (
+  1065→              <Loading rows={4} />
+  1066→            ) : subError ? (
+  1067→              <ErrorState message={subError} onRetry={reloadSubs} />
+  1068→            ) : subList.length === 0 ? (
+  1069→              <EmptyState title={t("forms.noSubsTitle")} desc={t("forms.noSubsDesc")} />
+  1070→            ) : (
+  1071→              <>
+  1072→                {/* masaüstü tablo */}
+  1073→                <div className="hidden max-h-96 overflow-y-auto maven-scroll md:block">
+  1074→                  <table className="w-full text-sm">
+  1075→                    <thead className="sticky top-0 bg-card">
+  1076→                      <tr className="border-b text-left text-xs text-muted-foreground">
+  1077→                        <th className="py-2 pr-3 font-medium">{t("forms.thRespondent")}</th>
+
+[showing lines 588-1077 of 1824; use offset=1078 with limit to continue reading]

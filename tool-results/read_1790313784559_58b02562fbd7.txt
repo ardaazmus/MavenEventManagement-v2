@@ -1,0 +1,768 @@
+     1→"use client";
+     2→// F-EXP — Dış sayfa form motoru: Form Merkezi'nde tasarlanan her formu KENDİ SAYFASI
+     3→// dışında (paylaşım bağlantısı ?form=<slug> veya harici site <iframe> gömmesi) çalıştırır.
+     4→// Kapsam: 18+ alan bileşeni · mantık kapıları (sunucuyla aynı motor) · honeypot · zaman
+     5→// tuzağı ölçümü · HMAC insan doğrulaması (captcha) · ağırlıklı quiz sonucu · oylama
+     6→// sonuç ekranı · KVKK rıza kutusu. Embed modunda shell'siz, iframe-içi render eder.
+     7→import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+     8→import { apiSend } from "@/lib/client";
+     9→import { isFieldVisible } from "@/lib/form-logic";
+    10→import { useLang, t } from "@/lib/i18n";
+    11→import { Button } from "@/components/ui/button";
+    12→import { Input } from "@/components/ui/input";
+    13→import { Label } from "@/components/ui/label";
+    14→import { Textarea } from "@/components/ui/textarea";
+    15→import { Checkbox } from "@/components/ui/checkbox";
+    16→import { Switch } from "@/components/ui/switch";
+    17→import { Badge } from "@/components/ui/badge";
+    18→import { Loader2, Send, ShieldCheck, CheckCircle2, AlertTriangle, RotateCcw, RefreshCw } from "lucide-react";
+    19→
+    20→// ─── API tipleri (public DTO — public-forms/[idOrSlug] sözleşmesi) ───────────
+    21→
+    22→interface PublicField {
+    23→  id: string; label: string; type: string; required: string;
+    24→  options?: string | null; columns?: string | null;
+    25→  placeholder?: string | null; helpText?: string | null;
+    26→  logicRules?: string | null; logicMode?: string | null; logicAction?: string | null;
+    27→  conditionField?: string | null; conditionValue?: string | null;
+    28→  points?: number | null; mobileInteractive?: boolean;
+    29→}
+    30→interface PublicForm {
+    31→  id: string; slug?: string | null; name: string; type: string;
+    32→  description?: string | null; successMessage?: string | null;
+    33→  captchaEnabled: boolean; honeypotEnabled: boolean; hasPublicResults: boolean;
+    34→  enableOnlinePayment?: boolean;
+    35→  fields: PublicField[];
+    36→  challenge?: { question: string; token: string } | null;
+    37→}
+    38→interface SubmitResult {
+    39→  submissionId: string; status: string;
+    40→  quizScore?: number | null; quizCorrect?: number | null; quizTotal?: number | null;
+    41→  registration?: { confirmationNo: string | null; status: string | null } | null;
+    42→  order?: { orderNo: string | null; status: string | null } | null;
+    43→  payment?: { id: string; status: string } | null;
+    44→}
+    45→interface PublicResults {
+    46→  form: { id: string; name: string; type: string };
+    47→  totalVotes: number;
+    48→  fields: { fieldId: string; label: string; type: string; responseCount: number; distribution?: { value: string; count: number }[]; average?: number | null }[];
+    49→}
+    50→
+    51→// ─── yardımcılar ─────────────────────────────────────────────────────────────
+    52→
+    53→const optsOf = (f: PublicField): string[] =>
+    54→  (f.options ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
+    55→const colsOf = (f: PublicField): string[] =>
+    56→  (f.columns ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
+    57→// MULTI_CHOICE / RANKING / MATRIX cevabı JSON dizi/nesne taşıyabilir
+    58→function parseMaybeJson(v: string): unknown {
+    59→  try {
+    60→    return JSON.parse(v);
+    61→  } catch {
+    62→    return v;
+    63→  }
+    64→}
+    65→
+    66→// ─── İmza tuvali (SIGNATURE) ─────────────────────────────────────────────────
+    67→
+    68→function SignaturePad({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+    69→  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    70→  const drawing = useRef(false);
+    71→
+    72→  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    73→    const cv = canvasRef.current;
+    74→    if (!cv) return { x: 0, y: 0 };
+    75→    const r = cv.getBoundingClientRect();
+    76→    return { x: ((e.clientX - r.left) / r.width) * cv.width, y: ((e.clientY - r.top) / r.height) * cv.height };
+    77→  };
+    78→  const start = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    79→    e.preventDefault();
+    80→    const ctx = canvasRef.current?.getContext("2d");
+    81→    if (!ctx) return;
+    82→    drawing.current = true;
+    83→    const p = pos(e);
+    84→    ctx.beginPath();
+    85→    ctx.moveTo(p.x, p.y);
+    86→  };
+    87→  const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    88→    if (!drawing.current) return;
+    89→    e.preventDefault();
+    90→    const ctx = canvasRef.current?.getContext("2d");
+    91→    if (!ctx) return;
+    92→    const p = pos(e);
+    93→    ctx.strokeStyle = "#0f766e";
+    94→    ctx.lineWidth = 2.2;
+    95→    ctx.lineCap = "round";
+    96→    ctx.lineTo(p.x, p.y);
+    97→    ctx.stroke();
+    98→  };
+    99→  const end = () => {
+   100→    if (!drawing.current) return;
+   101→    drawing.current = false;
+   102→    const cv = canvasRef.current;
+   103→    if (cv) onChange(cv.toDataURL("image/png"));
+   104→  };
+   105→  const clear = () => {
+   106→    const cv = canvasRef.current;
+   107→    const ctx = cv?.getContext("2d");
+   108→    if (cv && ctx) ctx.clearRect(0, 0, cv.width, cv.height);
+   109→    onChange("");
+   110→  };
+   111→
+   112→  return (
+   113→    <div className="grid gap-1.5">
+   114→      <canvas
+   115→        ref={canvasRef}
+   116→        width={560}
+   117→        height={150}
+   118→        role="img"
+   119→        aria-label={t("forms.signatureAria")}
+   120→        className="h-36 w-full cursor-crosshair touch-none rounded-lg border border-dashed bg-white"
+   121→        onPointerDown={start}
+   122→        onPointerMove={move}
+   123→        onPointerUp={end}
+   124→        onPointerLeave={end}
+   125→      />
+   126→      <div className="flex items-center justify-between">
+   127→        <p className="text-[11px] text-muted-foreground">{t("forms.signatureHint")}</p>
+   128→        {value && (
+   129→          <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={clear}>
+   130→            <RotateCcw className="size-3" /> {t("forms.signatureClear")}
+   131→          </Button>
+   132→        )}
+   133→      </div>
+   134→    </div>
+   135→  );
+   136→}
+   137→
+   138→// ─── Sıralama bileşeni (RANKING) ─────────────────────────────────────────────
+   139→
+   140→function RankingInput({ opts, value, onChange }: { opts: string[]; value: string; onChange: (v: string) => void }) {
+   141→  const [order, setOrder] = useState<string[]>(() => {
+   142→    const saved = value ? (parseMaybeJson(value) as unknown) : null;
+   143→    if (Array.isArray(saved) && (saved as string[]).length === opts.length && opts.every((o) => (saved as string[]).includes(o))) {
+   144→      return saved as string[];
+   145→    }
+   146→    return [...opts];
+   147→  });
+   148→  useEffect(() => {
+   149→    onChange(JSON.stringify(order));
+   150→    // yalnız sıralama değişince yaz
+   151→  }, [order]);
+   152→
+   153→  const move = (i: number, dir: -1 | 1) => {
+   154→    setOrder((o) => {
+   155→      const next = [...o];
+   156→      const j = i + dir;
+   157→      if (j < 0 || j >= next.length) return o;
+   158→      [next[i], next[j]] = [next[j], next[i]];
+   159→      return next;
+   160→    });
+   161→  };
+   162→
+   163→  return (
+   164→    <div className="grid gap-1">
+   165→      {order.map((opt, i) => (
+   166→        <div key={opt} className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-sm">
+   167→          <span className="grid size-5 shrink-0 place-items-center rounded-full bg-teal-100 text-[11px] font-bold text-teal-800">
+   168→            {i + 1}
+   169→          </span>
+   170→          <span className="min-w-0 flex-1 truncate">{opt}</span>
+   171→          <span className="flex shrink-0">
+   172→            <button type="button" aria-label={`${opt}: ${t("forms.moveUp")}`} className="rounded px-1.5 py-0.5 hover:bg-accent" onClick={() => move(i, -1)} disabled={i === 0}>▲</button>
+   173→            <button type="button" aria-label={`${opt}: ${t("forms.moveDown")}`} className="rounded px-1.5 py-0.5 hover:bg-accent" onClick={() => move(i, 1)} disabled={i === order.length - 1}>▼</button>
+   174→          </span>
+   175→        </div>
+   176→      ))}
+   177→    </div>
+   178→  );
+   179→}
+   180→
+   181→// ─── Ana bileşen ─────────────────────────────────────────────────────────────
+   182→
+   183→export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; embed?: boolean }) {
+   184→  useLang();
+   185→  const [form, setForm] = useState<PublicForm | null>(null);
+   186→  const [loadError, setLoadError] = useState<string | null>(null);
+   187→  const [loading, setLoading] = useState(true);
+   188→  const [ans, setAns] = useState<Record<string, string>>({});
+   189→  const [visitor, setVisitor] = useState({ name: "", email: "", phone: "", organization: "" });
+   190→  const [honeypot, setHoneypot] = useState("");
+   191→  const [captchaAnswer, setCaptchaAnswer] = useState("");
+   192→  const [commsOptIn, setCommsOptIn] = useState(false);
+   193→  const [challenge, setChallenge] = useState<{ question: string; token: string } | null>(null);
+   194→  const [payMethod, setPayMethod] = useState("ONLINE_CARD");
+   195→  const [pay, setPay] = useState({ cardHolder: "", cardNumber: "", expiry: "", cvc: "" });
+   196→  const [payBusy, setPayBusy] = useState(false);
+   197→  const [payOutcome, setPayOutcome] = useState<{ outcome: string; message: string; payment?: { id: string; status: string; reference?: string | null } } | null>(null);
+   198→  const [busy, setBusy] = useState(false);
+   199→  const [result, setResult] = useState<SubmitResult | null>(null);
+   200→  const [results, setResults] = useState<PublicResults | null>(null);
+   201→  const [error, setError] = useState<string | null>(null);
+   202→  const startRef = useRef<number>(Date.now());
+   203→
+   204→  const load = async () => {
+   205→    setLoading(true);
+   206→    setLoadError(null);
+   207→    try {
+   208→      const res = await fetch(`/api/public-forms/${encodeURIComponent(idOrSlug)}`);
+   209→      const data = (await res.json()) as PublicForm & { error?: string };
+   210→      if (!res.ok) throw new Error(data.error ?? t("forms.publicNotFound"));
+   211→      setForm(data);
+   212→      setChallenge(data.challenge ?? null);
+   213→      startRef.current = Date.now();
+   214→    } catch (e) {
+   215→      setLoadError(e instanceof Error ? e.message : t("forms.publicNotFound"));
+   216→    } finally {
+   217→      setLoading(false);
+   218→    }
+   219→  };
+   220→  useEffect(() => {
+   221→    load();
+   222→  }, [idOrSlug]);
+   223→
+   224→  const labelIndex = useMemo(
+   225→    () => new Map((form?.fields ?? []).map((f) => [f.label, f.id])),
+   226→    [form],
+   227→  );
+   228→  const visible = useMemo(() => {
+   229→    if (!form) return new Set<string>();
+   230→    const s = new Set<string>();
+   231→    for (const f of form.fields) {
+   232→      if (isFieldVisible(f, ans, labelIndex)) s.add(f.id);
+   233→    }
+   234→    return s;
+   235→  }, [form, ans, labelIndex]);
+   236→
+   237→  const set = (fid: string, v: string) => setAns((a) => ({ ...a, [fid]: v }));
+   238→  const toggleIn = (fid: string, opt: string, on: boolean) =>
+   239→    setAns((a) => {
+   240→      const cur: string[] = a[fid] ? (Array.isArray(parseMaybeJson(a[fid])) ? (parseMaybeJson(a[fid]) as string[]) : []) : [];
+   241→      return { ...a, [fid]: JSON.stringify(on ? [...cur, opt] : cur.filter((x) => x !== opt)) };
+   242→    });
+   243→
+   244→  const submit = async () => {
+   245→    if (!form) return;
+   246→    setError(null);
+   247→    if (!visitor.email.trim()) {
+   248→      setError(t("forms.publicEmailRequired"));
+   249→      return;
+   250→    }
+   251→    // görünür zorunlu alan denetimi (istemci tarafı — sunucu da denetler)
+   252→    const missing = form.fields.filter(
+   253→      (f) => f.required === "ALWAYS" && f.type !== "SECTION" && visible.has(f.id) &&
+   254→        !(ans[f.id] ?? "").trim() && isFieldVisible(f, ans, labelIndex),
+   255→    );
+   256→    if (missing.length > 0) {
+   257→      setError(`${t("forms.publicMissingFields")}: ${missing.map((f) => f.label).join(", ")}`);
+   258→      return;
+   259→    }
+   260→    if (form.captchaEnabled && !captchaAnswer.trim()) {
+   261→      setError(t("forms.publicCaptchaRequired"));
+   262→      return;
+   263→    }
+   264→    setBusy(true);
+   265→    try {
+   266→      const res = await apiSend<SubmitResult>("/api/public-register", "POST", {
+   267→        formId: idOrSlug, // slug veya id — sunucu ikisini de çözer
+   268→        respondentName: visitor.name,
+   269→        respondentEmail: visitor.email,
+   270→        phone: visitor.phone || undefined,
+   271→        organization: visitor.organization || undefined,
+   272→        answers: ans,
+   273→        honeypotValue: honeypot,
+   274→        elapsedSeconds: Math.round((Date.now() - startRef.current) / 1000),
+   275→        source: "WEB_PUBLIC",
+   276→        paymentMethod: payMethod,
+   277→        challengeToken: challenge?.token,
+   278→        challengeAnswer: captchaAnswer,
+   279→        commsOptIn,
+   280→      });
+   281→      setResult(res);
+   282→      if (form.hasPublicResults && res.status !== "SPAM") {
+   283→        fetch(`/api/public-forms/${encodeURIComponent(idOrSlug)}/results`)
+   284→          .then((r) => (r.ok ? r.json() : null))
+   285→          .then((d: PublicResults | null) => d && setResults(d))
+   286→          .catch(() => undefined);
+   287→      }
+   288→    } catch (e) {
+   289→      setError(e instanceof Error ? e.message : t("forms.toastSubmitError"));
+   290→    } finally {
+   291→      setBusy(false);
+   292→    }
+   293→  };
+   294→
+   295→  // Kayıt formu + online ödeme: gönderim başarılıysa ödeme simülasyonu (sandbox)
+   296→  const processPayment = async () => {
+   297→    if (!result?.payment) return;
+   298→    setPayBusy(true);
+   299→    try {
+   300→      const res = await apiSend<{ outcome: string; message: string; payment?: { id: string; status: string; reference?: string | null } }>(
+   301→        `/api/payments/${result.payment.id}/process`, "POST",
+   302→        { cardHolder: pay.cardHolder, cardNumber: pay.cardNumber, expiry: pay.expiry, cvc: pay.cvc },
+   303→      );
+   304→      setPayOutcome(res);
+   305→    } catch (e) {
+   306→      setError(e instanceof Error ? e.message : t("forms.toastPayError"));
+   307→    } finally {
+   308→      setPayBusy(false);
+   309→    }
+   310→  };
+   311→
+   312→  const again = () => {
+   313→    setResult(null);
+   314→    setResults(null);
+   315→    setPayOutcome(null);
+   316→    setPay({ cardHolder: "", cardNumber: "", expiry: "", cvc: "" });
+   317→    setPayMethod("ONLINE_CARD");
+   318→    setAns({});
+   319→    setVisitor({ name: "", email: "", phone: "", organization: "" });
+   320→    setCaptchaAnswer("");
+   321→    setHoneypot("");
+   322→    startRef.current = Date.now();
+   323→    if (form?.captchaEnabled) load(); // tek-kullanım challenge tazele
+   324→  };
+   325→
+   326→  // ─── yüklenme / hata ekranları ───
+   327→  if (loading) {
+   328→    return (
+   329→      <div className={embed ? "grid min-h-[240px] place-items-center" : "grid min-h-screen place-items-center bg-background"} role="status" aria-label={t("common.loading")}>
+   330→        <Loader2 className="size-7 animate-spin text-teal-600" />
+   331→      </div>
+   332→    );
+   333→  }
+   334→  if (loadError || !form) {
+   335→    return (
+   336→      <div className={embed ? "p-6" : "grid min-h-screen place-items-center bg-background p-6"}>
+   337→        <div className="max-w-sm rounded-xl border bg-card p-6 text-center shadow-sm">
+   338→          <AlertTriangle className="mx-auto size-8 text-amber-500" />
+   339→          <h1 className="mt-3 text-lg font-semibold">{t("forms.publicNotFoundTitle")}</h1>
+   340→          <p className="mt-1 text-sm text-muted-foreground">{loadError ?? t("forms.publicNotFound")}</p>
+   341→        </div>
+   342→      </div>
+   343→    );
+   344→  }
+   345→
+   346→  const wrap = (children: ReactNode) =>
+   347→    embed ? <div className="mx-auto w-full max-w-2xl p-3">{children}</div> : (
+   348→      <div className="min-h-screen bg-gradient-to-b from-teal-50/60 via-background to-background px-4 py-8">
+   349→        <div className="mx-auto w-full max-w-2xl">{children}</div>
+   350→      </div>
+   351→    );
+   352→
+   353→  // ─── sonuç ekranı ───
+   354→  if (result) {
+   355→    const spam = result.status === "SPAM";
+   356→    return wrap(
+   357→      <div className="space-y-4">
+   358→        <div className={`rounded-xl border p-6 text-center ${spam ? "border-rose-200 bg-rose-50" : result.status === "APPROVED" ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
+   359→          {spam ? <AlertTriangle className="mx-auto size-10 text-rose-500" /> : <CheckCircle2 className="mx-auto size-10 text-emerald-600" />}
+   360→          <h1 className="mt-3 text-xl font-semibold">
+   361→            {spam ? t("forms.toastSpamFlagged") : result.status === "APPROVED" ? t("forms.publicApproved") : t("forms.publicReceived")}
+   362→          </h1>
+   363→          {!spam && form.successMessage && <p className="mt-2 text-sm text-muted-foreground">{form.successMessage}</p>}
+   364→          {result.registration?.confirmationNo && (
+   365→            <p className="mt-3 inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-sm">
+   366→              {t("forms.publicRegNo")}: <span className="font-mono font-semibold">{result.registration.confirmationNo}</span>
+   367→            </p>
+   368→          )}
+   369→          {result.quizScore != null && (
+   370→            <p className="mt-3 text-sm font-medium text-teal-800">
+   371→              {t("forms.quizScoreLine", { score: Math.round(result.quizScore), correct: result.quizCorrect ?? 0, total: result.quizTotal ?? 0 })}
+   372→            </p>
+   373→          )}
+   374→        </div>
+   375→
+   376→        {/* Online kart ödemesi (simülasyon) — ONLINE_CARD seçildiyse */}
+   377→        {!spam && payMethod === "ONLINE_CARD" && result.payment && result.payment.status !== "SUCCEEDED" && (
+   378→          <div className="rounded-xl border bg-card p-5 shadow-sm">
+   379→            <h2 className="flex items-center gap-2 text-sm font-semibold">{t("forms.payCardTitle")}</h2>
+   380→            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+   381→              <div className="grid gap-1 sm:col-span-2">
+   382→                <Label className="text-xs">{t("forms.payCardHolder")}</Label>
+   383→                <Input value={pay.cardHolder} onChange={(e) => setPay({ ...pay, cardHolder: e.target.value })} autoComplete="cc-name" />
+   384→              </div>
+   385→              <div className="grid gap-1 sm:col-span-2">
+   386→                <Label className="text-xs">{t("forms.payCardNumber")}</Label>
+   387→                <Input value={pay.cardNumber} placeholder="4242 4242 4242 4242" onChange={(e) => setPay({ ...pay, cardNumber: e.target.value })} autoComplete="cc-number" inputMode="numeric" />
+   388→              </div>
+   389→              <div className="grid gap-1">
+   390→                <Label className="text-xs">{t("forms.payExpiry")}</Label>
+   391→                <Input placeholder="AA/YY" value={pay.expiry} onChange={(e) => setPay({ ...pay, expiry: e.target.value })} autoComplete="cc-exp" />
+   392→              </div>
+   393→              <div className="grid gap-1">
+   394→                <Label className="text-xs">CVC</Label>
+   395→                <Input placeholder="123" value={pay.cvc} onChange={(e) => setPay({ ...pay, cvc: e.target.value })} autoComplete="cc-csc" inputMode="numeric" />
+   396→              </div>
+   397→            </div>
+   398→            <div className="mt-3 flex flex-wrap items-center gap-2">
+   399→              <Button size="sm" disabled={payBusy || !pay.cardHolder.trim() || !pay.cardNumber.trim() || !pay.expiry.trim() || !pay.cvc.trim()} onClick={processPayment}>
+   400→                {t("forms.payComplete")}
+   401→              </Button>
+   402→              <span className="text-[11px] text-muted-foreground">4242… → {t("forms.yes")} · …0000 → {t("forms.no")}</span>
+   403→            </div>
+   404→            {payOutcome?.outcome === "SUCCEEDED" && (
+   405→              <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+   406→                {t("forms.payOkLine", { ref: payOutcome.payment?.reference ?? "—" })}
+   407→              </p>
+   408→            )}
+   409→            {payOutcome && payOutcome.outcome !== "SUCCEEDED" && (
+   410→              <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+   411→                {payOutcome.message || t("forms.toastPayError")}
+   412→              </p>
+   413→            )}
+   414→          </div>
+   415→        )}
+   416→        {results && <ResultsPanel results={results} />}
+   417→        <div className="text-center">
+   418→          <Button variant="outline" onClick={again}>
+   419→            <RefreshCw className="size-4" /> {t("forms.publicAgain")}
+   420→          </Button>
+   421→        </div>
+   422→      </div>,
+   423→    );
+   424→  }
+   425→
+   426→  // ─── form ekranı ───
+   427→  const isReg = form.type === "REGISTRATION";
+   428→  return wrap(
+   429→    <div className="space-y-4">
+   430→      <header className="rounded-xl border bg-card p-5 shadow-sm">
+   431→        <div className="flex flex-wrap items-center gap-2">
+   432→          <h1 className="text-xl font-bold">{form.name}</h1>
+   433→          {isReg && <Badge className="bg-teal-600">{t("forms.badgeRegistration")}</Badge>}
+   434→          {(form.type === "SURVEY" || form.type === "FEEDBACK") && <Badge variant="outline">{t("forms.badgeSurvey")}</Badge>}
+   435→        </div>
+   436→        {form.description && <p className="mt-1.5 text-sm text-muted-foreground">{form.description}</p>}
+   437→      </header>
+   438→
+   439→      <div className="rounded-xl border bg-card p-5 shadow-sm">
+   440→        <div className="relative space-y-5">
+   441→          {form.fields.filter((f) => visible.has(f.id)).map((f) => (
+   442→            <FieldInput key={f.id} f={f} ans={ans} set={set} toggleIn={toggleIn} />
+   443→          ))}
+   444→
+   445→          {/* ziyaretçi kimliği */}
+   446→          <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
+   447→            <div className="grid gap-1">
+   448→              <Label className="text-xs">{t("forms.publicName")}</Label>
+   449→              <Input value={visitor.name} autoComplete="name" onChange={(e) => setVisitor({ ...visitor, name: e.target.value })} />
+   450→            </div>
+   451→            <div className="grid gap-1">
+   452→              <Label className="text-xs">{t("forms.publicEmail")}<span className="text-rose-500"> *</span></Label>
+   453→              <Input type="email" required value={visitor.email} autoComplete="email" onChange={(e) => setVisitor({ ...visitor, email: e.target.value })} />
+   454→            </div>
+   455→            {isReg && (
+   456→              <>
+   457→                <div className="grid gap-1">
+   458→                  <Label className="text-xs">{t("forms.publicPhone")}</Label>
+   459→                  <Input type="tel" value={visitor.phone} autoComplete="tel" onChange={(e) => setVisitor({ ...visitor, phone: e.target.value })} />
+   460→                </div>
+   461→                <div className="grid gap-1">
+   462→                  <Label className="text-xs">{t("forms.publicOrg")}</Label>
+   463→                  <Input value={visitor.organization} autoComplete="organization" onChange={(e) => setVisitor({ ...visitor, organization: e.target.value })} />
+   464→                </div>
+   465→              </>
+   466→            )}
+   467→          </div>
+   468→
+   469→          {/* KVKK rıza */}
+   470→          <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-xs">
+   471→            <Checkbox checked={commsOptIn} onCheckedChange={(c) => setCommsOptIn(c === true)} className="mt-0.5" />
+   472→            <span className="text-muted-foreground">{t("forms.publicConsent")}</span>
+   473→          </label>
+   474→
+   475→          {/* Ödeme yöntemi — sadece online ödemeli kayıt formu */}
+   476→          {isReg && form.enableOnlinePayment && (
+   477→            <div className="grid gap-1 rounded-lg border bg-muted/20 p-3">
+   478→              <Label className="text-xs">{t("forms.payMethodLabel")}</Label>
+   479→              <div className="grid gap-1.5">
+   480→                {[
+   481→                  { value: "ONLINE_CARD", label: t("forms.payOnlineCard") },
+   482→                  { value: "BANK_TRANSFER", label: t("forms.payBankTransfer") },
+   483→                  { value: "PAYMENT_LINK", label: t("forms.payLink") },
+   484→                ].map((m) => (
+   485→                  <label key={m.value} className="flex cursor-pointer items-center gap-2 text-sm">
+   486→                    <input type="radio" name="payMethod" checked={payMethod === m.value} onChange={() => setPayMethod(m.value)} className="size-4 accent-teal-700" />
+   487→                    {m.label}
+   488→                  </label>
+   489→                ))}
+   490→              </div>
+   491→            </div>
+   492→          )}
+   493→
+   494→          {/* insan doğrulaması */}
+   495→          {form.captchaEnabled && challenge && (
+   496→            <div className="rounded-lg border border-teal-200 bg-teal-50/50 p-3">
+   497→              <Label className="flex items-center gap-1.5 text-xs font-medium text-teal-900">
+   498→                <ShieldCheck className="size-3.5" /> {t("forms.publicCaptchaTitle")}
+   499→              </Label>
+   500→              <div className="mt-2 flex items-center gap-2">
+   501→                <span className="rounded-md border bg-white px-3 py-1.5 font-mono text-sm font-bold tracking-wide text-teal-900" aria-live="polite">
+   502→                  {challenge.question} = ?
+   503→                </span>
+   504→                <Input
+   505→                  className="w-24"
+   506→                  inputMode="numeric"
+   507→                  value={captchaAnswer}
+   508→                  placeholder={t("forms.publicCaptchaPh")}
+   509→                  aria-label={t("forms.publicCaptchaTitle")}
+   510→                  onChange={(e) => setCaptchaAnswer(e.target.value)}
+   511→                />
+   512→              </div>
+   513→              <p className="mt-1 text-[11px] text-muted-foreground">{t("forms.publicCaptchaHint")}</p>
+   514→            </div>
+   515→          )}
+   516→
+   517→          {/* honeypot — gizli alan */}
+   518→          {form.honeypotEnabled && (
+   519→            <div className="absolute -left-[9999px] top-auto h-px w-px overflow-hidden" aria-hidden>
+   520→              <Input value={honeypot} name="website" autoComplete="off" tabIndex={-1} onChange={(e) => setHoneypot(e.target.value)} />
+   521→            </div>
+   522→          )}
+   523→
+   524→          {error && (
+   525→            <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>
+   526→          )}
+   527→
+   528→          <Button className="w-full" disabled={busy} onClick={submit}>
+   529→            {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+   530→            {isReg ? t("forms.publicSubmitReg") : t("forms.publicSubmit")}
+   531→          </Button>
+   532→          <p className="text-center text-[11px] text-muted-foreground">
+   533→            <ShieldCheck className="mr-1 inline size-3" />
+   534→            {t("forms.publicSpamNote")}
+   535→          </p>
+   536→        </div>
+   537→      </div>
+   538→    </div>,
+   539→  );
+   540→}
+   541→
+   542→// ─── alan giriş bileşeni ─────────────────────────────────────────────────────
+   543→
+   544→function FieldInput({
+   545→  f, ans, set, toggleIn,
+   546→}: {
+   547→  f: PublicField;
+   548→  ans: Record<string, string>;
+   549→  set: (fid: string, v: string) => void;
+   550→  toggleIn: (fid: string, opt: string, on: boolean) => void;
+   551→}) {
+   552→  const value = ans[f.id] ?? "";
+   553→  const reqStar = f.required === "ALWAYS" ? <span className="text-rose-500"> *</span> : null;
+   554→  const opts = optsOf(f);
+   555→  const cols = colsOf(f);
+   556→  const multiSelected: string[] = value ? (Array.isArray(parseMaybeJson(value)) ? (parseMaybeJson(value) as string[]) : []) : [];
+   557→
+   558→  if (f.type === "SECTION") {
+   559→    return (
+   560→      <div className="border-b pb-1.5">
+   561→        <p className="text-sm font-bold tracking-wide text-teal-900">{f.label}</p>
+   562→        {f.helpText && <p className="mt-0.5 text-xs text-muted-foreground">{f.helpText}</p>}
+   563→      </div>
+   564→    );
+   565→  }
+   566→
+   567→  const body = (() => {
+   568→    switch (f.type) {
+   569→      case "LONGTEXT":
+   570→        return <Textarea rows={3} value={value} placeholder={f.placeholder ?? ""} onChange={(e) => set(f.id, e.target.value)} />;
+   571→      case "NUMBER":
+   572→        return <Input type="number" value={value} placeholder={f.placeholder ?? ""} onChange={(e) => set(f.id, e.target.value)} />;
+   573→      case "EMAIL":
+   574→        return <Input type="email" value={value} placeholder={f.placeholder ?? "ad@ornek.com"} onChange={(e) => set(f.id, e.target.value)} />;
+   575→      case "PHONE":
+   576→        return <Input type="tel" value={value} placeholder={f.placeholder ?? "+90 5xx xxx xx xx"} onChange={(e) => set(f.id, e.target.value)} />;
+   577→      case "URL":
+   578→        return <Input type="url" value={value} placeholder="https://…" onChange={(e) => set(f.id, e.target.value)} />;
+   579→      case "DATE":
+   580→        return <Input type="date" value={value} onChange={(e) => set(f.id, e.target.value)} />;
+   581→      case "TIME":
+   582→        return <Input type="time" value={value} onChange={(e) => set(f.id, e.target.value)} />;
+   583→      case "COUNTRY":
+   584→        return <Input value={value} placeholder={f.placeholder ?? t("forms.phCountry")} onChange={(e) => set(f.id, e.target.value)} />;
+   585→      case "FILE":
+   586→        return <Input type="file" onChange={() => undefined} className="text-xs" aria-label={f.label} />;
+   587→      case "SINGLE_CHOICE":
+   588→      case "QA_QUIZ":
+   589→      case "VOTE":
+   590→        return (
+   591→          <div className={`grid gap-1.5 ${f.type === "VOTE" ? "rounded-lg border p-2.5" : ""}`} role="radiogroup" aria-label={f.label}>
+   592→            {opts.map((o) => (
+   593→              <label key={o} className="flex cursor-pointer items-center gap-2 text-sm">
+   594→                <input
+   595→                  type="radio"
+   596→                  name={f.id}
+   597→                  value={o}
+   598→                  checked={value === o}
+   599→                  onChange={() => set(f.id, o)}
+   600→                  className="size-4 accent-teal-700"
+   601→                />
+   602→                {o}
+   603→              </label>
+   604→            ))}
+   605→            {opts.length === 0 && <p className="text-xs text-muted-foreground">{t("forms.noOptions")}</p>}
+   606→          </div>
+   607→        );
+   608→      case "MULTI_CHOICE":
+   609→        return (
+   610→          <div className="grid gap-1.5 rounded-lg border p-2.5">
+   611→            {opts.map((o) => (
+   612→              <label key={o} className="flex cursor-pointer items-center gap-2 text-sm">
+   613→                <Checkbox checked={multiSelected.includes(o)} onCheckedChange={(c) => toggleIn(f.id, o, c === true)} />
+   614→                {o}
+   615→              </label>
+   616→            ))}
+   617→            {opts.length === 0 && <p className="text-xs text-muted-foreground">{t("forms.noOptions")}</p>}
+   618→          </div>
+   619→        );
+   620→      case "CHECKBOX":
+   621→      case "YESNO":
+   622→      case "TERMS":
+   623→        return (
+   624→          <label className="flex cursor-pointer items-center gap-2 text-sm">
+   625→            <Switch checked={value === "true"} onCheckedChange={(c) => set(f.id, c ? "true" : "false")} aria-label={f.label} />
+   626→            {f.type === "YESNO" && (
+   627→              <span className="text-muted-foreground">
+   628→                {value === "true" ? t("forms.yes") : value === "false" ? t("forms.no") : t("forms.chooseHint")}
+   629→              </span>
+   630→            )}
+   631→          </label>
+   632→        );
+   633→      case "RATING":
+   634→        return (
+   635→          <div className="flex items-center gap-1">
+   636→            {[1, 2, 3, 4, 5].map((n) => (
+   637→              <button key={n} type="button" aria-label={t("forms.stars", { n })} aria-pressed={Number(value) >= n}
+   638→                onClick={() => set(f.id, String(n))}
+   639→                className="rounded-md p-1 transition hover:bg-amber-50">
+   640→                <svg viewBox="0 0 24 24" className={`size-6 ${Number(value) >= n ? "fill-amber-400 text-amber-500" : "text-muted-foreground/40"}`} stroke="currentColor" strokeWidth="1.5">
+   641→                  <path d="M12 2.5l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.3l-5.8 3.1 1.1-6.5L2.6 9.3l6.5-.9L12 2.5z" />
+   642→                </svg>
+   643→              </button>
+   644→            ))}
+   645→            {value && <span className="ml-1 text-xs text-muted-foreground">{value}/5</span>}
+   646→          </div>
+   647→        );
+   648→      case "NPS":
+   649→        return (
+   650→          <div className="grid gap-1">
+   651→            <div className="grid grid-cols-11 gap-1">
+   652→              {Array.from({ length: 11 }, (_, n) => (
+   653→                <button key={n} type="button" aria-pressed={Number(value) === n} aria-label={String(n)}
+   654→                  onClick={() => set(f.id, String(n))}
+   655→                  className={`rounded-md border py-1.5 text-xs font-medium transition ${Number(value) === n ? "border-teal-600 bg-teal-600 text-white" : "hover:bg-accent"}`}>
+   656→                  {n}
+   657→                </button>
+   658→              ))}
+   659→            </div>
+   660→            <div className="flex justify-between text-[10px] text-muted-foreground">
+   661→              <span>{t("forms.npsLow")}</span><span>{t("forms.npsHigh")}</span>
+   662→            </div>
+   663→          </div>
+   664→        );
+   665→      case "RANKING":
+   666→        return opts.length > 0 ? <RankingInput opts={opts} value={value} onChange={(v) => set(f.id, v)} /> : <p className="text-xs text-muted-foreground">{t("forms.noOptions")}</p>;
+   667→      case "MATRIX":
+   668→        return (
+   669→          <div className="overflow-x-auto rounded-lg border">
+   670→            <table className="w-full min-w-[420px] text-sm">
+   671→              <thead>
+   672→                <tr className="border-b bg-muted/40">
+   673→                  <th className="p-2 text-left text-xs font-medium" />
+   674→                  {cols.map((c) => <th key={c} className="p-2 text-center text-xs font-medium">{c}</th>)}
+   675→                </tr>
+   676→              </thead>
+   677→              <tbody>
+   678→                {opts.map((r) => {
+   679→                  const rowState: Record<string, string> = value ? ((parseMaybeJson(value) as Record<string, string>) ?? {}) : {};
+   680→                  return (
+   681→                    <tr key={r} className="border-b last:border-0">
+   682→                      <td className="p-2 text-xs font-medium">{r}</td>
+   683→                      {cols.map((c) => (
+   684→                        <td key={c} className="p-2 text-center">
+   685→                          <input
+   686→                            type="radio"
+   687→                            name={`${f.id}-${r}`}
+   688→                            aria-label={`${r}: ${c}`}
+   689→                            checked={rowState[r] === c}
+   690→                            onChange={() => set(f.id, JSON.stringify({ ...rowState, [r]: c }))}
+   691→                            className="size-4 accent-teal-700"
+   692→                          />
+   693→                        </td>
+   694→                      ))}
+   695→                    </tr>
+   696→                  );
+   697→                })}
+   698→              </tbody>
+   699→            </table>
+   700→          </div>
+   701→        );
+   702→      case "SIGNATURE":
+   703→        return <SignaturePad value={value} onChange={(v) => set(f.id, v)} />;
+   704→      default:
+   705→        return <Input value={value} placeholder={f.placeholder ?? ""} onChange={(e) => set(f.id, e.target.value)} />;
+   706→    }
+   707→  })();
+   708→
+   709→  return (
+   710→    <div className="grid gap-1.5">
+   711→      <Label className="text-xs font-medium">
+   712→        {f.label}
+   713→        {reqStar}
+   714→        {f.points != null && f.type === "QA_QUIZ" && (
+   715→          <span className="ml-1.5 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">{f.points} {t("forms.pts")}</span>
+   716→        )}
+   717→        {f.mobileInteractive && <Badge variant="outline" className="ml-1.5 text-[10px]">{t("forms.mobileItem")}</Badge>}
+   718→      </Label>
+   719→      {body}
+   720→      {f.helpText && f.type !== "CHECKBOX" && f.type !== "YESNO" && f.type !== "TERMS" && (
+   721→        <p className="text-xs text-muted-foreground">{f.helpText}</p>
+   722→      )}
+   723→      {f.type === "TERMS" && f.helpText && (
+   724→        <p className="rounded-md bg-muted/40 p-2.5 text-xs text-muted-foreground">{f.helpText}</p>
+   725→      )}
+   726→    </div>
+   727→  );
+   728→}
+   729→
+   730→// ─── oylama sonuç paneli ─────────────────────────────────────────────────────
+   731→
+   732→function ResultsPanel({ results }: { results: PublicResults }) {
+   733→  return (
+   734→    <div className="rounded-xl border bg-card p-5 shadow-sm">
+   735→      <h2 className="flex items-center gap-2 text-sm font-semibold">
+   736→        {t("forms.publicResultsTitle")}
+   737→        <Badge variant="outline">{t("forms.publicVotesCount", { n: results.totalVotes })}</Badge>
+   738→      </h2>
+   739→      <div className="mt-3 space-y-4">
+   740→        {results.fields.map((f) => (
+   741→          <div key={f.fieldId} className="grid gap-1.5">
+   742→            <p className="text-xs font-medium">{f.label}</p>
+   743→            {f.distribution && f.distribution.length > 0 && (
+   744→              <div className="grid gap-1">
+   745→                {f.distribution.map((d) => {
+   746→                  const pct = results.totalVotes > 0 ? Math.round((d.count / Math.max(1, f.responseCount)) * 100) : 0;
+   747→                  return (
+   748→                    <div key={d.value} className="flex items-center gap-2 text-xs">
+   749→                      <span className="w-40 shrink-0 truncate" title={d.value}>{d.value}</span>
+   750→                      <div className="h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+   751→                        <div className="h-full rounded-full bg-teal-600 transition-all" style={{ width: `${Math.min(100, pct)}%` }} />
+   752→                      </div>
+   753→                      <span className="w-14 shrink-0 text-right tabular-nums text-muted-foreground">{d.count} · %{pct}</span>
+   754→                    </div>
+   755→                  );
+   756→                })}
+   757→              </div>
+   758→            )}
+   759→            {f.average != null && (
+   760→              <p className="text-xs text-muted-foreground">{t("forms.publicAvg")}: <b className="text-teal-800">{f.average}</b></p>
+   761→            )}
+   762→          </div>
+   763→        ))}
+   764→      </div>
+   765→    </div>
+   766→  );
+   767→}
+   768→

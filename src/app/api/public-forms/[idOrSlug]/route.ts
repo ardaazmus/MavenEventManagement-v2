@@ -43,6 +43,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       conditionValue: f.conditionValue,
       points: f.points,
       mobileInteractive: f.mobileInteractive,
+      width: f.width, // STUDIO-DND: dış sayfada birebir yerleşim (yalnız sunum verisi)
     }));
 
   const challenge = form.captchaEnabled ? issueChallenge() : null;

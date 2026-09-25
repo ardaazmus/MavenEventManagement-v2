@@ -26,6 +26,7 @@ interface PublicField {
   logicRules?: string | null; logicMode?: string | null; logicAction?: string | null;
   conditionField?: string | null; conditionValue?: string | null;
   points?: number | null; mobileInteractive?: boolean;
+  width?: number | null; // STUDIO-DND: tasarımcıdaki elle genişlik %
 }
 interface PublicForm {
   id: string; slug?: string | null; name: string; type: string;
@@ -438,9 +439,21 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
 
       <div className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="relative space-y-5">
-          {form.fields.filter((f) => visible.has(f.id)).map((f) => (
-            <FieldInput key={f.id} f={f} ans={ans} set={set} toggleIn={toggleIn} />
-          ))}
+          {/* STUDIO-DND: alanlar tasarımcıdaki genişlikleriyle flex satırlarına dizilir */}
+          <div className="flex flex-wrap">
+            {form.fields.filter((f) => visible.has(f.id)).map((f) => {
+              const w = f.type === "SECTION" ? 100 : Math.min(100, Math.max(25, Math.round(f.width ?? 100)));
+              return (
+                <div
+                  key={f.id}
+                  className="px-1.5 pb-3"
+                  style={{ width: `${w}%`, minWidth: w < 100 ? 230 : undefined }}
+                >
+                  <FieldInput f={f} ans={ans} set={set} toggleIn={toggleIn} />
+                </div>
+              );
+            })}
+          </div>
 
           {/* ziyaretçi kimliği */}
           <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">

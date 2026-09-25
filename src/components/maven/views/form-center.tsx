@@ -2,7 +2,7 @@
 // Form Merkezi — kayıt formları, anketler ve mobil interaktif QA öğeleri tek merkezde.
 // 4 sekme: Formlar (liste) · Tasarım Stüdyosu (alan editörü + spam/ödeme ayarları) ·
 // Yanıtlar & İstatistik (inceleme kuyruğu + dağılım analizi) · Canlı Kayıt Masası (halka açık önizleme).
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -25,7 +25,7 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { useLang, t, tLabel } from "@/lib/i18n";
 import * as Icons from "lucide-react";
-import { FieldPalette, FieldPropertiesPanel, SharePanel, type FieldDraft } from "../form-studio";
+import { FieldPalette, FieldPropertiesPanel, SharePanel, PALETTE_MIME, type FieldDraft } from "../form-studio";
 import { parseLogicRules } from "@/lib/form-logic";
 
 // ─── API tipleri (sözleşme: UI AGENT SÖZLEŞMESİ / registry) ─────────────────
@@ -37,6 +37,7 @@ interface FormFieldDef {
   correctAnswer?: string | null;
   logicRules?: string | null; logicMode?: string | null; logicAction?: string | null;
   points?: number | null; columns?: string | null;
+  width?: number | null; // STUDIO-DND: tuvaldeki genişlik %
 }
 interface FormDef {
   id: string; editionId: string; name: string; type: string; status: string;
@@ -201,6 +202,15 @@ export function FormCenterView() {
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const selectedField = selectedForm?.fields.find((f) => f.id === selectedFieldId) ?? null;
 
+  // STUDIO-DND — sürükle-bırak sıralama + elle genişlik (iyimser yerel kopyalar)
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const insertAtRef = useRef<number | null>(null); // paletten tuvale bırakmada ekleme konumu
+  const [localOrder, setLocalOrder] = useState<string[] | null>(null);
+  const [localWidth, setLocalWidth] = useState<Record<string, number>>({});
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; pos: "before" | "after" } | null>(null);
+  const [resizingId, setResizingId] = useState<string | null>(null);
+
   const liveForms = useMemo(
     () => formList.filter((f) => f.status === "PUBLISHED" && f.isPublic),
     [formList],
@@ -270,6 +280,12 @@ export function FormCenterView() {
   useEffect(() => {
     setSelectedFieldId(null);
   }, [selectedFormId]);
+
+  // STUDIO-DND: sunucu verisi tazelendikçe iyimser sıra/genişlik kopyalarını eşitle
+  useEffect(() => {
+    setLocalOrder(null);
+    setLocalWidth({});
+  }, [selectedFormId, formList]);
 
   // ── Aksiyonlar ────────────────────────────────────────────────────────────
 
@@ -395,7 +411,6 @@ export function FormCenterView() {
     setNewField({ ...emptyNewField, type: tp, mobileInteractive: MOBILE_TYPES.includes(tp), points: "1" });
     setFieldOpen(true);
   };
-
   // F-EXP: seçili alanın tüm özelliklerini kaydet (mantık kapıları dahil)
   const saveField = async (draft: FieldDraft) => {
     if (!selectedField) return;
@@ -418,6 +433,8 @@ export function FormCenterView() {
         logicRules: draft.logicRules.length > 0 ? JSON.stringify(draft.logicRules) : null,
         logicMode: draft.logicRules.length > 0 ? draft.logicMode : null,
         logicAction: draft.logicRules.length > 0 ? draft.logicAction : null,
+        // STUDIO-DND: elle ayarlanan genişlik (25..100 aralığına sabitlenir)
+        width: draft.type === "SECTION" ? 100 : Math.min(100, Math.max(25, numOr(draft.width, 100))),
       });
       toast({ title: t("forms.fieldSavedToast"), description: draft.label });
       reload();
@@ -433,7 +450,7 @@ export function FormCenterView() {
     if (!selectedForm) return;
     setBusy("field");
     try {
-      await apiSend("/api/form-fields", "POST", {
+      const created = await apiSend<{ id: string }>("/api/form-fields", "POST", {
         formId: selectedForm.id,
         label: newField.label,
         type: newField.type,
@@ -450,6 +467,13 @@ export function FormCenterView() {
         points: newField.type === "QA_QUIZ" ? numOr(newField.points, 1) : null,
         order: selectedForm.fields.length + 1,
       });
+      // STUDIO-DND: paletten bırakılan konuma ekleme — yeni alan tam sıraya tek istekte yerleşir
+      if (insertAtRef.current != null) {
+        const ids = [...selectedForm.fields].sort((a, b) => a.order - b.order).map((x) => x.id);
+        ids.splice(Math.min(Math.max(insertAtRef.current, 0), ids.length), 0, created.id);
+        insertAtRef.current = null;
+        await apiSend("/api/form-fields/reorder", "POST", { formId: selectedForm.id, orderedIds: ids });
+      }
       toast({ title: t("forms.toastFieldAdded"), description: t("forms.toastFieldAddedDesc", { name: newField.label, order: selectedForm.fields.length + 1 }) });
       setFieldOpen(false);
       setNewField(emptyNewField);
@@ -482,6 +506,131 @@ export function FormCenterView() {
     } finally {
       setBusy(null);
     }
+  };
+
+  // ── STUDIO-DND: sürükle-bırak sıralama + elle genişlik ────────────────────
+  // Gösterim listesi: iyimser sürükleme kopyası varsa onu, yoksa sunucu sırasını kullan
+  const orderedFields = useMemo(() => {
+    if (!selectedForm) return [];
+    const sorted = [...selectedForm.fields].sort((a, b) => a.order - b.order);
+    if (!localOrder) return sorted;
+    const byId = new Map(sorted.map((f) => [f.id, f]));
+    const list = localOrder.map((id) => byId.get(id)).filter((f): f is FormFieldDef => Boolean(f));
+    for (const f of sorted) if (!localOrder.includes(f.id)) list.push(f); // yeni eklenenler sonda
+    return list;
+  }, [selectedForm, localOrder]);
+
+  const fieldW = (f: FormFieldDef) => {
+    if (f.type === "SECTION") return 100; // bölüm başlığı her zaman tam satır
+    return Math.min(100, Math.max(25, Math.round(localWidth[f.id] ?? f.width ?? 100)));
+  };
+
+  // Bırakma: yeni sırayı iyimser göster, TEK istekte sunucuya yaz (toplu reorder)
+  const commitOrder = async (ids: string[]) => {
+    if (!selectedForm) return;
+    setDragId(null);
+    setDropTarget(null);
+    const current = [...selectedForm.fields].sort((a, b) => a.order - b.order).map((f) => f.id);
+    if (current.length === ids.length && current.every((id, i) => id === ids[i])) return; // değişim yok
+    setLocalOrder(ids);
+    setBusy("reorder");
+    try {
+      await apiSend("/api/form-fields/reorder", "POST", { formId: selectedForm.id, orderedIds: ids });
+      toast({ title: t("forms.reorderSaved"), description: selectedForm.name });
+      reload();
+      bump();
+    } catch (e) {
+      toast({ title: t("forms.reorderError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+      setLocalOrder(null);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Kart üzerinde bekleme: hedefin sol/sağ yarısına göre ekleme çizgisi konumu
+  const cardDragOver = (e: ReactDragEvent, f: FormFieldDef) => {
+    const paletteDrop = e.dataTransfer.types.includes(PALETTE_MIME);
+    if (dragId === null && !paletteDrop) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = paletteDrop ? "copy" : "move";
+    const r = e.currentTarget.getBoundingClientRect();
+    setDropTarget({ id: f.id, pos: (e.clientX - r.left) / r.width >= 0.5 ? "after" : "before" });
+  };
+
+  const cardDrop = (e: ReactDragEvent, f: FormFieldDef) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const after = (e.clientX - r.left) / r.width >= 0.5;
+    const paletteType = e.dataTransfer.getData(PALETTE_MIME);
+    if (paletteType) {
+      // palet → tuval: türü ön-seçili Alan Ekle dialogu + hedef konuma ekleme
+      e.preventDefault();
+      setDropTarget(null);
+      const idx = orderedFields.findIndex((x) => x.id === f.id);
+      insertAtRef.current = Math.max(0, idx + (after ? 1 : 0));
+      pickFieldType(paletteType);
+      return;
+    }
+    if (!dragId || dragId === f.id) return;
+    e.preventDefault();
+    const ids = orderedFields.map((x) => x.id);
+    const from = ids.indexOf(dragId);
+    if (from >= 0) ids.splice(from, 1);
+    ids.splice(Math.max(0, ids.indexOf(f.id) + (after ? 1 : 0)), 0, dragId);
+    commitOrder(ids);
+  };
+
+  // Paletten boş tuvale bırakma — sona ekler
+  const canvasDrop = (e: ReactDragEvent) => {
+    const paletteType = e.dataTransfer.getData(PALETTE_MIME);
+    if (!paletteType) return;
+    e.preventDefault();
+    setDropTarget(null);
+    insertAtRef.current = orderedFields.length;
+    pickFieldType(paletteType);
+  };
+
+  // Elle genişlik: sağ kenar tutamacı — %5 adım, 25..100 aralığı (bırakınca PUT)
+  const saveWidth = async (f: FormFieldDef, width: number) => {
+    if ((f.width ?? 100) === width) {
+      setLocalWidth((w) => { const n = { ...w }; delete n[f.id]; return n; });
+      return;
+    }
+    setLocalWidth((w) => ({ ...w, [f.id]: width }));
+    setBusy(`w-${f.id}`);
+    try {
+      await apiSend(`/api/form-fields/${f.id}`, "PUT", { width });
+      reload();
+      bump();
+    } catch (e) {
+      toast({ title: t("forms.widthSaveError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+      setLocalWidth((w) => { const n = { ...w }; delete n[f.id]; return n; });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const startResize = (f: FormFieldDef) => (e: ReactPointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const startX = e.clientX;
+    const startPct = fieldW(f);
+    setResizingId(f.id);
+    const onMove = (ev: PointerEvent) => {
+      const pct = Math.round((((startPct / 100) * rect.width + (ev.clientX - startX)) / rect.width) * 100 / 5) * 5;
+      setLocalWidth((w) => ({ ...w, [f.id]: Math.min(100, Math.max(25, pct)) }));
+    };
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      setResizingId(null);
+      const pct = Math.min(100, Math.max(25, Math.round((((startPct / 100) * rect.width + (ev.clientX - startX)) / rect.width) * 100 / 5) * 5));
+      void saveWidth(f, pct);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   };
 
   const deleteField = async (fieldId: string, fieldLabel: string) => {
@@ -734,128 +883,181 @@ export function FormCenterView() {
                     </SectionCard>
                   </div>
 
-                  {/* ORTA — Alan listesi */}
+                  {/* ORTA — Alan listesi (STUDIO-DND: sürükle-bırak tuvali) */}
                   <div className="min-w-0 lg:col-span-5">
                     <SectionCard
-                      title={t("forms.fieldsTitle")}
+                      title={t("forms.fieldsTitle", { n: selectedForm.fields.length })}
                       desc={t("forms.fieldsDesc", { n: selectedForm.fields.length })}
                       action={
-                        <Button size="sm" onClick={() => { setNewField(emptyNewField); setFieldOpen(true); }}>
+                        <Button size="sm" onClick={() => { setNewField(emptyNewField); insertAtRef.current = null; setFieldOpen(true); }}>
                           <Icons.Plus className="size-3.5" /> {t("forms.addField")}
                         </Button>
                       }
                     >
-                      {selectedForm.fields.length === 0 ? (
-                        <EmptyState title={t("forms.noFieldsTitle")} desc={t("forms.noFieldsDesc")} />
-                      ) : (
-                        <div className="max-h-96 space-y-2 overflow-y-auto maven-scroll pr-1">
-                          {[...selectedForm.fields]
-                            .sort((a, b) => a.order - b.order)
-                            .map((f, i) => (
-                              <div
-                                key={f.id}
-                                role="button"
-                                tabIndex={0}
-                                aria-pressed={selectedFieldId === f.id}
-                                onClick={() => setSelectedFieldId(selectedFieldId === f.id ? null : f.id)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" || e.key === " ") {
-                                    e.preventDefault();
-                                    setSelectedFieldId(selectedFieldId === f.id ? null : f.id);
-                                  }
-                                }}
-                                className={`flex cursor-pointer items-center gap-2 rounded-lg border p-2.5 transition hover:border-teal-400 ${
-                                  selectedFieldId === f.id ? "border-teal-500 ring-2 ring-teal-500/20" : ""
-                                } ${f.type === "SECTION" ? "bg-muted/40 border-l-4 border-l-teal-500" : ""}`}
-                              >
-                                <span className="w-6 shrink-0 text-center text-xs font-medium tabular-nums text-muted-foreground">
-                                  {i + 1}
-                                </span>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    <span className={`truncate text-sm font-medium ${f.type === "SECTION" ? "font-semibold" : ""}`}>
-                                      {f.label}
+                      <div
+                        onDragOver={(e) => {
+                          // STUDIO-DND: bırakma kabulü — kart sürükleme veya paletten bileşen
+                          if (dragId !== null || e.dataTransfer.types.includes(PALETTE_MIME)) e.preventDefault();
+                        }}
+                        onDrop={canvasDrop}
+                      >
+                        {selectedForm.fields.length === 0 ? (
+                          <EmptyState title={t("forms.noFieldsTitle")} desc={t("forms.noFieldsDesc")} />
+                        ) : (
+                          <div>
+                            <div ref={canvasRef} className="maven-scroll flex max-h-96 flex-wrap overflow-y-auto">
+                              {orderedFields.map((f, i) => (
+                                <div key={f.id} className="relative min-w-[120px] shrink-0 grow-0 p-1" style={{ width: `${fieldW(f)}%` }}>
+                                  {dropTarget?.id === f.id && (
+                                    <span
+                                      aria-hidden
+                                      className={`pointer-events-none absolute inset-x-1 z-10 h-1 rounded-full bg-teal-500 shadow ${
+                                        dropTarget.pos === "before" ? "top-0" : "bottom-0"
+                                      }`}
+                                    />
+                                  )}
+                                  <div
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-pressed={selectedFieldId === f.id}
+                                    draggable={busy === null}
+                                    onDragStart={(e) => {
+                                      setDragId(f.id);
+                                      e.dataTransfer.effectAllowed = "move";
+                                      e.dataTransfer.setData("text/plain", f.id);
+                                    }}
+                                    onDragEnd={() => { setDragId(null); setDropTarget(null); }}
+                                    onDragOver={(e) => cardDragOver(e, f)}
+                                    onDrop={(e) => cardDrop(e, f)}
+                                    onClick={() => setSelectedFieldId(selectedFieldId === f.id ? null : f.id)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        setSelectedFieldId(selectedFieldId === f.id ? null : f.id);
+                                      }
+                                    }}
+                                    className={`relative flex cursor-grab items-center gap-2 rounded-lg border bg-card p-2.5 pr-3 transition hover:border-teal-400 active:cursor-grabbing ${
+                                      selectedFieldId === f.id ? "border-teal-500 ring-2 ring-teal-500/20" : ""
+                                    } ${f.type === "SECTION" ? "bg-muted/40 border-l-4 border-l-teal-500" : ""} ${
+                                      dragId === f.id ? "opacity-50" : ""
+                                    }`}
+                                  >
+                                    <Icons.GripVertical aria-hidden className="size-3.5 shrink-0 text-muted-foreground/60" />
+                                    <span className="w-5 shrink-0 text-center text-xs font-medium tabular-nums text-muted-foreground">
+                                      {i + 1}
                                     </span>
-                                    <span className="text-[11px] text-muted-foreground">{tLabel(FORM_FIELD_TYPES, f.type)}</span>
-                                    {f.required === "ALWAYS" && <Chip tone="amber">{t("forms.required")}</Chip>}
-                                    {f.required === "CONDITIONAL" && (
-                                      <span className="inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700">
-                                        {t("forms.conditional")}
-                                      </span>
-                                    )}
-                                    {f.mobileInteractive && <Chip tone="teal">{t("forms.mobileChip")}</Chip>}
-                                    {f.sensitivity !== "STANDARD" && (
-                                      <Chip tone="violet">{tLabel(SENSITIVITY_MAP, f.sensitivity)}</Chip>
-                                    )}
-                                    {/* F-EXP: mantık kapısı + puan + matris rozetleri */}
-                                    {parseLogicRules(f.logicRules).length > 0 && (
-                                      <span className="inline-flex items-center gap-0.5 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">
-                                        <Icons.GitBranch className="size-3" />
-                                        {f.logicAction === "HIDE" ? t("forms.logicHideShort") : t("forms.logicShowShort")}
-                                        · {parseLogicRules(f.logicRules).length}
-                                      </span>
-                                    )}
-                                    {f.type === "QA_QUIZ" && f.points != null && f.points > 0 && (
-                                      <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">{f.points} {t("forms.pts")}</span>
-                                    )}
-                                    {f.type === "MATRIX" && f.columns && (
-                                      <span className="rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                                        {(f.options ?? "").split("\n").filter((s) => s.trim()).length}×{(f.columns ?? "").split("\n").filter((s) => s.trim()).length}
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <span className={`truncate text-sm font-medium ${f.type === "SECTION" ? "font-semibold" : ""}`}>
+                                          {f.label}
+                                        </span>
+                                        <span className="text-[11px] text-muted-foreground">{tLabel(FORM_FIELD_TYPES, f.type)}</span>
+                                        {f.type !== "SECTION" && (
+                                          <span
+                                            className="inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground"
+                                            title={t("forms.widthLabel")}
+                                          >
+                                            <Icons.MoveHorizontal className="size-3" /> %{fieldW(f)}
+                                          </span>
+                                        )}
+                                        {f.required === "ALWAYS" && <Chip tone="amber">{t("forms.required")}</Chip>}
+                                        {f.required === "CONDITIONAL" && (
+                                          <span className="inline-flex items-center rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700">
+                                            {t("forms.conditional")}
+                                          </span>
+                                        )}
+                                        {f.mobileInteractive && <Chip tone="teal">{t("forms.mobileChip")}</Chip>}
+                                        {f.sensitivity !== "STANDARD" && (
+                                          <Chip tone="violet">{tLabel(SENSITIVITY_MAP, f.sensitivity)}</Chip>
+                                        )}
+                                        {/* F-EXP: mantık kapısı + puan + matris rozetleri */}
+                                        {parseLogicRules(f.logicRules).length > 0 && (
+                                          <span className="inline-flex items-center gap-0.5 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">
+                                            <Icons.GitBranch className="size-3" />
+                                            {f.logicAction === "HIDE" ? t("forms.logicHideShort") : t("forms.logicShowShort")}
+                                            · {parseLogicRules(f.logicRules).length}
+                                          </span>
+                                        )}
+                                        {f.type === "QA_QUIZ" && f.points != null && f.points > 0 && (
+                                          <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">{f.points} {t("forms.pts")}</span>
+                                        )}
+                                        {f.type === "MATRIX" && f.columns && (
+                                          <span className="rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                                            {(f.options ?? "").split("\n").filter((s) => s.trim()).length}×{(f.columns ?? "").split("\n").filter((s) => s.trim()).length}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {f.required === "CONDITIONAL" && f.conditionField && (
+                                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                          {t("forms.conditionLine", { field: f.conditionField, value: f.conditionValue ?? "—" })}
+                                        </p>
+                                      )}
+                                      {f.type === "QA_QUIZ" && (
+                                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700">
+                                            <Icons.KeyRound className="size-3" /> {t("forms.correctAnswerLabel")}
+                                          </span>
+                                          <Select value={f.correctAnswer ?? undefined} onValueChange={(v) => setCorrectAnswer(f.id, v)}>
+                                            <SelectTrigger className="h-7 w-44 text-[11px]" disabled={busy !== null}>
+                                              <SelectValue placeholder={t("forms.selectScoringOff")} />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {(f.options ?? "").split("\n").map((s) => s.trim()).filter(Boolean).map((opt) => (
+                                                <SelectItem key={opt} value={opt} className="text-xs">{opt}</SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                          {busy === `ca-${f.id}` && <Icons.Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-0.5 pr-2">
+                                      <Button
+                                        size="icon" variant="ghost" className="size-7" aria-label={t("forms.moveUp")}
+                                        disabled={i === 0 || busy !== null}
+                                        onClick={() => moveField(f.id, -1)}
+                                      >
+                                        <Icons.ArrowUp className="size-3.5" />
+                                      </Button>
+                                      <Button
+                                        size="icon" variant="ghost" className="size-7" aria-label={t("forms.moveDown")}
+                                        disabled={i === orderedFields.length - 1 || busy !== null}
+                                        onClick={() => moveField(f.id, 1)}
+                                      >
+                                        <Icons.ArrowDown className="size-3.5" />
+                                      </Button>
+                                      <Button
+                                        size="icon" variant="ghost" className="size-7 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                                        aria-label={t("forms.deleteFieldAria")}
+                                        disabled={busy !== null}
+                                        onClick={() => deleteField(f.id, f.label)}
+                                      >
+                                        <Icons.Trash2 className="size-3.5" />
+                                      </Button>
+                                    </div>
+                                    {/* STUDIO-DND: sağ kenar genişlik tutamacı — sürükle-bırak, %5 adım */}
+                                    {f.type !== "SECTION" && (
+                                      <span
+                                        role="separator"
+                                        aria-orientation="vertical"
+                                        aria-label={t("forms.resizeHandleAria")}
+                                        title={t("forms.resizeHandleAria")}
+                                        onPointerDown={startResize(f)}
+                                        className="absolute inset-y-2 right-0 flex w-2.5 cursor-ew-resize touch-none items-center justify-center rounded-full transition hover:bg-teal-100"
+                                      >
+                                        <span className={`h-9 w-0.5 rounded-full ${resizingId === f.id ? "bg-teal-500" : "bg-muted-foreground/30"}`} />
                                       </span>
                                     )}
                                   </div>
-                                  {f.required === "CONDITIONAL" && f.conditionField && (
-                                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                      {t("forms.conditionLine", { field: f.conditionField, value: f.conditionValue ?? "—" })}
-                                    </p>
-                                  )}
-                                  {f.type === "QA_QUIZ" && (
-                                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700">
-                                        <Icons.KeyRound className="size-3" /> {t("forms.correctAnswerLabel")}
-                                      </span>
-                                      <Select value={f.correctAnswer ?? undefined} onValueChange={(v) => setCorrectAnswer(f.id, v)}>
-                                        <SelectTrigger className="h-7 w-44 text-[11px]" disabled={busy !== null}>
-                                          <SelectValue placeholder={t("forms.selectScoringOff")} />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          {(f.options ?? "").split("\n").map((s) => s.trim()).filter(Boolean).map((opt) => (
-                                            <SelectItem key={opt} value={opt} className="text-xs">{opt}</SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                      {busy === `ca-${f.id}` && <Icons.Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
-                                    </div>
-                                  )}
                                 </div>
-                                <div className="flex shrink-0 items-center gap-0.5">
-                                  <Button
-                                    size="icon" variant="ghost" className="size-7" aria-label={t("forms.moveUp")}
-                                    disabled={i === 0 || busy !== null}
-                                    onClick={() => moveField(f.id, -1)}
-                                  >
-                                    <Icons.ArrowUp className="size-3.5" />
-                                  </Button>
-                                  <Button
-                                    size="icon" variant="ghost" className="size-7" aria-label={t("forms.moveDown")}
-                                    disabled={i === selectedForm.fields.length - 1 || busy !== null}
-                                    onClick={() => moveField(f.id, 1)}
-                                  >
-                                    <Icons.ArrowDown className="size-3.5" />
-                                  </Button>
-                                  <Button
-                                    size="icon" variant="ghost" className="size-7 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
-                                    aria-label={t("forms.deleteFieldAria")}
-                                    disabled={busy !== null}
-                                    onClick={() => deleteField(f.id, f.label)}
-                                  >
-                                    <Icons.Trash2 className="size-3.5" />
-                                  </Button>
-                                </div>
-                              </div>
-                            ))}
-                        </div>
-                      )}
+                              ))}
+                            </div>
+                            <p className="mt-2 flex items-center gap-1.5 border-t pt-2 text-[11px] text-muted-foreground">
+                              <Icons.Info className="size-3 shrink-0" /> {t("forms.canvasHint")}
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </SectionCard>
                   </div>
 
@@ -1556,7 +1758,7 @@ export function FormCenterView() {
           <DialogHeader>
             <DialogTitle>Alan Ekle</DialogTitle>
             <DialogDescription>
-              {selectedForm ? `${selectedForm.name} — yeni alan sıra ${selectedForm.fields.length + 1} olarak eklenir.` : "Form seçilmedi."}
+              {selectedForm ? `${selectedForm.name} — yeni alan sıra ${(insertAtRef.current ?? selectedForm.fields.length) + 1} olarak eklenir.` : "Form seçilmedi."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">

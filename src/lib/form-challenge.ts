@@ -37,8 +37,11 @@ export function issueChallenge(): ChallengeIssue {
   const a = randomInt(2, 12);
   const b = randomInt(2, 12);
   const add = randomInt(0, 2) === 1;
+  // DÜZELTME (çıkarma tutarlılığı): soru "(a+b) − min(a,b)" gösterir — değeri max(a,b)'dir.
+  // Eski kod hmac'e |a−b| gömüyordu → ÇIKARMALI soruların DOĞRU cevabı reddediliyordu
+  // (soru matematiksel olarak çözülemezdi — insan kullanıcı %50 ihtimalle kilitleniyordu).
   const question = add ? `${a} + ${b}` : `${a + b} − ${a < b ? a : b}`; // görsel eksi
-  const answer = add ? a + b : Math.abs(a - b);
+  const answer = add ? a + b : Math.max(a, b); // sorunun gerçek değeri = (a+b) − min(a,b)
   const payload = Buffer.from(
     JSON.stringify({ h: hmac(String(answer)), exp: Date.now() + TTL_MS }),
   ).toString("base64url");

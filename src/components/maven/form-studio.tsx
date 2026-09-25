@@ -40,6 +40,8 @@ export const FIELD_GROUPS: { title: string; types: string[] }[] = [
   { title: t("forms.paletteLayout"), types: ["SECTION"] },
 ];
 
+export const PALETTE_MIME = "application/x-maven-field-type"; // STUDIO-DND: palet → tuval sürükleme imzası
+
 export function FieldPalette({ onPick }: { onPick: (type: string) => void }) {
   return (
     <div className="grid gap-2.5">
@@ -53,8 +55,15 @@ export function FieldPalette({ onPick }: { onPick: (type: string) => void }) {
                 <button
                   key={tp}
                   type="button"
+                  draggable
+                  aria-label={tLabel(FORM_FIELD_TYPES, tp)}
                   onClick={() => onPick(tp)}
-                  className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-left text-xs transition hover:border-teal-400 hover:bg-teal-50/50"
+                  onDragStart={(e) => {
+                    // STUDIO-DND: tıkla-ekle'nin yanı sıra tutup tuvale sürüklenebilir
+                    e.dataTransfer.setData(PALETTE_MIME, tp);
+                    e.dataTransfer.effectAllowed = "copy";
+                  }}
+                  className="flex cursor-grab items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-left text-xs transition hover:border-teal-400 hover:bg-teal-50/50 active:cursor-grabbing"
                 >
                   <Icon className="size-3.5 shrink-0 text-teal-700" />
                   <span className="min-w-0 truncate font-medium">{tLabel(FORM_FIELD_TYPES, tp)}</span>
@@ -65,6 +74,7 @@ export function FieldPalette({ onPick }: { onPick: (type: string) => void }) {
           </div>
         </div>
       ))}
+      <p className="text-[10px] leading-snug text-muted-foreground">{t("forms.paletteDragHint")}</p>
     </div>
   );
 }
@@ -76,7 +86,19 @@ export interface FieldDraft {
   required: string; conditionField: string; conditionValue: string; sensitivity: string;
   mobileInteractive: boolean; correctAnswer: string; points: string;
   logicRules: LogicRule[]; logicMode: string; logicAction: string;
+  width: string; // STUDIO-DND: % genişlik (25..100)
 }
+
+// STUDIO-DND: adlandırılmış genişlik ön ayarları (özellik paneli) — tuvalde serbest
+// sürükleme 5'lik adımlarla 25..100 arası üretir; panel adları en yakın değeri gösterir.
+export const WIDTH_PRESETS: { value: string; labelKey: string }[] = [
+  { value: "100", labelKey: "forms.widthFull" },
+  { value: "75", labelKey: "forms.widthWide" },
+  { value: "66", labelKey: "forms.widthTwoThird" },
+  { value: "50", labelKey: "forms.widthHalf" },
+  { value: "33", labelKey: "forms.widthThird" },
+  { value: "25", labelKey: "forms.widthQuarter" },
+];
 
 export function draftFromField(f: {
   label: string; type: string; placeholder?: string | null; helpText?: string | null;
@@ -84,6 +106,7 @@ export function draftFromField(f: {
   conditionField?: string | null; conditionValue?: string | null; sensitivity: string;
   mobileInteractive: boolean; correctAnswer?: string | null; points?: number | null;
   logicRules?: string | null; logicMode?: string | null; logicAction?: string | null;
+  width?: number | null;
 }): FieldDraft {
   return {
     label: f.label, type: f.type, placeholder: f.placeholder ?? "", helpText: f.helpText ?? "",
@@ -92,6 +115,7 @@ export function draftFromField(f: {
     sensitivity: f.sensitivity, mobileInteractive: f.mobileInteractive,
     correctAnswer: f.correctAnswer ?? "", points: f.points != null ? String(f.points) : "1",
     logicRules: parseLogicRules(f.logicRules), logicMode: f.logicMode ?? "ANY", logicAction: f.logicAction ?? "SHOW",
+    width: String(f.width ?? 100),
   };
 }
 
@@ -193,6 +217,29 @@ export function FieldPropertiesPanel({
             </SelectContent>
           </Select>
         </div>
+      </div>
+
+      {/* ── STUDIO-DND: genişlik (elle ayarlanabilir boyut) ── */}
+      <div className="grid gap-1">
+        <Label className="text-xs">{t("forms.widthLabel")}</Label>
+        <Select
+          value={WIDTH_PRESETS.some((p) => p.value === draft.width) ? draft.width : "CUSTOM"}
+          disabled={draft.type === "SECTION"}
+          onValueChange={(v) => upd({ width: v === "CUSTOM" ? draft.width : v })}
+        >
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {WIDTH_PRESETS.map((p) => (
+              <SelectItem key={p.value} value={p.value}>{t(p.labelKey)}</SelectItem>
+            ))}
+            <SelectItem value="CUSTOM">{t("forms.widthCustom", { w: draft.width })}</SelectItem>
+          </SelectContent>
+        </Select>
+        {draft.type === "SECTION" ? (
+          <p className="text-[11px] text-muted-foreground">{t("forms.widthSectionLocked")}</p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">{t("forms.widthHint")}</p>
+        )}
       </div>
 
       {draft.type === "QA_QUIZ" && (
@@ -306,7 +353,9 @@ export function FieldPropertiesPanel({
       </Button>
 
       <div className="flex gap-2">
-        <Button size="sm" className="flex-1" disabled={busy !== null || !draft.label.trim()} onClick={() => onSave(draft)}>
+        <Button size="sm" className="flex-1" disabled={busy !== null || !draft.label.trim()}
+          onClick={() => onSave({ ...draft, width: draft.type === "SECTION" ? "100" : draft.width })}
+        >
           {busy !== null ? <Loader2 className="size-4 animate-spin" /> : <CheckIcon />} {t("forms.saveField")}
         </Button>
         <Button size="sm" variant="outline" onClick={onCancel}>{t("forms.cancelEdit")}</Button>

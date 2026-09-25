@@ -580,6 +580,8 @@ model FormField {
   mobileInteractive Boolean @default(false) // mobil uygulamada interaktif öge (anket QA, NPS, rating)
   correctAnswer   String? // QA_QUIZ: seçeneklerden doğru cevap (mobil QA scoring)
   order           Int     @default(0)
+  // — STUDIO-DND: tasarımcı üzerinde elle konum/boyut —
+  width           Int     @default(100) // alan genişliği % (25..100; 100=tam satır; sürükleyerek ayarlanır)
   // — F-EXP: mantık kapıları + genişletilmiş bileşenler —
   logicRules      String? // JSON: [{"field":<fieldId>,"op":EQ|NEQ|CONTAINS|GT|LT|EMPTY|NOT_EMPTY,"value":string}] — çoklu koşul
   logicMode       String? // ANY|ALL — koşulların birleşim biçimi (OR/AND kapısı)

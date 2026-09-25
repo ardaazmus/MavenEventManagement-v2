@@ -305,7 +305,23 @@
     "slugSave": "Kaydet",
     "slugSaveError": "Kısa adres kaydedilemedi (başkası tarafından kullanılıyor olabilir)",
     "slugSaved": "Kısa adres kaydedildi",
-    "typeChangeWarn": "Tür değişikliği eski yanıtların gösterimini etkileyebilir."
+    "typeChangeWarn": "Tür değişikliği eski yanıtların gösterimini etkileyebilir.",
+    "canvasHint": "Alanları sürükleyerek taşı · sağ kenardaki tutamaçla genişliği ayarla",
+    "paletteDragHint": "Tıkla-ekle'nin yanı sıra bileşeni tutup tuvale sürükleyebilirsin",
+    "resizeHandleAria": "Alan genişliğini ayarla",
+    "widthLabel": "Genişlik",
+    "widthFull": "Tam genişlik (%100)",
+    "widthWide": "Geniş (%75)",
+    "widthTwoThird": "İki üçlük (%66)",
+    "widthHalf": "Yarım (%50)",
+    "widthThird": "Üçte bir (%33)",
+    "widthQuarter": "Çeyrek (%25)",
+    "widthCustom": "Özel (%{w})",
+    "widthSectionLocked": "Bölüm başlığı her zaman tam genişliktedir",
+    "widthHint": "Tuvalde sağ kenardaki tutamacı sürükleyerek serbest genişlik verebilirsin",
+    "reorderSaved": "Alan sırası güncellendi",
+    "reorderError": "Sıralama güncellenemedi",
+    "widthSaveError": "Genişlik kaydedilemedi"
   },
   "common": {
     "error": "Hata"

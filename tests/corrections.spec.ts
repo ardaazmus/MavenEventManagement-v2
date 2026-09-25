@@ -1,9 +1,36 @@
 // DÜZELTME TURU hedefli testler — tenant izolasyonu, public DTO, para bütünlüğü,
 // atomic zincir, middleware benzeri kapılar. Mevcut desen: Playwright + Prisma (flow.spec.ts).
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 
 const db = new PrismaClient();
+
+// F-EXP captcha sözleşmesi: captchaEnabled formda public-register HMAC challenge ister.
+// Test tarafı challenge'ı çözerek MEŞRU istemci yolunu izler (tek-kullanım: her POST yenisi).
+async function solveChallenge(
+  request: APIRequestContext,
+  formId: string,
+): Promise<{ challengeToken: string; challengeAnswer: string } | Record<string, never>> {
+  const pub = await request.get(`/api/public-forms/${formId}`);
+  if (!pub.ok()) return {};
+  const data = (await pub.json()) as { challenge?: { question: string; token: string } | null };
+  const ch = data.challenge;
+  if (!ch) return {};
+  const m = ch.question.match(/(\d+)\s*([+−-])\s*(\d+)/);
+  if (!m) return {};
+  const a = Number(m[1]);
+  const b = Number(m[3]);
+  const answer = m[2] === "+" ? a + b : a - b;
+  return { challengeToken: ch.token, challengeAnswer: String(answer) };
+}
+
+// Oran-sınırlayıcı izolasyonu: her koşu AYRI sanal istemciden gelir (en-sağ XFF kimliği —
+// güven modeli: MAVEN_TRUST_PROXY=on tek-gateway kurulumunun sözleşmesi). Böylece geriye
+// doğru ardışık koşuların 10 dk/IP kovasını tüketmesi testleri sallantıya sokmaz.
+function virtualClientHeaders() {
+  const ip = `10.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.ceil(Math.random() * 254)}`;
+  return { "x-forwarded-for": ip };
+}
 
 test.describe.serial("P1.1 — deliverables tenant izolasyonu (fail-closed)", () => {
   let agreementId = "";
@@ -100,7 +127,8 @@ test.describe("P1.2 — public-register DTO izin listesi", () => {
     }
     const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const res = await request.post("/api/public-register", {
-      data: { formId: form.id, respondentName: `DTO ${stamp}`, respondentEmail: `dto-${stamp}@maven-correct.local`, answers, elapsedSeconds: 30, commsOptIn: true },
+      headers: virtualClientHeaders(),
+      data: { formId: form.id, respondentName: `DTO ${stamp}`, respondentEmail: `dto-${stamp}@maven-correct.local`, answers, elapsedSeconds: 30, commsOptIn: true, ...(await solveChallenge(request, form.id)) },
     });
     expect([200, 201]).toContain(res.status());
     const body = (await res.json()) as Record<string, unknown>;
@@ -207,6 +235,12 @@ test.describe.serial("P1.3 — iade para bütünlüğü + idempotency", () => {
     const paid = order!.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
     const refunded = order!.refunds.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + r.amount, 0);
     expect(paid - refunded).toBe(paidMinor);
+    // status-onarımı: finance.refund recalc'ı sipariş durumunu düşürür; test satırı silince
+    // sunucu yeniden hesaplamaz — iş kuralıyla (bakiye ≥ toplam → PAID) durumu geri koy
+    // (GOLDEN paritesi: flow.spec "ÖDEME" adımı kapanmış sipariş bekler)
+    if (order!.status !== "PAID" && paid - refunded >= order!.totalAmount) {
+      await db.order.update({ where: { id: orderId }, data: { status: "PAID" } });
+    }
   });
 });
 
@@ -239,7 +273,8 @@ test.describe.serial("P1.4 — atomic registration chain (retry + eşzamanlı)",
       else answers[f.id] = "Zincir Testi";
     }
     const res = await request.post("/api/public-register", {
-      data: { formId, respondentName: "Zincir Test Kişisi", respondentEmail: email, answers, elapsedSeconds: 30, commsOptIn: true },
+      headers: virtualClientHeaders(),
+      data: { formId, respondentName: "Zincir Test Kişisi", respondentEmail: email, answers, elapsedSeconds: 30, commsOptIn: true, ...(await solveChallenge(request, formId)) },
     });
     expect([200, 201]).toContain(res.status());
     const person = await db.person.findFirst({ where: { email } });
@@ -273,7 +308,8 @@ test.describe.serial("P1.4 — atomic registration chain (retry + eşzamanlı)",
     }
     // gönderiyi zincirsiz oluştur (PENDING) — sonra iki eşzamanlı onay
     const res = await request.post("/api/public-register", {
-      data: { formId, respondentName: "Eşzamanlı Kişi", respondentEmail: email2, answers, elapsedSeconds: 30, commsOptIn: false },
+      headers: virtualClientHeaders(),
+      data: { formId, respondentName: "Eşzamanlı Kişi", respondentEmail: email2, answers, elapsedSeconds: 30, commsOptIn: false, ...(await solveChallenge(request, formId)) },
     });
     expect([200, 201]).toContain(res.status());
     const submission = await db.formSubmission.findFirst({ where: { respondentEmail: email2 }, orderBy: { createdAt: "desc" } });

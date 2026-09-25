@@ -8,6 +8,7 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 import { extractSession, validatePortalSession } from "@/lib/api/portal-access";
 import { requireAdmin } from "@/lib/auth/request-context";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
+import { dispatchChannelMessage, eventRouting } from "@/lib/notify";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +42,6 @@ export async function POST(req: NextRequest) {
 
     const created = await db.portalAnnouncement.create({
       data: { editionId: eid, title: title.slice(0, 120), message: message.slice(0, 500), level, target },
-      select: { id: true, title: true, level: true, target: true, createdAt: true },
     });
     await db.activityLog.create({
       data: {
@@ -53,7 +53,35 @@ export async function POST(req: NextRequest) {
         actorName: "Yönetici",
       },
     });
-    return NextResponse.json(created, { status: 201 });
+
+    // ── dış kanal dağıtımı (WhatsApp/SMS) — duyuru akışını ASLA bloklamaz ──
+    // Hedef: edisyon katılımcıları (telefonu olanlar). Hata kanal-spesifik raporlanır;
+    // portal içi duyuru zaten oluşturulmuş olduğundan buradaki hata 500'e düşürmez.
+    let channels: { ok: boolean; wa: { attempted: number; sent: number; error?: string }; sms: { attempted: number; sent: number; error?: string } } | null = null;
+    try {
+      const cfg = await db.notificationChannelConfig.findUnique({ where: { editionId: eid } });
+      if (cfg && cfg.channelsEnabled && (cfg.waEnabled || cfg.smsEnabled) && eventRouting(cfg).announcement) {
+        const parts = await db.eventParticipation.findMany({
+          where: { editionId: eid, person: { phone: { not: null } } },
+          select: { person: { select: { firstName: true, lastName: true, phone: true } } },
+          take: 100, // tavan: maliyet koruması (notify.ts MAX_RECIPIENTS ile uyumlu)
+        });
+        const recipients = parts
+          .map((p) => p.person)
+          .filter((p): p is NonNullable<typeof p> => Boolean(p))
+          .map((p) => ({ name: `${p.firstName} ${p.lastName}`, phone: p.phone }));
+        if (recipients.length > 0) {
+          channels = await dispatchChannelMessage(eid, {
+            kind: "announcement",
+            title: created.title,
+            body: `${created.message}\n\n— ${created.level === "URGENT" ? "ACİL" : "Duyuru"}`,
+          }, recipients);
+        }
+      }
+    } catch (chErr) {
+      console.error("announcement channel dispatch:", chErr);
+    }
+    return NextResponse.json({ ...created, channels }, { status: 201 });
   } catch (e) {
     const ge = guardJson(e);
     if (ge) return ge;

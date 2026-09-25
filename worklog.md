@@ -2097,3 +2097,52 @@ Work Log:
 - scripts/portal-demo-setup.mjs (yeni, idempotent): seed sonrası portal demo durumunu kurar (aktif portal+DEMO26+kroki(public/portal-kroki-demo.png URL olarak)+2 B2B planı+3 atama+karşılama duyurusu). /api/seed portal config'i SIFIRLAR — seed sonrası bu betik çalıştırılmalı (worklog notu: Playwright+seed rutinlerinin sonuna eklenmeli).
 - Kalan riskler: (1) seed portal demo verisini temizler (betik çözüyor); (2) agent-browser upload sıfır-byte dosya — gerçek tarayıcıda input onChange standart (kod doğru, tooling kısıtı); (3) B2B "tamamlandı" durumu saha modülüyle bağlanabilir (ileride); (4) web-push server tarafı yerine client scheduler — PWA açıkken çalışır, kapalıyken bildirim düşmez (spec "browser-based" ile uyumlu; gerçek FCM/webpush A4 sonrası).
 - Sonraki adım önerileri: portal ayarlarına Q&A moderasyon listesi (yanıtla/gizle), sponsor kurum detay kartı, program "takvime ekle" (ICS), PWA offline fallback sayfası, portal dil tercihine tenant dillerinin entegrasyonu.
+---
+Task ID: NOTIFY-CHANNELS+DESIGN+DBM (WhatsApp/SMS kanalları + Mobil Portal Tasarım + DB Migration)
+Agent: Z.ai Code (ana ajan)
+Task: Kullanıcı talepleri paketi — (1) bağlı şirket mobil telefonu üzerinden WhatsApp + SMS bildirim kanalları, (2) Mobil Portal'ın TAM tasarım/font ayarları + ikon SVG logo + header/footer/içerik renk ve arka plan görselleri (SVG/PNG/JPEG) + kanvas grid'de ikon konumlandırma, (3) Mobil Portal Sponsoru logo alanı, (4) MySQL/MariaDB (Hostinger) migration hazırlığı + B2B eşzamanlılık kontrolü + geçici DB ayar sekmesi.
+
+Work Log:
+## ŞEMA (additive — mevcut tablolar BOZULMADI) ✓
+- EventPortalConfig += 13 tasarım alanı: fontFamily(5 preset), fontScale(90-120), headerBgColor/footerBgColor/contentBgColor, headerBgImage/footerBgImage/contentBgImage (dataURL ≤600KB), portalSponsorLogoUrl/portalSponsorName/portalSponsorUrl, iconOverridesJson({navKey:{svg,color}}), iconLayoutJson({navKey:order}).
+- YENİ model NotificationChannelConfig (editionId @unique): wa*/sms* sağlayıcı kimlikleri + waTokenCipher/smsTokenCipher (AES-256-GCM, secrets.ts deseni) + waAccountId/smsAccountId (Twilio SID/Netgsm usercode) + eventsJson (olay-yönlendirme matrisi) + lastTest*.
+- B2bPlan += @@unique([editionId, startsAt, location]) — DB düzeyi çift-kayıt invariant (NULL'lar kısıt dışı; migration öncesi tarama: 0 çift). db:push ✓ + restart ✓.
+
+## BACKEND ✓
+- src/lib/notify.ts (yeni çekirdek): normalizePhone (TR E.164: "0 532…"→+90…), WhatsApp senderları (META_CLOUD/TWILIO/ULTRAMSG/WAHA/GENERIC_WEBHOOK/DEMO), SMS senderları (TWILIO/NETGSM/ILETIMERKEZI/VERIMOR/GENERIC_WEBHOOK/DEMO), dispatchChannelMessage (kanal-yönlendirme + 100 alıcı tavanı + IntegrationLog izi + hata-fırlatmaz), sendChannelTest (tek-numara test). DEMO sağlayıcı ağa çıkmaz (SIMULATED ok) — sandbox QA'sı için.
+- /api/notifications/channels GET/PUT (admin): upsert, token üç-durum (undefined=dokunma/"__CLEAR__"=sil/değer=AES şifrele), maske "••••••••" gönderilirse üzerine yazmaz, eventsJson bilinen-anahtar doğrulaması, ActivityLog.
+- /api/notifications/channels/test POST: kanal test gönderimi → lastTestStatus işlenir; 10/dk rate.
+- /api/portal/announcements POST: duyuru oluştuktan sonra dış-kanal dağıtımı (telefonlu katılımcılar, tavan 100) — duyuru akışını ASLA bloklamaz, sonuç `channels` alanında döner. Kanıt: 26 alıcı → WA 26/26 + SMS 26/26 (DEMO).
+- /api/portal/config PUT: 13 tasarım alanı doğrulamalı (hex renkler, fontFamily whitelist, iconOverrides svg yalnız data:image/svg+xml|png|jpeg|webp ≤2MB, portalSponsorUrl yalnız http(s) — JS/data: enjeksiyonu kapalı).
+- /api/portal/content: LOGIN fazına da design+portalSponsor+themeColor eklendi (giriş ekranı da marka uygular); ACTIVE fazına design + portalSponsor blokları.
+- /api/admin/db-migration GET (yeni): sağlayıcı tespiti (file:/mysql:), SQLite dosya yolu+boyut, 95 tablo satır sayısı, 8 MySQL hazırlık kontrolü (B2B çift-kayıt canlı tarama, eşzamanlılık mimarisi, cuid, enum-stratejisi, DATETIME(3), artefakt varlığı+LongText/Text sayımları, veri hacmi) + 8 adımlı runbook.
+- EŞZAMANLILIK: registry EntityConfig += beforeWrite async kancası; [entity] POST + [id] PUT çağırır → çakışmada 409. b2b-plans kancası: withLock(`b2b:edition:location`) + aynı-masa adayları + kesin aralık-çakışma testi (endsAt yoksa 30dk varsayılan pencere) + kendisi-hariç (update). Kanıt: overlap→409 (çakışan mesajlı), farklı masa aynı saat→201, kendi güncellemesi→200. b2b-plans validate: endsAt≥startsAt.
+
+## MYSQL ARTEFAKTI ✓
+- scripts/generate-mysql-schema.mjs (yeni, iki-geçişli parser): prisma/schema.prisma → docs/schema.mysql.prisma (provider mysql; indeksli/@unique/Id-son ekli/@default'lı alanlar VARCHAR(191) kalır — MySQL TEXT'e DEFAULT verilemez; büyük-içerik alanlar → @db.LongText (98), diğer String → @db.Text (267)). `prisma validate` GEÇERLİ (mysql:// DSN ile kanıtlandı). prisma/ klasörüne KOYULMADI (çoklu-şema birleşme çakışması).
+
+## ADMIN UI ✓
+- portal-settings.tsx: yeni "Tasarım ve Tipografi" SectionCard (§5.2+) — font select (canlı önizlemeli) + ölçek slider, 3 alan-rengi (color input + sıfırla), 3 arka plan görseli yükleyici (SVG/PNG/JPEG, 600KB), Mobil Portal Sponsoru kartı (logo+ad+url), İKON KANVASI: telefon önizlemeli 5-slot grid, sürükle-bırak (HTML5 DnD swap) + ok butonları + seçili ikona SVG/PNG yükleme (300KB) + temizle; kayıtlı değerlerle önizleme canlı.
+- portal-settings.tsx: yeni "Bildirim Kanalları — WhatsApp & SMS" kartı (bağımsız kaydetme): master switch, WA kartı (sağlayıcı seçimine göre koşullu alanlar: endpoint/phoneId/accountId/from/token + DEMO uyarısı), SMS kartı, olay-yönlendirme 4 switch, test-numarası + WA/SMS test butonları + "Son test" durumu + toast kanıtı.
+- onsite.tsx SettingsView: GRUP 3 (GEÇİCİ) "Veritabanı & Migration" başlığı + yeni db-migration-card.tsx (useApi deseni): özet şeridi (sağlayıcı/yol/boyut/95 tablo), PASS/INFO rozetli kontroller, kopyala-butonlu runbook, açılır tablo-satır listesi, yenile.
+
+## PORTAL UI ✓
+- portal-app.tsx: kök div'e fontFamily+fontScale+contentBg uygulanır; Top Header + Event Header headerBg (renk+görsel); sabit alt menü footerBg + iconOverrides SVG img / color; navItems iconLayout sırasına göre sort; Mobil Portal Sponsoru şeridi (fixed, alt menü üstünde, safe-area'lı, main padding koşullu 96px) + LoginScreen'de marka (font/bg/sponsor şeridi). LOGIN fazı cfg null-çökmesi giderildi (cfg?.notifications?.enabled).
+
+## i18n ✓
+- portalSettings.design.* (41 yaprak) + portalSettings.channels.* (47) + portalApp.design.* (2) + settingsView.dbm.* (17) — tr+en SİMETRİK; bake → 3068 yaprak; hardcoded-scan 79 dosya 0 ihlal.
+
+## KAPILAR + KANIT (agent-browser, taze context) ✓
+- tsc 0; lint 0; i18n scan 0.
+- Playwright SIRALI: corrections 22 + ui-corrections 6 + phase0 16 + phase2 9 + phase3 11 + phase4 14 + goldens 1 + flow 6 + middleware 2 = **87 PASS / 0 FAIL**. Sonrası POST /api/seed + portal-demo-setup (baseline: 28 kişi, DEMO26, kroki).
+- API kanıtları: kanal PUT/GET (token maskeli), DEMO test WA+SMS "SIMULATED → +905324445566", duyuru→kanal dağıtımı 26/26+26/26, B2B 409/201/200 üçlüsü, config tasarım roundtrip, content LOGIN+ACTIVE design blokları, db-migration (SQLite 8.4MB, 95/95, 8 kontrol).
+- Görsel kanıtlar (tool-results/): newdesign-login3.png (serif+krem bg), newdesign-dashboard.png (koyu lacivert header + sponsor şeridi + yıldız SVG ikon + yeni nav sırası Profil|Anasayfa|Program|Sponsorlar|Yer Planı), icon-canvas.png (kanvas önizleme kayıtlı renk/iksla), channels-section.png + channels-test.png (test toast + son-test), design-en.png (EN simetrik), dbm-card2.png (migration paneli PASS rozetleri), portal-final-sanity2.png (seed sonrası temiz). pageErrors 0.
+
+## TEMİZLİK / DURUM
+- Test artıkları silindi (3 test duyurusu, 3 test B2B planı); Ahmet telefonu seed desenine geri alındı; portal tasarım alanları varsayılana döndürüldü (kullanıcı kendi markasını kurar); kanal yapılandırması kapalıya çekildi (yanlışlıkla dış-gönderim yok). Kanal kurulumu canlıda: Ayarlar→Dış Portal→Portal Ayarları→Bildirim Kanalları → sağlayıcı+token (şifreli saklanır) → test → Kaydet.
+
+Stage Summary:
+- Teslim edilenler: (1) WhatsApp (şirket telefonu köprülü 5 sağlayıcı) + SMS (5 sağlayıcı) bildirim kanalları — şifreli sır, test gönderimi, olay-yönlendirme, duyuru dağıtım entegrasyonu; (2) Mobil Portal tam tasarım kontrolü — font/ölçek, 3 alan rengi, 3 alan arka plan görseli (SVG/PNG/JPEG), ikon SVG logo desteği, kanvas grid'de sürükle-bırak ikon konumlandırma; (3) Mobil Portal Sponsoru logo/ad/bağlantı alanı + tüm ekranlarda görünen sponsor şeridi; (4) MySQL/MariaDB migration hazırlığı — geçici Ayarlar sekmesi (canlı durum + 8 hazırlık kontrolü + runbook), doğrulanmış docs/schema.mysql.prisma artefaktı, B2B eşzamanlılık kontrolü (withLock + 409 + DB unique invariant).
+- Kural korundu: mevcut tablolar/ilişkiler değişmedi (yalnız additive), tek-route kuralı, kiracı/edisyon izolasyonu (tüm yeni uçlar requireAdmin/resolveEditionContext), sır-maskelendirme, i18n tr/en simetrik.
+- Kalan riskler: (1) gerçek sağlayıcı gövde sözleşmeleri saha doğrulaması bekler (META_CLOUD/WAHA/NETGSM URL+payload'ları sürüm değiştirebilir; GENERIC_WEBHOOK kaçış kapısı); (2) withLock süreç-içi — çok-örnek üretimde Redis GETLOCK'a taşınmalı (runbook adım 8); (3) dataURL görseller bootstrap payload'ını büyütür — medya sistemine geçiş önerisi dbm INFO kontrolünde; (4) seed portal tasarım/kanal demo verisini siler — portal-demo-setup sonrası istenirse yeniden konfigüre edilmeli.
+- Sonraki adım önerileri: portal ayarlarına Q&A moderasyon listesi, program "takvime ekle" (ICS), B2B zaman-talebi organizatör onay ekranı, kanal gönderim raporları (IntegrationLog görünümü), WhatsApp şablon-mesaj yönetimi.

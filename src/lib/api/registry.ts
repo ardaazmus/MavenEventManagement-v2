@@ -32,6 +32,10 @@ export interface EntityConfig {
   // DÜZELTME (server-side validation): varlık-bazlı yazım sözleşmesi — null döner (geçerli)
   // ya da hata mesajı döner (400). UI devre dışı butonu güvenlik kontrolü DEĞİLDİR.
   validate?: (data: Record<string, unknown>, isUpdate: boolean) => string | null;
+  // Eşzamanlılık kontrolü kancası (B2B randevu çakışması): create/update ÖNCESİ
+  // async çakışma denetimi — hata mesajı dönerse 409 ile reddedilir. Inside the
+  // hook: withLock(anahtar) + çakışan-aralık sorgusu (check-then-write serileştirme).
+  beforeWrite?: (data: Record<string, unknown>, isUpdate: boolean, existingId?: string) => Promise<string | null>;
 }
 
 export const registry: Record<string, EntityConfig> = {
@@ -612,6 +616,53 @@ export const registry: Record<string, EntityConfig> = {
     searchFields: ["subject", "venue", "location"],
     filterFields: ["editionId", "status", "isPrivate"],
     orderBy: { startsAt: "asc" },
+    // Yazım sözleşmesi: endsAt verilirse startsAt'tan önce OLAMAZ.
+    validate: (data) => {
+      const read = (v: unknown): Date | null => (v == null ? null : new Date(String(v)));
+      if (data.startsAt != null && Number.isNaN(read(data.startsAt)!.getTime())) return "startsAt geçersiz bir tarih";
+      if (data.endsAt != null && Number.isNaN(read(data.endsAt)!.getTime())) return "endsAt geçersiz bir tarih";
+      const s = read(data.startsAt);
+      const e = read(data.endsAt);
+      if (s && e && e < s) return "Bitiş saati başlangıçtan önce olamaz";
+      return null;
+    },
+    // EŞZAMANLILIK KONTROLÜ (Concurrency Control): aynı edisyonda aynı masa/konumda
+    // zaman-çakışan iki randevu YASAK. withLock ile check-then-write serileştirilir
+    // (tek-örnek garantisi — tx-lock.ts sözleşmesi); @@unique([editionId,startsAt,location])
+    // ise DB düzeyinde son savunma hattıdır. MySQL geçişinde FOR UPDATE aynı sözleşmeyi verir.
+    beforeWrite: async (data, isUpdate, existingId) => {
+      const { withLock } = await import("@/lib/tx-lock");
+      const editionId = typeof data.editionId === "string" ? data.editionId : null;
+      const location = typeof data.location === "string" && data.location.trim() ? data.location.trim().toLowerCase() : null;
+      const startsAt = data.startsAt ? new Date(String(data.startsAt)) : null;
+      const endsAtRaw = data.endsAt ? new Date(String(data.endsAt)) : null;
+      if (!editionId || !startsAt || !location) return null; // kısıt kapsamı dışı — DB invariant yeter
+      // çakışma aralığı: yeni randevu [s, e) — endsAt yoksa 30dk varsayılan pencere
+      const endsAt = endsAtRaw && !Number.isNaN(endsAtRaw.getTime()) && endsAtRaw > startsAt ? endsAtRaw : new Date(startsAt.getTime() + 30 * 60_000);
+      return withLock(`b2b:${editionId}:${location}`, async () => {
+        // Prisma zaman-çakışmasını doğrudan ifade edemediğinden adaylar üstünde kesin aralık testi
+        const candidates = await db.b2bPlan.findMany({
+          where: {
+            editionId,
+            status: { not: "CANCELLED" },
+            startsAt: { not: null },
+            OR: [{ location: data.location as string }, ...(typeof data.location === "string" ? [{ location: data.location.trim() }] : [])],
+            ...(isUpdate && existingId ? { id: { not: existingId } } : {}),
+          },
+          select: { id: true, subject: true, startsAt: true, endsAt: true, location: true },
+          take: 200,
+        });
+        for (const c of candidates) {
+          if (!c.startsAt) continue;
+          const cStart = new Date(c.startsAt);
+          const cEnd = c.endsAt && c.endsAt > cStart ? new Date(c.endsAt) : new Date(cStart.getTime() + 30 * 60_000);
+          if (cStart < endsAt && cEnd > startsAt) {
+            return `Çakışma: "${c.subject}" bu masada ${cStart.toLocaleString("tr-TR")} saatinde planlanmış — aynı masa/zaman aralığına çift kayıt atılamaz`;
+          }
+        }
+        return null;
+      });
+    },
   },
   "b2b-assignments": {
     delegate: db.b2bAssignment as unknown as AnyDelegate,

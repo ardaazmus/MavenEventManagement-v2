@@ -160,6 +160,20 @@ export async function PUT(req: NextRequest) {
       pwaEnabled?: boolean;
       headerTitle?: string | null;
       headerSubtitle?: string | null;
+      // ── Mobil Portal tasarım kontrolü (§5.2+ kullanıcı isteği) ──
+      fontFamily?: string | null;
+      fontScale?: number | null;
+      headerBgColor?: string | null;
+      footerBgColor?: string | null;
+      contentBgColor?: string | null;
+      headerBgImage?: string | null;
+      footerBgImage?: string | null;
+      contentBgImage?: string | null;
+      portalSponsorLogoUrl?: string | null;
+      portalSponsorName?: string | null;
+      portalSponsorUrl?: string | null;
+      iconOverrides?: Record<string, { svg?: string; color?: string }> | null;
+      iconLayout?: Record<string, number> | null;
     };
     if (!body.editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
     const ctx = await resolveEditionContext(body.editionId, { required: true });
@@ -216,6 +230,63 @@ export async function PUT(req: NextRequest) {
     if (body.venueMapUrl !== undefined) data.venueMapUrl = body.venueMapUrl?.slice(0, 2_000_000) || null;
     if (body.venueMapEnabled !== undefined) data.venueMapEnabled = Boolean(body.venueMapEnabled);
     if (body.pwaEnabled !== undefined) data.pwaEnabled = Boolean(body.pwaEnabled);
+
+    // ── tasarım alanları (§5.2+) ──
+    const FONT_FAMILIES = new Set(["system", "serif", "rounded", "mono", "condensed"]);
+    if (body.fontFamily !== undefined) {
+      data.fontFamily = body.fontFamily && FONT_FAMILIES.has(body.fontFamily) ? body.fontFamily : null;
+    }
+    if (body.fontScale !== undefined) {
+      const n = Number(body.fontScale);
+      data.fontScale = Number.isFinite(n) && n >= 90 && n <= 120 ? Math.round(n) : null;
+    }
+    for (const k of ["headerBgColor", "footerBgColor", "contentBgColor"] as const) {
+      const c = toHexColor(body[k]);
+      if (c !== undefined) data[k] = c;
+    }
+    for (const k of ["headerBgImage", "footerBgImage", "contentBgImage"] as const) {
+      if (body[k] !== undefined) data[k] = (body[k] as string | null)?.slice(0, 2_000_000) || null;
+    }
+    if (body.portalSponsorLogoUrl !== undefined) data.portalSponsorLogoUrl = body.portalSponsorLogoUrl?.slice(0, 2_000_000) || null;
+    if (body.portalSponsorName !== undefined) data.portalSponsorName = body.portalSponsorName?.slice(0, 120) || null;
+    if (body.portalSponsorUrl !== undefined) {
+      const u = body.portalSponsorUrl?.trim() || "";
+      // yalnız http(s) — javascript:/data: enjeksiyonu kapalı
+      data.portalSponsorUrl = /^https?:\/\//i.test(u) ? u.slice(0, 300) : null;
+    }
+    if (body.iconOverrides !== undefined) {
+      const obj = toJsonObject(body.iconOverrides);
+      if (obj) {
+        // biçim doğrulama: {navKey: {svg?: string(≤2MB), color?: hex}} — svg yalnız data:image/(svg|png|jpeg|webp)
+        const parsed = JSON.parse(obj) as Record<string, { svg?: unknown; color?: unknown }>;
+        const clean: Record<string, { svg?: string; color?: string }> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          if (!v || typeof v !== "object") continue;
+          const e: { svg?: string; color?: string } = {};
+          if (typeof v.svg === "string" && /^data:image\/(svg\+xml|png|jpeg|webp);base64,/.test(v.svg) && v.svg.length <= 2_000_000) e.svg = v.svg;
+          if (typeof v.color === "string" && /^#[0-9a-fA-F]{6}$/.test(v.color)) e.color = v.color.toLowerCase();
+          if (e.svg || e.color) clean[k] = e;
+        }
+        data.iconOverridesJson = JSON.stringify(clean);
+      } else {
+        data.iconOverridesJson = null;
+      }
+    }
+    if (body.iconLayout !== undefined) {
+      const obj = toJsonObject(body.iconLayout);
+      if (obj) {
+        // biçim: {navKey: order} — order 0..9 tamsayı (grid konum/sıra)
+        const parsed = JSON.parse(obj) as Record<string, unknown>;
+        const clean: Record<string, number> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          const n = Number(v);
+          if (Number.isInteger(n) && n >= 0 && n <= 9) clean[k] = n;
+        }
+        data.iconLayoutJson = JSON.stringify(clean);
+      } else {
+        data.iconLayoutJson = null;
+      }
+    }
 
     const config = await db.eventPortalConfig.upsert({
       where: { editionId: eid },

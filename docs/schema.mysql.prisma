@@ -1,3 +1,9 @@
+// ═══ MySQL/MariaDB MIGRATION ARTEFAKTI — otomatik üretilmiş (scripts/generate-mysql-schema.mjs) ═══
+// Kaynak: prisma/schema.prisma · Üretim: 2026-09-25T12:13:31.398Z
+// Amaç: Hostinger MySQL/MariaDB taşınması için hazır şema — prisma schema.mysql.prisma olarak
+// ayrı klasörde durur (prisma/ klasörüne KOYULMAZ — çoklu-şema birleşmesi çakışması önlenir).
+// Doğrulama akışı: bkz. Admin → Ayarlar → Veritabanı & Migration (geçici sekme).
+
 // ============================================================================
 // MAVEN EVENT MANAGEMENT — ORTAK ORGANİZASYONEL MİMARİ
 // Master Domain Graph (§58) + 02 Organizasyonel Bilgi Modeli birebir uygulama
@@ -10,7 +16,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -18,21 +24,21 @@ datasource db {
 
 model Tenant {
   id           String   @id @default(cuid())
-  name         String
+  name String @db.Text
   slug         String   @unique
   plan         String   @default("PRO") // FREE | PRO | ENTERPRISE
   status       String   @default("ACTIVE")
-  country      String?
+  country String? @db.Text
   timezone     String   @default("Europe/Istanbul")
   createdAt    DateTime @default(now())
   // — Firma kimliği (Faz C / R11) — vitrin + shell logo için nullable alanlar
-  logoUrl      String? // shell sol üst + vitrin hero (medya/dataURL)
-  tagline      String? // kısa slogan (shell alt yazı + vitrin)
-  aboutText    String? // vitrin "Hakkında" metni
-  contactName  String? // yetkili adı (vitrin kartı)
-  contactPhone String? // yetkili telefon (tel: linki)
-  contactEmail String? // yetkili e-posta (mailto: linki)
-  website      String? // firma web sitesi
+  logoUrl String? @db.LongText // shell sol üst + vitrin hero (medya/dataURL)
+  tagline String? @db.Text // kısa slogan (shell alt yazı + vitrin)
+  aboutText String? @db.Text // vitrin "Hakkında" metni
+  contactName String? @db.Text // yetkili adı (vitrin kartı)
+  contactPhone String? @db.Text // yetkili telefon (tel: linki)
+  contactEmail String? @db.Text // yetkili e-posta (mailto: linki)
+  website String? @db.Text // firma web sitesi
 
   users               User[]
   organizations       Organization[]
@@ -52,20 +58,20 @@ model Tenant {
 model User {
   id                String    @id @default(cuid())
   tenantId          String
-  email             String
-  name              String
+  email String @db.Text
+  name String @db.Text
   role              String    @default("ORG_ADMIN") // §48: ORG_OWNER|ORG_ADMIN|EVENT_MANAGER|FINANCE_MANAGER|REGISTRATION_MANAGER|SPONSORSHIP_MANAGER|SCIENTIFIC_MANAGER|PROGRAM_MANAGER|ONSITE_MANAGER
   status            String    @default("ACTIVE")
   // — A4: kimlik doğrulama altyapısı (flag-off; MAVEN_AUTH=on ile devreye girer) —
-  passwordHash      String? // argon2id (m=19456,t=2,p=1) — plaintext ASLA saklanmaz/yazılmaz
-  mfaSecretCipher   String? // TOTP secret (AES-256-GCM cipher; secrets.ts ile)
+  passwordHash String? @db.Text // argon2id (m=19456,t=2,p=1) — plaintext ASLA saklanmaz/yazılmaz
+  mfaSecretCipher String? @db.LongText // TOTP secret (AES-256-GCM cipher; secrets.ts ile)
   mfaEnabled        Boolean   @default(false)
-  recoveryCodes     String? // JSON: [{ hash, usedAt|null }] — kurtarma faktörü (tek kullanımlık, hash'li)
+  recoveryCodes String? @db.Text // JSON: [{ hash, usedAt|null }] — kurtarma faktörü (tek kullanımlık, hash'li)
   failedLoginCount  Int       @default(0)
   lockedUntil       DateTime?
   lastLoginAt       DateTime?
   // — A4: asgari rıza (KVKK) —
-  consentVersion    String?
+  consentVersion String? @db.Text
   consentAcceptedAt DateTime?
   createdAt         DateTime  @default(now())
 
@@ -80,11 +86,11 @@ model Passkey {
   id           String    @id @default(cuid())
   userId       String
   credentialId String    @unique
-  publicKey    String // base64 (COSE)
+  publicKey String @db.Text // base64 (COSE)
   counter      Int       @default(0)
-  transports   String? // CSV: internal|hybrid|usb|nfc|ble
-  name         String?
-  aaguid       String?
+  transports String? @db.Text // CSV: internal|hybrid|usb|nfc|ble
+  name String? @db.Text
+  aaguid String? @db.Text
   createdAt    DateTime  @default(now())
   lastUsedAt   DateTime?
 
@@ -115,14 +121,14 @@ model OAuthAccount {
 model KvkkErasureRequest {
   id           String    @id @default(cuid())
   tenantId     String
-  email        String // talep sahibi başvuru adresi (doğrulama: kayıtla eşleşme)
+  email String @db.Text // talep sahibi başvuru adresi (doğrulama: kayıtla eşleşme)
   personId     String? // eşleşen kişi (doğrulama sonrası)
   status       String    @default("PENDING") // PENDING|VERIFIED|COMPLETED|REJECTED
-  note         String? // talepçinin açıklaması
-  rejectReason String? // legal-hold gerekçesi (reddedildiyse)
+  note String? @db.Text // talepçinin açıklaması
+  rejectReason String? @db.Text // legal-hold gerekçesi (reddedildiyse)
   verifiedAt   DateTime?
   completedAt  DateTime?
-  handledBy    String?
+  handledBy String? @db.Text
   requestedAt  DateTime  @default(now())
   dueAt        DateTime // requestedAt + 30 gün (SLA)
 
@@ -135,23 +141,23 @@ model KvkkErasureRequest {
 model Organization {
   id        String   @id @default(cuid())
   tenantId  String
-  name      String
-  code      String?
-  type      String? // COMPANY|ASSOCIATION|UNIVERSITY|AGENCY|PUBLIC_AUTHORITY|VENUE|HOTEL|MEDIA (sponsor TÜRÜ DEĞİL — §4)
-  website   String?
-  country   String?
-  city      String?
-  taxNo     String?
-  logoUrl   String?
-  notes     String?
+  name String @db.Text
+  code String? @db.Text
+  type String? @db.Text // COMPANY|ASSOCIATION|UNIVERSITY|AGENCY|PUBLIC_AUTHORITY|VENUE|HOTEL|MEDIA (sponsor TÜRÜ DEĞİL — §4)
+  website String? @db.Text
+  country String? @db.Text
+  city String? @db.Text
+  taxNo String? @db.Text
+  logoUrl String? @db.LongText
+  notes String? @db.LongText
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // — Kurumsal kimlik kartı (kullanıcı isteği 5) —
-  generalEmail String? // genel e-posta (info@...)
-  address      String? // fiziksel adres
-  description  String? // genel açıklama/bilgi
-  locationNote String? // Salon/Fuar alanı/Otel konum + QR notu
+  generalEmail String? @db.Text // genel e-posta (info@...)
+  address String? @db.Text // fiziksel adres
+  description String? @db.LongText // genel açıklama/bilgi
+  locationNote String? @db.Text // Salon/Fuar alanı/Otel konum + QR notu
   // TASK-A F1: portalToken skaleri KALDIRILDI — düz metin saklama yasak; belirteçler
   // PortalToken tablosunda sha256-hash ile yaşar (expiresAt + scope + revokedAt).
 
@@ -171,13 +177,13 @@ model OrganizationContact {
   id             String  @id @default(cuid())
   organizationId String
   personId       String?
-  name           String
-  title          String?
-  email          String?
-  phone          String?
+  name String @db.Text
+  title String? @db.Text
+  email String? @db.Text
+  phone String? @db.Text
   isPrimary      Boolean @default(false)
   role           String  @default("PRIMARY") // PRIMARY|AUTHORIZED|PAYMENT|TECHNICAL|PRESS|CUSTOM — rol bazlı sınırsız kontak
-  department     String?
+  department String? @db.Text
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   person       Person?      @relation(fields: [personId], references: [id], onDelete: SetNull)
@@ -186,26 +192,26 @@ model OrganizationContact {
 model Person {
   id                String    @id @default(cuid())
   tenantId          String
-  firstName         String
+  firstName String @db.Text
   lastName          String
   email             String? // güçlü eşleştirme işareti, kesin kimlik değil (Kimlik kuralı 1)
-  phone             String?
-  title             String?
-  company           String? // kalıcı profil; etkinlik anı görünümü snapshot'ta
-  country           String?
-  city              String?
-  bio               String?
-  photoUrl          String?
-  linkedin          String?
+  phone String? @db.Text
+  title String? @db.Text
+  company String? @db.Text // kalıcı profil; etkinlik anı görünümü snapshot'ta
+  country String? @db.Text
+  city String? @db.Text
+  bio String? @db.LongText
+  photoUrl String? @db.LongText
+  linkedin String? @db.Text
   status            String    @default("ACTIVE") // ACTIVE|PASSIVE|MERGED
   mergedIntoId      String? // kişi tekilleştirme: önerili + onaylı birleştirme
   // TASK-A F1: portalToken skaleri KALDIRILDI — düz metin saklama yasak; belirteçler
   // PortalToken tablosunda sha256-hash ile yaşar (expiresAt + scope + revokedAt).
   // — Misafir/aile hiyerarşisi (Self-Referencing Parent_ID, kullanıcı isteği 8) —
   parentPersonId    String? // bağlı olduğu ana katılımcı (aile/misafir profili)
-  relationType      String? // SELF|SPOUSE|CHILD|GUEST|ASSISTANT|OTHER
+  relationType String? @db.Text // SELF|SPOUSE|CHILD|GUEST|ASSISTANT|OTHER
   // — TASK-B 14: asgari rıza (KVKK m.4 asgari veri) — herkese açık kayıt yüzeyi —
-  consentVersion    String? // gösterilen aydınlatma/rıza metni sürümü
+  consentVersion String? @db.Text // gösterilen aydınlatma/rıza metni sürümü
   consentAcceptedAt DateTime? // gerekli-bilgilendirme onayı zamanı (gönderim anı)
   commsOptIn        Boolean? // fonksiyonel seçimli onay (iletişim) — zorunlu DEĞİL
   createdAt         DateTime  @default(now())
@@ -240,11 +246,11 @@ model Person {
 model EventSeries {
   id          String   @id @default(cuid())
   tenantId    String
-  name        String // örn. "No-Dig Turkey"
+  name String @db.Text // örn. "No-Dig Turkey"
   slug        String   @unique
-  description String?
-  template    String? // SCIENTIFIC_CONGRESS|TRADE_FAIR|CORPORATE|CUSTOM
-  logoUrl     String?
+  description String? @db.LongText
+  template String? @db.Text // SCIENTIFIC_CONGRESS|TRADE_FAIR|CORPORATE|CUSTOM
+  logoUrl String? @db.LongText
   createdAt   DateTime @default(now())
 
   tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -255,31 +261,31 @@ model EventEdition {
   id                   String    @id @default(cuid())
   tenantId             String
   seriesId             String? // null → bağımsız tek seferlik etkinlik
-  name                 String
+  name String @db.Text
   slug                 String    @unique
-  editionLabel         String? // örn. "2026"
+  editionLabel String? @db.Text // örn. "2026"
   status               String    @default("PLANNING") // §7 yaşam döngüsü: OPPORTUNITY|BID|AWARDED|PLANNING|CONFIGURATION|SALES|REGISTRATION|LOGISTICS|PRE_EVENT|ONSITE|POST_EVENT|RECONCILIATION|ARCHIVED
   isPublished          Boolean   @default(false)
-  template             String? // başlangıç yetenek seti önerisi
+  template String? @db.Text // başlangıç yetenek seti önerisi
   startDate            DateTime?
   endDate              DateTime?
   timezone             String    @default("Europe/Istanbul")
-  venueName            String?
-  city                 String?
-  country              String?
+  venueName String? @db.Text
+  city String? @db.Text
+  country String? @db.Text
   format               String    @default("IN_PERSON") // IN_PERSON|VIRTUAL|HYBRID
-  description          String?
-  coverColor           String? // UI vurgu rengi
-  languages            String? // "tr,en"
+  description String? @db.LongText
+  coverColor String? @db.Text // UI vurgu rengi
+  languages String? @db.Text // "tr,en"
   isFeatured           Boolean   @default(false)
   // — Etkinlik kimliği (kullanıcı isteği: üst firma ayarlarından AYRI, edisyon bazlı) —
-  logoUrl              String? // etkinlik logosu — etkinlik kartı + ayarlar (medya/dataURL)
-  headerImageUrl       String? // etkinlik kartı başlık görseli — etkinlik kartı bandı (medya/dataURL)
+  logoUrl String? @db.LongText // etkinlik logosu — etkinlik kartı + ayarlar (medya/dataURL)
+  headerImageUrl String? @db.LongText // etkinlik kartı başlık görseli — etkinlik kartı bandı (medya/dataURL)
   // — Dış portal header tasarımı (kullanıcı isteği: arka resim + başlık) —
-  portalHeaderTitle    String?
-  portalHeaderSubtitle String?
-  portalHeaderImageUrl String? // medya klasörü PORTAL bağlantılı
-  portalHeaderAccent   String? // vurgu rengi hex
+  portalHeaderTitle String? @db.Text
+  portalHeaderSubtitle String? @db.Text
+  portalHeaderImageUrl String? @db.LongText // medya klasörü PORTAL bağlantılı
+  portalHeaderAccent String? @db.Text // vurgu rengi hex
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
@@ -347,7 +353,7 @@ model EventCapability {
   key        String // §6: REGISTRATION|SCIENTIFIC|PROGRAM|SPONSORSHIP|EXHIBITION|FLOOR_PLAN|ACCOMMODATION|TRAVEL|BADGING|ACCESS_CONTROL|CERTIFICATES|CME_CREDITS|TOURS|SOCIAL_EVENTS|OPERATIONS|COMMUNICATIONS|FLOOR_STUDIO
   enabled    Boolean @default(false)
   isRequired Boolean @default(false)
-  setupNote  String? // modül kartı notu (hazır/yapılacak/dikkat)
+  setupNote String? @db.Text // modül kartı notu (hazır/yapılacak/dikkat)
 
   edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
 
@@ -358,10 +364,10 @@ model EventOrganizationAssignment {
   id             String    @id @default(cuid())
   editionId      String
   organizationId String
-  role           String // §4: HOST|EVENT_OWNER|CLIENT|PCO|CO_ORGANIZER|SCIENTIFIC_OWNER|PUBLIC_AUTHORITY|SUPPORTER|SPONSOR|EXHIBITOR|VENUE|HOTEL|SUPPLIER|MEDIA_PARTNER|ACADEMIC_PARTNER|ASSOCIATION|WORKSHOP_SPONSOR
+  role String @db.Text // §4: HOST|EVENT_OWNER|CLIENT|PCO|CO_ORGANIZER|SCIENTIFIC_OWNER|PUBLIC_AUTHORITY|SUPPORTER|SPONSOR|EXHIBITOR|VENUE|HOTEL|SUPPLIER|MEDIA_PARTNER|ACADEMIC_PARTNER|ASSOCIATION|WORKSHOP_SPONSOR
   validFrom      DateTime?
   validTo        DateTime?
-  notes          String?
+  notes String? @db.LongText
   createdAt      DateTime  @default(now())
 
   edition      EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
@@ -378,7 +384,7 @@ model EventParticipation {
   personId   String
   source     String   @default("ADMIN_ENTRY") // §12: PUBLIC_FORM|INVITATION|SPONSOR_PORTAL|EXHIBITOR_PORTAL|SCIENTIFIC_PORTAL|ADMIN_ENTRY|IMPORT|API|ONSITE_WALK_IN|GROUP_REGISTRATION
   attendance String   @default("NOT_ARRIVED") // §10: NOT_ARRIVED|CHECKED_IN|CHECKED_OUT|NO_SHOW
-  notes      String?
+  notes String? @db.LongText
   createdAt  DateTime @default(now())
 
   edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
@@ -409,11 +415,11 @@ model EventParticipation {
 model EventProfileSnapshot {
   id              String   @id @default(cuid())
   participationId String
-  badgeName       String // rozette yazacak isim — geçmiş geriye dönük değişmez (Kimlik kuralı 3)
-  company         String? // etkinlik anındaki kurum
-  title           String?
-  country         String?
-  specialNote     String?
+  badgeName String @db.Text // rozette yazacak isim — geçmiş geriye dönük değişmez (Kimlik kuralı 3)
+  company String? @db.Text // etkinlik anındaki kurum
+  title String? @db.Text
+  country String? @db.Text
+  specialNote String? @db.Text
   version         Int      @default(1)
   approved        Boolean  @default(true)
   createdAt       DateTime @default(now())
@@ -432,9 +438,9 @@ model Registration {
   status          String    @default("DRAFT") // §10: DRAFT|SUBMITTED|PENDING_APPROVAL|CONFIRMED|REJECTED|CANCELLED
   submittedAt     DateTime?
   decidedAt       DateTime?
-  decidedBy       String?
-  cancelReason    String?
-  notes           String?
+  decidedBy String? @db.Text
+  cancelReason String? @db.Text
+  notes String? @db.LongText
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -455,13 +461,13 @@ model Registration {
 model RegistrationCategory {
   id                 String  @id @default(cuid())
   editionId          String
-  name               String // Regular|Student|Member|Invited Speaker|Sponsor Guest|Press|VIP|Staff|Accompanying Person...
-  code               String
+  name String @db.Text // Regular|Student|Member|Invited Speaker|Sponsor Guest|Press|VIP|Staff|Accompanying Person...
+  code String @db.Text
   basePrice          Int     @default(0) // F6: kuruş
   currency           String  @default("TRY")
   requiresApproval   Boolean @default(false)
   capacity           Int? // null = sınırsız
-  paymentInstruction String? // ücretli kategori için yayın engelleyici (05)
+  paymentInstruction String? @db.Text // ücretli kategori için yayın engelleyici (05)
   isActive           Boolean @default(true)
   order              Int     @default(0)
 
@@ -485,7 +491,7 @@ model WaitlistEntry {
   offerExpiresAt          DateTime? // teklif 48 saat geçerli (§12 kayıt politikası)
   respondedAt             DateTime?
   convertedRegistrationId String?
-  notes                   String?
+  notes String? @db.LongText
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 
@@ -502,10 +508,10 @@ model WaitlistEntry {
 model EventRoleAssignment {
   id              String   @id @default(cuid())
   participationId String
-  role            String // §11: ATTENDEE|AUTHOR|REVIEWER|SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST|COMMITTEE_MEMBER|VIP|PRESS|STAFF|EXHIBITOR_STAFF + custom rol anahtarları
+  role String @db.Text // §11: ATTENDEE|AUTHOR|REVIEWER|SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST|COMMITTEE_MEMBER|VIP|PRESS|STAFF|EXHIBITOR_STAFF + custom rol anahtarları
   customRoleId    String? // özel rol tanımı (CustomRole) — hiyerarşik eşleme
   status          String   @default("ACTIVE") // INVITED|ACCEPTED|ACTIVE|CANCELLED
-  notes           String?
+  notes String? @db.LongText
   createdAt       DateTime @default(now())
 
   participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
@@ -521,15 +527,15 @@ model Invitation {
   editionId               String
   organizationId          String? // davet kaynağı kurum olabilir
   personId                String?
-  email                   String
-  fullName                String
+  email String @db.Text
+  fullName String @db.Text
   suggestedCategoryId     String?
   channel                 String    @default("EMAIL") // EMAIL|SMS|PHONE|MANUAL
   status                  String    @default("INVITED") // §10 LCV: INVITED|DELIVERED|RESPONSE_PENDING|COMING|NOT_COMING|NO_RESPONSE
   sentAt                  DateTime?
   respondedAt             DateTime?
   convertedRegistrationId String?
-  notes                   String?
+  notes String? @db.LongText
   createdAt               DateTime  @default(now())
 
   edition      EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
@@ -544,30 +550,30 @@ model Invitation {
 model FormDefinition {
   id                  String   @id @default(cuid())
   editionId           String
-  name                String
+  name String @db.Text
   type                String   @default("CUSTOM") // REGISTRATION|SURVEY|FEEDBACK|QA_MOBILE|CUSTOM — Form Merkezi türleri
   audience            String   @default("PARTICIPANT") // PARTICIPANT|ORDER_BUYER|ORGANIZATION|SESSION|ACCESSIBILITY|ACCOMMODATION
   status              String   @default("DRAFT") // DRAFT|PUBLISHED|CLOSED
   version             Int      @default(1)
-  description         String?
+  description String? @db.LongText
   isPublic            Boolean  @default(false) // herkese açık bağlantı açık mı
   // — Spam koruması (§44 genişletme) —
   honeypotEnabled     Boolean  @default(true) // gizli alan tuzağı
   minSubmitSeconds    Int      @default(4) // zaman tuzağı: daha hızlı dolduran bot şüpheli
   maxPerEmailPerDay   Int      @default(5) // e-posta başına günlük gönderi limiti
-  blockedDomains      String? // virgülle ayrılmış engelli e-posta alan adları
+  blockedDomains String? @db.Text // virgülle ayrılmış engelli e-posta alan adları
   autoApprove         Boolean  @default(false) // spam temizse otomatik onay
   // — Kayıt formu ödeme entegrasyonu —
   enableOnlinePayment Boolean  @default(false) // online ödeme seçenekleri gösterilsin
   defaultCategoryId   String? // kayıtta ön seçilecek kategori
-  successMessage      String?
+  successMessage String? @db.LongText
   // — F-EXP: dış sayfa paylaşımı + gerçek captcha —
   slug                String?  @unique // kısa paylaşım bağlantısı: /?form=<slug>
   captchaEnabled      Boolean  @default(true) // HMAC imzalı doğrulama sorusu (bot kapısı)
   hasPublicResults    Boolean  @default(false) // oylama/anket sonuçları herkese açık
   // — FORM-EXP2: çok-adımlı form + gönderim bildirimi —
   enableSteps         Boolean  @default(false) // alanlar adımlara (sayfalara) bölünür; dış sayfada adım adım doldurma
-  notifyEmail         String? // yeni gönderimde bildirim e-postası (boşsa bildirim yok; bastırma/kota denetimli)
+  notifyEmail String? @db.Text // yeni gönderimde bildirim e-postası (boşsa bildirim yok; bastırma/kota denetimli)
   // — FORM-EXP3: yanıtlayana onay e-postası —
   confirmEmail        Boolean  @default(false) // gönderim başarılıysa yanıtlayana onay e-postası (kota/bastırma denetimli)
   // — FORM-EXP4: kullanıcı şablonu —
@@ -585,29 +591,29 @@ model FormDefinition {
 model FormField {
   id                String  @id @default(cuid())
   formId            String
-  label             String
-  helpText          String?
+  label String @db.Text
+  helpText String? @db.Text
   type              String  @default("TEXT") // TEXT|LONGTEXT|NUMBER|EMAIL|PHONE|DATE|SINGLE_CHOICE|MULTI_CHOICE|CHECKBOX|FILE|COUNTRY|RATING|NPS|QA_QUIZ|SECTION — son 3'ü mobil interaktif
-  placeholder       String?
-  options           String? // satır bazlı seçenekler
+  placeholder String? @db.Text
+  options String? @db.Text // satır bazlı seçenekler
   required          String  @default("OPTIONAL") // ALWAYS|CONDITIONAL|OPTIONAL (§05)
-  conditionField    String? // koşullu gösterim
-  conditionValue    String?
+  conditionField String? @db.Text // koşullu gösterim
+  conditionValue String? @db.Text
   sensitivity       String  @default("STANDARD") // STANDARD|OPERATIONAL_SENSITIVE|TEAM_ONLY (§05 gizlilik)
   mobileInteractive Boolean @default(false) // mobil uygulamada interaktif öge (anket QA, NPS, rating)
-  correctAnswer     String? // QA_QUIZ: seçeneklerden doğru cevap (mobil QA scoring)
+  correctAnswer String? @db.Text // QA_QUIZ: seçeneklerden doğru cevap (mobil QA scoring)
   order             Int     @default(0)
   // — STUDIO-DND: tasarımcı üzerinde elle konum/boyut —
   width             Int     @default(100) // alan genişliği % (25..100; 100=tam satır; sürükleyerek ayarlanır)
   // — FORM-EXP2: çok-adımlı form — alanın bulunduğu adım (1..20; enableSteps=false iken yoksayılır)
   step              Int     @default(1)
   // — F-EXP: mantık kapıları + genişletilmiş bileşenler —
-  logicRules        String? // JSON: [{"field":<fieldId>,"op":EQ|NEQ|CONTAINS|GT|LT|EMPTY|NOT_EMPTY,"value":string}] — çoklu koşul
-  logicMode         String? // ANY|ALL — koşulların birleşim biçimi (OR/AND kapısı)
-  logicAction       String? // SHOW|HIDE|GOTO — koşul sağlanınca göster/gizle/adıma atla
+  logicRules String? @db.Text // JSON: [{"field":<fieldId>,"op":EQ|NEQ|CONTAINS|GT|LT|EMPTY|NOT_EMPTY,"value":string}] — çoklu koşul
+  logicMode String? @db.Text // ANY|ALL — koşulların birleşim biçimi (OR/AND kapısı)
+  logicAction String? @db.Text // SHOW|HIDE|GOTO — koşul sağlanınca göster/gizle/adıma atla
   gotoStep          Int? // logicAction=GOTO: koşul sağlanınca gidilecek adım (2..20)
   points            Int? // QA_QUIZ ağırlık puanı (varsayılan 1; puanlama ağırlıklı)
-  columns           String? // MATRIX: satır-bazlı kolonlar (options=satırlar)
+  columns String? @db.Text // MATRIX: satır-bazlı kolonlar (options=satırlar)
 
   form    FormDefinition @relation(fields: [formId], references: [id], onDelete: Cascade)
   answers FormAnswer[]
@@ -619,7 +625,7 @@ model FormAnswer {
   fieldId         String
   submissionId    String?
   participationId String?
-  answer          String?
+  answer String? @db.Text
   answeredAt      DateTime @default(now())
 
   form          FormDefinition      @relation(fields: [formId], references: [id], onDelete: Cascade)
@@ -635,21 +641,21 @@ model FormSubmission {
   formId          String
   editionId       String
   registrationId  String?  @unique // REGISTRATION türünde onaylanınca oluşan kayıt — @unique = zincir idempotency anahtarı (aynı gönderiye ikinci zincir KURULAMAZ)
-  respondentName  String
-  respondentEmail String
-  phone           String?
-  organization    String?
+  respondentName String @db.Text
+  respondentEmail String @db.Text
+  phone String? @db.Text
+  organization String? @db.Text
   status          String   @default("PENDING") // PENDING|APPROVED|REJECTED|SPAM
   spamScore       Float    @default(0) // 0-100 spam puanı
-  spamReasons     String? // JSON dizi: tespit gerekçeleri
-  honeypotValue   String? // gizli alan değeri (doluyorsa bot)
+  spamReasons String? @db.Text // JSON dizi: tespit gerekçeleri
+  honeypotValue String? @db.Text // gizli alan değeri (doluyorsa bot)
   elapsedSeconds  Float? // form açılma→gönderim süresi (zaman tuzağı)
-  submitIp        String?
+  submitIp String? @db.Text
   source          String   @default("WEB_PUBLIC") // WEB_PUBLIC|KIOSK|MOBILE|ADMIN
   quizScore       Float? // QA_QUIZ başarı yüzdesi 0-100
   quizCorrect     Int? // doğru sayısı
   quizTotal       Int? // quiz sorusu sayısı
-  notes           String?
+  notes String? @db.LongText
   createdAt       DateTime @default(now())
 
   form         FormDefinition @relation(fields: [formId], references: [id], onDelete: Cascade)
@@ -668,18 +674,18 @@ model Expense {
   editionId     String
   code          String   @unique @default(cuid()) // okunabilir: GSN-2026-001 (seed/rota set eder)
   category      String   @default("OTHER") // FIELD_EXPENSE|VENDOR|LOGISTICS|MARKETING|VENUE|TECH|CATERING|STAFF_TRAVEL|OTHER
-  title         String
-  description   String?
+  title String @db.Text
+  description String? @db.LongText
   amount        Int      @default(0) // F6: kuruş
   currency      String   @default("TRY")
-  vendor        String?
+  vendor String? @db.Text
   incurredAt    DateTime @default(now()) // harcama tarihi (sahada anlık)
-  spentBy       String? // harcayan personel
+  spentBy String? @db.Text // harcayan personel
   paymentMethod String   @default("COMPANY_CARD") // COMPANY_CARD|CASH|BANK_TRANSFER|PERSONAL_REIMBURSE
   status        String   @default("PENDING_RECEIPT") // PLANNED|PENDING_RECEIPT|APPROVED|REJECTED|PAID|REIMBURSED
-  receiptNo     String?
-  approvedBy    String?
-  notes         String?
+  receiptNo String? @db.Text
+  approvedBy String? @db.Text
+  notes String? @db.LongText
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -699,17 +705,17 @@ model Income {
   editionId   String
   code        String   @unique @default(cuid()) // okunabilir: GLR-2026-001 (istemci set eder)
   category    String   @default("DIGER") // SPONSORLUK|KAYIT|SATIS|HIBE|DIGER
-  title       String
-  description String?
+  title String @db.Text
+  description String? @db.LongText
   amount      Int      @default(0) // F6: kuruş
   currency    String   @default("TRY")
   method      String   @default("BANK_TRANSFER") // ONLINE_CARD|BANK_TRANSFER|POS|CASH|PAYMENT_LINK|MANUAL_EXTERNAL
-  payer       String? // ödeyen (kurum/kişi adı)
+  payer String? @db.Text // ödeyen (kurum/kişi adı)
   incomeDate  DateTime @default(now()) // gelir tarihi (varsayılan bugün)
   status      String   @default("PLANNED") // PLANNED|PENDING_RECEIPT|APPROVED|RECEIVED
-  receiptNo   String?
-  approvedBy  String?
-  notes       String?
+  receiptNo String? @db.Text
+  approvedBy String? @db.Text
+  notes String? @db.LongText
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -726,8 +732,8 @@ model CatalogItem {
   id           String  @id @default(cuid())
   editionId    String
   category     String  @default("TICKET") // TICKET|ADDON|SERVICE|TOUR|GALA|TRANSFER
-  name         String
-  description  String?
+  name String @db.Text
+  description String? @db.LongText
   price        Int     @default(0) // F6: kuruş
   currency     String  @default("TRY")
   quantity     Int? // null = sınırsız
@@ -747,15 +753,15 @@ model Entitlement {
   ownerPersonId       String? // konuşmacı hakkı
   source              String    @default("SPONSOR_PACKAGE") // SPONSOR_PACKAGE|SPEAKER|COMMITTEE|VIP|STAFF|PACKAGE|PROMO
   type                String    @default("COMPLIMENTARY_REGISTRATION") // COMPLIMENTARY_REGISTRATION|BOOTH|GALA_TICKET|BADGE|LOUNGE_ACCESS|DISCOUNT|SESSION_ACCESS|HOTEL|CUSTOM
-  label               String // "Gold Sponsor Ücretsiz Katılım Hakkı" (§45 custom ama kontrollü)
+  label String @db.Text // "Gold Sponsor Ücretsiz Katılım Hakkı" (§45 custom ama kontrollü)
   quantityGranted     Int       @default(0)
   quantityConsumed    Int       @default(0)
   quantityReserved    Int       @default(0) // ayrılmış — davette ayır, onayda kullan
   // — Hak onay akışı (kullanıcı isteği 7) —
   approvalStatus      String    @default("APPROVED") // PROPOSED|APPROVED|REJECTED — mevcut kayıtlar onaylı doğar (evrim güvenliği)
-  approvedBy          String?
+  approvedBy String? @db.Text
   approvedAt          DateTime?
-  restrictions        String?
+  restrictions String? @db.Text
   validFrom           DateTime?
   validUntil          DateTime?
 
@@ -771,12 +777,12 @@ model EntitlementClaim {
   entitlementId   String
   participationId String?
   registrationId  String?
-  guestName       String?
+  guestName String? @db.Text
   status          String    @default("RESERVED") // RESERVED|CONSUMED|RELEASED|EXPIRED (§09-C: davette ayır, onayda kullan)
   reservedAt      DateTime  @default(now())
   consumedAt      DateTime?
   releasedAt      DateTime?
-  notes           String?
+  notes String? @db.LongText
 
   entitlement   Entitlement         @relation(fields: [entitlementId], references: [id], onDelete: Cascade)
   participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
@@ -791,11 +797,11 @@ model Order {
   orderNo             String   @unique @default(cuid())
   buyerOrganizationId String? // kurumsal alıcı
   buyerPersonId       String?
-  payerName           String? // siparişi ödeyen ≠ satırların katılımcıları (Kimlik kuralı 4)
+  payerName String? @db.Text // siparişi ödeyen ≠ satırların katılımcıları (Kimlik kuralı 4)
   currency            String   @default("TRY")
   totalAmount         Int      @default(0) // F6: kuruş
   status              String   @default("OPEN") // OPEN|PARTIALLY_PAID|PAID|CANCELLED
-  notes               String?
+  notes String? @db.LongText
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -814,7 +820,7 @@ model OrderLine {
   participationId String? // satır kime ait
   registrationId  String?
   catalogItemId   String?
-  description     String
+  description String @db.LongText
   quantity        Int     @default(1)
   unitPrice       Int     @default(0) // F6: kuruş
   total           Int     @default(0) // F6: kuruş
@@ -832,10 +838,10 @@ model Payment {
   currency   String    @default("TRY")
   source     String    @default("ONLINE_CARD") // §37: ONLINE_CARD|BANK_TRANSFER|POS|CASH|PAYMENT_LINK|MANUAL_EXTERNAL
   status     String    @default("PENDING") // PENDING|SUCCEEDED|FAILED
-  reference  String?
-  enteredBy  String? // manuel teyit (§38): entered_by + reason zorunlu
-  reason     String?
-  approvedBy String? // eşiği aşan manuel tahsilat ikinci onay
+  reference String? @db.Text
+  enteredBy String? @db.Text // manuel teyit (§38): entered_by + reason zorunlu
+  reason String? @db.Text
+  approvedBy String? @db.Text // eşiği aşan manuel tahsilat ikinci onay
   paidAt     DateTime?
   createdAt  DateTime  @default(now())
 
@@ -851,9 +857,9 @@ model Refund {
   paymentId      String?
   amount         Int // MINOR UNIT (kuruş) — pozitif, sonlu, tam sayı; major-unit float KABUL edilmez
   currency       String    @default("TRY") // sipariş para birimiyle AYNI olmalı (uyuşmazlık 400)
-  reason         String?
+  reason String? @db.Text
   status         String    @default("REQUESTED") // REQUESTED|APPROVED|REJECTED|PROCESSED
-  requestedBy    String?
+  requestedBy String? @db.Text
   idempotencyKey String? // aynı siparişte aynı anahtar = İKİNCİ finansal hareket oluşmaz; farklı yük = 409
   processedAt    DateTime?
   createdAt      DateTime  @default(now())
@@ -868,12 +874,12 @@ model Refund {
 model SponsorTierDefinition {
   id            String  @id @default(cuid())
   editionId     String
-  name          String // her etkinlikte özelleştirilebilir: Gold|Naming|Lunch Sponsor...
+  name String @db.Text // her etkinlikte özelleştirilebilir: Gold|Naming|Lunch Sponsor...
   displayOrder  Int     @default(0)
   capacity      Int? // maksimum sponsor sayısı
   price         Int     @default(0) // F6: kuruş
   currency      String  @default("TRY")
-  brandingRules String?
+  brandingRules String? @db.Text
 
   edition    EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
   packages   SponsorPackage[]
@@ -884,11 +890,11 @@ model SponsorPackage {
   id          String  @id @default(cuid())
   editionId   String
   tierId      String?
-  name        String // "Gold Sponsorship 2027"
+  name String @db.Text // "Gold Sponsorship 2027"
   price       Int     @default(0) // F6: kuruş
   currency    String  @default("TRY")
-  description String?
-  rightsSpec  String? // paket hak özeti: "20x Ücretsiz Kayıt, 1x 12m² Stant..."
+  description String? @db.LongText
+  rightsSpec String? @db.Text // paket hak özeti: "20x Ücretsiz Kayıt, 1x 12m² Stant..."
 
   edition    EventEdition           @relation(fields: [editionId], references: [id], onDelete: Cascade)
   tier       SponsorTierDefinition? @relation(fields: [tierId], references: [id], onDelete: SetNull)
@@ -905,7 +911,7 @@ model SponsorAgreement {
   currency       String    @default("TRY")
   status         String    @default("PROSPECT") // PROSPECT|NEGOTIATION|CONTRACTED|ACTIVE|COMPLETED|CANCELLED
   signedAt       DateTime?
-  notes          String?
+  notes String? @db.LongText
   createdAt      DateTime  @default(now())
 
   edition          EventEdition           @relation(fields: [editionId], references: [id], onDelete: Cascade)
@@ -922,12 +928,12 @@ model SponsorAgreement {
 model Deliverable {
   id          String    @id @default(cuid())
   agreementId String
-  name        String // Logo|Contract|Banner|Guest List|Stand Design...
+  name String @db.Text // Logo|Contract|Banner|Guest List|Stand Design...
   type        String    @default("LOGO")
   status      String    @default("NOT_STARTED") // §51: NOT_STARTED|WAITING_SPONSOR|SUBMITTED|UNDER_REVIEW|APPROVED|REJECTED|COMPLETED
   dueDate     DateTime?
-  responsible String?
-  notes       String?
+  responsible String? @db.Text
+  notes String? @db.LongText
 
   agreement SponsorAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
 
@@ -939,25 +945,25 @@ model Deliverable {
 model HotelProperty {
   id             String  @id @default(cuid())
   editionId      String
-  name           String
-  city           String?
-  district       String?
-  address        String?
-  contactName    String?
-  contactPhone   String?
-  notes          String?
+  name String @db.Text
+  city String? @db.Text
+  district String? @db.Text
+  address String? @db.Text
+  contactName String? @db.Text
+  contactPhone String? @db.Text
+  notes String? @db.LongText
   // — Detaylı otel girişi (kullanıcı isteği: logo, resim, adres, ilgili kişi, mail) —
-  logoUrl        String? // medya klasörü OTEL bağlantılı (upload-linked)
-  imageUrl       String? // kapak/oda görseli — medya klasörü OTEL bağlantılı
-  email          String? // rezervasyon/irtibat e-postası
-  website        String?
+  logoUrl String? @db.LongText // medya klasörü OTEL bağlantılı (upload-linked)
+  imageUrl String? @db.LongText // kapak/oda görseli — medya klasörü OTEL bağlantılı
+  email String? @db.Text // rezervasyon/irtibat e-postası
+  website String? @db.Text
   starRating     Int? // 1-5 yıldız
-  checkInNote    String? // giriş/çıkış saat notu (örn. "14:00 / 12:00")
+  checkInNote String? @db.Text // giriş/çıkış saat notu (örn. "14:00 / 12:00")
   // — TASK-B 25: kompakt portal alanları (giriş ekranından girilir; SIFIR hardcode) —
-  mapsUrl        String? // harita bağlantısı (katılımcı portalı "Yol Tarifi")
-  transportInfo  String? // ulaşım bilgisi (metro/otobüs/vale)
-  localPhoneCode String? // yerel telefon/contak kodu
-  powerInfo      String? // priz/gerilim bilgisi (220V Type-C vb.)
+  mapsUrl String? @db.LongText // harita bağlantısı (katılımcı portalı "Yol Tarifi")
+  transportInfo String? @db.Text // ulaşım bilgisi (metro/otobüs/vale)
+  localPhoneCode String? @db.Text // yerel telefon/contak kodu
+  powerInfo String? @db.Text // priz/gerilim bilgisi (220V Type-C vb.)
 
   edition   EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
   roomTypes RoomType[]
@@ -969,7 +975,7 @@ model HotelProperty {
 model RoomType {
   id            String @id @default(cuid())
   hotelId       String
-  name          String // Single|Double|Suite
+  name String @db.Text // Single|Double|Suite
   capacity      Int    @default(2)
   pricePerNight Int    @default(0) // F6: kuruş
   currency      String @default("TRY")
@@ -983,10 +989,10 @@ model RoomBlock {
   id                 String    @id @default(cuid())
   hotelId            String
   roomTypeId         String
-  name               String // "Maven Ana Blok"
+  name String @db.Text // "Maven Ana Blok"
   releaseDate        DateTime? // rezervasyon son günü
-  cancellationPolicy String?
-  payerPolicy        String? // SELF|ORGANIZATION|SPONSOR|ORGANIZER
+  cancellationPolicy String? @db.Text
+  payerPolicy String? @db.Text // SELF|ORGANIZATION|SPONSOR|ORGANIZER
 
   hotel           HotelProperty    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
   roomType        RoomType         @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
@@ -1014,19 +1020,19 @@ model Reservation {
   blockId                     String?
   roomTypeId                  String?
   primaryGuestParticipationId String?
-  guestName                   String
+  guestName String @db.Text
   checkIn                     DateTime
   checkOut                    DateTime
   payerType                   String   @default("SELF") // §35: SELF|ORGANIZATION|SPONSOR|ORGANIZER|SPEAKER_HOSPITALITY
-  payerName                   String?
+  payerName String? @db.Text
   status                      String   @default("REQUESTED") // §10 Konaklama: NOT_REQUESTED|REQUESTED|WAITLIST|RESERVED|CONFIRMED|CHECKED_IN|CHECKED_OUT|CANCELLED
   // — Konaklama operasyon detayları (kullanıcı isteği 8) —
-  occupancyType               String? // SINGLE|DOUBLE|FAMILY_SHARED
+  occupancyType String? @db.Text // SINGLE|DOUBLE|FAMILY_SHARED
   ratePerNight                Int      @default(0) // F6: kuruş // hangi fiyattan
   nights                      Int      @default(0) // kaç gece
   noShow                      Boolean  @default(false) // gerçekleşmeyen konaklama — sistemden düşme
   noShowFee                   Int      @default(0) // F6: kuruş
-  notes                       String?
+  notes String? @db.LongText
   createdAt                   DateTime @default(now())
 
   edition        EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
@@ -1042,7 +1048,7 @@ model OccupancySlot {
   id              String  @id @default(cuid())
   reservationId   String
   participationId String?
-  guestName       String?
+  guestName String? @db.Text
   position        Int     @default(1)
 
   reservation   Reservation         @relation(fields: [reservationId], references: [id], onDelete: Cascade)
@@ -1053,7 +1059,7 @@ model RoommateRequest {
   id                       String   @id @default(cuid())
   requesterParticipationId String
   targetParticipationId    String?
-  targetName               String
+  targetName String @db.Text
   status                   String   @default("PENDING") // PENDING|ACCEPTED|DECLINED|EXPIRED
   createdAt                DateTime @default(now())
 }
@@ -1063,8 +1069,8 @@ model RoommateRequest {
 model ScientificSetup {
   id                 String    @id @default(cuid())
   editionId          String    @unique
-  callTitle          String?
-  callDescription    String?
+  callTitle String? @db.Text
+  callDescription String? @db.LongText
   reviewMode         String    @default("SINGLE_BLIND") // OPEN|SINGLE_BLIND|DOUBLE_BLIND
   submissionDeadline DateTime?
   reviewDeadline     DateTime?
@@ -1077,8 +1083,8 @@ model ScientificSetup {
 model Track {
   id          String  @id @default(cuid())
   editionId   String
-  name        String
-  description String?
+  name String @db.Text
+  description String? @db.LongText
 
   edition     EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
   submissions Submission[]
@@ -1091,15 +1097,15 @@ model Submission {
   trackId              String?
   submitterId          String?
   code                 String    @unique @default(cuid())
-  title                String
-  abstract             String?
+  title String @db.Text
+  abstract String? @db.Text
   type                 String    @default("ORAL") // ORAL|POSTER|E_POSTER|PANEL|WORKSHOP
-  keywords             String?
-  presentingAuthorName String?
+  keywords String? @db.Text
+  presentingAuthorName String? @db.Text
   status               String    @default("DRAFT") // §10 Bildiri: DRAFT|SUBMITTED|UNDER_REVIEW|REVISION_REQUIRED|ACCEPTED|REJECTED|WITHDRAWN|WAITLIST
-  fileUrl              String?
-  posterNo             String?
-  fileStatus           String? // SunumKontrol: MISSING|FORMAT_ISSUE|AV_PENDING|APPROVED
+  fileUrl String? @db.LongText
+  posterNo String? @db.Text
+  fileStatus String? @db.Text // SunumKontrol: MISSING|FORMAT_ISSUE|AV_PENDING|APPROVED
   submittedAt          DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
@@ -1120,8 +1126,8 @@ model Authorship {
   id               String  @id @default(cuid())
   submissionId     String
   personId         String? // harici ortak yazar hesapsız olabilir (§25)
-  name             String
-  organizationName String?
+  name String @db.Text
+  organizationName String? @db.Text
   position         Int     @default(0)
   isPresenting     Boolean @default(false)
   isCorresponding  Boolean @default(false)
@@ -1151,8 +1157,8 @@ model Review {
   id             String   @id @default(cuid())
   assignmentId   String
   score          Float?
-  recommendation String? // ACCEPT_ORAL|ACCEPT_POSTER|REJECT|REVISION
-  comment        String?
+  recommendation String? @db.Text // ACCEPT_ORAL|ACCEPT_POSTER|REJECT|REVISION
+  comment String? @db.Text
   submittedAt    DateTime @default(now())
 
   assignment ReviewAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
@@ -1161,9 +1167,9 @@ model Review {
 model Decision {
   id           String   @id @default(cuid())
   submissionId String
-  decision     String // §27 canonical: ACCEPT_ORAL|ACCEPT_POSTER|ACCEPT_E_POSTER|ACCEPT_PANEL|REVISION_REQUIRED|WAITLIST|REJECT|WITHDRAWN
-  rationale    String?
-  decidedBy    String?
+  decision String @db.Text // §27 canonical: ACCEPT_ORAL|ACCEPT_POSTER|ACCEPT_E_POSTER|ACCEPT_PANEL|REVISION_REQUIRED|WAITLIST|REJECT|WITHDRAWN
+  rationale String? @db.Text
+  decidedBy String? @db.Text
   version      Int      @default(1)
   decidedAt    DateTime @default(now())
 
@@ -1177,9 +1183,9 @@ model Decision {
 model ProgramRoom {
   id        String  @id @default(cuid())
   editionId String
-  name      String
+  name String @db.Text
   capacity  Int     @default(100)
-  floor     String?
+  floor String? @db.Text
 
   edition  EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
   sessions ProgramSession[]
@@ -1191,13 +1197,13 @@ model ProgramSession {
   roomId       String?
   trackId      String?
   submissionId String? // kaynak bildiri — kabul otomatik slot oluşturmaz (Kimlik kuralı 6)
-  title        String
-  description  String?
+  title String @db.Text
+  description String? @db.LongText
   type         String   @default("TALK") // KEYNOTE|TALK|PANEL|WORKSHOP|BREAK|NETWORKING|POSTER_SESSION
   startTime    DateTime
   endTime      DateTime
   capacity     Int?
-  accessRule   String? // OPEN|REGISTRATION_REQUIRED|SCAN
+  accessRule String? @db.Text // OPEN|REGISTRATION_REQUIRED|SCAN
   status       String   @default("DRAFT") // §10 Program: DRAFT|ASSIGNED|APPROVED|PUBLISHED|CANCELLED
   isVisible    Boolean  @default(false)
   cmeCredits   Float? // CME kredi değeri — CME_CREDITS yeteneği açıkken akreditasyon sorumlusu girer (§08)
@@ -1221,7 +1227,7 @@ model ProgramAssignment {
   personId        String?
   role            String  @default("SPEAKER") // §29: SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST
   status          String  @default("INVITED") // INVITED|ACCEPTED|DECLINED|CONFIRMED|CANCELLED
-  notes           String? // AV gereksinimi, honorarium...
+  notes String? @db.LongText // AV gereksinimi, honorarium...
 
   session       ProgramSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
@@ -1235,9 +1241,9 @@ model ProgramAssignment {
 model BadgeProfile {
   id          String  @id @default(cuid())
   editionId   String
-  name        String // Delegate|Speaker|Exhibitor|Sponsor|VIP|Staff|Press
-  accessAreas String? // "Main Hall, VIP Lounge, Gala"
-  color       String?
+  name String @db.Text // Delegate|Speaker|Exhibitor|Sponsor|VIP|Staff|Press
+  accessAreas String? @db.Text // "Main Hall, VIP Lounge, Gala"
+  color String? @db.Text
   designId    String? // bağlı yaka kartı tasarımı (BadgeDesign)
 
   edition        EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
@@ -1253,7 +1259,7 @@ model BadgeInstance {
   status          String    @default("NOT_ELIGIBLE") // §10: NOT_ELIGIBLE|READY|ISSUED|PRINTED|REPRINTED|VOID
   issuedAt        DateTime?
   printedAt       DateTime?
-  voidReason      String?
+  voidReason String? @db.Text
 
   participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
   profile       BadgeProfile?      @relation(fields: [profileId], references: [id], onDelete: SetNull)
@@ -1266,7 +1272,7 @@ model Credential {
   badgeId         String?
   code            String    @unique @default(cuid())
   type            String    @default("QR") // QR|NFC
-  accessProfile   String? // §41: VIP→Main Hall+Lounge; Speaker→Main Hall+Backstage...
+  accessProfile String? @db.Text // §41: VIP→Main Hall+Lounge; Speaker→Main Hall+Backstage...
   validFrom       DateTime?
   validUntil      DateTime?
   status          String    @default("ACTIVE") // ACTIVE|SUSPENDED|REVOKED
@@ -1284,12 +1290,12 @@ model ScanEvent {
   personId        String?
   sessionId       String? // oturum girişi ayrı tarama listesine ait (§07)
   location        String   @default("MAIN_DOOR") // MAIN_DOOR|SESSION|GALA|LOUNGE
-  doorName        String?
+  doorName String? @db.Text
   action          String   @default("ENTRY") // ENTRY|EXIT|SESSION_ENTRY|SESSION_EXIT|RESCAN|DENIED
   result          String   @default("ALLOWED") // ALLOWED|RESCAN_WARNING|DENIED|MANUAL_EXCEPTION
-  reason          String? // manuel istisna gerekçesi — tarama geçmişi silinmez (Kimlik kuralı 8)
-  device          String?
-  operator        String?
+  reason String? @db.Text // manuel istisna gerekçesi — tarama geçmişi silinmez (Kimlik kuralı 8)
+  device String? @db.Text
+  operator String? @db.Text
   scannedAt       DateTime @default(now())
 
   participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
@@ -1308,25 +1314,25 @@ model ScanEvent {
 model CertificateDefinition {
   id                 String  @id @default(cuid())
   editionId          String
-  name               String // "Katılımcı Sertifikası", "Konuşmacı Sertifikası"
+  name String @db.Text // "Katılımcı Sertifikası", "Konuşmacı Sertifikası"
   type               String  @default("PARTICIPANT") // düzeye göre seçimli: PARTICIPANT|SPEAKER|COMMITTEE|SPONSOR|STAFF|CUSTOM
-  eligibilityRule    String? // "registration=CONFIRMED AND checked_in" iş tanımı
+  eligibilityRule String? @db.Text // "registration=CONFIRMED AND checked_in" iş tanımı
   minimumSessions    Int? // oturum katılım eşiği
-  signerName         String?
+  signerName String? @db.Text
   isActive           Boolean @default(true)
   // — Sertifika tasarımcısı (kullanıcı isteği 9) —
   widthMm            Float   @default(297)
   heightMm           Float   @default(210)
   bleedMm            Float   @default(0) // baskı payı seçimli
   orientation        String  @default("LANDSCAPE")
-  backgroundDataUrl  String? // tasarımcıdan gelen arka plan — en arka layer
+  backgroundDataUrl String? @db.LongText // tasarımcıdan gelen arka plan — en arka layer
   fontKey            String  @default("serif")
   textColor          String  @default("1f2937")
-  bodyTemplate       String? // kişi-özel gövde metni: {{fullName}}, {{title}}, {{edition}}... yer tutucular
-  tierNote           String? // düzey/katılım notu
+  bodyTemplate String? @db.Text // kişi-özel gövde metni: {{fullName}}, {{title}}, {{edition}}... yer tutucular
+  tierNote String? @db.Text // düzey/katılım notu
   mailDeliveredCount Int     @default(0)
   // — Kanvas tabanlı sertifika tasarımcısı (yaka kartı tasarımcısı mimarisi) —
-  designJson         String? // eleman dizisi: {type,x,y,w,h,...} mm — farklı alanlara farklı yerleşim
+  designJson String? @db.LongText // eleman dizisi: {type,x,y,w,h,...} mm — farklı alanlara farklı yerleşim
 
   edition EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
   issues  CertificateIssue[]
@@ -1337,10 +1343,10 @@ model CertificateIssue {
   definitionId    String
   participationId String
   status          String    @default("NOT_ELIGIBLE") // §10: NOT_ELIGIBLE|ELIGIBLE|GENERATED|DELIVERED|REVOKED
-  eligibilityNote String? // katılımcı uygunluk nedenini görür (§07)
+  eligibilityNote String? @db.Text // katılımcı uygunluk nedenini görür (§07)
   generatedAt     DateTime?
   deliveredAt     DateTime?
-  revokedReason   String?
+  revokedReason String? @db.Text
 
   definition    CertificateDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
   participation EventParticipation    @relation(fields: [participationId], references: [id], onDelete: Cascade)
@@ -1353,7 +1359,7 @@ model CertificateIssue {
 model BoothUnit {
   id              String    @id @default(cuid())
   editionId       String
-  code            String // A24
+  code String @db.Text // A24
   sizeSqm         Float     @default(12)
   type            String    @default("SHELL_SCHEME") // SHELL_SCHEME|SPACE_ONLY|CUSTOM
   status          String    @default("AVAILABLE") // §21: AVAILABLE|HELD|OPTION|RESERVED|CONTRACTED|BLOCKED|OCCUPIED|RELEASED
@@ -1385,7 +1391,7 @@ model BoothAllocation {
 model FloorPlanObject {
   id          String  @id @default(cuid())
   boothUnitId String? @unique // Paylaşılan kimlik: booth_unit_id (§20)
-  label       String?
+  label String? @db.Text
   x           Float   @default(0)
   y           Float   @default(0)
   width       Float   @default(4)
@@ -1401,22 +1407,22 @@ model FloorPlanObject {
 model Campaign {
   id               String    @id @default(cuid())
   editionId        String
-  name             String
-  segmentRule      String // "kayıt onaylı ama ödeme bekliyor" gibi sabitlenmiş ölçüt
+  name String @db.Text
+  segmentRule String @db.Text // "kayıt onaylı ama ödeme bekliyor" gibi sabitlenmiş ölçüt
   audienceCount    Int       @default(0)
   channel          String    @default("EMAIL")
   status           String    @default("DRAFT") // DRAFT|TESTED|SCHEDULED|SENT|FAILED
   // — 360 Branding (kullanıcı isteği 6) —
   phase            String    @default("PRE_EVENT") // PRE_EVENT|DURING_EVENT|POST_EVENT — 3 aşamalı süreç
   audienceMode     String    @default("SEGMENT") // SEGMENT|CUSTOM|BOTH
-  customRecipients String? // özel e-posta listesi (satır/virgül bazlı)
+  customRecipients String? @db.Text // özel e-posta listesi (satır/virgül bazlı)
   templateId       String? // HTML mailing şablonu
   providerId       String? // gönderim sağlayıcısı (SMTP/Mailjet...)
   formId           String? // etkileşimli quiz formu
   isSegmentFixed   Boolean   @default(true) // sabit mi gönderim anında güncel mi
-  subject          String?
-  body             String?
-  testSentTo       String?
+  subject String? @db.Text
+  body String? @db.LongText
+  testSentTo String? @db.Text
   scheduledAt      DateTime?
   sentAt           DateTime?
   sentCount        Int       @default(0)
@@ -1438,8 +1444,8 @@ model Campaign {
 model Task {
   id          String    @id @default(cuid())
   editionId   String?
-  title       String
-  description String?
+  title String @db.Text
+  description String? @db.LongText
   module      String    @default("OPERATIONS") // REGISTRATION|SPONSORSHIP|SCIENTIFIC|PROGRAM|ACCOMMODATION|ONSITE|FINANCE|OPERATIONS|COMMUNICATIONS|CERTIFICATES
   status      String    @default("TODO") // BACKLOG|TODO|IN_PROGRESS|REVIEW|DONE|BLOCKED
   priority    String    @default("MEDIUM") // LOW|MEDIUM|HIGH|URGENT
@@ -1458,12 +1464,12 @@ model Task {
 model Delegation {
   id                    String  @id @default(cuid())
   editionId             String
-  name                  String // sponsor grubu|şirket delegasyonu|kamu heyeti...
+  name String @db.Text // sponsor grubu|şirket delegasyonu|kamu heyeti...
   type                  String  @default("COMPANY") // SPONSOR_GROUP|COMPANY|GOVERNMENT|STUDENT|VIP|TOUR
   leaderId              String?
   billingOrganizationId String?
-  paymentAccount        String?
-  rules                 String?
+  paymentAccount String? @db.Text
+  rules String? @db.Text
 
   edition             EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
   leader              Person?            @relation("DelegationLeader", fields: [leaderId], references: [id], onDelete: SetNull)
@@ -1486,9 +1492,9 @@ model DelegationMember {
 model Companion {
   id              String  @id @default(cuid())
   participationId String
-  name            String
+  name String @db.Text
   type            String  @default("ADULT") // §34: ADULT|CHILD|INFANT
-  notes           String? // hotel, breakfast, gala, tour hakları
+  notes String? @db.LongText // hotel, breakfast, gala, tour hakları
 
   participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
 }
@@ -1499,11 +1505,11 @@ model ActivityLog {
   id         String   @id @default(cuid())
   tenantId   String?
   editionId  String?
-  type       String // REGISTRATION_CONFIRMED, PAYMENT_RECEIVED, SPONSOR_AGREEMENT_ACTIVATED, SCAN_ALLOWED...
-  message    String
-  entityType String?
+  type String @db.Text // REGISTRATION_CONFIRMED, PAYMENT_RECEIVED, SPONSOR_AGREEMENT_ACTIVATED, SCAN_ALLOWED...
+  message String @db.LongText
+  entityType String? @db.Text
   entityId   String?
-  actorName  String?
+  actorName String? @db.Text
   createdAt  DateTime @default(now())
 
   tenant  Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -1519,11 +1525,11 @@ model CustomRole {
   id             String   @id @default(cuid())
   editionId      String
   key            String // sistem rol anahtarına ek özel anahtar: "gala_host", "cme_auditor"...
-  name           String // "Gala Host", "Akreditasyon Denetçisi"
-  color          String? // rozet/kart rengi
+  name String @db.Text // "Gala Host", "Akreditasyon Denetçisi"
+  color String? @db.Text // rozet/kart rengi
   hierarchyLevel Int      @default(50) // 1 en üst — hiyerarşik eşleme
-  permissions    String? // JSON dizi: CAPABILITIES anahtarları + custom izinler
-  description    String?
+  permissions String? @db.Text // JSON dizi: CAPABILITIES anahtarları + custom izinler
+  description String? @db.LongText
   isSystem       Boolean  @default(false)
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
@@ -1539,13 +1545,13 @@ model CvEntry {
   personId     String
   editionId    String // etkinlik bazlı izolasyon (tenant-like kural)
   kind         String    @default("EXPERIENCE") // EDUCATION|EXPERIENCE|AWARD|LANGUAGE|PUBLICATION|CERTIFICATION
-  title        String
-  organization String? // kurum/okul
-  city         String?
+  title String @db.Text
+  organization String? @db.Text // kurum/okul
+  city String? @db.Text
   startDate    DateTime?
   endDate      DateTime?
   isCurrent    Boolean   @default(false)
-  description  String?
+  description String? @db.LongText
   order        Int       @default(0)
   createdAt    DateTime  @default(now())
 
@@ -1562,16 +1568,16 @@ model SessionMaterial {
   sessionId       String
   editionId       String
   type            String   @default("SLIDES") // ABSTRACT|FULL_PAPER|SLIDES|VIDEO|SPEAKER_TEXT|LINK|OTHER
-  title           String
+  title String @db.Text
   personId        String? // sahibi konuşmacıysa
   participationId String?
-  url             String? // dış bağlantı
-  dataUrl         String? // küçük dosyalar için base64 (≤ 400KB)
-  mimeType        String?
+  url String? @db.Text // dış bağlantı
+  dataUrl String? @db.LongText // küçük dosyalar için base64 (≤ 400KB)
+  mimeType String? @db.Text
   sizeKb          Int?
   durationMin     Int? // video için
   status          String   @default("PENDING") // PENDING|READY|MISSING
-  notes           String?
+  notes String? @db.LongText
   order           Int      @default(0)
   createdAt       DateTime @default(now())
 
@@ -1589,10 +1595,10 @@ model MediaFolder {
   id          String   @id @default(cuid())
   editionId   String
   parentId    String? // esnek iç içe klasörleme (self-referencing)
-  name        String
-  color       String?
-  systemKey   String? // ROOT|PHOTOS|LOGOS|DOCUMENTS|PRESENTATIONS|VIDEOS|FLOOR_STUDIO|DESIGN_ASSETS — sistem klasörü işareti
-  description String?
+  name String @db.Text
+  color String? @db.Text
+  systemKey String? @db.Text // ROOT|PHOTOS|LOGOS|DOCUMENTS|PRESENTATIONS|VIDEOS|FLOOR_STUDIO|DESIGN_ASSETS — sistem klasörü işareti
+  description String? @db.LongText
   createdAt   DateTime @default(now())
 
   edition  EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
@@ -1608,20 +1614,20 @@ model MediaAsset {
   id           String   @id @default(cuid())
   editionId    String // ETKİNLİK İZOLASYONU — her varsa kendi edisyonunda
   folderId     String?
-  name         String
+  name String @db.Text
   kind         String   @default("IMAGE") // IMAGE|VIDEO|AUDIO|DOCUMENT|SPREADSHEET|ARCHIVE|FONT|OTHER
-  mimeType     String?
+  mimeType String? @db.Text
   sizeKb       Int?
-  externalUrl  String? // dış bağlantı
-  dataUrl      String? // küçük dosyalar için base64 (≤ 400KB)
-  thumbDataUrl String? // M5: 320px WebP önizleme (raster görseller; kaynak meta veriler temizlenmiş)
+  externalUrl String? @db.LongText // dış bağlantı
+  dataUrl String? @db.LongText // küçük dosyalar için base64 (≤ 400KB)
+  thumbDataUrl String? @db.LongText // M5: 320px WebP önizleme (raster görseller; kaynak meta veriler temizlenmiş)
   widthPx      Int? // M5: piksel denetimi (25MP iki-kapı)
   heightPx     Int?
-  tags         String? // virgülle
-  notes        String?
-  linkedType   String? // PERSON|ORGANIZATION|SUBMISSION|SESSION|BOOTH|BADGE_DESIGN|CERTIFICATE
+  tags String? @db.Text // virgülle
+  notes String? @db.LongText
+  linkedType String? @db.Text // PERSON|ORGANIZATION|SUBMISSION|SESSION|BOOTH|BADGE_DESIGN|CERTIFICATE
   linkedId     String?
-  uploadedBy   String?
+  uploadedBy String? @db.Text
   createdAt    DateTime @default(now())
 
   edition   EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
@@ -1642,11 +1648,11 @@ model JurisdictionProfile {
   dsrSlaDays        Int      @default(30) // veri konusu talebi SLA (K7: 30 gün)
   breachWindowHours Int      @default(72) // veri ihlali bildirim penceresi
   opLogYears        Int      @default(3) // operasyon günlüğü saklama (K7 ile uyumlu)
-  consentVersion    String? // etkin rıza metni sürümü (metin HARİCİ)
+  consentVersion String? @db.Text // etkin rıza metni sürümü (metin HARİCİ)
   cookieStrictness  String   @default("STRICT") // STRICT|OPT_OUT — üçüncü taraf script ZATEN YOK
   dpoMode           Boolean  @default(false) // VK (veri sorumlusunu temsil) modu
   transferMechanism String   @default("BOARD_AUTHORIZATION") // TR: Kurul izni | EU: SCC|ADEQUACY
-  retentionNotes    String? // saklama özeti (serbest not — hukuk metni değil)
+  retentionNotes String? @db.LongText // saklama özeti (serbest not — hukuk metni değil)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -1659,14 +1665,14 @@ model DocumentRecord {
   tenantId     String
   kind         String // AYDINLATMA|ACIK_RIZA|VERI_SAKLAMA|DST|KVKK_POLITIKA|E_FATURA|VERBIS|OTHER
   version      Int      @default(1)
-  title        String
-  sha256       String // içerik bütünlüğü (hex 64)
+  title String @db.Text
+  sha256 String @db.Text // içerik bütünlüğü (hex 64)
   mediaAssetId String? // dosya merkezi medya arşivinde
-  externalUrl  String? // harici barındırma (göreli yol ilkesi: kullanıcı linki)
-  notes        String?
+  externalUrl String? @db.LongText // harici barındırma (göreli yol ilkesi: kullanıcı linki)
+  notes String? @db.LongText
   active       Boolean  @default(true) // (tenantId,kind) başına TEK aktif — yeni sürüm eskisini arşivler
-  supersededBy String? // yerini alan sürümün DocumentRecord id'si
-  createdBy    String?
+  supersededBy String? @db.Text // yerini alan sürümün DocumentRecord id'si
+  createdBy String? @db.Text
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -1687,7 +1693,7 @@ model TenantSubscription {
   periodStart       DateTime  @default(now())
   periodEnd         DateTime?
   trialQuotaBytes   Int       @default(524288000) // deneme kotası (512 MB) — YALNIZ soft-block
-  notes             String?
+  notes String? @db.LongText
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -1705,7 +1711,7 @@ model TenantInvoice {
   issuedAt       DateTime?
   paidAt         DateTime?
   dueAt          DateTime?
-  notes          String?
+  notes String? @db.LongText
   createdAt      DateTime  @default(now())
 
   subscription TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
@@ -1719,8 +1725,8 @@ model PortalBlock {
   editionId   String
   audience    String   @default("BOTH") // PARTICIPANT|SPONSOR|BOTH — hangi portal yüzeyi
   type        String   @default("ANNOUNCEMENT") // ANNOUNCEMENT|BANNER|INFO|LINK|CUSTOM
-  title       String
-  payloadJson String? // yapılandırılmış içerik { text?, url?, imageUrl?, linkLabel? }
+  title String @db.Text
+  payloadJson String? @db.LongText // yapılandırılmış içerik { text?, url?, imageUrl?, linkLabel? }
   order       Int      @default(0)
   isVisible   Boolean  @default(true)
   createdAt   DateTime @default(now())
@@ -1737,20 +1743,20 @@ model ApiIntegration {
   id           String    @id @default(cuid())
   tenantId     String
   editionId    String? // tenant-düzeyi entegrasyonlarda null (ödeme sağlayıcısı vb.)
-  name         String
+  name String @db.Text
   direction    String    @default("OUTBOUND") // OUTBOUND|INBOUND — çift yönlü akış
   kind         String    @default("REST") // REST|WEBHOOK|PAYMENT|MAIL|SMS|CRM|TICKETING
-  provider     String? // IYZICO|PAYTR|STRIPE|MAILJET|RESEND|SMTP|CUSTOM
-  baseUrl      String?
+  provider String? @db.Text // IYZICO|PAYTR|STRIPE|MAILJET|RESEND|SMTP|CUSTOM
+  baseUrl String? @db.LongText
   authType     String    @default("NONE") // NONE|API_KEY|BEARER|BASIC|OAUTH2|SIGNATURE
-  authConfig   String? // JSON (UI'da maskelenir)
+  authConfig String? @db.Text // JSON (UI'da maskelenir)
   inboundToken String?   @unique // INBOUND çağrı adresi: /api/integrations/hook/<token>
   status       String    @default("DRAFT") // DRAFT|ACTIVE|PAUSED|ERROR
   lastRunAt    DateTime?
-  lastStatus   String? // OK|FAILED
+  lastStatus String? @db.Text // OK|FAILED
   successCount Int       @default(0)
   failCount    Int       @default(0)
-  notes        String?
+  notes String? @db.LongText
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -1767,13 +1773,13 @@ model IntegrationLog {
   integrationId String?
   editionId     String?
   direction     String   @default("OUTBOUND") // OUTBOUND|INBOUND
-  method        String? // GET|POST|PUT|...
-  endpoint      String?
+  method String? @db.Text // GET|POST|PUT|...
+  endpoint String? @db.Text
   statusCode    Int?
   ok            Boolean  @default(false)
   durationMs    Int?
-  summary       String?
-  payload       String? // kısa özet (ilk 500 karakter)
+  summary String? @db.LongText
+  payload String? @db.Text // kısa özet (ilk 500 karakter)
   createdAt     DateTime @default(now())
 
   integration ApiIntegration? @relation(fields: [integrationId], references: [id], onDelete: Cascade)
@@ -1787,11 +1793,11 @@ model IntegrationLog {
 model EmailTemplate {
   id         String   @id @default(cuid())
   editionId  String
-  name       String
+  name String @db.Text
   category   String   @default("INFORMATION") // INVITATION|CONFIRMATION|PAYMENT_REMINDER|INFORMATION|QUIZ|THANK_YOU|CUSTOM
   phase      String   @default("PRE_EVENT") // PRE_EVENT|DURING_EVENT|POST_EVENT
-  subject    String
-  htmlBody   String // HTML mail alanı
+  subject String @db.Text
+  htmlBody String @db.LongText // HTML mail alanı
   isActive   Boolean  @default(true)
   usageCount Int      @default(0)
   createdAt  DateTime @default(now())
@@ -1805,21 +1811,21 @@ model EmailTemplate {
 model MailProviderConfig {
   id             String    @id @default(cuid())
   tenantId       String
-  name           String // "Şirket SMTP", "Mailjet Ana Hesap"
+  name String @db.Text // "Şirket SMTP", "Mailjet Ana Hesap"
   kind           String    @default("SMTP") // SMTP|MAILJET|SENDGRID|RESEND|POSTMARK|OTHER
-  host           String?
+  host String? @db.Text
   port           Int?
-  username       String?
-  password       String? // DEPRECATED (S3): düz metin saklanmaz — yalnız eski kayıtlar için; API'den MASKELİ döner
-  passwordCipher String? // S3: AES-256-GCM şifreli kimlik bilgisi (MAVEN_SECRET_KEY ile) — at-rest koruma
-  fromEmail      String
-  fromName       String?
-  replyTo        String?
+  username String? @db.Text
+  password String? @db.Text // DEPRECATED (S3): düz metin saklanmaz — yalnız eski kayıtlar için; API'den MASKELİ döner
+  passwordCipher String? @db.LongText // S3: AES-256-GCM şifreli kimlik bilgisi (MAVEN_SECRET_KEY ile) — at-rest koruma
+  fromEmail String @db.Text
+  fromName String? @db.Text
+  replyTo String? @db.Text
   dailyLimit     Int? // gönderim limiti
   isDefault      Boolean   @default(false)
   status         String    @default("ACTIVE") // ACTIVE|PAUSED
   lastTestAt     DateTime?
-  lastTestStatus String?
+  lastTestStatus String? @db.Text
   createdAt      DateTime  @default(now())
 
   tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -1835,7 +1841,7 @@ model MailSuppression {
   tenantId  String
   email     String
   reason    String   @default("MANUAL") // UNSUBSCRIBE|BOUNCE|COMPLAINT|MANUAL
-  note      String?
+  note String? @db.Text
   createdAt DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -1849,21 +1855,21 @@ model MailSuppression {
 model BadgeDesign {
   id                     String   @id @default(cuid())
   editionId              String
-  name                   String
+  name String @db.Text
   widthMm                Float    @default(105) // CR80 dikey: 54x86; konferans: 105x148 — tamamen custom
   heightMm               Float    @default(148)
   bleedMm                Float    @default(3) // baskı payı ekle/çıkar
   cornerMm               Float    @default(4)
   sideCount              Int      @default(1) // 1|2 — tek/çift taraflı
   fontKey                String   @default("inter") // serbest font seçimi
-  frontBackgroundDataUrl String? // tasarımcıdan yüklenen arka layer
-  backBackgroundDataUrl  String?
-  frontElements          String? // JSON: [{type:TEXT|FIELD|QR|LOGO|SPONSOR_LOGO|PROGRAM|CONTACT, x,y,w,h (mm), fontSize, weight, color, align, fieldKey?, text?}]
-  backElements           String? // arka yüz: fuar/event logosu, hiyerarşik sponsor logosu, program, iletişim
+  frontBackgroundDataUrl String? @db.LongText // tasarımcıdan yüklenen arka layer
+  backBackgroundDataUrl String? @db.LongText
+  frontElements String? @db.Text // JSON: [{type:TEXT|FIELD|QR|LOGO|SPONSOR_LOGO|PROGRAM|CONTACT, x,y,w,h (mm), fontSize, weight, color, align, fieldKey?, text?}]
+  backElements String? @db.Text // arka yüz: fuar/event logosu, hiyerarşik sponsor logosu, program, iletişim
   qrSource               String   @default("CREDENTIAL") // CREDENTIAL|VCARD — QR seçimli eklenip çıkarılır
-  sponsorHierarchyKey    String? // hangi sponsor seviyesi logosu arka yüzde
+  sponsorHierarchyKey String? @db.Text // hangi sponsor seviyesi logosu arka yüzde
   showProgramOnBack      Boolean  @default(false)
-  backContactInfo        String?
+  backContactInfo String? @db.Text
   isActive               Boolean  @default(true)
   isDefault              Boolean  @default(false)
   createdAt              DateTime @default(now())
@@ -1884,17 +1890,17 @@ model SocialPlan {
   kind         String    @default("SOCIAL") // SOCIAL (sosyal etkinlik) | TOUR (tur planı) — birleşik modül içinde ayrım
   type         String    @default("OTHER") // GALA|COCKTAIL|OFFICIAL_DINNER|WELCOME_RECEPTION|CLOSING|NETWORKING|CULTURAL_TOUR|CITY_TOUR|TECHNICAL_TOUR|OTHER
   isOfficial   Boolean   @default(false) // Resmi (kurum/konakçı adına) plan
-  title        String
-  description  String?
+  title String @db.Text
+  description String? @db.LongText
   startsAt     DateTime?
   endsAt       DateTime?
-  venue        String? // sosyal mekân / tur başlangıç noktası
-  meetingPoint String? // tur buluşma noktası & saati notu
+  venue String? @db.Text // sosyal mekân / tur başlangıç noktası
+  meetingPoint String? @db.Text // tur buluşma noktası & saati notu
   capacity     Int?
   price        Int? // F6: kuruş
   currency     String    @default("TRY")
   status       String    @default("DRAFT") // DRAFT|ANNOUNCED|CLOSED|CANCELLED
-  notes        String?
+  notes String? @db.LongText
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -1909,10 +1915,10 @@ model SocialPlanAnnouncement {
   id          String    @id @default(cuid())
   planId      String
   personId    String?
-  fullName    String? // snapshot — kişi silinse de duyuru geçmişi kalır
+  fullName String? @db.Text // snapshot — kişi silinse de duyuru geçmişi kalır
   channel     String    @default("IN_APP") // IN_APP|EMAIL|SMS|PUSH
-  message     String?
-  response    String? // INVITED|ACCEPTED|DECLINED — mobil/portal yanıtı
+  message String? @db.LongText
+  response String? @db.Text // INVITED|ACCEPTED|DECLINED — mobil/portal yanıtı
   respondedAt DateTime?
   sentAt      DateTime  @default(now())
 
@@ -1929,15 +1935,15 @@ model SocialPlanAnnouncement {
 model B2bPlan {
   id          String    @id @default(cuid())
   editionId   String
-  subject     String // Konu girişi
-  description String?
+  subject String @db.Text // Konu girişi
+  description String? @db.LongText
   startsAt    DateTime? // Saat girişi
   endsAt      DateTime?
-  venue       String? // Etkinlik yeri
+  venue String? @db.Text // Etkinlik yeri
   location    String? // Konum (masa / stand / oda / buluşma noktası)
   isPrivate   Boolean   @default(true) // kişilerin kendi özelinde kalır
   status      String    @default("DRAFT") // DRAFT|PENDING_APPROVAL|ACTIVE|COMPLETED|CANCELLED
-  notes       String?
+  notes String? @db.LongText
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -1958,7 +1964,7 @@ model B2bAssignment {
   status            String    @default("ASSIGNED") // ASSIGNED|ACCEPTED|DECLINED|COMPLETED
   organizerApproved Boolean   @default(false) // organizatör onayı
   personApproved    Boolean   @default(false) // kişinin onayı (mobil uygulama)
-  feedback          String? // görüş (mobil uygulamadan gelir)
+  feedback String? @db.LongText // görüş (mobil uygulamadan gelir)
   feedbackAt        DateTime?
   respondedAt       DateTime?
   createdAt         DateTime  @default(now())
@@ -1990,24 +1996,24 @@ model NotificationChannelConfig {
   channelsEnabled Boolean   @default(true) // dış kanal ana anahtarı (web-push'tan bağımsız)
   // ── WhatsApp — bağlanan ŞİRKET MOBİL TELEFONU üzerinden ──
   waEnabled       Boolean   @default(false)
-  waProvider      String? // META_CLOUD|TWILIO|ULTRAMSG|WAHA|GENERIC_WEBHOOK|DEMO
-  waEndpoint      String? // WAHA/UltraMsg/generic webhook API kök adresi
+  waProvider String? @db.Text // META_CLOUD|TWILIO|ULTRAMSG|WAHA|GENERIC_WEBHOOK|DEMO
+  waEndpoint String? @db.Text // WAHA/UltraMsg/generic webhook API kök adresi
   waPhoneId       String? // Meta Phone Number ID / WAHA session adı / UltraMsg instance
   waAccountId     String? // hesap kimliği (Twilio Account SID vb.)
-  waFrom          String? // bağlı şirket mobil numarası (E.164, örn. +90555…)
-  waTokenCipher   String? // API token — AES-256-GCM şifreli (at-rest koruma)
+  waFrom String? @db.Text // bağlı şirket mobil numarası (E.164, örn. +90555…)
+  waTokenCipher String? @db.LongText // API token — AES-256-GCM şifreli (at-rest koruma)
   // ── SMS ──
   smsEnabled      Boolean   @default(false)
-  smsProvider     String? // TWILIO|NETGSM|ILETIMERKEZI|VERIMOR|GENERIC_WEBHOOK|DEMO
-  smsEndpoint     String? // generic webhook / sağlayıcı API kök adresi
+  smsProvider String? @db.Text // TWILIO|NETGSM|ILETIMERKEZI|VERIMOR|GENERIC_WEBHOOK|DEMO
+  smsEndpoint String? @db.Text // generic webhook / sağlayıcı API kök adresi
   smsSenderId     String? // alfabetik gönderici başlığı (maks 11 karakter)
-  smsFrom         String? // sayısal gönderici numarası (E.164)
+  smsFrom String? @db.Text // sayısal gönderici numarası (E.164)
   smsAccountId    String? // hesap kimliği (Twilio Account SID / Netgsm kullanıcı kodu)
-  smsTokenCipher  String? // API anahtarı — AES-256-GCM şifreli
+  smsTokenCipher String? @db.LongText // API anahtarı — AES-256-GCM şifreli
   // ── Hangi olaylarda dış kanal kullanılır (olay-yönlendirme matrisi) ──
-  eventsJson      String? // {"announcement":true,"b2b":true,"reminder":false,"magicLink":false}
+  eventsJson String? @db.LongText // {"announcement":true,"b2b":true,"reminder":false,"magicLink":false}
   lastTestAt      DateTime?
-  lastTestStatus  String? // son test sonucu (özet — sır içermez)
+  lastTestStatus String? @db.Text // son test sonucu (özet — sır içermez)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -2022,12 +2028,12 @@ model NotificationChannelConfig {
 model PortalToken {
   id             String    @id @default(cuid())
   tokenHash      String    @unique // sha256 hex (64) — ham belirteç bir kez döner, sonra yok
-  scope          String // PARTICIPANT | SPONSOR
+  scope String @db.Text // PARTICIPANT | SPONSOR
   editionId      String
   personId       String? // scope=PARTICIPANT
   organizationId String? // scope=SPONSOR
   issuedAt       DateTime  @default(now())
-  issuedBy       String? // çıkarım kanalı: REGISTRATION_APPROVAL | ADMIN | PREVIEW
+  issuedBy String? @db.Text // çıkarım kanalı: REGISTRATION_APPROVAL | ADMIN | PREVIEW
   expiresAt      DateTime
   revokedAt      DateTime?
   lastUsedAt     DateTime?
@@ -2054,44 +2060,44 @@ model EventPortalConfig {
   editionId                 String    @unique
   // §5.1 Erişim ve güvenlik yönetimi
   portalEnabled             Boolean   @default(false) // pasifken bakım / geri sayım sayfası
-  maintenanceMessage        String?
+  maintenanceMessage String? @db.LongText
   countdownTo               DateTime? // pasifken "başlama geri sayımı" hedefi
-  eventCode                 String? // etkinlik özel genel giriş kodu (GUEST girişi)
+  eventCode String? @db.Text // etkinlik özel genel giriş kodu (GUEST girişi)
   allowRegistrationRedirect Boolean   @default(true) // "Kayıt Formuna Yönlendir" butonu
   registrationFormId        String? // yönlendirme hedefi (edition FormDefinition, isPublic)
   // §5.2 Görsel yapılandırma ve tema
-  portalLogoUrl             String? // portal logosu (edition logoUrl'den BAĞIMSIZ)
-  portalBannerUrl           String? // arka plan görseli (banner)
-  themeColor                String? // tema rengi hex (alt menü vurgusu)
-  headerEventsJson          String? // ["editionId",…] — Top Header diğer-etkinlik carousel seçimi
-  bottomNavJson             String? // {"program":true,"sponsors":true,"map":true} — ikon aç/kapat
+  portalLogoUrl String? @db.LongText // portal logosu (edition logoUrl'den BAĞIMSIZ)
+  portalBannerUrl String? @db.LongText // arka plan görseli (banner)
+  themeColor String? @db.Text // tema rengi hex (alt menü vurgusu)
+  headerEventsJson String? @db.LongText // ["editionId",…] — Top Header diğer-etkinlik carousel seçimi
+  bottomNavJson String? @db.LongText // {"program":true,"sponsors":true,"map":true} — ikon aç/kapat
   // §5.3 Dinamik widget ve modül yönetimi (feature toggles)
-  widgetsJson               String? // {key:{enabled,visibility,order}} — visibility ALL|AUTH
+  widgetsJson String? @db.LongText // {key:{enabled,visibility,order}} — visibility ALL|AUTH
   // §5.4 Bildirim yönetimi
   notificationsEnabled      Boolean   @default(true)
-  notifyOffsetsJson         String? // [60,30,10] — dakika cinsinden hatırlatma tetikleri
+  notifyOffsetsJson String? @db.LongText // [60,30,10] — dakika cinsinden hatırlatma tetikleri
   // §5.5 İçerik bağlama
-  sponsorIdsJson            String? // ["organizationId",…] — boşsa tüm aktif sponsorlar
-  venueMapUrl               String? // SVG/görsel kroki
+  sponsorIdsJson String? @db.LongText // ["organizationId",…] — boşsa tüm aktif sponsorlar
+  venueMapUrl String? @db.LongText // SVG/görsel kroki
   venueMapEnabled           Boolean   @default(false)
   // §5.2+ Mobil Portal TAM TASARIM KONTROLÜ (kullanıcı isteği):
   // tipografi + alan-renkleri + alan-arka plan görselleri (SVG/PNG/JPEG dataURL)
   // + ikon SVG logo desteği + alt-menü ikonlarının grid (kanvas) konum düzeni.
-  fontFamily                String? // system|serif|rounded|mono|condensed — portal yazı tipi
+  fontFamily String? @db.Text // system|serif|rounded|mono|condensed — portal yazı tipi
   fontScale                 Int? // 90..120 (%100 = varsayılan ölçek)
-  headerBgColor             String? // üst bant (top+event header) arka plan rengi hex
-  footerBgColor             String? // sabit alt menü arka plan rengi hex
-  contentBgColor            String? // orta (içerik) arka plan rengi hex
-  headerBgImage             String? // üst bant arka plan görseli (≤600KB)
-  footerBgImage             String? // alt menü arka plan görseli (≤600KB)
-  contentBgImage            String? // içerik alanı arka plan görseli (≤600KB)
+  headerBgColor String? @db.Text // üst bant (top+event header) arka plan rengi hex
+  footerBgColor String? @db.Text // sabit alt menü arka plan rengi hex
+  contentBgColor String? @db.Text // orta (içerik) arka plan rengi hex
+  headerBgImage String? @db.LongText // üst bant arka plan görseli (≤600KB)
+  footerBgImage String? @db.LongText // alt menü arka plan görseli (≤600KB)
+  contentBgImage String? @db.LongText // içerik alanı arka plan görseli (≤600KB)
   // Mobil Portal Sponsoru — portala maddi destek veren kurum (footer şeridi)
-  portalSponsorLogoUrl      String? // sponsor logosu (dataURL/URL)
-  portalSponsorName         String? // sponsor adı
-  portalSponsorUrl          String? // sponsor web adresi (tıklanınca açılır)
+  portalSponsorLogoUrl String? @db.LongText // sponsor logosu (dataURL/URL)
+  portalSponsorName String? @db.Text // sponsor adı
+  portalSponsorUrl String? @db.LongText // sponsor web adresi (tıklanınca açılır)
   // İkon özelleştirme: lucide ikon yerine SVG logo + grid konum düzeni
-  iconOverridesJson         String? // {navKey: {svg?: string, color?: string}} — SVG logo desteği
-  iconLayoutJson            String? // {navKey: order} — kanvas grid mantığıyla konum/sıra
+  iconOverridesJson String? @db.LongText // {navKey: {svg?: string, color?: string}} — SVG logo desteği
+  iconLayoutJson String? @db.LongText // {navKey: order} — kanvas grid mantığıyla konum/sıra
   // PWA
   pwaEnabled                Boolean   @default(true)
   createdAt                 DateTime  @default(now())
@@ -2106,7 +2112,7 @@ model EventPortalConfig {
 model PortalSession {
   id         String    @id @default(cuid())
   editionId  String
-  kind       String // GUEST | AUTH
+  kind String @db.Text // GUEST | AUTH
   personId   String? // AUTH — kimlikli katılımcı
   tokenHash  String    @unique // sha256 hex — ham anahtar saklanmaz
   expiresAt  DateTime
@@ -2130,8 +2136,8 @@ model PortalAnalyticsLog {
   editionId String
   sessionId String?
   kind      String // VISIT|WIDGET_CLICK|PWA_INSTALL|FORM_OPEN|B2B_ACTION|QA_SUBMIT|REMINDER_SET
-  widgetKey String? // agenda|forms|qa|map|b2b|speakers|sponsors|profile|program
-  meta      String? // kısa yapılandırılmış özet (PII yok)
+  widgetKey String? @db.Text // agenda|forms|qa|map|b2b|speakers|sponsors|profile|program
+  meta String? @db.Text // kısa yapılandırılmış özet (PII yok)
   createdAt DateTime @default(now())
 
   edition EventEdition   @relation(fields: [editionId], references: [id], onDelete: Cascade)
@@ -2146,8 +2152,8 @@ model PortalAnalyticsLog {
 model PortalAnnouncement {
   id        String   @id @default(cuid())
   editionId String
-  title     String
-  message   String
+  title String @db.Text
+  message String @db.LongText
   level     String   @default("INFO") // INFO|WARNING|URGENT
   target    String   @default("ALL") // ALL|AUTH|GUEST
   sentBy    String   @default("ADMIN") // ADMIN|AUTO
@@ -2165,8 +2171,8 @@ model PortalQuestion {
   editionId        String
   sessionId        String? // hangi portal oturumu sordu
   programSessionId String? // hedef oturum
-  body             String
-  displayName      String? // anonim değilse görünen ad
+  body String @db.LongText
+  displayName String? @db.Text // anonim değilse görünen ad
   isAnonymous      Boolean  @default(false)
   status           String   @default("PENDING") // PENDING|ANSWERED|HIDDEN
   createdAt        DateTime @default(now())
@@ -2177,3 +2183,4 @@ model PortalQuestion {
 
   @@index([editionId, status])
 }
+

@@ -143,6 +143,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       const vErr = config.validate(data, false);
       if (vErr) return NextResponse.json({ error: vErr }, { status: 400 });
     }
+    // EŞZAMANLILIK KONTROLÜ: yazım öncesi çakışma denetimi (B2B randevu vb.) —
+    // çakışma varsa 409 Conflict (çift kayıt kök-nedeninde engellenir).
+    if (config.beforeWrite) {
+      const conflict = await config.beforeWrite(data, false);
+      if (conflict) return NextResponse.json({ error: conflict }, { status: 409 });
+    }
     const created = await config.delegate.create({ data, include: config.include });
     // S3: sır içeren yanıt maskelenir
     const safeCreated = config.readMask ? config.readMask(created as Record<string, unknown>) : created;

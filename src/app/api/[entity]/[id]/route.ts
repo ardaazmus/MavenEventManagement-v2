@@ -82,6 +82,11 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
       const vErr = config.validate(data, true);
       if (vErr) return NextResponse.json({ error: vErr }, { status: 400 });
     }
+    // EŞZAMANLILIK KONTROLÜ: güncelleme öncesi çakışma denetimi (kendisi hariç) — 409
+    if (config.beforeWrite) {
+      const conflict = await config.beforeWrite(data, true, id);
+      if (conflict) return NextResponse.json({ error: conflict }, { status: 409 });
+    }
     // TASK-A F1: sponsor sözleşmesi AKTİF'e geçerken (ilk geçiş) portal yetenek
     // belirteci çıkarılır — ham değer bu yanıtta BİR KEZ döner (tek görünlük).
     let beforeStatus: string | null = null;

@@ -57,6 +57,22 @@ type B2bMeeting = {
   counterpart: { name: string; company: string | null }[];
 };
 type OtherEvent = { id: string; slug: string; name: string; editionLabel: string | null; startDate: string | null; endDate: string | null; city: string | null; logoUrl: string | null; headerImageUrl: string | null };
+// §5.2+ tasarım kontrolü — admin ayarlarından gelir; hepsi nullable (varsayılan tema)
+type PortalDesign = {
+  fontFamily: string | null; fontScale: number | null;
+  headerBgColor: string | null; footerBgColor: string | null; contentBgColor: string | null;
+  headerBgImage: string | null; footerBgImage: string | null; contentBgImage: string | null;
+  iconOverrides: Record<string, { svg?: string; color?: string }> | null;
+  iconLayout: Record<string, number> | null;
+};
+// font ailesi anahtarı → CSS stack (portal-settings.tsx ile birebir aynı)
+const PORTAL_FONT_STACKS: Record<string, string> = {
+  system: "inherit",
+  serif: "Georgia, 'Times New Roman', serif",
+  rounded: "ui-rounded, 'Nunito', 'SF Pro Rounded', system-ui, sans-serif",
+  mono: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  condensed: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif",
+};
 type PortalContent = {
   phase: string;
   session?: { kind: "GUEST" | "AUTH" };
@@ -74,6 +90,8 @@ type PortalContent = {
     allowRegistrationRedirect: boolean;
     registrationFormId: string | null;
     pwaEnabled: boolean;
+    design?: PortalDesign | null;
+    portalSponsor?: { logoUrl: string | null; name: string | null; url: string | null } | null;
   };
   otherEvents?: OtherEvent[];
   program?: ProgramItem[];
@@ -322,7 +340,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
 
   // ── hatırlatıcı motoru (§4.2): B2B randevuları + işaretli oturumlar ──
   useEffect(() => {
-    if (phase !== "ACTIVE" || !cfg?.notifications.enabled || !content) return;
+    if (phase !== "ACTIVE" || !cfg?.notifications?.enabled || !content) return;
     const offsets = cfg.notifications.offsets.length ? cfg.notifications.offsets : [60, 30, 10];
     const tick = () => {
       const now = Date.now();
@@ -365,7 +383,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     void tick();
     const id = setInterval(tick, 30_000);
     return () => clearInterval(id);
-  }, [phase, cfg?.notifications.enabled, content, editionSlug, toast, t]);
+  }, [phase, cfg?.notifications?.enabled, content, editionSlug, toast, t]);
 
   // ekranı bozmadan içeriği tazele (Q&A gönderimi sonrası vb.)
   const refreshContent = useCallback(async () => {
@@ -464,19 +482,50 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   if (phase !== "ACTIVE" || !content || !cfg) return null;
 
   const accent = cfg.themeColor ?? content.edition.portalHeaderAccent ?? "#0d9488";
+  const design = cfg.design ?? null;
   const visibleWidgets = cfg.widgets;
+  const iconOverrides = design?.iconOverrides ?? {};
+  // alt menü konum düzeni — admin kanvas grid sırası (varsayılan: home, program, sponsors, map, profile)
+  const navOrder = (k: string) => design?.iconLayout?.[k] ?? { home: 0, program: 1, sponsors: 2, map: 3, profile: 4 }[k] ?? 9;
   const navItems: { key: string; label: string; icon: typeof Icons.Home }[] = [
     { key: "home", label: t("portalApp.nav.home"), icon: Icons.Home },
     ...(cfg.bottomNav.program !== false ? [{ key: "program", label: t("portalApp.nav.program"), icon: Icons.CalendarDays }] : []),
     ...(cfg.bottomNav.sponsors !== false ? [{ key: "sponsors", label: t("portalApp.nav.sponsors"), icon: Icons.Handshake }] : []),
     ...(cfg.bottomNav.map !== false && cfg.venueMap.enabled ? [{ key: "map", label: t("portalApp.nav.map"), icon: Icons.Map }] : []),
     { key: "profile", label: t("portalApp.nav.profile"), icon: Icons.UserRound },
-  ];
+  ].sort((a, b) => navOrder(a.key) - navOrder(b.key));
+  const sponsor = cfg.portalSponsor ?? null;
+  const headerBgStyle = {
+    backgroundColor: design?.headerBgColor || undefined,
+    backgroundImage: design?.headerBgImage ? `url(${design.headerBgImage})` : undefined,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+  } as const;
+  const contentBgStyle = {
+    backgroundColor: design?.contentBgColor || undefined,
+    backgroundImage: design?.contentBgImage ? `url(${design.contentBgImage})` : undefined,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+  } as const;
+  const footerBgStyle = {
+    backgroundColor: design?.footerBgColor || undefined,
+    backgroundImage: design?.footerBgImage ? `url(${design.footerBgImage})` : undefined,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+  } as const;
 
   return (
-    <div className="flex min-h-screen flex-col bg-muted/40" style={{ ["--portal-accent" as string]: accent }}>
+    <div
+      className="flex min-h-screen flex-col bg-muted/40"
+      style={{
+        ["--portal-accent" as string]: accent,
+        fontFamily: design?.fontFamily && design.fontFamily !== "system" ? PORTAL_FONT_STACKS[design.fontFamily] : undefined,
+        fontSize: design?.fontScale && design.fontScale !== 100 ? `${16 * (design.fontScale / 100)}px` : undefined,
+        ...contentBgStyle,
+      }}
+    >
       {/* ── Top Header (§3.1): organizatör + diğer etkinlikler carousel ── */}
-      <div className="border-b bg-background">
+      <div className="border-b bg-background" style={headerBgStyle}>
         <div className="mx-auto w-full max-w-2xl px-4 pt-3">
           <div className="flex items-center gap-2">
             {content.tenant.logoUrl ? (
@@ -512,7 +561,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
       </div>
 
       {/* ── Event Header (§3.1): banner + logo + ad + tarih ── */}
-      <header className="relative overflow-hidden bg-background">
+      <header className="relative overflow-hidden bg-background" style={headerBgStyle}>
         {content.edition.headerImageUrl && (
           <div className="relative h-28 sm:h-36">
             <img src={content.edition.headerImageUrl} alt={`${content.edition.name} ${t("portalApp.bannerAlt")}`} className="absolute inset-0 size-full object-cover" />
@@ -548,7 +597,10 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
       </header>
 
       {/* ── ana içerik (§3.2-§3.4 + §4) ── */}
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-24 pt-3">
+      <main
+        className="mx-auto w-full max-w-2xl flex-1 px-4 pb-24 pt-3"
+        style={{ paddingBottom: sponsor?.logoUrl || sponsor?.name ? "calc(env(safe-area-inset-bottom) + 96px)" : undefined }}
+      >
         {screen === "home" && (
           <HomeScreen
             content={content}
@@ -595,15 +647,37 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
         )}
       </main>
 
+      {/* ── Mobil Portal Sponsoru şeridi (§5.2+) — sponsor logo alanı ── */}
+      {(sponsor?.logoUrl || sponsor?.name) && (
+        <div
+          className="fixed inset-x-0 z-40 flex h-9 items-center justify-end gap-2 border-t bg-background/95 px-3 backdrop-blur"
+          style={{ bottom: "calc(env(safe-area-inset-bottom) + 56px)", ...footerBgStyle }}
+        >
+          <span className="text-[10px] font-medium text-muted-foreground">{t("portalApp.design.sponsorLabel")}</span>
+          {sponsor.logoUrl ? (
+            <img src={sponsor.logoUrl} alt={sponsor.name ?? ""} className="h-5 w-auto max-w-28 object-contain" />
+          ) : (
+            <Icons.BadgeCheck className="size-4" style={{ color: accent }} />
+          )}
+          {sponsor.name && <span className="truncate text-[11px] font-semibold">{sponsor.name}</span>}
+          {sponsor.url ? (
+            <a href={sponsor.url} target="_blank" rel="noopener noreferrer" className="ml-1 shrink-0 text-[10px] underline decoration-dotted" style={{ color: accent }}>
+              {t("portalApp.design.sponsorVisit")}
+            </a>
+          ) : null}
+        </div>
+      )}
+
       {/* ── Sabit Alt Menü (§3.3) ── */}
       <nav
         className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        style={{ paddingBottom: "env(safe-area-inset-bottom)", ...footerBgStyle }}
         aria-label={t("portalApp.nav.aria")}
       >
         <div className="mx-auto flex w-full max-w-2xl">
           {navItems.map((n) => {
             const I = n.icon;
+            const o = iconOverrides[n.key];
             const active = screen === n.key || (n.key === "home" && ["speakers", "qa", "forms", "b2b"].includes(screen));
             return (
               <button
@@ -615,7 +689,11 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
                 )}
                 aria-current={active ? "page" : undefined}
               >
-                <I className={cn("size-5", active && "stroke-[2.4]")} />
+                {o?.svg ? (
+                  <img src={o.svg} alt="" className="object-contain" style={{ width: 20, height: 20, opacity: active ? 1 : 0.72 }} />
+                ) : (
+                  <I className={cn("size-5", active && "stroke-[2.4]")} style={{ color: o?.color || undefined }} />
+                )}
                 {n.label}
               </button>
             );
@@ -713,8 +791,19 @@ function LoginScreen({
     }
   };
 
+  // tasarım uygulaması — giriş ekranı da admin marka ayarlarını izler (§5.2+)
+  const dsg = content.config?.design ?? null;
+  const sp = content.config?.portalSponsor ?? null;
   return (
-    <div className="flex min-h-screen flex-col bg-gradient-to-b from-teal-50 to-background">
+    <div
+      className="flex min-h-screen flex-col bg-gradient-to-b from-teal-50 to-background"
+      style={{
+        fontFamily: dsg?.fontFamily && dsg.fontFamily !== "system" ? PORTAL_FONT_STACKS[dsg.fontFamily] : undefined,
+        fontSize: dsg?.fontScale && dsg.fontScale !== 100 ? `${16 * (dsg.fontScale / 100)}px` : undefined,
+        ...(dsg?.contentBgColor ? { backgroundColor: dsg.contentBgColor } : {}),
+        ...(dsg?.contentBgImage ? { backgroundImage: `url(${dsg.contentBgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}),
+      }}
+    >
       <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-5 py-8">
         <div className="text-center">
           {content.edition.headerImageUrl ? (
@@ -804,6 +893,14 @@ function LoginScreen({
         )}
 
         <p className="mt-auto pt-6 text-center text-[11px] text-muted-foreground">{content.tenant.name} · {t("portalApp.login.poweredBy")}</p>
+        {/* Mobil Portal Sponsoru şeridi (§5.2+) — giriş ekranında da görünür */}
+        {(sp?.logoUrl || sp?.name) && (
+          <div className="flex items-center justify-end gap-2 pb-4">
+            <span className="text-[10px] font-medium text-muted-foreground">{t("portalApp.design.sponsorLabel")}</span>
+            {sp.logoUrl ? <img src={sp.logoUrl} alt={sp.name ?? ""} className="h-5 w-auto max-w-28 object-contain" /> : <Icons.BadgeCheck className="size-4 text-teal-600" />}
+            {sp.name && <span className="text-[11px] font-semibold">{sp.name}</span>}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -86,6 +86,17 @@ function parseNumberArray(raw: string | null | undefined, fallback: number[]): n
   }
 }
 
+// JSON nesne ayrıştırıcı — tasarım alanları (iconOverrides/iconLayout) için
+function parseJsonObject(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as unknown;
+    return p && typeof p === "object" && !Array.isArray(p) ? (p as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: NextRequest) {
   const denied = enforceRateLimit(req, { key: "portal-content", limit: 120, windowMs: 60_000 });
   if (denied) return denied;
@@ -152,6 +163,27 @@ export async function GET(req: NextRequest) {
           emailLogin: Boolean(config?.eventCode),
           allowRegistrationRedirect: config?.allowRegistrationRedirect ?? true,
           registrationFormId: config?.registrationFormId ?? null,
+        },
+        // giriş ekranı da marka uygular (font + alan-renkleri/görselleri + sponsor şeridi)
+        config: {
+          themeColor: config?.themeColor ?? null,
+          design: {
+            fontFamily: config?.fontFamily ?? null,
+            fontScale: config?.fontScale ?? null,
+            headerBgColor: config?.headerBgColor ?? null,
+            footerBgColor: config?.footerBgColor ?? null,
+            contentBgColor: config?.contentBgColor ?? null,
+            headerBgImage: config?.headerBgImage ?? null,
+            footerBgImage: config?.footerBgImage ?? null,
+            contentBgImage: config?.contentBgImage ?? null,
+            iconOverrides: null,
+            iconLayout: null,
+          },
+          portalSponsor: {
+            logoUrl: config?.portalSponsorLogoUrl ?? null,
+            name: config?.portalSponsorName ?? null,
+            url: config?.portalSponsorUrl ?? null,
+          },
         },
       });
     }
@@ -341,6 +373,24 @@ export async function GET(req: NextRequest) {
         allowRegistrationRedirect: config?.allowRegistrationRedirect ?? true,
         registrationFormId: config?.registrationFormId ?? null,
         pwaEnabled: config?.pwaEnabled ?? true,
+        // ── tasarım kontrolü (§5.2+): tipografi + alan-renkleri/görselleri + sponsor + ikonlar ──
+        design: {
+          fontFamily: config?.fontFamily ?? null,
+          fontScale: config?.fontScale ?? null,
+          headerBgColor: config?.headerBgColor ?? null,
+          footerBgColor: config?.footerBgColor ?? null,
+          contentBgColor: config?.contentBgColor ?? null,
+          headerBgImage: config?.headerBgImage ?? null,
+          footerBgImage: config?.footerBgImage ?? null,
+          contentBgImage: config?.contentBgImage ?? null,
+          iconOverrides: parseJsonObject(config?.iconOverridesJson),
+          iconLayout: parseJsonObject(config?.iconLayoutJson),
+        },
+        portalSponsor: {
+          logoUrl: config?.portalSponsorLogoUrl ?? null,
+          name: config?.portalSponsorName ?? null,
+          url: config?.portalSponsorUrl ?? null,
+        },
       },
       otherEvents,
       program,

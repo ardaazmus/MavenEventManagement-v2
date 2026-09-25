@@ -413,7 +413,26 @@
     "colorAmber": "Amber",
     "colorViolet": "Violet",
     "colorRose": "Rose",
-    "colorNeutral": "Neutral"
+    "colorNeutral": "Neutral",
+    "dbm": {
+      "groupTitle": "Database & Migration",
+      "groupDesc": "SQLite → MySQL/MariaDB (Hostinger) migration readiness: status, checks and a step-by-step runbook. This group will be removed once the migration completes.",
+      "tempChip": "Temporary",
+      "title": "Migration Audit Panel",
+      "desc": "Live database status and MySQL readiness checks. Read-only — changes nothing.",
+      "provider": "Provider",
+      "path": "File path",
+      "size": "Size",
+      "tables": "Tables",
+      "models": "models",
+      "checksTitle": "MySQL Readiness Checks",
+      "runbookTitle": "Migration Runbook",
+      "copy": "Copy command",
+      "tableCounts": "Table row counts",
+      "generatedAt": "Generated at",
+      "refresh": "Refresh",
+      "loadFail": "Failed to load migration status"
+    }
   },
   "common": {
     "error": "Error"

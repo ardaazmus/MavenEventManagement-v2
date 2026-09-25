@@ -1,0 +1,889 @@
+     1→     1→"use client";
+     2→     2→// ─── Admin Yapılandırma Modülü — "Katılımcı Portalı Ayarları" (§5) ────────────
+     3→     3→// Etkinlik altına bağlı konfigürasyon sekmesi: erişim & güvenlik (5.1), görsel
+     4→     4→// yapılandırma (5.2), widget/modül yönetimi (5.3), bildirimler + canlı duyuru
+     5→     5→// paneli (5.4), içerik bağlama (5.5), canlı istatistikler (5.6).
+     6→     6→// Kapsülleme: yalnız /api/portal/config + /api/portal/analytics +
+     7→     7→// /api/portal/magic-links + duyuru ucuyla konuşur — bilet/muhasebe modüllerine
+     8→     8→// DOKUNMAZ (§Teknik 3). Mevcut ana tablolar bozulmaz; yalnız görünürlük kuralları.
+     9→     9→import { useCallback, useEffect, useMemo, useState } from "react";
+    10→    10→import * as Icons from "lucide-react";
+    11→    11→import { Button } from "@/components/ui/button";
+    12→    12→import { Input } from "@/components/ui/input";
+    13→    13→import { Label } from "@/components/ui/label";
+    14→    14→import { Switch } from "@/components/ui/switch";
+    15→    15→import { Textarea } from "@/components/ui/textarea";
+    16→    16→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+    17→    17→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    18→    18→import { Checkbox } from "@/components/ui/checkbox";
+    19→    19→import { SectionCard, EmptyState, Loading, ErrorState } from "@/components/maven/bits";
+    20→    20→import { useToast } from "@/hooks/use-toast";
+    21→    21→import { useLang, t } from "@/lib/i18n";
+    22→    22→import { apiGet, apiSend } from "@/lib/client";
+    23→    23→import { fmtDate } from "@/lib/constants";
+    24→    24→import { cn } from "@/lib/utils";
+    25→    25→
+    26→    26→// ─── tipler ─────────────────────────────────────────────────────────────────
+    27→    27→type PortalConfig = {
+    28→    28→  id: string; editionId: string;
+    29→    29→  portalEnabled: boolean; maintenanceMessage: string | null; countdownTo: string | null;
+    30→    30→  eventCode: string | null; allowRegistrationRedirect: boolean; registrationFormId: string | null;
+    31→    31→  portalLogoUrl: string | null; portalBannerUrl: string | null; themeColor: string | null;
+    32→    32→  headerEventsJson: string | null; bottomNavJson: string | null; widgetsJson: string | null;
+    33→    33→  notificationsEnabled: boolean; notifyOffsetsJson: string | null;
+    34→    34→  sponsorIdsJson: string | null; venueMapUrl: string | null; venueMapEnabled: boolean;
+    35→    35→  pwaEnabled: boolean;
+    36→    36→};
+    37→    37→type Lookups = {
+    38→    38→  editions: { id: string; name: string; editionLabel: string | null; startDate: string | null; isPublished: boolean }[];
+    39→    39→  forms: { id: string; name: string; type: string; status: string }[];
+    40→    40→  sponsors: { id: string; name: string; logoUrl: string | null; tierName: string | null }[];
+    41→    41→  people: { id: string; firstName: string; lastName: string; email: string | null; company: string | null }[];
+    42→    42→};
+    43→    43→type ConfigPayload = { config: PortalConfig; header: { title: string; subtitle: string }; lookups: Lookups };
+    44→    44→type WidgetRow = { key: string; enabled: boolean; visibility: "ALL" | "AUTH"; order: number };
+    45→    45→type Analytics = {
+    46→    46→  uniqueVisitors: { guest: number; auth: number; total: number };
+    47→    47→  visits: { total: number; byDay: { day: string; count: number }[] };
+    48→    48→  widgetClicks: { widgetKey: string; count: number }[];
+    49→    49→  installs: number;
+    50→    50→  formEngagement: { opens: number; submissions: number; forms: { id: string; name: string; submissions: number }[] };
+    51→    51→  b2b: { total: number; accepted: number; declined: number; completed: number; completionRate: number };
+    52→    52→  questions: { pending: number; answered: number; hidden: number; total: number };
+    53→    53→  announcements: number;
+    54→    54→};
+    55→    55→type MagicResult = { items: { personId: string; name: string; email: string | null; token: string; expiresAt: string; mailed: boolean }[]; skipped: { personId: string; reason: string }[] };
+    56→    56→
+    57→    57→const WIDGET_ORDER: { key: string; icon: typeof Icons.Home }[] = [
+    58→    58→  { key: "agenda", icon: Icons.CalendarDays },
+    59→    59→  { key: "speakers", icon: Icons.Mic2 },
+    60→    60→  { key: "forms", icon: Icons.ClipboardList },
+    61→    61→  { key: "qa", icon: Icons.MessageCircleQuestion },
+    62→    62→  { key: "map", icon: Icons.Map },
+    63→    63→  { key: "b2b", icon: Icons.Handshake },
+    64→    64→];
+    65→    65→const THEME_PRESETS = ["#0d9488", "#7c3aed", "#dc2626", "#ea580c", "#16a34a", "#0891b2"];
+    66→    66→
+    67→    67→// dataURL okuyucu — boyut kotalı (logo 300KB / banner-kroki 600KB)
+    68→    68→// Hata mesajları kod döner; çağrı yerinde i18n ile çevrilir (tarama temiz).
+    69→    69→function readImage(file: File, maxBytes: number): Promise<string> {
+    70→    70→  return new Promise((resolve, reject) => {
+    71→    71→    if (file.size > maxBytes) {
+    72→    72→      reject(new RangeError("IMG_TOO_LARGE"));
+    73→    73→      return;
+    74→    74→    }
+    75→    75→    const r = new FileReader();
+    76→    76→    r.onload = () => resolve(String(r.result));
+    77→    77→    r.onerror = () => reject(new RangeError("IMG_READ_FAILED"));
+    78→    78→    r.readAsDataURL(file);
+    79→    79→  });
+    80→    80→}
+    81→    81→
+    82→    82→function parseWidgetsJson(raw: string | null): WidgetRow[] {
+    83→    83→  const defaults: WidgetRow[] = WIDGET_ORDER.map((w, i) => ({ key: w.key, enabled: true, visibility: w.key === "b2b" ? "AUTH" : "ALL", order: i }));
+    84→    84→  if (!raw) return defaults;
+    85→    85→  try {
+    86→    86→    const p = JSON.parse(raw) as Record<string, { enabled?: boolean; visibility?: string; order?: number }>;
+    87→    87→    return WIDGET_ORDER.map((w, i) => {
+    88→    88→      const o = p[w.key];
+    89→    89→      if (!o) return defaults[i];
+    90→    90→      return {
+    91→    91→        key: w.key,
+    92→    92→        enabled: o.enabled === undefined ? true : Boolean(o.enabled),
+    93→    93→        visibility: w.key === "b2b" ? "AUTH" : o.visibility === "AUTH" ? "AUTH" : "ALL",
+    94→    94→        order: Number.isFinite(o.order) ? Number(o.order) : i,
+    95→    95→      };
+    96→    96→    });
+    97→    97→  } catch {
+    98→    98→    return defaults;
+    99→    99→  }
+   100→   100→}
+   101→   101→
+   102→   102→function parseJsonObj<T>(raw: string | null, fallback: T): T {
+   103→   103→  if (!raw) return fallback;
+   104→   104→  try {
+   105→   105→    const p = JSON.parse(raw) as unknown;
+   106→   106→    return p && typeof p === "object" && !Array.isArray(p) ? (p as T) : fallback;
+   107→   107→  } catch {
+   108→   108→    return fallback;
+   109→   109→  }
+   110→   110→}
+   111→   111→function parseJsonArr(raw: string | null): string[] {
+   112→   112→  if (!raw) return [];
+   113→   113→  try {
+   114→   114→    const p = JSON.parse(raw) as unknown;
+   115→   115→    return Array.isArray(p) ? p.filter((x): x is string => typeof x === "string") : [];
+   116→   116→  } catch {
+   117→   117→    return [];
+   118→   118→  }
+   119→   119→}
+   120→   120→
+   121→   121→// ─── ana sekme bileşeni ─────────────────────────────────────────────────────
+   122→   122→export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string; portalSlug: string | null }) {
+   123→   123→  const { t } = useLang();
+   124→   124→  const { toast } = useToast();
+   125→   125→  const [payload, setPayload] = useState<ConfigPayload | null>(null);
+   126→   126→  const [loadErr, setLoadErr] = useState<string | null>(null);
+   127→   127→  const [saving, setSaving] = useState(false);
+   128→   128→  const [dirty, setDirty] = useState(false);
+   129→   129→
+   130→   130→  // taslak — config alanlarının düzenlenebilir kopyası
+   131→   131→  const [draft, setDraft] = useState<null | {
+   132→   132→    portalEnabled: boolean; maintenanceMessage: string; countdownTo: string;
+   133→   133→    eventCode: string; allowRegistrationRedirect: boolean; registrationFormId: string;
+   134→   134→    portalLogoUrl: string; portalBannerUrl: string; themeColor: string;
+   135→   135→    headerEvents: string[]; bottomNav: Record<string, boolean>;
+   136→   136→    widgets: WidgetRow[]; notificationsEnabled: boolean; offsets: number[];
+   137→   137→    sponsorIds: string[]; venueMapUrl: string; venueMapEnabled: boolean; pwaEnabled: boolean;
+   138→   138→    headerTitle: string; headerSubtitle: string;
+   139→   139→  }>(null);
+   140→   140→  const [analytics, setAnalytics] = useState<Analytics | null>(null);
+   141→   141→  const [magicOpen, setMagicOpen] = useState(false);
+   142→   142→  const [magicBusy, setMagicBusy] = useState(false);
+   143→   143→  const [magicSelected, setMagicSelected] = useState<Set<string>>(new Set());
+   144→   144→  const [magicSendMail, setMagicSendMail] = useState(false);
+   145→   145→  const [magicResult, setMagicResult] = useState<MagicResult | null>(null);
+   146→   146→  const [annTitle, setAnnTitle] = useState("");
+   147→   147→  const [annMessage, setAnnMessage] = useState("");
+   148→   148→  const [annLevel, setAnnLevel] = useState("INFO");
+   149→   149→  const [annTarget, setAnnTarget] = useState("ALL");
+   150→   150→  const [annBusy, setAnnBusy] = useState(false);
+   151→   151→
+   152→   152→  const load = useCallback(async () => {
+   153→   153→    setLoadErr(null);
+   154→   154→    try {
+   155→   155→      const data = await apiGet<ConfigPayload>(`/api/portal/config?editionId=${encodeURIComponent(editionId)}`);
+   156→   156→      setPayload(data);
+   157→   157→      setDraft({
+   158→   158→        portalEnabled: data.config.portalEnabled,
+   159→   159→        maintenanceMessage: data.config.maintenanceMessage ?? "",
+   160→   160→        countdownTo: data.config.countdownTo ? new Date(data.config.countdownTo).toISOString().slice(0, 16) : "",
+   161→   161→        eventCode: data.config.eventCode ?? "",
+   162→   162→        allowRegistrationRedirect: data.config.allowRegistrationRedirect,
+   163→   163→        registrationFormId: data.config.registrationFormId ?? "",
+   164→   164→        portalLogoUrl: data.config.portalLogoUrl ?? "",
+   165→   165→        portalBannerUrl: data.config.portalBannerUrl ?? "",
+   166→   166→        themeColor: data.config.themeColor ?? "#0d9488",
+   167→   167→        headerEvents: parseJsonArr(data.config.headerEventsJson),
+   168→   168→        bottomNav: parseJsonObj(data.config.bottomNavJson, { program: true, sponsors: true, map: true }),
+   169→   169→        widgets: parseWidgetsJson(data.config.widgetsJson).sort((a, b) => a.order - b.order),
+   170→   170→        notificationsEnabled: data.config.notificationsEnabled,
+   171→   171→        offsets: parseJsonArr(data.config.notifyOffsetsJson).map(Number).filter((n) => Number.isFinite(n) && n > 0),
+   172→   172→        sponsorIds: parseJsonArr(data.config.sponsorIdsJson),
+   173→   173→        venueMapUrl: data.config.venueMapUrl ?? "",
+   174→   174→        venueMapEnabled: data.config.venueMapEnabled,
+   175→   175→        pwaEnabled: data.config.pwaEnabled,
+   176→   176→        headerTitle: data.header.title,
+   177→   177→        headerSubtitle: data.header.subtitle,
+   178→   178→      });
+   179→   179→      setDirty(false);
+   180→   180→    } catch (e) {
+   181→   181→      setLoadErr(e instanceof Error ? e.message : "Yapılandırma alınamadı");
+   182→   182→    }
+   183→   183→  }, [editionId]);
+   184→   184→
+   185→   185→  useEffect(() => {
+   186→   186→    void load();
+   187→   187→  }, [load]);
+   188→   188→
+   189→   189→  useEffect(() => {
+   190→   190→    let alive = true;
+   191→   191→    apiGet<Analytics>(`/api/portal/analytics?editionId=${encodeURIComponent(editionId)}`)
+   192→   192→      .then((d) => alive && setAnalytics(d))
+   193→   193→      .catch(() => undefined);
+   194→   194→    return () => {
+   195→   195→      alive = false;
+   196→   196→    };
+   197→   197→  }, [editionId, payload?.config.id]);
+   198→   198→
+   199→   199→  const pickImage = async (file: File, maxBytes: number, apply: (url: string) => void) => {
+   200→   200→    try {
+   201→   201→      apply(await readImage(file, maxBytes));
+   202→   202→    } catch (err) {
+   203→   203→      const msg = err instanceof RangeError && err.message === "IMG_TOO_LARGE"
+   204→   204→        ? t("portalSettings.brand.imgSize", { kb: Math.round(maxBytes / 1024) })
+   205→   205→        : t("portalSettings.brand.imgRead");
+   206→   206→      toast({ title: t("portalSettings.brand.imgErr"), description: msg, variant: "destructive" });
+   207→   207→    }
+   208→   208→  };
+   209→   209→
+   210→   210→  const patch = <K extends keyof NonNullable<typeof draft>>(k: K, v: NonNullable<typeof draft>[K]) => {
+   211→   211→    setDraft((d) => (d ? { ...d, [k]: v } : d));
+   212→   212→    setDirty(true);
+   213→   213→  };
+   214→   214→
+   215→   215→  const save = async () => {
+   216→   216→    if (!draft) return;
+   217→   217→    setSaving(true);
+   218→   218→    try {
+   219→   219→      await apiSend("/api/portal/config", "PUT", {
+   220→   220→        editionId,
+   221→   221→        portalEnabled: draft.portalEnabled,
+   222→   222→        maintenanceMessage: draft.maintenanceMessage || null,
+   223→   223→        countdownTo: draft.countdownTo ? new Date(draft.countdownTo).toISOString() : null,
+   224→   224→        eventCode: draft.eventCode ? draft.eventCode : null,
+   225→   225→        allowRegistrationRedirect: draft.allowRegistrationRedirect,
+   226→   226→        registrationFormId: draft.registrationFormId || null,
+   227→   227→        portalLogoUrl: draft.portalLogoUrl || null,
+   228→   228→        portalBannerUrl: draft.portalBannerUrl || null,
+   229→   229→        themeColor: draft.themeColor || null,
+   230→   230→        headerEvents: draft.headerEvents,
+   231→   231→        bottomNav: draft.bottomNav,
+   232→   232→        widgets: Object.fromEntries(draft.widgets.map((w, i) => [w.key, { enabled: w.enabled, visibility: w.visibility, order: i }])),
+   233→   233→        notificationsEnabled: draft.notificationsEnabled,
+   234→   234→        notifyOffsets: draft.offsets.length ? draft.offsets : [60, 30, 10],
+   235→   235→        sponsorIds: draft.sponsorIds,
+   236→   236→        venueMapUrl: draft.venueMapUrl || null,
+   237→   237→        venueMapEnabled: draft.venueMapEnabled,
+   238→   238→        pwaEnabled: draft.pwaEnabled,
+   239→   239→        headerTitle: draft.headerTitle || null,
+   240→   240→        headerSubtitle: draft.headerSubtitle || null,
+   241→   241→      });
+   242→   242→      toast({ title: t("portalSettings.saved"), description: t("portalSettings.savedDesc") });
+   243→   243→      await load();
+   244→   244→    } catch (e) {
+   245→   245→      toast({ title: t("portalSettings.saveFail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   246→   246→    } finally {
+   247→   247→      setSaving(false);
+   248→   248→    }
+   249→   249→  };
+   250→   250→
+   251→   251→  const genCode = () => {
+   252→   252→    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+   253→   253→    let out = "";
+   254→   254→    for (let i = 0; i < 6; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+   255→   255→    patch("eventCode", out);
+   256→   256→  };
+   257→   257→
+   258→   258→  const issueMagic = async () => {
+   259→   259→    setMagicBusy(true);
+   260→   260→    try {
+   261→   261→      const res = await apiSend<MagicResult>("/api/portal/magic-links", "POST", {
+   262→   262→        editionId,
+   263→   263→        personIds: [...magicSelected],
+   264→   264→        sendMail: magicSendMail,
+   265→   265→      });
+   266→   266→      setMagicResult(res);
+   267→   267→      toast({ title: t("portalSettings.magic.issued", { count: res.items.length }) });
+   268→   268→    } catch (e) {
+   269→   269→      toast({ title: t("portalSettings.magic.fail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   270→   270→    } finally {
+   271→   271→      setMagicBusy(false);
+   272→   272→    }
+   273→   273→  };
+   274→   274→
+   275→   275→  const sendAnnouncement = async () => {
+   276→   276→    setAnnBusy(true);
+   277→   277→    try {
+   278→   278→      await apiSend("/api/portal/announcements", "POST", { editionId, title: annTitle.trim(), message: annMessage.trim(), level: annLevel, target: annTarget });
+   279→   279→      toast({ title: t("portalSettings.announce.sent"), description: t("portalSettings.announce.sentDesc") });
+   280→   280→      setAnnTitle("");
+   281→   281→      setAnnMessage("");
+   282→   282→    } catch (e) {
+   283→   283→      toast({ title: t("portalSettings.announce.fail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   284→   284→    } finally {
+   285→   285→      setAnnBusy(false);
+   286→   286→    }
+   287→   287→  };
+   288→   288→
+   289→   289→  const moveWidget = (idx: number, dir: -1 | 1) => {
+   290→   290→    if (!draft) return;
+   291→   291→    const next = [...draft.widgets];
+   292→   292→    const j = idx + dir;
+   293→   293→    if (j < 0 || j >= next.length) return;
+   294→   294→    [next[idx], next[j]] = [next[j], next[idx]];
+   295→   295→    setDraft({ ...draft, widgets: next });
+   296→   296→    setDirty(true);
+   297→   297→  };
+   298→   298→
+   299→   299→  if (loadErr) return <ErrorState message={loadErr} onRetry={() => void load()} />;
+   300→   300→  if (!payload || !draft) return <Loading rows={6} />;
+   301→   301→
+   302→   302→  const lookups = payload.lookups;
+   303→   303→  const peopleList = lookups.people;
+   304→   304→
+   305→   305→  return (
+   306→   306→    <div className="space-y-4">
+   307→   307→      {/* canlı önizleme butonu */}
+   308→   308→      <div className="flex flex-wrap items-center gap-2">
+   309→   309→        <Button
+   310→   310→          variant={draft.portalEnabled ? "default" : "outline"}
+   311→   311→          onClick={() => portalSlug && window.open(`/?portal=${encodeURIComponent(portalSlug)}`, "_blank")}
+   312→   312→          disabled={!portalSlug || !draft.portalEnabled}
+   313→   313→        >
+   314→   314→          <Icons.ExternalLink className="size-4" /> {t("portalSettings.openPortal")}
+   315→   315→        </Button>
+   316→   316→        <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium",
+   317→   317→          draft.portalEnabled ? "bg-teal-50 text-teal-700 dark:bg-teal-900/40 dark:text-teal-200" : "bg-amber-50 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200")}>
+   318→   318→          {draft.portalEnabled ? <><Icons.RadioTower className="size-3" /> {t("portalSettings.statusActive")}</> : <><Icons.PauseCircle className="size-3" /> {t("portalSettings.statusPassive")}</>}
+   319→   319→        </span>
+   320→   320→        {dirty && <span className="text-[11px] text-amber-600">{t("portalSettings.unsaved")}</span>}
+   321→   321→        <Button className="ml-auto" onClick={() => void save()} disabled={saving}>
+   322→   322→          {saving ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Save className="size-4" />} {t("portalSettings.save")}
+   323→   323→        </Button>
+   324→   324→      </div>
+   325→   325→
+   326→   326→      {/* ── §5.1 Erişim ve Güvenlik ── */}
+   327→   327→      <SectionCard title={t("portalSettings.access.title")} desc={t("portalSettings.access.desc")}>
+   328→   328→        <div className="space-y-4">
+   329→   329→          <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+   330→   330→            <div>
+   331→   331→              <Label className="text-xs">{t("portalSettings.access.status")}</Label>
+   332→   332→              <p className="mt-0.5 text-[11px] text-muted-foreground">{draft.portalEnabled ? t("portalSettings.access.statusOn") : t("portalSettings.access.statusOff")}</p>
+   333→   333→            </div>
+   334→   334→            <Switch checked={draft.portalEnabled} onCheckedChange={(v) => patch("portalEnabled", v)} aria-label={t("portalSettings.access.status")} />
+   335→   335→          </div>
+   336→   336→          {!draft.portalEnabled && (
+   337→   337→            <div className="grid gap-3 sm:grid-cols-2">
+   338→   338→              <div className="space-y-1.5">
+   339→   339→                <Label className="text-xs">{t("portalSettings.access.maintMsg")}</Label>
+   340→   340→                <Textarea value={draft.maintenanceMessage} onChange={(e) => patch("maintenanceMessage", e.target.value)} placeholder={t("portalSettings.access.maintPh")} rows={2} maxLength={300} />
+   341→   341→              </div>
+   342→   342→              <div className="space-y-1.5">
+   343→   343→                <Label className="text-xs">{t("portalSettings.access.countdown")}</Label>
+   344→   344→                <Input type="datetime-local" value={draft.countdownTo} onChange={(e) => patch("countdownTo", e.target.value)} />
+   345→   345→              </div>
+   346→   346→            </div>
+   347→   347→          )}
+   348→   348→          <div className="grid gap-3 sm:grid-cols-2">
+   349→   349→            <div className="space-y-1.5">
+   350→   350→              <Label className="text-xs">{t("portalSettings.access.code")}</Label>
+   351→   351→              <div className="flex gap-2">
+   352→   352→                <Input
+   353→   353→                  value={draft.eventCode}
+   354→   354→                  onChange={(e) => patch("eventCode", e.target.value.toUpperCase().replace(/\s+/g, "").slice(0, 24))}
+   355→   355→                  placeholder="ABC123"
+   356→   356→                  className="font-mono uppercase tracking-widest"
+   357→   357→                />
+   358→   358→                <Button variant="outline" size="icon" onClick={genCode} title={t("portalSettings.access.codeGen")} aria-label={t("portalSettings.access.codeGen")}>
+   359→   359→                  <Icons.Dices className="size-4" />
+   360→   360→                </Button>
+   361→   361→              </div>
+   362→   362→              <p className="text-[11px] text-muted-foreground">{t("portalSettings.access.codeHint")}</p>
+   363→   363→            </div>
+   364→   364→            <div className="space-y-1.5">
+   365→   365→              <Label className="text-xs">{t("portalSettings.access.magicTitle")}</Label>
+   366→   366→              <Button variant="outline" size="sm" className="w-full" onClick={() => setMagicOpen(true)}>
+   367→   367→                <Icons.Wand2 className="size-4" /> {t("portalSettings.access.magicBtn")}
+   368→   368→              </Button>
+   369→   369→              <p className="text-[11px] text-muted-foreground">{t("portalSettings.access.magicHint")}</p>
+   370→   370→            </div>
+   371→   371→          </div>
+   372→   372→          <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+   373→   373→            <div>
+   374→   374→              <Label className="text-xs">{t("portalSettings.access.regRedirect")}</Label>
+   375→   375→              <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.access.regRedirectHint")}</p>
+   376→   376→            </div>
+   377→   377→            <Switch checked={draft.allowRegistrationRedirect} onCheckedChange={(v) => patch("allowRegistrationRedirect", v)} />
+   378→   378→          </div>
+   379→   379→          {draft.allowRegistrationRedirect && (
+   380→   380→            <div className="space-y-1.5 sm:max-w-sm">
+   381→   381→              <Label className="text-xs">{t("portalSettings.access.regForm")}</Label>
+   382→   382→              <Select value={draft.registrationFormId || "none"} onValueChange={(v) => patch("registrationFormId", v === "none" ? "" : v)}>
+   383→   383→                <SelectTrigger><SelectValue placeholder={t("portalSettings.access.regFormPh")} /></SelectTrigger>
+   384→   384→                <SelectContent>
+   385→   385→                  <SelectItem value="none">{t("portalSettings.access.regFormNone")}</SelectItem>
+   386→   386→                  {lookups.forms.map((f) => (
+   387→   387→                    <SelectItem key={f.id} value={f.id}>{f.name} ({t(`portalSettings.formStatus.${f.status}`)})</SelectItem>
+   388→   388→                  ))}
+   389→   389→                </SelectContent>
+   390→   390→              </Select>
+   391→   391→            </div>
+   392→   392→          )}
+   393→   393→        </div>
+   394→   394→      </SectionCard>
+   395→   395→
+   396→   396→      {/* ── §5.2 Görsel Yapılandırma ── */}
+   397→   397→      <SectionCard title={t("portalSettings.brand.title")} desc={t("portalSettings.brand.desc")}>
+   398→   398→        <div className="grid gap-4 sm:grid-cols-2">
+   399→   399→          <div className="space-y-1.5">
+   400→   400→            <Label className="text-xs">{t("portalSettings.brand.logo")}</Label>
+   401→   401→            <div className="flex items-center gap-2">
+   402→   402→              <div className="grid size-11 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted">
+   403→   403→                {draft.portalLogoUrl ? <img src={draft.portalLogoUrl} alt="" className="size-full object-contain p-0.5" /> : <Icons.ImageIcon className="size-4 text-muted-foreground" />}
+   404→   404→              </div>
+   405→   405→              <Input
+   406→   406→                type="file"
+   407→   407→                accept="image/*"
+   408→   408→                className="h-9 text-xs"
+   409→   409→                onChange={(e) => {
+   410→   410→                  const f = e.target.files?.[0];
+   411→   411→                  if (!f) return;
+   412→   412→                  void pickImage(f, 300_000, (url) => patch("portalLogoUrl", url));
+   413→   413→                }}
+   414→   414→              />
+   415→   415→              {draft.portalLogoUrl && (
+   416→   416→                <Button variant="ghost" size="icon" onClick={() => patch("portalLogoUrl", "")} aria-label={t("portalSettings.brand.clear")}>
+   417→   417→                  <Icons.Trash2 className="size-4 text-muted-foreground" />
+   418→   418→                </Button>
+   419→   419→              )}
+   420→   420→            </div>
+   421→   421→          </div>
+   422→   422→          <div className="space-y-1.5">
+   423→   423→            <Label className="text-xs">{t("portalSettings.brand.banner")}</Label>
+   424→   424→            <div className="flex items-center gap-2">
+   425→   425→              <div className="grid h-11 w-16 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted">
+   426→   426→                {draft.portalBannerUrl ? <img src={draft.portalBannerUrl} alt="" className="size-full object-cover" /> : <Icons.ImageIcon className="size-4 text-muted-foreground" />}
+   427→   427→              </div>
+   428→   428→              <Input
+   429→   429→                type="file"
+   430→   430→                accept="image/*"
+   431→   431→                className="h-9 text-xs"
+   432→   432→                onChange={(e) => {
+   433→   433→                  const f = e.target.files?.[0];
+   434→   434→                  if (!f) return;
+   435→   435→                  void pickImage(f, 600_000, (url) => patch("portalBannerUrl", url));
+   436→   436→                }}
+   437→   437→              />
+   438→   438→              {draft.portalBannerUrl && (
+   439→   439→                <Button variant="ghost" size="icon" onClick={() => patch("portalBannerUrl", "")} aria-label={t("portalSettings.brand.clear")}>
+   440→   440→                  <Icons.Trash2 className="size-4 text-muted-foreground" />
+   441→   441→                </Button>
+   442→   442→              )}
+   443→   443→            </div>
+   444→   444→          </div>
+   445→   445→          <div className="space-y-1.5">
+   446→   446→            <Label className="text-xs">{t("portalSettings.brand.theme")}</Label>
+   447→   447→            <div className="flex flex-wrap items-center gap-1.5">
+   448→   448→              {THEME_PRESETS.map((c) => (
+   449→   449→                <button
+   450→   450→                  key={c}
+   451→   451→                  onClick={() => patch("themeColor", c)}
+   452→   452→                  aria-label={c}
+   453→   453→                  className={cn("size-7 rounded-lg border-2 transition", draft.themeColor === c ? "border-foreground scale-110" : "border-transparent")}
+   454→   454→                  style={{ backgroundColor: c }}
+   455→   455→                />
+   456→   456→              ))}
+   457→   457→              <input
+   458→   458→                type="color"
+   459→   459→                value={draft.themeColor}
+   460→   460→                onChange={(e) => patch("themeColor", e.target.value)}
+   461→   461→                className="size-7 cursor-pointer rounded-lg border bg-transparent"
+   462→   462→                aria-label={t("portalSettings.brand.themeCustom")}
+   463→   463→              />
+   464→   464→            </div>
+   465→   465→          </div>
+   466→   466→          <div className="space-y-1.5">
+   467→   467→            <Label className="text-xs">{t("portalSettings.brand.headerTitle")}</Label>
+   468→   468→            <Input value={draft.headerTitle} onChange={(e) => patch("headerTitle", e.target.value)} placeholder={t("portalSettings.brand.headerTitlePh")} maxLength={120} />
+   469→   469→          </div>
+   470→   470→          <div className="space-y-1.5 sm:col-span-2">
+   471→   471→            <Label className="text-xs">{t("portalSettings.brand.headerSubtitle")}</Label>
+   472→   472→            <Input value={draft.headerSubtitle} onChange={(e) => patch("headerSubtitle", e.target.value)} placeholder={t("portalSettings.brand.headerSubtitlePh")} maxLength={200} />
+   473→   473→          </div>
+   474→   474→        </div>
+   475→   475→
+   476→   476→        {/* Top Header carousel seçimi (§5.2) */}
+   477→   477→        <div className="mt-4">
+   478→   478→          <Label className="text-xs">{t("portalSettings.brand.headerEvents")}</Label>
+   479→   479→          <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.brand.headerEventsHint")}</p>
+   480→   480→          {lookups.editions.length === 0 ? (
+   481→   481→            <p className="mt-2 text-[11px] text-muted-foreground">{t("portalSettings.brand.noOtherEvents")}</p>
+   482→   482→          ) : (
+   483→   483→            <div className="maven-scroll mt-2 max-h-40 space-y-1 overflow-y-auto rounded-lg border p-2">
+   484→   484→              {lookups.editions.map((e) => (
+   485→   485→                <label key={e.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50">
+   486→   486→                  <Checkbox
+   487→   487→                    checked={draft.headerEvents.includes(e.id)}
+   488→   488→                    onCheckedChange={(v) => patch("headerEvents", v ? [...draft.headerEvents, e.id] : draft.headerEvents.filter((x) => x !== e.id))}
+   489→   489→                  />
+   490→   490→                  <span className="truncate">{e.name}</span>
+   491→   491→                  <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{[e.editionLabel, e.startDate ? fmtDate(e.startDate) : null].filter(Boolean).join(" · ")}</span>
+   492→   492→                </label>
+   493→   493→              ))}
+   494→   494→            </div>
+   495→   495→          )}
+   496→   496→        </div>
+   497→   497→
+   498→   498→        {/* Alt menü özelleştirme (§5.2) */}
+   499→   499→        <div className="mt-4">
+   500→   500→          <Label className="text-xs">{t("portalSettings.brand.bottomNav")}</Label>
+   501→   501→          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+   502→   502→            {([["program", t("portalApp.nav.program")], ["sponsors", t("portalApp.nav.sponsors")], ["map", t("portalApp.nav.map")]] as const).map(([key, label]) => (
+   503→   503→              <div key={key} className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 p-2.5">
+   504→   504→                <span className="text-xs">{label}</span>
+   505→   505→                <Switch
+   506→   506→                  checked={draft.bottomNav[key] !== false}
+   507→   507→                  onCheckedChange={(v) => patch("bottomNav", { ...draft.bottomNav, [key]: v })}
+   508→   508→                  aria-label={label}
+   509→   509→                />
+   510→   510→              </div>
+   511→   511→            ))}
+   512→   512→          </div>
+   513→   513→          <p className="mt-1 text-[11px] text-muted-foreground">{t("portalSettings.brand.bottomNavHint")}</p>
+   514→   514→        </div>
+   515→   515→      </SectionCard>
+   516→   516→
+   517→   517→      {/* ── §5.3 Widget ve Modül Yönetimi ── */}
+   518→   518→      <SectionCard title={t("portalSettings.widgets.title")} desc={t("portalSettings.widgets.desc")}>
+   519→   519→        <div className="space-y-2">
+   520→   520→          {draft.widgets.map((w, i) => {
+   521→   521→            const meta = WIDGET_ORDER.find((x) => x.key === w.key)!;
+   522→   522→            const I = meta.icon;
+   523→   523→            return (
+   524→   524→              <div key={w.key} className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-2.5">
+   525→   525→                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white shadow-sm dark:bg-card">
+   526→   526→                  <I className="size-4" />
+   527→   527→                </span>
+   528→   528→                <span className="min-w-24 text-xs font-medium">{t(`portalApp.widget.${w.key}`)}</span>
+   529→   529→                <Switch checked={w.enabled} onCheckedChange={(v) => { const next = [...draft.widgets]; next[i] = { ...w, enabled: v }; setDraft({ ...draft, widgets: next }); setDirty(true); }} aria-label={t("portalSettings.widgets.toggle")} />
+   530→   530→                <div className="ml-auto flex items-center gap-1.5">
+   531→   531→                  <Select
+   532→   532→                    value={w.visibility}
+   533→   533→                    onValueChange={(v) => {
+   534→   534→                      const next = [...draft.widgets];
+   535→   535→                      next[i] = { ...w, visibility: w.key === "b2b" ? "AUTH" : (v as "ALL" | "AUTH") };
+   536→   536→                      setDraft({ ...draft, widgets: next });
+   537→   537→                      setDirty(true);
+   538→   538→                    }}
+   539→   539→                    disabled={w.key === "b2b"}
+   540→   540→                  >
+   541→   541→                    <SelectTrigger className="h-8 w-44 text-[11px]">
+   542→   542→                      <SelectValue />
+   543→   543→                    </SelectTrigger>
+   544→   544→                    <SelectContent>
+   545→   545→                      <SelectItem value="ALL">{t("portalSettings.widgets.visAll")}</SelectItem>
+   546→   546→                      <SelectItem value="AUTH">{t("portalSettings.widgets.visAuth")}</SelectItem>
+   547→   547→                    </SelectContent>
+   548→   548→                  </Select>
+   549→   549→                  {w.key === "b2b" && <Icons.Lock className="size-3.5 shrink-0 text-muted-foreground" aria-label={t("portalSettings.widgets.b2bLocked")} />}
+   550→   550→                  <div className="flex shrink-0">
+   551→   551→                    <Button variant="ghost" size="icon" className="size-7" onClick={() => moveWidget(i, -1)} disabled={i === 0} aria-label={t("portalSettings.widgets.up")}>
+   552→   552→                      <Icons.ChevronUp className="size-3.5" />
+   553→   553→                    </Button>
+   554→   554→                    <Button variant="ghost" size="icon" className="size-7" onClick={() => moveWidget(i, 1)} disabled={i === draft.widgets.length - 1} aria-label={t("portalSettings.widgets.down")}>
+   555→   555→                      <Icons.ChevronDown className="size-3.5" />
+   556→   556→                    </Button>
+   557→   557→                  </div>
+   558→   558→                </div>
+   559→   559→              </div>
+   560→   560→            );
+   561→   561→          })}
+   562→   562→        </div>
+   563→   563→      </SectionCard>
+   564→   564→
+   565→   565→      {/* ── §5.4 Bildirim Yönetimi + Canlı Duyuru Paneli ── */}
+   566→   566→      <SectionCard title={t("portalSettings.notify.title")} desc={t("portalSettings.notify.desc")}>
+   567→   567→        <div className="space-y-4">
+   568→   568→          <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+   569→   569→            <div>
+   570→   570→              <Label className="text-xs">{t("portalSettings.notify.enabled")}</Label>
+   571→   571→              <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.notify.enabledHint")}</p>
+   572→   572→            </div>
+   573→   573→            <Switch checked={draft.notificationsEnabled} onCheckedChange={(v) => patch("notificationsEnabled", v)} />
+   574→   574→          </div>
+   575→   575→          {draft.notificationsEnabled && (
+   576→   576→            <div>
+   577→   577→              <Label className="text-xs">{t("portalSettings.notify.offsets")}</Label>
+   578→   578→              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+   579→   579→                {draft.offsets.map((o, i) => (
+   580→   580→                  <span key={i} className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
+   581→   581→                    {o} dk
+   582→   582→                    <button
+   583→   583→                      onClick={() => patch("offsets", draft.offsets.filter((_, j) => j !== i))}
+   584→   584→                      className="rounded-full hover:text-teal-900"
+   585→   585→                      aria-label={t("portalSettings.notify.removeOffset")}
+   586→   586→                    >
+   587→   587→                      <Icons.X className="size-3" />
+   588→   588→                    </button>
+   589→   589→                  </span>
+   590→   590→                ))}
+   591→   591→                <Select
+   592→   592→                  value="__add"
+   593→   593→                  onValueChange={(v) => {
+   594→   594→                    const n = Number(v);
+   595→   595→                    if (Number.isFinite(n) && n > 0 && !draft.offsets.includes(n)) patch("offsets", [...draft.offsets, n].sort((a, b) => a - b).slice(0, 5));
+   596→   596→                  }}
+   597→   597→                >
+   598→   598→                  <SelectTrigger className="h-7 w-36 text-[11px]"><SelectValue /></SelectTrigger>
+   599→   599→                  <SelectContent>
+   600→   600→                    <SelectItem value="__add" disabled>{t("portalSettings.notify.addOffset")}</SelectItem>
+   601→   601→                    {[5, 10, 15, 30, 45, 60, 120, 1440].filter((n) => !draft.offsets.includes(n)).map((n) => (
+   602→   602→                      <SelectItem key={n} value={String(n)}>{t("portalSettings.notify.offsetMin", { n })}</SelectItem>
+   603→   603→                    ))}
+   604→   604→                  </SelectContent>
+   605→   605→                </Select>
+   606→   606→              </div>
+   607→   607→              <p className="mt-1 text-[11px] text-muted-foreground">{t("portalSettings.notify.offsetsHint")}</p>
+   608→   608→            </div>
+   609→   609→          )}
+   610→   610→
+   611→   611→          {/* Canlı Duyuru Paneli (§5.4) */}
+   612→   612→          <div className="rounded-lg border border-dashed p-3">
+   613→   613→            <div className="flex items-center gap-1.5">
+   614→   614→              <Icons.Radio className="size-4 text-red-500" />
+   615→   615→              <p className="text-xs font-semibold">{t("portalSettings.announce.title")}</p>
+   616→   616→            </div>
+   617→   617→            <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.announce.desc")}</p>
+   618→   618→            <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_130px_130px]">
+   619→   619→              <Input value={annTitle} onChange={(e) => setAnnTitle(e.target.value)} placeholder={t("portalSettings.announce.titlePh")} maxLength={120} />
+   620→   620→              <Select value={annLevel} onValueChange={setAnnLevel}>
+   621→   621→                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+   622→   622→                <SelectContent>
+   623→   623→                  <SelectItem value="INFO">{t("portalSettings.announce.levelInfo")}</SelectItem>
+   624→   624→                  <SelectItem value="WARNING">{t("portalSettings.announce.levelWarning")}</SelectItem>
+   625→   625→                  <SelectItem value="URGENT">{t("portalSettings.announce.levelUrgent")}</SelectItem>
+   626→   626→                </SelectContent>
+   627→   627→              </Select>
+   628→   628→              <Select value={annTarget} onValueChange={setAnnTarget}>
+   629→   629→                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+   630→   630→                <SelectContent>
+   631→   631→                  <SelectItem value="ALL">{t("portalSettings.announce.targetAll")}</SelectItem>
+   632→   632→                  <SelectItem value="AUTH">{t("portalSettings.announce.targetAuth")}</SelectItem>
+   633→   633→                  <SelectItem value="GUEST">{t("portalSettings.announce.targetGuest")}</SelectItem>
+   634→   634→                </SelectContent>
+   635→   635→              </Select>
+   636→   636→            </div>
+   637→   637→            <Textarea value={annMessage} onChange={(e) => setAnnMessage(e.target.value)} placeholder={t("portalSettings.announce.msgPh")} rows={2} maxLength={500} className="mt-2" />
+   638→   638→            <Button size="sm" className="mt-2" onClick={() => void sendAnnouncement()} disabled={annBusy || !annTitle.trim() || !annMessage.trim()}>
+   639→   639→              {annBusy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Send className="size-4" />} {t("portalSettings.announce.send")}
+   640→   640→            </Button>
+   641→   641→            {analytics && <p className="mt-1.5 text-[11px] text-muted-foreground">{t("portalSettings.announce.sentCount", { count: analytics.announcements })}</p>}
+   642→   642→          </div>
+   643→   643→        </div>
+   644→   644→      </SectionCard>
+   645→   645→
+   646→   646→      {/* ── §5.5 İçerik Bağlama ── */}
+   647→   647→      <SectionCard title={t("portalSettings.content.title")} desc={t("portalSettings.content.desc")}>
+   648→   648→        <div className="space-y-4">
+   649→   649→          <div>
+   650→   650→            <Label className="text-xs">{t("portalSettings.content.sponsors")}</Label>
+   651→   651→            <p className="mt-0.5 text-[11px] text-muted-foreground">
+   652→   652→              {draft.sponsorIds.length > 0 ? t("portalSettings.content.sponsorsSelected", { count: draft.sponsorIds.length }) : t("portalSettings.content.sponsorsAll")}
+   653→   653→            </p>
+   654→   654→            {lookups.sponsors.length === 0 ? (
+   655→   655→              <p className="mt-2 text-[11px] text-muted-foreground">{t("portalSettings.content.noSponsors")}</p>
+   656→   656→            ) : (
+   657→   657→              <div className="maven-scroll mt-2 max-h-40 space-y-1 overflow-y-auto rounded-lg border p-2">
+   658→   658→                {lookups.sponsors.map((s) => (
+   659→   659→                  <label key={s.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50">
+   660→   660→                    <Checkbox
+   661→   661→                      checked={draft.sponsorIds.includes(s.id)}
+   662→   662→                      onCheckedChange={(v) => patch("sponsorIds", v ? [...draft.sponsorIds, s.id] : draft.sponsorIds.filter((x) => x !== s.id))}
+   663→   663→                    />
+   664→   664→                    {s.logoUrl ? <img src={s.logoUrl} alt="" className="size-4 rounded object-contain" /> : <Icons.Building2 className="size-3.5 text-muted-foreground" />}
+   665→   665→                    <span className="truncate">{s.name}</span>
+   666→   666→                    {s.tierName && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{s.tierName}</span>}
+   667→   667→                  </label>
+   668→   668→                ))}
+   669→   669→              </div>
+   670→   670→            )}
+   671→   671→          </div>
+   672→   672→          <div>
+   673→   673→            <Label className="text-xs">{t("portalSettings.content.map")}</Label>
+   674→   674→            <div className="mt-1.5 flex items-center gap-2">
+   675→   675→              <div className="grid h-11 w-16 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted">
+   676→   676→                {draft.venueMapUrl ? <img src={draft.venueMapUrl} alt="" className="size-full object-cover" /> : <Icons.Map className="size-4 text-muted-foreground" />}
+   677→   677→              </div>
+   678→   678→              <Input
+   679→   679→                type="file"
+   680→   680→                accept="image/*"
+   681→   681→                className="h-9 text-xs"
+   682→   682→                onChange={(e) => {
+   683→   683→                  const f = e.target.files?.[0];
+   684→   684→                  if (!f) return;
+   685→   685→                  void pickImage(f, 600_000, (url) => {
+   686→   686→                    patch("venueMapUrl", url);
+   687→   687→                    if (!draft.venueMapEnabled) patch("venueMapEnabled", true);
+   688→   688→                  });
+   689→   689→                }}
+   690→   690→              />
+   691→   691→              {draft.venueMapUrl && (
+   692→   692→                <Button variant="ghost" size="icon" onClick={() => { patch("venueMapUrl", ""); patch("venueMapEnabled", false); }} aria-label={t("portalSettings.brand.clear")}>
+   693→   693→                  <Icons.Trash2 className="size-4 text-muted-foreground" />
+   694→   694→                </Button>
+   695→   695→              )}
+   696→   696→              <div className="flex shrink-0 items-center gap-1.5">
+   697→   697→                <Label className="text-[11px] text-muted-foreground">{t("portalSettings.content.mapActive")}</Label>
+   698→   698→                <Switch checked={draft.venueMapEnabled} onCheckedChange={(v) => patch("venueMapEnabled", v)} disabled={!draft.venueMapUrl} />
+   699→   699→              </div>
+   700→   700→            </div>
+   701→   701→          </div>
+   702→   702→          <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+   703→   703→            <div>
+   704→   704→              <Label className="text-xs">PWA</Label>
+   705→   705→              <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.content.pwaHint")}</p>
+   706→   706→            </div>
+   707→   707→            <Switch checked={draft.pwaEnabled} onCheckedChange={(v) => patch("pwaEnabled", v)} aria-label="PWA" />
+   708→   708→          </div>
+   709→   709→        </div>
+   710→   710→      </SectionCard>
+   711→   711→
+   712→   712→      {/* ── §5.6 Canlı Portal İstatistikleri ── */}
+   713→   713→      <SectionCard title={t("portalSettings.analytics.title")} desc={t("portalSettings.analytics.desc")}>
+   714→   714→        {!analytics ? (
+   715→   715→          <Loading rows={3} />
+   716→   716→        ) : (
+   717→   717→          <div className="space-y-4">
+   718→   718→            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+   719→   719→              <StatCard icon={Icons.Users} label={t("portalSettings.analytics.unique")} value={String(analytics.uniqueVisitors.total)} sub={`${t("portalSettings.analytics.guest")} ${analytics.uniqueVisitors.guest} · ${t("portalSettings.analytics.auth")} ${analytics.uniqueVisitors.auth}`} />
+   720→   720→              <StatCard icon={Icons.Eye} label={t("portalSettings.analytics.visits")} value={String(analytics.visits.total)} sub={t("portalSettings.analytics.visitUnit")} />
+   721→   721→              <StatCard icon={Icons.Smartphone} label={t("portalSettings.analytics.installs")} value={String(analytics.installs)} sub="PWA" />
+   722→   722→              <StatCard icon={Icons.MessageCircleQuestion} label={t("portalSettings.analytics.questions")} value={String(analytics.questions.total)} sub={`${t("portalSettings.analytics.pending")} ${analytics.questions.pending}`} />
+   723→   723→            </div>
+   724→   724→
+   725→   725→            {/* 14 günlük ziyaret eğrisi — saf CSS çubuk */}
+   726→   726→            <div>
+   727→   727→              <p className="text-xs font-semibold">{t("portalSettings.analytics.visitsTrend")}</p>
+   728→   728→              <div className="mt-1.5 flex h-16 items-end gap-1" role="img" aria-label={t("portalSettings.analytics.visitsTrend")}>
+   729→   729→                {analytics.visits.byDay.map((d) => {
+   730→   730→                  const max = Math.max(1, ...analytics.visits.byDay.map((x) => x.count));
+   731→   731→                  return (
+   732→   732→                    <div key={d.day} className="flex-1 rounded-t bg-teal-500/70 transition-all" style={{ height: `${Math.max(6, (d.count / max) * 100)}%` }} title={`${d.day}: ${d.count}`} />
+   733→   733→                  );
+   734→   734→                })}
+   735→   735→              </div>
+   736→   736→              <div className="mt-0.5 flex justify-between text-[9px] text-muted-foreground">
+   737→   737→                <span>{analytics.visits.byDay[0]?.day.slice(5)}</span>
+   738→   738→                <span>{analytics.visits.byDay[analytics.visits.byDay.length - 1]?.day.slice(5)}</span>
+   739→   739→              </div>
+   740→   740→            </div>
+   741→   741→
+   742→   742→            {/* widget tıklama oranları */}
+   743→   743→            <div>
+   744→   744→              <p className="text-xs font-semibold">{t("portalSettings.analytics.clicks")}</p>
+   745→   745→              {analytics.widgetClicks.length === 0 ? (
+   746→   746→                <p className="mt-1 text-[11px] text-muted-foreground">{t("portalSettings.analytics.noClicks")}</p>
+   747→   747→              ) : (
+   748→   748→                <div className="mt-1.5 space-y-1.5">
+   749→   749→                  {analytics.widgetClicks.map((c) => {
+   750→   750→                    const max = Math.max(...analytics.widgetClicks.map((x) => x.count));
+   751→   751→                    return (
+   752→   752→                      <div key={c.widgetKey} className="flex items-center gap-2">
+   753→   753→                        <span className="w-28 shrink-0 truncate text-[11px]">{t(`portalApp.widget.${c.widgetKey}`)}</span>
+   754→   754→                        <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-muted">
+   755→   755→                          <div className="h-full rounded-full bg-teal-500" style={{ width: `${(c.count / max) * 100}%` }} />
+   756→   756→                        </div>
+   757→   757→                        <span className="w-8 shrink-0 text-right text-[11px] tabular-nums">{c.count}</span>
+   758→   758→                      </div>
+   759→   759→                    );
+   760→   760→                  })}
+   761→   761→                </div>
+   762→   762→              )}
+   763→   763→            </div>
+   764→   764→
+   765→   765→            {/* B2B tamamlama + form katılımı */}
+   766→   766→            <div className="grid gap-2 sm:grid-cols-2">
+   767→   767→              <div className="rounded-lg border bg-muted/20 p-3">
+   768→   768→                <p className="flex items-center gap-1.5 text-xs font-semibold"><Icons.Handshake className="size-3.5" /> B2B</p>
+   769→   769→                <p className="mt-1 text-lg font-bold tabular-nums">%{analytics.b2b.completionRate}</p>
+   770→   770→                <p className="text-[11px] text-muted-foreground">
+   771→   771→                  {t("portalSettings.analytics.b2bDone", { completed: analytics.b2b.completed, total: analytics.b2b.total })} · {t("portalSettings.analytics.b2bAccepted", { accepted: analytics.b2b.accepted, declined: analytics.b2b.declined })}
+   772→   772→                </p>
+   773→   773→              </div>
+   774→   774→              <div className="rounded-lg border bg-muted/20 p-3">
+   775→   775→                <p className="flex items-center gap-1.5 text-xs font-semibold"><Icons.ClipboardList className="size-3.5" /> {t("portalSettings.analytics.forms")}</p>
+   776→   776→                <p className="mt-1 text-lg font-bold tabular-nums">{analytics.formEngagement.submissions}</p>
+   777→   777→                <p className="text-[11px] text-muted-foreground">
+   778→   778→                  {t("portalSettings.analytics.formOpens", { opens: analytics.formEngagement.opens })}
+   779→   779→                  {analytics.formEngagement.forms.length > 0 && ` · ${analytics.formEngagement.forms.map((f) => `${f.name}: ${f.submissions}`).join(", ")}`}
+   780→   780→                </p>
+   781→   781→              </div>
+   782→   782→            </div>
+   783→   783→          </div>
+   784→   784→        )}
+   785→   785→      </SectionCard>
+   786→   786→
+   787→   787→      {/* ── Magic Link diyaloğu (§5.1) ── */}
+   788→   788→      <Dialog open={magicOpen} onOpenChange={(o) => { setMagicOpen(o); if (!o) setMagicResult(null); }}>
+   789→   789→        <DialogContent className="sm:max-w-lg">
+   790→   790→          <DialogHeader>
+   791→   791→            <DialogTitle className="text-sm">{t("portalSettings.magic.title")}</DialogTitle>
+   792→   792→            <DialogDescription className="text-xs">{t("portalSettings.magic.desc")}</DialogDescription>
+   793→   793→          </DialogHeader>
+   794→   794→          {magicResult ? (
+   795→   795→            <div className="space-y-2">
+   796→   796→              <p className="rounded-lg bg-amber-50 p-2 text-[11px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("portalSettings.magic.onceWarning")}</p>
+   797→   797→              <div className="maven-scroll max-h-64 space-y-1.5 overflow-y-auto">
+   798→   798→                {magicResult.items.map((it) => (
+   799→   799→                  <div key={it.personId} className="rounded-lg border p-2">
+   800→   800→                    <div className="flex items-center justify-between gap-2">
+   801→   801→                      <p className="truncate text-xs font-medium">{it.name}</p>
+   802→   802→                      {it.mailed && <span className="shrink-0 rounded-full bg-teal-50 px-1.5 py-0.5 text-[9px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">{t("portalSettings.magic.mailed")}</span>}
+   803→   803→                    </div>
+   804→   804→                    <div className="mt-1 flex items-center gap-1.5">
+   805→   805→                      <code className="min-w-0 flex-1 truncate rounded bg-muted px-1.5 py-1 font-mono text-[11px]">{it.token}</code>
+   806→   806→                      <Button
+   807→   807→                        variant="ghost"
+   808→   808→                        size="icon"
+   809→   809→                        className="size-7"
+   810→   810→                        aria-label={t("portalSettings.magic.copy")}
+   811→   811→                        onClick={() => {
+   812→   812→                          void navigator.clipboard.writeText(it.token);
+   813→   813→                          toast({ title: t("portalSettings.magic.copied") });
+   814→   814→                        }}
+   815→   815→                      >
+   816→   816→                        <Icons.Copy className="size-3.5" />
+   817→   817→                      </Button>
+   818→   818→                    </div>
+   819→   819→                  </div>
+   820→   820→                ))}
+   821→   821→                {magicResult.skipped.map((s) => (
+   822→   822→                  <p key={s.personId} className="text-[11px] text-muted-foreground">— {t("portalSettings.magic.skipped")}: {s.reason}</p>
+   823→   823→                ))}
+   824→   824→              </div>
+   825→   825→            </div>
+   826→   826→          ) : (
+   827→   827→            <div className="space-y-3">
+   828→   828→              <div className="flex items-center justify-between">
+   829→   829→                <p className="text-xs font-medium">{t("portalSettings.magic.select", { count: magicSelected.size })}</p>
+   830→   830→                <div className="flex gap-1">
+   831→   831→                  <Button variant="ghost" size="sm" className="h-7 text-[11px]" onClick={() => setMagicSelected(new Set(peopleList.map((p) => p.id)))}>{t("portalSettings.magic.all")}</Button>
+   832→   832→                  <Button variant="ghost" size="sm" className="h-7 text-[11px]" onClick={() => setMagicSelected(new Set())}>{t("portalSettings.magic.none")}</Button>
+   833→   833→                </div>
+   834→   834→              </div>
+   835→   835→              <div className="maven-scroll max-h-56 space-y-1 overflow-y-auto rounded-lg border p-2">
+   836→   836→                {peopleList.length === 0 ? (
+   837→   837→                  <p className="p-2 text-[11px] text-muted-foreground">{t("portalSettings.magic.noPeople")}</p>
+   838→   838→                ) : (
+   839→   839→                  peopleList.map((p) => (
+   840→   840→                    <label key={p.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50">
+   841→   841→                      <Checkbox
+   842→   842→                        checked={magicSelected.has(p.id)}
+   843→   843→                        onCheckedChange={(v) => {
+   844→   844→                          const next = new Set(magicSelected);
+   845→   845→                          if (v) next.add(p.id);
+   846→   846→                          else next.delete(p.id);
+   847→   847→                          setMagicSelected(next);
+   848→   848→                        }}
+   849→   849→                      />
+   850→   850→                      <span className="truncate">{p.firstName} {p.lastName}</span>
+   851→   851→                      <span className="ml-auto shrink-0 truncate text-[10px] text-muted-foreground">{p.email ?? "—"}</span>
+   852→   852→                    </label>
+   853→   853→                  ))
+   854→   854→                )}
+   855→   855→              </div>
+   856→   856→              <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2">
+   857→   857→                <Label className="text-[11px] font-normal text-muted-foreground">{t("portalSettings.magic.sendMail")}</Label>
+   858→   858→                <Switch checked={magicSendMail} onCheckedChange={setMagicSendMail} />
+   859→   859→              </div>
+   860→   860→            </div>
+   861→   861→          )}
+   862→   862→          <DialogFooter>
+   863→   863→            <Button variant="outline" size="sm" onClick={() => setMagicOpen(false)}>{t("portalSettings.magic.close")}</Button>
+   864→   864→            {!magicResult && (
+   865→   865→              <Button size="sm" disabled={magicBusy || magicSelected.size === 0} onClick={() => void issueMagic()}>
+   866→   866→                {magicBusy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Wand2 className="size-4" />}
+   867→   867→                {t("portalSettings.magic.generate")}
+   868→   868→              </Button>
+   869→   869→            )}
+   870→   870→          </DialogFooter>
+   871→   871→        </DialogContent>
+   872→   872→      </Dialog>
+   873→   873→    </div>
+   874→   874→  );
+   875→   875→}
+   876→   876→
+   877→   877→function StatCard({ icon: I, label, value, sub }: { icon: typeof Icons.Users; label: string; value: string; sub: string }) {
+   878→   878→  return (
+   879→   879→    <div className="rounded-lg border bg-white p-3 shadow-sm dark:bg-card">
+   880→   880→      <div className="flex items-center gap-1.5 text-muted-foreground">
+   881→   881→        <I className="size-3.5" />
+   882→   882→        <span className="truncate text-[10px] font-medium uppercase tracking-wide">{label}</span>
+   883→   883→      </div>
+   884→   884→      <p className="mt-1 text-xl font-bold tabular-nums">{value}</p>
+   885→   885→      <p className="truncate text-[10px] text-muted-foreground">{sub}</p>
+   886→   886→    </div>
+   887→   887→  );
+   888→   888→}
+   889→   889→

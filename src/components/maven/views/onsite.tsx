@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLang, t, tLabel, exportI18nJson, importI18nJson } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DatabaseMigrationCard } from "./db-migration-card";
 
 // ─── SAHA ───────────────────────────────────────────────────────────────────
 
@@ -1951,6 +1952,15 @@ export function SettingsView() {
           </div>
         )}
       </SectionCard>
+
+      {/* ── GRUP 3 · GEÇİCİ: Veritabanı & Migration — SQLite → MySQL/MariaDB taşınma denetimi ── */}
+      <SettingsGroup
+        icon="DatabaseBackup"
+        title={t("settingsView.dbm.groupTitle")}
+        desc={t("settingsView.dbm.groupDesc")}
+        scope={<Chip tone="amber"><Icons.Wrench className="size-3" /> {t("settingsView.dbm.tempChip")}</Chip>}
+      />
+      <DatabaseMigrationCard />
     </div>
   );
 }

@@ -6,7 +6,7 @@
 // Kapsülleme: yalnız /api/portal/config + /api/portal/analytics +
 // /api/portal/magic-links + duyuru ucuyla konuşur — bilet/muhasebe modüllerine
 // DOKUNMAZ (§Teknik 3). Mevcut ana tablolar bozulmaz; yalnız görünürlük kuralları.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Icons from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +33,12 @@ type PortalConfig = {
   notificationsEnabled: boolean; notifyOffsetsJson: string | null;
   sponsorIdsJson: string | null; venueMapUrl: string | null; venueMapEnabled: boolean;
   pwaEnabled: boolean;
+  // ── tasarım kontrolü (§5.2+) ──
+  fontFamily: string | null; fontScale: number | null;
+  headerBgColor: string | null; footerBgColor: string | null; contentBgColor: string | null;
+  headerBgImage: string | null; footerBgImage: string | null; contentBgImage: string | null;
+  portalSponsorLogoUrl: string | null; portalSponsorName: string | null; portalSponsorUrl: string | null;
+  iconOverridesJson: string | null; iconLayoutJson: string | null;
 };
 type Lookups = {
   editions: { id: string; name: string; editionLabel: string | null; startDate: string | null; isPublished: boolean }[];
@@ -63,6 +69,42 @@ const WIDGET_ORDER: { key: string; icon: typeof Icons.Home }[] = [
   { key: "b2b", icon: Icons.Handshake },
 ];
 const THEME_PRESETS = ["#0d9488", "#7c3aed", "#dc2626", "#ea580c", "#16a34a", "#0891b2"];
+
+// ── tasarım sabitleri (§5.2+) ──
+const NAV_KEYS = ["home", "program", "sponsors", "map", "profile"] as const;
+const DEFAULT_ICON_LAYOUT: Record<string, number> = { home: 0, program: 1, sponsors: 2, map: 3, profile: 4 };
+type IconOverride = { svg?: string; color?: string };
+const FONT_OPTIONS = ["system", "serif", "rounded", "mono", "condensed"] as const;
+
+function parseIconOverrides(raw: string | null): Record<string, IconOverride> {
+  if (!raw) return {};
+  try {
+    const p = JSON.parse(raw) as unknown;
+    if (!p || typeof p !== "object" || Array.isArray(p)) return {};
+    const out: Record<string, IconOverride> = {};
+    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+      if (v && typeof v === "object") out[k] = v as IconOverride;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+function parseIconLayout(raw: string | null): Record<string, number> {
+  if (!raw) return { ...DEFAULT_ICON_LAYOUT };
+  try {
+    const p = JSON.parse(raw) as unknown;
+    if (!p || typeof p !== "object" || Array.isArray(p)) return { ...DEFAULT_ICON_LAYOUT };
+    const out: Record<string, number> = { ...DEFAULT_ICON_LAYOUT };
+    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+      const n = Number(v);
+      if (Number.isInteger(n) && n >= 0 && n <= 9) out[k] = n;
+    }
+    return out;
+  } catch {
+    return { ...DEFAULT_ICON_LAYOUT };
+  }
+}
 
 // dataURL okuyucu — boyut kotalı (logo 300KB / banner-kroki 600KB)
 // Hata mesajları kod döner; çağrı yerinde i18n ile çevrilir (tarama temiz).
@@ -136,6 +178,12 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
     widgets: WidgetRow[]; notificationsEnabled: boolean; offsets: number[];
     sponsorIds: string[]; venueMapUrl: string; venueMapEnabled: boolean; pwaEnabled: boolean;
     headerTitle: string; headerSubtitle: string;
+    // ── tasarım (§5.2+) ──
+    fontFamily: string; fontScale: number;
+    headerBgColor: string; footerBgColor: string; contentBgColor: string;
+    headerBgImage: string; footerBgImage: string; contentBgImage: string;
+    portalSponsorLogoUrl: string; portalSponsorName: string; portalSponsorUrl: string;
+    iconOverrides: Record<string, IconOverride>; iconLayout: Record<string, number>;
   }>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [magicOpen, setMagicOpen] = useState(false);
@@ -175,6 +223,20 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
         pwaEnabled: data.config.pwaEnabled,
         headerTitle: data.header.title,
         headerSubtitle: data.header.subtitle,
+        // ── tasarım alanları ──
+        fontFamily: data.config.fontFamily ?? "system",
+        fontScale: data.config.fontScale ?? 100,
+        headerBgColor: data.config.headerBgColor ?? "",
+        footerBgColor: data.config.footerBgColor ?? "",
+        contentBgColor: data.config.contentBgColor ?? "",
+        headerBgImage: data.config.headerBgImage ?? "",
+        footerBgImage: data.config.footerBgImage ?? "",
+        contentBgImage: data.config.contentBgImage ?? "",
+        portalSponsorLogoUrl: data.config.portalSponsorLogoUrl ?? "",
+        portalSponsorName: data.config.portalSponsorName ?? "",
+        portalSponsorUrl: data.config.portalSponsorUrl ?? "",
+        iconOverrides: parseIconOverrides(data.config.iconOverridesJson),
+        iconLayout: parseIconLayout(data.config.iconLayoutJson),
       });
       setDirty(false);
     } catch (e) {
@@ -238,6 +300,20 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
         pwaEnabled: draft.pwaEnabled,
         headerTitle: draft.headerTitle || null,
         headerSubtitle: draft.headerSubtitle || null,
+        // ── tasarım alanları ──
+        fontFamily: draft.fontFamily === "system" ? null : draft.fontFamily,
+        fontScale: draft.fontScale === 100 ? null : draft.fontScale,
+        headerBgColor: draft.headerBgColor || null,
+        footerBgColor: draft.footerBgColor || null,
+        contentBgColor: draft.contentBgColor || null,
+        headerBgImage: draft.headerBgImage || null,
+        footerBgImage: draft.footerBgImage || null,
+        contentBgImage: draft.contentBgImage || null,
+        portalSponsorLogoUrl: draft.portalSponsorLogoUrl || null,
+        portalSponsorName: draft.portalSponsorName || null,
+        portalSponsorUrl: draft.portalSponsorUrl || null,
+        iconOverrides: draft.iconOverrides,
+        iconLayout: draft.iconLayout,
       });
       toast({ title: t("portalSettings.saved"), description: t("portalSettings.savedDesc") });
       await load();
@@ -514,6 +590,20 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
         </div>
       </SectionCard>
 
+      {/* ── §5.2+ Tasarım & Tipografi — mobil portalın TAM tasarım kontrolü ── */}
+      <SectionCard title={t("portalSettings.design.title")} desc={t("portalSettings.design.desc")}>
+        <DesignSectionContent
+          draft={draft}
+          onField={(k, v) => {
+            setDraft((d) => (d ? ({ ...d, [k]: v } as NonNullable<typeof draft>) : d));
+            setDirty(true);
+          }}
+          pickImage={pickImage}
+          onTouch={() => setDirty(true)}
+          t={t}
+        />
+      </SectionCard>
+
       {/* ── §5.3 Widget ve Modül Yönetimi ── */}
       <SectionCard title={t("portalSettings.widgets.title")} desc={t("portalSettings.widgets.desc")}>
         <div className="space-y-2">
@@ -642,6 +732,9 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
           </div>
         </div>
       </SectionCard>
+
+      {/* ── §5.4+ Dış Bildirim Kanalları — WhatsApp (şirket mobil telefonu) + SMS ── */}
+      <NotificationChannelsCard editionId={editionId} />
 
       {/* ── §5.5 İçerik Bağlama ── */}
       <SectionCard title={t("portalSettings.content.title")} desc={t("portalSettings.content.desc")}>
@@ -884,5 +977,653 @@ function StatCard({ icon: I, label, value, sub }: { icon: typeof Icons.Users; la
       <p className="mt-1 text-xl font-bold tabular-nums">{value}</p>
       <p className="truncate text-[10px] text-muted-foreground">{sub}</p>
     </div>
+  );
+}
+
+// ═══ §5.2+ TASARIM & TİPOGRAFİ — mobil portalın tüm tasarım/font ayarları ═══
+// Font ailesi + ölçeği, üç alan (header/footer/içerik) renk ve arka plan görselleri
+// (SVG/PNG/JPEG), Mobil Portal Sponsoru logosu ve alt-menü ikonlarının kanvas
+// üzerinde grid mantığıyla konumlandırılması + ikon SVG logo desteği.
+type DesignFields = {
+  fontFamily: string; fontScale: number;
+  headerBgColor: string; footerBgColor: string; contentBgColor: string;
+  headerBgImage: string; footerBgImage: string; contentBgImage: string;
+  portalSponsorLogoUrl: string; portalSponsorName: string; portalSponsorUrl: string;
+  iconOverrides: Record<string, IconOverride>; iconLayout: Record<string, number>;
+};
+
+// font ailesi → CSS stack eşlemesi (portal uygulamasıyla birebir aynı)
+export const PORTAL_FONT_CSS: Record<string, string> = {
+  system: "inherit",
+  serif: "Georgia, 'Times New Roman', serif",
+  rounded: "ui-rounded, 'Nunito', 'SF Pro Rounded', system-ui, sans-serif",
+  mono: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  condensed: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif",
+};
+
+const NAV_ICONS: Record<string, typeof Icons.Home> = {
+  home: Icons.Home,
+  program: Icons.CalendarDays,
+  sponsors: Icons.Handshake,
+  map: Icons.Map,
+  profile: Icons.UserRound,
+};
+
+function DesignSectionContent({
+  draft,
+  onField,
+  pickImage,
+  onTouch,
+  t,
+}: {
+  draft: DesignFields;
+  onField: (k: keyof DesignFields, v: unknown) => void;
+  pickImage: (file: File, maxBytes: number, apply: (url: string) => void) => Promise<void>;
+  onTouch: () => void;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const [sel, setSel] = useState<string>("home");
+  const dragKey = useRef<string | null>(null);
+
+  const ordered = ([...NAV_KEYS] as string[]).sort((a, b) => (draft.iconLayout[a] ?? 0) - (draft.iconLayout[b] ?? 0));
+  const swap = (a: string, b: string) => {
+    const la = draft.iconLayout[a] ?? 0;
+    const lb = draft.iconLayout[b] ?? 0;
+    onField("iconLayout", { ...draft.iconLayout, [a]: lb, [b]: la });
+  };
+  const moveSelected = (dir: -1 | 1) => {
+    const idx = ordered.indexOf(sel);
+    const j = idx + dir;
+    if (idx < 0 || j < 0 || j >= ordered.length) return;
+    swap(ordered[idx], ordered[j]);
+  };
+  const setOverride = (key: string, next: IconOverride) => {
+    const clean = { ...draft.iconOverrides };
+    if (next.svg || next.color) clean[key] = next;
+    else delete clean[key];
+    onField("iconOverrides", clean);
+  };
+
+  const COLOR_ROWS: { key: "headerBgColor" | "footerBgColor" | "contentBgColor"; label: string }[] = [
+    { key: "headerBgColor", label: t("portalSettings.design.headerBg") },
+    { key: "footerBgColor", label: t("portalSettings.design.footerBg") },
+    { key: "contentBgColor", label: t("portalSettings.design.contentBg") },
+  ];
+  const IMAGE_ROWS: { key: "headerBgImage" | "footerBgImage" | "contentBgImage"; label: string; hint: string }[] = [
+    { key: "headerBgImage", label: t("portalSettings.design.headerImg"), hint: t("portalSettings.design.headerImgHint") },
+    { key: "footerBgImage", label: t("portalSettings.design.footerImg"), hint: t("portalSettings.design.footerImgHint") },
+    { key: "contentBgImage", label: t("portalSettings.design.contentImg"), hint: t("portalSettings.design.contentImgHint") },
+  ];
+
+  return (
+    <div className="space-y-5">
+      {/* ── Tipografi ── */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label className="text-xs">{t("portalSettings.design.fontFamily")}</Label>
+          <Select value={draft.fontFamily} onValueChange={(v) => onField("fontFamily", v)}>
+            <SelectTrigger aria-label={t("portalSettings.design.fontFamily")}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {FONT_OPTIONS.map((f) => (
+                <SelectItem key={f} value={f}>
+                  <span style={{ fontFamily: PORTAL_FONT_CSS[f] }}>{t(`portalSettings.design.font_${f}`)}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="truncate rounded border bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground" style={{ fontFamily: PORTAL_FONT_CSS[draft.fontFamily] }}>
+            {t("portalSettings.design.fontPreview")}
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">{t("portalSettings.design.fontScale")} — %{draft.fontScale}</Label>
+          <input
+            type="range"
+            min={90}
+            max={120}
+            step={5}
+            value={draft.fontScale}
+            onChange={(e) => onField("fontScale", Number(e.target.value))}
+            className="mt-2 w-full accent-teal-600"
+            aria-label={t("portalSettings.design.fontScale")}
+          />
+          <div className="flex justify-between text-[10px] text-muted-foreground"><span>%90</span><span>%100</span><span>%120</span></div>
+          <p className="text-[11px] text-muted-foreground">{t("portalSettings.design.fontScaleHint")}</p>
+        </div>
+      </div>
+
+      {/* ── Alan renkleri ── */}
+      <div>
+        <Label className="text-xs">{t("portalSettings.design.areaColors")}</Label>
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+          {COLOR_ROWS.map((row) => (
+            <div key={row.key} className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 p-2.5">
+              <span className="truncate text-xs">{row.label}</span>
+              <div className="flex items-center gap-1">
+                <input
+                  type="color"
+                  value={draft[row.key] || "#ffffff"}
+                  onChange={(e) => onField(row.key, e.target.value)}
+                  className="size-7 cursor-pointer rounded border bg-transparent"
+                  aria-label={row.label}
+                />
+                {draft[row.key] && (
+                  <Button variant="ghost" size="icon" className="size-7" onClick={() => onField(row.key, "")} aria-label={t("portalSettings.design.resetArea")}>
+                    <Icons.RotateCcw className="size-3.5 text-muted-foreground" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-1 text-[11px] text-muted-foreground">{t("portalSettings.design.areaColorsHint")}</p>
+      </div>
+
+      {/* ── Alan arka plan görselleri (SVG/PNG/JPEG) ── */}
+      <div>
+        <Label className="text-xs">{t("portalSettings.design.areaImages")}</Label>
+        <div className="mt-2 grid gap-3 sm:grid-cols-3">
+          {IMAGE_ROWS.map((row) => (
+            <div key={row.key} className="space-y-1.5 rounded-lg border bg-muted/10 p-2.5">
+              <p className="text-xs font-medium">{row.label}</p>
+              <p className="text-[10px] leading-snug text-muted-foreground">{row.hint}</p>
+              <div className="flex items-center gap-2">
+                <div className="relative grid h-11 w-16 shrink-0 place-items-center overflow-hidden rounded border bg-muted">
+                  {draft[row.key] ? (
+                    <img src={draft[row.key]} alt="" className="absolute inset-0 size-full object-cover" />
+                  ) : (
+                    <Icons.ImageIcon className="size-4 text-muted-foreground" />
+                  )}
+                </div>
+                <Input
+                  type="file"
+                  accept=".svg,.png,.jpg,.jpeg,image/svg+xml,image/png,image/jpeg"
+                  className="h-9 text-xs"
+                  aria-label={row.label}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    void pickImage(f, 600_000, (url) => onField(row.key, url));
+                  }}
+                />
+                {draft[row.key] && (
+                  <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => onField(row.key, "")} aria-label={t("portalSettings.brand.clear")}>
+                    <Icons.Trash2 className="size-4 text-muted-foreground" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Mobil Portal Sponsoru ── */}
+      <div className="rounded-lg border border-dashed p-3">
+        <div className="flex items-center gap-1.5">
+          <Icons.BadgeCheck className="size-4 text-amber-500" />
+          <p className="text-xs font-semibold">{t("portalSettings.design.sponsorTitle")}</p>
+        </div>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.design.sponsorDesc")}</p>
+        <div className="mt-2 grid gap-3 sm:grid-cols-[auto_1fr_1fr] sm:items-start">
+          <div className="flex items-center gap-2">
+            <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg border bg-white dark:bg-card">
+              {draft.portalSponsorLogoUrl ? (
+                <img src={draft.portalSponsorLogoUrl} alt="" className="size-full object-contain p-1" />
+              ) : (
+                <Icons.ImageIcon className="size-4 text-muted-foreground" />
+              )}
+            </div>
+            <Input
+              type="file"
+              accept=".svg,.png,.jpg,.jpeg,image/svg+xml,image/png,image/jpeg"
+              className="h-9 w-44 text-xs"
+              aria-label={t("portalSettings.design.sponsorLogo")}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                void pickImage(f, 300_000, (url) => onField("portalSponsorLogoUrl", url));
+              }}
+            />
+            {draft.portalSponsorLogoUrl && (
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => onField("portalSponsorLogoUrl", "")} aria-label={t("portalSettings.brand.clear")}>
+                <Icons.Trash2 className="size-4 text-muted-foreground" />
+              </Button>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t("portalSettings.design.sponsorName")}</Label>
+            <Input value={draft.portalSponsorName} onChange={(e) => onField("portalSponsorName", e.target.value)} maxLength={120} placeholder={t("portalSettings.design.sponsorNamePh")} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t("portalSettings.design.sponsorUrl")}</Label>
+            <Input value={draft.portalSponsorUrl} onChange={(e) => onField("portalSponsorUrl", e.target.value)} maxLength={300} placeholder="https://…" type="url" />
+          </div>
+        </div>
+      </div>
+
+      {/* ── İkon Kanvası — grid konumlandırma + SVG logo desteği ── */}
+      <div className="rounded-lg border border-dashed p-3">
+        <div className="flex items-center gap-1.5">
+          <Icons.LayoutGrid className="size-4 text-teal-600" />
+          <p className="text-xs font-semibold">{t("portalSettings.design.canvasTitle")}</p>
+        </div>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.design.canvasDesc")}</p>
+
+        {/* telefon önizleme — alt menü kanvası */}
+        <div className="mx-auto mt-3 max-w-xs">
+          <div
+            className="overflow-hidden rounded-2xl border shadow-sm"
+            style={{
+              backgroundColor: draft.contentBgColor || undefined,
+              backgroundImage: draft.contentBgImage ? `url(${draft.contentBgImage})` : undefined,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+            }}
+          >
+            <div className="h-16" />
+            {/* alt menü — 5 kolonlu grid kanvas */}
+            <div
+              className="relative border-t"
+              style={{
+                backgroundColor: draft.footerBgColor || "hsl(var(--card))",
+                backgroundImage: draft.footerBgImage ? `url(${draft.footerBgImage})` : undefined,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
+            >
+              <div className="grid grid-cols-5 gap-1.5 p-2">
+                {ordered.map((k) => {
+                  const I = NAV_ICONS[k] ?? Icons.Home;
+                  const o = draft.iconOverrides[k];
+                  const selected = sel === k;
+                  return (
+                    <button
+                      key={k}
+                      draggable
+                      onDragStart={(e) => {
+                        dragKey.current = k;
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const from = dragKey.current;
+                        dragKey.current = null;
+                        if (from && from !== k) {
+                          swap(from, k);
+                          onTouch();
+                        }
+                        setSel(k);
+                      }}
+                      onClick={() => setSel(k)}
+                      aria-label={t(`portalSettings.design.nav_${k}`)}
+                      className={cn(
+                        "flex min-h-[52px] cursor-grab flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed p-1 text-[9px] transition active:cursor-grabbing",
+                        selected ? "border-teal-500 bg-teal-50/70 ring-2 ring-teal-500/40 dark:bg-teal-900/30" : "border-muted-foreground/25 hover:border-muted-foreground/50",
+                      )}
+                    >
+                      {o?.svg ? (
+                        <img src={o.svg} alt="" className="size-4.5 object-contain" style={{ width: 18, height: 18 }} />
+                      ) : (
+                        <I className="size-4" style={{ color: o?.color || undefined }} />
+                      )}
+                      <span className="w-full truncate text-center">{t(`portalSettings.design.nav_${k}`)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="h-3" style={{ paddingBottom: "env(safe-area-inset-bottom)" }} />
+            </div>
+          </div>
+        </div>
+
+        {/* seçili ikon kontrolleri */}
+        <div className="mx-auto mt-3 flex max-w-md flex-wrap items-center justify-center gap-2">
+          <span className="rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
+            {t("portalSettings.design.selected")}: {t(`portalSettings.design.nav_${sel}`)}
+          </span>
+          <Button variant="outline" size="icon" className="size-8" onClick={() => moveSelected(-1)} aria-label={t("portalSettings.design.moveLeft")}>
+            <Icons.ArrowLeft className="size-4" />
+          </Button>
+          <Button variant="outline" size="icon" className="size-8" onClick={() => moveSelected(1)} aria-label={t("portalSettings.design.moveRight")}>
+            <Icons.ArrowRight className="size-4" />
+          </Button>
+          <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-muted/50">
+            <Icons.Upload className="size-3.5" />
+            {t("portalSettings.design.uploadSvg")}
+            <input
+              type="file"
+              className="sr-only"
+              accept=".svg,.png,image/svg+xml,image/png"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                void pickImage(f, 300_000, (url) => {
+                  setOverride(sel, { ...draft.iconOverrides[sel], svg: url });
+                  onTouch();
+                });
+              }}
+            />
+          </label>
+          {draft.iconOverrides[sel]?.svg && (
+            <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setOverride(sel, {}); onTouch(); }}>
+              <Icons.Eraser className="size-3.5" /> {t("portalSettings.design.clearSvg")}
+            </Button>
+          )}
+        </div>
+        <p className="mt-2 text-center text-[10px] text-muted-foreground">{t("portalSettings.design.canvasHint")}</p>
+      </div>
+    </div>
+  );
+}
+
+// ═══ §5.4+ DIŞ BİLDİRİM KANALLARI — WhatsApp (şirket mobil telefonu) + SMS ═══
+// Bağımsız kaydetme akışı: /api/notifications/channels (GET/PUT) + /test.
+// Sırlar API'den daima maskeli döner; maske değeri gönderilirse değişmez.
+type ChannelConfig = {
+  channelsEnabled: boolean;
+  waEnabled: boolean; waProvider: string | null; waEndpoint: string | null;
+  waPhoneId: string | null; waAccountId: string | null; waFrom: string | null;
+  smsEnabled: boolean; smsProvider: string | null; smsEndpoint: string | null;
+  smsSenderId: string | null; smsFrom: string | null; smsAccountId: string | null;
+  eventsJson: string | null;
+  lastTestAt: string | null; lastTestStatus: string | null;
+};
+
+const WA_PROVIDERS = ["META_CLOUD", "TWILIO", "ULTRAMSG", "WAHA", "GENERIC_WEBHOOK", "DEMO"] as const;
+const SMS_PROVIDERS = ["TWILIO", "NETGSM", "ILETIMERKEZI", "VERIMOR", "GENERIC_WEBHOOK", "DEMO"] as const;
+// sağlayıcı alan gereksinimleri — sadece ilgili alanlar gösterilir
+const WA_FIELDS: Record<string, ("endpoint" | "phoneId" | "accountId" | "from")[]> = {
+  META_CLOUD: ["phoneId"],
+  TWILIO: ["accountId", "from"],
+  ULTRAMSG: ["phoneId"],
+  WAHA: ["endpoint", "phoneId"],
+  GENERIC_WEBHOOK: ["endpoint"],
+  DEMO: [],
+};
+const SMS_FIELDS: Record<string, ("endpoint" | "senderId" | "accountId" | "from")[]> = {
+  TWILIO: ["accountId", "senderId"],
+  NETGSM: ["senderId", "accountId"],
+  ILETIMERKEZI: ["senderId"],
+  VERIMOR: ["senderId"],
+  GENERIC_WEBHOOK: ["endpoint", "senderId"],
+  DEMO: [],
+};
+
+function NotificationChannelsCard({ editionId }: { editionId: string }) {
+  const { t } = useLang();
+  const { toast } = useToast();
+  const [cfg, setCfg] = useState<ChannelConfig | null>(null);
+  const [hasWaToken, setHasWaToken] = useState(false);
+  const [hasSmsToken, setHasSmsToken] = useState(false);
+  const [waToken, setWaToken] = useState("");
+  const [smsToken, setSmsToken] = useState("");
+  const [events, setEvents] = useState<Record<string, boolean>>({ announcement: true, b2b: true, reminder: false, magicLink: false });
+  const [busy, setBusy] = useState(false);
+  const [testPhone, setTestPhone] = useState("");
+  const [testBusy, setTestBusy] = useState<"WHATSAPP" | "SMS" | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const d = await apiGet<{ config: ChannelConfig; hasWaToken: boolean; hasSmsToken: boolean }>(
+        `/api/notifications/channels?editionId=${encodeURIComponent(editionId)}`,
+      );
+      setCfg(d.config);
+      setHasWaToken(d.hasWaToken);
+      setHasSmsToken(d.hasSmsToken);
+      if (d.config.eventsJson) {
+        try {
+          setEvents({ announcement: true, b2b: true, reminder: false, magicLink: false, ...(JSON.parse(d.config.eventsJson) as Record<string, boolean>) });
+        } catch { /* varsayılan kalır */ }
+      }
+    } catch (e) {
+      toast({ title: t("portalSettings.channels.loadFail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    }
+  }, [editionId, t, toast]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!cfg) return <Loading rows={3} />;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await apiSend("/api/notifications/channels", "PUT", {
+        editionId,
+        channelsEnabled: cfg.channelsEnabled,
+        waEnabled: cfg.waEnabled,
+        waProvider: cfg.waProvider,
+        waEndpoint: cfg.waEndpoint,
+        waPhoneId: cfg.waPhoneId,
+        waAccountId: cfg.waAccountId,
+        waFrom: cfg.waFrom,
+        waToken: waToken || undefined,
+        smsEnabled: cfg.smsEnabled,
+        smsProvider: cfg.smsProvider,
+        smsEndpoint: cfg.smsEndpoint,
+        smsSenderId: cfg.smsSenderId,
+        smsFrom: cfg.smsFrom,
+        smsAccountId: cfg.smsAccountId,
+        smsToken: smsToken || undefined,
+        events,
+      });
+      setWaToken("");
+      setSmsToken("");
+      toast({ title: t("portalSettings.channels.saved"), description: t("portalSettings.channels.savedDesc") });
+      await load();
+    } catch (e) {
+      toast({ title: t("portalSettings.channels.saveFail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runTest = async (channel: "WHATSAPP" | "SMS") => {
+    if (!testPhone.trim()) {
+      toast({ title: t("portalSettings.channels.testNeedPhone"), variant: "destructive" });
+      return;
+    }
+    setTestBusy(channel);
+    try {
+      const r = await apiSend<{ ok: boolean; provider: string | null; status: number; detail: string }>(
+        "/api/notifications/channels/test",
+        "POST",
+        { editionId, channel, phone: testPhone },
+      );
+      toast({
+        title: r.ok ? t("portalSettings.channels.testOk") : t("portalSettings.channels.testFail"),
+        description: `${r.provider ?? "—"} · ${r.status} · ${r.detail.slice(0, 120)}`,
+        variant: r.ok ? "default" : "destructive",
+      });
+      await load();
+    } catch (e) {
+      toast({ title: t("portalSettings.channels.testFail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setTestBusy(null);
+    }
+  };
+
+  const patchCfg = (p: Partial<ChannelConfig>) => setCfg((c) => (c ? { ...c, ...p } : c));
+  const waF = WA_FIELDS[cfg.waProvider ?? ""] ?? [];
+  const smsF = SMS_FIELDS[cfg.smsProvider ?? ""] ?? [];
+
+  return (
+    <SectionCard title={t("portalSettings.channels.title")} desc={t("portalSettings.channels.desc")}>
+      <div className="space-y-4">
+        {/* ana anahtar */}
+        <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+          <div>
+            <Label className="text-xs">{t("portalSettings.channels.master")}</Label>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.channels.masterHint")}</p>
+          </div>
+          <Switch checked={cfg.channelsEnabled} onCheckedChange={(v) => patchCfg({ channelsEnabled: v })} />
+        </div>
+
+        {/* ── WhatsApp ── */}
+        <div className={cn("rounded-lg border p-3", cfg.waEnabled ? "border-emerald-300 bg-emerald-50/40 dark:border-emerald-800 dark:bg-emerald-900/10" : "bg-muted/10")}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="grid size-8 place-items-center rounded-lg bg-emerald-500 text-white"><Icons.MessageCircle className="size-4" /></span>
+              <div>
+                <p className="text-xs font-semibold">{t("portalSettings.channels.waTitle")}</p>
+                <p className="text-[11px] text-muted-foreground">{t("portalSettings.channels.waDesc")}</p>
+              </div>
+            </div>
+            <Switch checked={cfg.waEnabled} onCheckedChange={(v) => patchCfg({ waEnabled: v })} aria-label={t("portalSettings.channels.waTitle")} />
+          </div>
+          {cfg.waEnabled && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("portalSettings.channels.provider")}</Label>
+                <Select value={cfg.waProvider ?? "none"} onValueChange={(v) => patchCfg({ waProvider: v === "none" ? null : v })}>
+                  <SelectTrigger className="text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t("portalSettings.channels.providerNone")}</SelectItem>
+                    {WA_PROVIDERS.map((p) => (
+                      <SelectItem key={p} value={p}>{t(`portalSettings.channels.wa_${p}`)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {cfg.waProvider === "DEMO" && <p className="text-[10px] text-amber-600">{t("portalSettings.channels.demoNote")}</p>}
+              </div>
+              {waF.includes("endpoint") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("portalSettings.channels.endpoint")}</Label>
+                  <Input value={cfg.waEndpoint ?? ""} onChange={(e) => patchCfg({ waEndpoint: e.target.value })} placeholder="https://waha.example…" className="text-xs" />
+                </div>
+              )}
+              {waF.includes("phoneId") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("portalSettings.channels.waPhoneId")}</Label>
+                  <Input value={cfg.waPhoneId ?? ""} onChange={(e) => patchCfg({ waPhoneId: e.target.value })} className="text-xs" />
+                </div>
+              )}
+              {waF.includes("accountId") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("portalSettings.channels.accountId")}</Label>
+                  <Input value={cfg.waAccountId ?? ""} onChange={(e) => patchCfg({ waAccountId: e.target.value })} className="text-xs" />
+                </div>
+              )}
+              {waF.includes("from") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("portalSettings.channels.waFrom")}</Label>
+                  <Input value={cfg.waFrom ?? ""} onChange={(e) => patchCfg({ waFrom: e.target.value })} placeholder="+90555…" className="text-xs" dir="ltr" />
+                  <p className="text-[10px] text-muted-foreground">{t("portalSettings.channels.waFromHint")}</p>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("portalSettings.channels.token")}</Label>
+                <Input type="password" value={waToken} onChange={(e) => setWaToken(e.target.value)} placeholder={hasWaToken ? t("portalSettings.channels.tokenSet") : t("portalSettings.channels.tokenPh")} className="text-xs" autoComplete="new-password" />
+                {hasWaToken && (
+                  <button className="text-[10px] text-muted-foreground underline hover:text-foreground" onClick={() => setWaToken("__CLEAR__")}>
+                    {t("portalSettings.channels.tokenClear")}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── SMS ── */}
+        <div className={cn("rounded-lg border p-3", cfg.smsEnabled ? "border-sky-300 bg-sky-50/40 dark:border-sky-800 dark:bg-sky-900/10" : "bg-muted/10")}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="grid size-8 place-items-center rounded-lg bg-sky-500 text-white"><Icons.Smartphone className="size-4" /></span>
+              <div>
+                <p className="text-xs font-semibold">{t("portalSettings.channels.smsTitle")}</p>
+                <p className="text-[11px] text-muted-foreground">{t("portalSettings.channels.smsDesc")}</p>
+              </div>
+            </div>
+            <Switch checked={cfg.smsEnabled} onCheckedChange={(v) => patchCfg({ smsEnabled: v })} aria-label={t("portalSettings.channels.smsTitle")} />
+          </div>
+          {cfg.smsEnabled && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("portalSettings.channels.provider")}</Label>
+                <Select value={cfg.smsProvider ?? "none"} onValueChange={(v) => patchCfg({ smsProvider: v === "none" ? null : v })}>
+                  <SelectTrigger className="text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t("portalSettings.channels.providerNone")}</SelectItem>
+                    {SMS_PROVIDERS.map((p) => (
+                      <SelectItem key={p} value={p}>{t(`portalSettings.channels.sms_${p}`)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {cfg.smsProvider === "DEMO" && <p className="text-[10px] text-amber-600">{t("portalSettings.channels.demoNote")}</p>}
+              </div>
+              {smsF.includes("endpoint") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("portalSettings.channels.endpoint")}</Label>
+                  <Input value={cfg.smsEndpoint ?? ""} onChange={(e) => patchCfg({ smsEndpoint: e.target.value })} className="text-xs" />
+                </div>
+              )}
+              {smsF.includes("senderId") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("portalSettings.channels.smsSender")}</Label>
+                  <Input value={cfg.smsSenderId ?? ""} onChange={(e) => patchCfg({ smsSenderId: e.target.value.slice(0, 11) })} maxLength={11} className="text-xs" />
+                  <p className="text-[10px] text-muted-foreground">{t("portalSettings.channels.smsSenderHint")}</p>
+                </div>
+              )}
+              {smsF.includes("accountId") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("portalSettings.channels.accountId")}</Label>
+                  <Input value={cfg.smsAccountId ?? ""} onChange={(e) => patchCfg({ smsAccountId: e.target.value })} className="text-xs" />
+                </div>
+              )}
+              {smsF.includes("from") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("portalSettings.channels.smsFrom")}</Label>
+                  <Input value={cfg.smsFrom ?? ""} onChange={(e) => patchCfg({ smsFrom: e.target.value })} className="text-xs" dir="ltr" />
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("portalSettings.channels.token")}</Label>
+                <Input type="password" value={smsToken} onChange={(e) => setSmsToken(e.target.value)} placeholder={hasSmsToken ? t("portalSettings.channels.tokenSet") : t("portalSettings.channels.tokenPh")} className="text-xs" autoComplete="new-password" />
+                {hasSmsToken && (
+                  <button className="text-[10px] text-muted-foreground underline hover:text-foreground" onClick={() => setSmsToken("__CLEAR__")}>
+                    {t("portalSettings.channels.tokenClear")}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* olay yönlendirme */}
+        <div>
+          <Label className="text-xs">{t("portalSettings.channels.routing")}</Label>
+          <div className="mt-2 grid gap-2 sm:grid-cols-4">
+            {(["announcement", "b2b", "reminder", "magicLink"] as const).map((k) => (
+              <div key={k} className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 p-2.5">
+                <span className="text-xs">{t(`portalSettings.channels.route_${k}`)}</span>
+                <Switch checked={Boolean(events[k])} onCheckedChange={(v) => setEvents((e) => ({ ...e, [k]: v }))} aria-label={t(`portalSettings.channels.route_${k}`)} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* test + kaydet */}
+        <div className="flex flex-wrap items-end gap-2 rounded-lg border border-dashed p-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t("portalSettings.channels.testPhone")}</Label>
+            <Input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="+90555…" className="w-44 text-xs" dir="ltr" />
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void runTest("WHATSAPP")} disabled={testBusy !== null || !cfg.waEnabled}>
+            {testBusy === "WHATSAPP" ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.MessageCircle className="size-4" />} {t("portalSettings.channels.testWa")}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void runTest("SMS")} disabled={testBusy !== null || !cfg.smsEnabled}>
+            {testBusy === "SMS" ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Smartphone className="size-4" />} {t("portalSettings.channels.testSms")}
+          </Button>
+          <Button size="sm" className="ml-auto" onClick={() => void save()} disabled={busy}>
+            {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Save className="size-4" />} {t("portalSettings.channels.save")}
+          </Button>
+          {cfg.lastTestStatus && (
+            <p className="w-full text-[10px] text-muted-foreground">{t("portalSettings.channels.lastTest")}: {cfg.lastTestStatus}</p>
+          )}
+        </div>
+      </div>
+    </SectionCard>
   );
 }

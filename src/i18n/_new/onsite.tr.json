@@ -413,7 +413,26 @@
     "colorAmber": "Kehribar",
     "colorViolet": "Menekşe",
     "colorRose": "Gül",
-    "colorNeutral": "Nötr"
+    "colorNeutral": "Nötr",
+    "dbm": {
+      "groupTitle": "Veritabanı & Migration",
+      "groupDesc": "SQLite → MySQL/MariaDB (Hostinger) taşınma hazırlığı: durum, kontroller ve adım-adım runbook. Taşınma tamamlanınca bu grup kaldırılacaktır.",
+      "tempChip": "Geçici",
+      "title": "Migration Denetim Paneli",
+      "desc": "Canlı veritabanı durumu ve MySQL hazır-bulunurluk kontrolleri. Yalnız okuma — hiçbir şeyi değiştirmez.",
+      "provider": "Sağlayıcı",
+      "path": "Dosya yolu",
+      "size": "Boyut",
+      "tables": "Tablo",
+      "models": "model",
+      "checksTitle": "MySQL Hazırlık Kontrolleri",
+      "runbookTitle": "Migration Runbook",
+      "copy": "Komutu kopyala",
+      "tableCounts": "Tablo satır sayıları",
+      "generatedAt": "Üretim zamanı",
+      "refresh": "Yenile",
+      "loadFail": "Migration durumu alınamadı"
+    }
   },
   "common": {
     "error": "Hata"

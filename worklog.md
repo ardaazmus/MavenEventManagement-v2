@@ -1956,3 +1956,44 @@ Stage Summary:
 - Kanıt (agent-browser taze context, 1440px): sol 540px / sağ 540px → birebir %50-%50; imgH 164 = leftH 164 (görsel sol yüksekliğini tam doldurur); e-posta (en alt bilgi satırı) sol sütun içinde ve görsel alt kenarının ÜSTÜNDE (noTextUnderImage=true); sütun arası 12px temiz ayrım. Mobil 390px: stacked=true, görsel 298×112 info altında. page errors 0. tsc 0, lint 0.
 - Değişen: src/components/maven/views/accommodation.tsx (yalnız otel kartı gövde grid'i; yeni kullanıcı-metni YOK).
 - Ekran görüntüleri: tool-results/hotel-split50-desktop.png, hotel-split50-mobile.png.
+---
+Task ID: FORM-EXP4 (kullanıcı şablonları — kaydet/uygula)
+Agent: Z.ai Code (ana ajan)
+Task: Worklog FORM-EXP3 sonrası önerilerden "kullanıcı-şablonu kaydet/uygula" — kullanıcıların kendi formlarını şablon olarak işaretleyip ayarları/alanları/mantık kapılarıyla tek tıkla kopyalayabilmesi. (Önceki tur: HOTEL-SPLIT50 %50-%50 kart düzeni kullanıcı tarafından onaylandı.)
+
+Work Log:
+## SCHEMA ✓
+- FormDefinition.isTemplate Boolean @default(false) — db:push ✓ + dev server RESTART (Prisma client cache dersi; 2 kez gerekti: tsc OOM dalgası sunucuyu öldürdü → protokolle geri).
+
+## API ✓
+- YENİ ROTA YOK: PUT /api/forms/[id] { isTemplate } (generic sanitize yolu) + GET /api/forms?isTemplate=true (registry forms.filterFields'e "isTemplate" eklendi; listEntity ile {items} unwrap).
+- KANIT: PUT isTemplate:true → 200 + GET filtre satırı fields include ile döner.
+
+## UI (form-center.tsx) ✓
+- Form kartı: "Şablonla/Şablon" yer imi düğmesi (Bookmark/BookmarkCheck, busy Loader2) + şablonlu kartta "Şablon" çipi.
+- Şablon diyaloğu: "Şablonlarım" bölümü (sayılı başlık, kiracı-geneli — edisyon farkı gözetmez; maven-scroll max-h-72 liste; boş-durum notu; hata durumu ErrorState).
+- toggleTemplate: PUT isTemplate ters-çevir + toast (kaydedildi/kaldırıldı; kaldırma formu SİLMEZ).
+- applyUserTemplate: kaynak formu klonlar — ayarlar (honeypot/minSubmit/maxPerEmail/blockedDomains/captcha/autoApprove/hasPublicResults/enableSteps/notifyEmail/confirmEmail) + alanlar (label/type/options/columns/required/condition/sensitivity/mobile/correctAnswer/points/width/step/order) + mantık kapıları YENİ alan kimliklerine remap + gotoStep taşınır. Klon DRAFT + özel (isPublic=false) — güvenli başlangıç. Bozuk kural şablonu sessizce atlanır (klon yine oluşur).
+
+## DÜZELTME (ilk çalıştırmada yakalandı) ✓
+- userTemplates.map is not a function: apiGet ham {items} dönerken liste listEntity bekliyordu → loader listEntity<FormDef>("forms", { isTemplate: "true", limit: 100 })'e çevrildi (tarayıcı Runtime TypeError overlay ile kanıtlandı, düzeltme sonrası 0 hata).
+
+## i18n ✓
+- forms.* +16 yaprak (markTpl*/unmarkTpl*/tplChip/myTemplates*/noUserTemplates/toastTplSaved*/toastTplRemoved*/toastUtplApplied*) tr+en; bake ✓ (2618 yaprak SİMETRİK); hardcoded-scan 76 dosya 0 ihlal.
+
+## KAPILAR ✓
+- tsc 0; lint 0.
+- Playwright SIRALI: corrections 22 + ui-corrections 16 + phase2/3/4 34 + phase0 16 + goldens+flow 7 = **95 PASS / 0 FAIL**.
+- Test sonrası POST /api/seed → demo baseline (forms:4, formSubmissions:15, people:28) → goldens 4/4 parite ✓.
+
+## KANIT (agent-browser, taze context) ✓
+- UI işaretleme: "Şablonla" düğmesi → kartta "Şablon" çipi + düğme durum-değişimi.
+- Klon E2E: 3 alanlı + mantık kapılı (SHOW) + GOTO'lu sıfırdan kaynak form → diyaloğa düşen kart ("3 alan / 2 adımlı / Özel" çipleri) → Uygula → klon DRAFT: ayarlar birebir (minSubmit 6, maxPerEmail 3, enableSteps/confirmEmail/hasPublicResults true), 3 alan options'larıyla, mantık kuralı KLONUN kendi alan-id'sine remap (LOGIC REMAP VALID: True), gotoStep=3 taşındı; stüdyoya otomatik geçiş.
+- Temizlik: scratch formlar silindi, isTemplate=false geri alındı; seed paritesi korundu.
+
+Stage Summary:
+- Form sistemi şimdi kendi şablonlarını da tanıyor: kullanıcı herhangi bir formu "Şablonla" ile yer imine alır, "Şablondan Oluştur" diyaloğundaki Şablonlarım bölümünden ayarları/alanları/mantık kapıları/dallanmalarıyla tek tıkla kopyalar (kopya her zaman taslak + özel başlar; mantık hedefleri yeni kimliklere güvenle bağlanır).
+- Değişen: prisma/schema.prisma (isTemplate), src/lib/api/registry.ts (filterFields), src/components/maven/views/form-center.tsx (FormDef, useApi, toggleTemplate, applyUserTemplate, kart düğmesi+çip, diyalog bölümü), src/i18n/_new/forms.{tr,en}.json + bake.
+- Kalan riskler: (1) dev server OOM dalgalanması sürüyor — health-poll + restart protokolü; (2) Şablonlarım kiracı-geneli: eski edisyonun şablonu yeni edisyona kopyalanabilir (istenir); klonun defaultCategoryId/enableOnlinePayment kopyalanmaz (kategori edisyon-bağlı — elle kurulur); (3) ui-corrections artık 16 test (worklog'daki eski "6" sayısı güncellendi).
+- Sonraki adım önerileri: form yanıt sayfası sayfalama/arama zenginleştirme, PHASE 6/7 (K1 Lead Retrieval, K8 PromoCode, K5 live-poll), şablon kartına "kaynak form silindiğinde şablon da düşer" uyarısı yerine arşiv-koruma (isTemplate=true olan formun silinmesini engelleme kuralı).
+- Cron: 15 dk webDevReview job 413355 aktif.

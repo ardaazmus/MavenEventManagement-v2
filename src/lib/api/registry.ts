@@ -175,7 +175,7 @@ export const registry: Record<string, EntityConfig> = {
   forms: {
     delegate: db.formDefinition as unknown as AnyDelegate,
     include: { fields: { orderBy: { order: "asc" } }, _count: { select: { submissions: true } } },
-    filterFields: ["editionId", "status", "audience", "type"],
+    filterFields: ["editionId", "status", "audience", "type", "isTemplate"],
     orderBy: { createdAt: "desc" },
     auditType: ActivityType.SUBMISSION_SAVED,
     auditMessage: (d) => `Form güncellendi: ${d.name ?? ""}`,

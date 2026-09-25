@@ -50,6 +50,7 @@ interface FormDef {
   captchaEnabled: boolean; hasPublicResults: boolean; slug?: string | null;
   enableSteps?: boolean; notifyEmail?: string | null; // FORM-EXP2
   confirmEmail?: boolean; // FORM-EXP3: yanıtlayana onay e-postası
+  isTemplate?: boolean; // FORM-EXP4: kullanıcı şablonu
   fields: FormFieldDef[]; _count?: { submissions: number };
 }
 interface SubmissionRow {
@@ -207,6 +208,15 @@ export function FormCenterView() {
 
   // FORM-EXP2: şablon kütüphanesi dialogu
   const [tplOpen, setTplOpen] = useState(false);
+  // FORM-EXP4: kullanıcı şablonları — diyaloğ açıkken kiracı-geneli (edisyon farkı gözetmeksizin) listelenir
+  const {
+    data: userTemplates,
+    error: userTplError,
+    reload: reloadUserTemplates,
+  } = useApi<FormDef[] | null>(
+    async () => (tplOpen ? listEntity<FormDef>("forms", { isTemplate: "true", limit: 100 }) : null),
+    [tplOpen, refreshKey],
+  );
 
   // Stüdyo — seçili alan (özellik paneli)
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
@@ -567,6 +577,110 @@ export function FormCenterView() {
       toast({
         title: t("forms.tplApplied"),
         description: t("forms.tplAppliedDesc", { name: t(`forms.${tpl.nameKey}`), n: tpl.fields.length }),
+      });
+      setTplOpen(false);
+      setSelectedFormId(created.id);
+      setTab("studio");
+      reload();
+      bump();
+    } catch (e) {
+      toast({ title: t("forms.tplError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // FORM-EXP4: kullanıcı şablonu işaretle/kaldır — form aynen kalır, yalnız şablon listesine girer/çıkar
+  const toggleTemplate = async (f: FormDef) => {
+    setBusy(`utpl-toggle-${f.id}`);
+    try {
+      await apiSend(`/api/forms/${f.id}`, "PUT", { isTemplate: !f.isTemplate });
+      toast({
+        title: f.isTemplate ? t("forms.toastTplRemoved") : t("forms.toastTplSaved"),
+        description: f.isTemplate ? t("forms.toastTplRemovedDesc", { name: f.name }) : t("forms.toastTplSavedDesc", { name: f.name }),
+      });
+      reload();
+      bump();
+    } catch (e) {
+      toast({ title: t("forms.tplError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // FORM-EXP4: kullanıcı şablonunu uygula — kaynak formu AYARLARIYLA + alanlarıyla klonlar
+  // (mantık kapısı hedefleri yeni alan kimliklerine remap edilir; klon DRAFT + özeldir)
+  const applyUserTemplate = async (src: FormDef) => {
+    setBusy(`utpl-${src.id}`);
+    try {
+      const created = await apiSend<{ id: string }>("/api/forms", "POST", {
+        editionId: currentEditionId,
+        name: src.name,
+        type: src.type,
+        description: src.description ?? null,
+        honeypotEnabled: src.honeypotEnabled,
+        minSubmitSeconds: src.minSubmitSeconds ?? 4,
+        maxPerEmailPerDay: src.maxPerEmailPerDay ?? 5,
+        blockedDomains: src.blockedDomains ?? null,
+        captchaEnabled: src.captchaEnabled,
+        autoApprove: src.autoApprove,
+        hasPublicResults: src.hasPublicResults,
+        enableSteps: src.enableSteps ?? false,
+        notifyEmail: src.notifyEmail ?? null,
+        confirmEmail: src.confirmEmail ?? false,
+      });
+      const idMap: Record<string, string> = {};
+      for (let i = 0; i < src.fields.length; i++) {
+        const f = src.fields[i];
+        const row = await apiSend<{ id: string }>("/api/form-fields", "POST", {
+          formId: created.id,
+          label: f.label,
+          type: f.type,
+          placeholder: f.placeholder ?? null,
+          helpText: f.helpText ?? null,
+          options: f.options ?? null,
+          columns: f.columns ?? null,
+          required: f.required,
+          conditionField: f.conditionField ?? null,
+          conditionValue: f.conditionValue ?? null,
+          sensitivity: f.sensitivity,
+          mobileInteractive: f.mobileInteractive,
+          correctAnswer: f.correctAnswer ?? null,
+          points: f.points ?? null,
+          width: f.width ?? 100,
+          step: f.step ?? 1,
+          order: f.order,
+        });
+        idMap[f.id] = row.id;
+      }
+      // mantık kapıları + dallanma hedefi — yeni kimliklerle bağlanır
+      for (const f of src.fields) {
+        const newId = idMap[f.id];
+        if (!newId) continue;
+        if (f.logicRules) {
+          try {
+            const parsed = JSON.parse(f.logicRules) as { field: string; op: string; value?: string }[];
+            const remapped = parsed
+              .map((l) => ({ ...l, field: idMap[l.field] ?? "" }))
+              .filter((l) => l.field);
+            if (remapped.length > 0) {
+              await apiSend(`/api/form-fields/${newId}`, "PUT", {
+                logicRules: JSON.stringify(remapped),
+                logicMode: f.logicMode ?? "ANY",
+                logicAction: f.logicAction ?? "SHOW",
+              });
+            }
+          } catch {
+            /* bozuk kural şablonu sessizce atlanır — klon yine oluşur */
+          }
+        }
+        if (f.gotoStep != null) {
+          await apiSend(`/api/form-fields/${newId}`, "PUT", { gotoStep: f.gotoStep });
+        }
+      }
+      toast({
+        title: t("forms.toastUtplApplied"),
+        description: t("forms.toastUtplAppliedDesc", { name: src.name, n: src.fields.length }),
       });
       setTplOpen(false);
       setSelectedFormId(created.id);
@@ -965,6 +1079,9 @@ export function FormCenterView() {
                     {f.isPublic && (
                       <Chip tone="violet"><Icons.Globe className="size-3" /> {t("forms.chipPublic")}</Chip>
                     )}
+                    {f.isTemplate && (
+                      <Chip tone="teal"><Icons.BookmarkCheck className="size-3" /> {t("forms.tplChip")}</Chip>
+                    )}
                   </div>
                   <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1">
@@ -994,6 +1111,18 @@ export function FormCenterView() {
                         : <><Icons.Upload className="size-3.5" /> {t("forms.publish")}</>}
                     </Button>
                     <div className="ml-auto flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className={f.isTemplate ? "text-teal-700" : "text-muted-foreground"}
+                        disabled={busy !== null}
+                        aria-label={f.isTemplate ? t("forms.unmarkTplAria") : t("forms.markTplAria")}
+                        title={f.isTemplate ? t("forms.unmarkTpl") : t("forms.markTpl")}
+                        onClick={() => toggleTemplate(f)}
+                      >
+                        {busy === `utpl-toggle-${f.id}` ? <Icons.Loader2 className="size-3.5 animate-spin" /> : f.isTemplate ? <Icons.BookmarkCheck className="size-3.5" /> : <Icons.Bookmark className="size-3.5" />}
+                        {f.isTemplate ? t("forms.unmarkTplShort") : t("forms.markTplShort")}
+                      </Button>
                       <Switch
                         checked={f.isPublic}
                         disabled={busy !== null}
@@ -2059,6 +2188,74 @@ export function FormCenterView() {
                 </div>
               );
             })}
+          </div>
+
+          {/* ══ FORM-EXP4: KULLANICI ŞABLONLARI ═══════════════════════════ */}
+          <div className="mt-2 border-t pt-4">
+            <p className="flex items-center gap-1.5 text-sm font-semibold">
+              <Icons.BookmarkCheck className="size-4 text-teal-600" /> {t("forms.myTemplates")}
+              {userTemplates && userTemplates.length > 0 && (
+                <Chip tone="teal">{userTemplates.length}</Chip>
+              )}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t("forms.myTemplatesDesc")}</p>
+            <div className="mt-3">
+              {userTplError ? (
+                <ErrorState message={userTplError} onRetry={reloadUserTemplates} />
+              ) : !userTemplates ? (
+                <Loading rows={1} />
+              ) : userTemplates.length === 0 ? (
+                <p className="rounded-lg border border-dashed bg-muted/30 px-3 py-4 text-center text-xs text-muted-foreground">
+                  {t("forms.noUserTemplates")}
+                </p>
+              ) : (
+                <div className="maven-scroll grid max-h-72 gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+                  {userTemplates.map((src) => {
+                    const isBusy = busy === `utpl-${src.id}`;
+                    const stepCount = Math.max(1, ...src.fields.map((f) => f.step ?? 1));
+                    return (
+                      <div key={src.id} className="flex flex-col rounded-xl border bg-card p-4 transition hover:border-teal-400">
+                        <div className="flex items-start gap-2.5">
+                          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-teal-50">
+                            <Icons.BookmarkCheck className="size-4.5 text-teal-700" />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold">{src.name}</p>
+                            <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{src.description ?? t("forms.noDescription")}</p>
+                          </div>
+                        </div>
+                        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                          <Chip tone="neutral">{t("forms.tplFieldsCount", { n: src.fields.length })}</Chip>
+                          {Boolean(src.enableSteps) && stepCount > 1 && (
+                            <Chip tone="teal"><Icons.Layers className="size-3" /> {t("forms.tplStepsCount", { n: stepCount })}</Chip>
+                          )}
+                          <Chip tone={TYPE_TONE[src.type] ?? "neutral"}>{tLabel(FORM_TYPES, src.type)}</Chip>
+                        </div>
+                        <div className="mt-3 flex gap-2">
+                          <Button
+                            size="sm" className="flex-1"
+                            disabled={busy !== null}
+                            onClick={() => applyUserTemplate(src)}
+                          >
+                            {isBusy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Check className="size-4" />}
+                            {isBusy ? t("forms.tplApplying") : t("forms.tplApply")}
+                          </Button>
+                          <Button
+                            size="sm" variant="outline"
+                            disabled={busy !== null}
+                            aria-label={t("forms.unmarkTplAria")}
+                            title={t("forms.unmarkTpl")}
+                            onClick={() => { toggleTemplate(src); reloadUserTemplates(); }}
+                          >
+                            <Icons.BookmarkX className="size-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </DialogContent>
       </Dialog>

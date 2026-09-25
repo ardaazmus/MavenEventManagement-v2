@@ -560,6 +560,8 @@ model FormDefinition {
   notifyEmail     String? // yeni gönderimde bildirim e-postası (boşsa bildirim yok; bastırma/kota denetimli)
   // — FORM-EXP3: yanıtlayana onay e-postası —
   confirmEmail    Boolean @default(false) // gönderim başarılıysa yanıtlayana onay e-postası (kota/bastırma denetimli)
+  // — FORM-EXP4: kullanıcı şablonu —
+  isTemplate      Boolean @default(false) // form kullanıcı şablonu olarak işaretli (Şablonlarım listesinde görünür, tek tıkla kopyalanır)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

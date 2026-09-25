@@ -415,33 +415,68 @@ export function AccommodationView() {
               >
                 <div className="space-y-2.5 p-3">
                   <div className={cn("grid gap-3", h.imageUrl && "sm:grid-cols-2")}>
-                    <div className="flex min-w-0 items-start gap-3">
-                      {h.logoUrl ? (
-                        <img src={h.logoUrl} alt={`${h.name} logosu`} className="size-11 shrink-0 rounded-lg border bg-white object-contain p-0.5" />
-                      ) : (
-                        <span className="grid size-11 shrink-0 place-items-center rounded-lg border bg-muted text-muted-foreground"><Icons.Building className="size-5" /></span>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold">{h.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">{[h.district, h.city].filter(Boolean).join(" · ") || "konum belirtilmedi"}</p>
-                        {h.starRating ? (
-                          <p className="mt-0.5 text-xs text-amber-500" aria-label={`${h.starRating} yıldız`}>
-                            {"★".repeat(h.starRating)}
-                            <span className="text-muted-foreground/30">{"★".repeat(5 - h.starRating)}</span>
-                          </p>
-                        ) : null}
+                    {/* SOL — tüm bilgiler burada kalır, resmin altına taşmaz */}
+                    <div className="flex min-w-0 flex-col gap-2.5">
+                      <div className="flex items-start gap-3">
+                        {h.logoUrl ? (
+                          <img src={h.logoUrl} alt={`${h.name} logosu`} className="size-11 shrink-0 rounded-lg border bg-white object-contain p-0.5" />
+                        ) : (
+                          <span className="grid size-11 shrink-0 place-items-center rounded-lg border bg-muted text-muted-foreground"><Icons.Building className="size-5" /></span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold">{h.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">{[h.district, h.city].filter(Boolean).join(" · ") || "konum belirtilmedi"}</p>
+                          {h.starRating ? (
+                            <p className="mt-0.5 text-xs text-amber-500" aria-label={`${h.starRating} yıldız`}>
+                              {"★".repeat(h.starRating)}
+                              <span className="text-muted-foreground/30">{"★".repeat(5 - h.starRating)}</span>
+                            </p>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={`${h.name} otelini düzenle`}
+                          onClick={() => openEditHotel(h)}
+                          className="grid size-7 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                          <Icons.Pencil className="size-3.5" />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        aria-label={`${h.name} otelini düzenle`}
-                        onClick={() => openEditHotel(h)}
-                        className="grid size-7 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      >
-                        <Icons.Pencil className="size-3.5" />
-                      </button>
+
+                      {(h.address || h.checkInNote || h.contactName || h.contactPhone) && (
+                        <div className="space-y-1.5">
+                          {h.address && (
+                            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Icons.MapPin className="size-3 shrink-0" aria-hidden />
+                              <span className="min-w-0 truncate" title={h.address}>{h.address}</span>
+                            </p>
+                          )}
+                          <div className="flex flex-wrap gap-1.5">
+                            {h.contactName && <Chip tone="teal"><Icons.UserRound className="mr-1 inline size-3" />{h.contactName}</Chip>}
+                            {h.contactPhone && <Chip tone="teal"><Icons.Phone className="mr-1 inline size-3" />{h.contactPhone}</Chip>}
+                            {h.checkInNote && <Chip tone="amber"><Icons.KeyRound className="mr-1 inline size-3" />{h.checkInNote}</Chip>}
+                          </div>
+                        </div>
+                      )}
+
+                      {(h.email || h.website) && (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                          {h.email && (
+                            <a href={`mailto:${h.email}`} className="inline-flex min-w-0 items-center gap-1 text-teal-700 hover:underline">
+                              <Icons.Mail className="size-3 shrink-0" aria-hidden /><span className="truncate">{h.email}</span>
+                            </a>
+                          )}
+                          {h.website && (
+                            <a href={h.website.startsWith("http") ? h.website : `https://${h.website}`} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1 text-teal-700 hover:underline">
+                              <Icons.ExternalLink className="size-3 shrink-0" aria-hidden /> web sitesi
+                            </a>
+                          )}
+                        </div>
+                      )}
                     </div>
+                    {/* SAĞ — kapak görseli; sol sütunun tam yüksekliğine oturur, %50-%50 ayrım */}
                     {h.imageUrl && (
-                      <div className="relative h-28 overflow-hidden rounded-lg border bg-muted sm:h-auto sm:min-h-24">
+                      <div className="relative h-28 overflow-hidden rounded-lg border bg-muted sm:h-auto">
                         <img
                           src={h.imageUrl}
                           alt={`${h.name} kapak görseli`}
@@ -451,37 +486,6 @@ export function AccommodationView() {
                       </div>
                     )}
                   </div>
-
-                  {(h.address || h.checkInNote || h.contactName || h.contactPhone) && (
-                    <div className="space-y-1.5">
-                      {h.address && (
-                        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <Icons.MapPin className="size-3 shrink-0" aria-hidden />
-                          <span className="min-w-0 truncate" title={h.address}>{h.address}</span>
-                        </p>
-                      )}
-                      <div className="flex flex-wrap gap-1.5">
-                        {h.contactName && <Chip tone="teal"><Icons.UserRound className="mr-1 inline size-3" />{h.contactName}</Chip>}
-                        {h.contactPhone && <Chip tone="teal"><Icons.Phone className="mr-1 inline size-3" />{h.contactPhone}</Chip>}
-                        {h.checkInNote && <Chip tone="amber"><Icons.KeyRound className="mr-1 inline size-3" />{h.checkInNote}</Chip>}
-                      </div>
-                    </div>
-                  )}
-
-                  {(h.email || h.website) && (
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-                      {h.email && (
-                        <a href={`mailto:${h.email}`} className="inline-flex min-w-0 items-center gap-1 text-teal-700 hover:underline">
-                          <Icons.Mail className="size-3 shrink-0" aria-hidden /><span className="truncate">{h.email}</span>
-                        </a>
-                      )}
-                      {h.website && (
-                        <a href={h.website.startsWith("http") ? h.website : `https://${h.website}`} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1 text-teal-700 hover:underline">
-                          <Icons.ExternalLink className="size-3 shrink-0" aria-hidden /> web sitesi
-                        </a>
-                      )}
-                    </div>
-                  )}
 
                   {h.blocks.map((b) => {
                     const total = b.inventoryNights.reduce((s, n) => s + n.totalRooms, 0);

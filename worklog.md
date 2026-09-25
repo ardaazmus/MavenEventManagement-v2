@@ -1942,3 +1942,17 @@ Stage Summary:
 - Kanıt (agent-browser taze context): masaüstü 1440px — imgW 458 / imgH 94, kartın sağ yarısını dolduruyor, info ile üst-hizalı; mobil 390px — görsel info altında 296×110; page errors 0; tsc 0, lint 0, i18n-hardcoded-scan 0 ihlal.
 - Değişen: src/components/maven/views/accommodation.tsx (yalnız otel kartı header grid'i).
 - Ekran görüntüleri: tool-results/hotel-split-desktop.png, hotel-split-card.png, hotel-split-mobile.png.
+---
+Task ID: HOTEL-SPLIT50 (otel kartı %50-%50 tam ayrım)
+Agent: Z.ai Code (ana ajan)
+Task: Kullanıcı geri bildirimi — otel kartı üst alanında TAM ayrım: solda TÜM bilgiler, sağda görsel; %50-%50; yazılar resmin altına taşmayacak.
+
+Work Log:
+- accommodation.tsx otel kartı yeniden yapılandırıldı: adres/iletişim-chip'leri/e-posta-web satırları grid DIŞINDAN alınarak SOL sütunun İÇİNE taşındı (flex flex-col gap-2.5: header satırı + adres + chip'ler + e-posta). Böylece tüm bilgi metinleri sol yarıda kalır, resim altına akış yok.
+- SAĞ sütun: kapak görseli `relative overflow-hidden rounded-lg border` + absolute inset-0 object-cover; grid stretch ile sol sütunun TAM yüksekliğine oturur (sm:h-auto; mobilde h-28 full-width stack).
+- Görsel yoksa grid tek sütun — boş yarım oluşmaz. Oda bloğu çizelgeleri grid altında tam genişlik (ayrı bölümler).
+
+Stage Summary:
+- Kanıt (agent-browser taze context, 1440px): sol 540px / sağ 540px → birebir %50-%50; imgH 164 = leftH 164 (görsel sol yüksekliğini tam doldurur); e-posta (en alt bilgi satırı) sol sütun içinde ve görsel alt kenarının ÜSTÜNDE (noTextUnderImage=true); sütun arası 12px temiz ayrım. Mobil 390px: stacked=true, görsel 298×112 info altında. page errors 0. tsc 0, lint 0.
+- Değişen: src/components/maven/views/accommodation.tsx (yalnız otel kartı gövde grid'i; yeni kullanıcı-metni YOK).
+- Ekran görüntüleri: tool-results/hotel-split50-desktop.png, hotel-split50-mobile.png.

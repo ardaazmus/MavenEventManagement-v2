@@ -2893,7 +2893,8 @@
     "program": {
       "title": "Genel Program",
       "empty": "Yayınlanmış oturum bulunmuyor — program yakında burada.",
-      "speakers": "Konuşmacılar"
+      "speakers": "Konuşmacılar",
+      "ics": "Takvime Ekle"
     },
     "speakers": {
       "title": "Konuşmacılar",
@@ -2906,7 +2907,8 @@
       "title": "Sponsorlar",
       "empty": "Bu etkinlik için görünen sponsor bulunmuyor.",
       "untiered": "Destekçiler",
-      "website": "Web sitesi"
+      "website": "Web sitesi",
+      "detail": "Sponsor Detayı"
     },
     "map": {
       "title": "Yer Planı",
@@ -2932,7 +2934,8 @@
         "PENDING": "Yanıt bekliyor",
         "ANSWERED": "Yanıtlandı",
         "HIDDEN": "Gizlendi"
-      }
+      },
+      "answerLabel": "Organizatör yanıtı"
     },
     "forms": {
       "title": "Formlar & Quizler",
@@ -3053,7 +3056,8 @@
       "levelUp": "Seviye atladın!",
       "levelUpDesc": "Tebrikler — artık {level} seviyesindesin.",
       "pointsWon": "Puan kazandın!",
-      "pointsWonDesc": "+{points} puan hesabına eklendi."
+      "pointsWonDesc": "+{points} puan hesabına eklendi.",
+      "anon": "Katılımcı"
     },
     "form": {
       "title": "Form"
@@ -3310,7 +3314,13 @@
       "saved": "Kanal ayarları kaydedildi",
       "savedDesc": "Bildirim kanalları güncellendi.",
       "saveFail": "Kanallar kaydedilemedi",
-      "loadFail": "Kanal yapılandırması yüklenemedi"
+      "loadFail": "Kanal yapılandırması yüklenemedi",
+      "reports": "Gönderim Raporu",
+      "reportsRefresh": "Yenile",
+      "reportsEmpty": "Henüz gönderim kaydı yok.",
+      "reportsTotal": "{count} kayıt",
+      "reportsOk": "{count} başarılı",
+      "reportsFail": "{count} hatalı"
     },
     "chrome": {
       "title": "Ekran Üst Bantları",
@@ -3345,7 +3355,31 @@
       "levelsHint": "Eşikler artan sırada olmalıdır — katılımcı eşiği geçtiğinde seviye atlar ve konfeti kutlaması gösterilir.",
       "levelAdd": "Seviye ekle",
       "levelRemove": "Son seviyeyi sil",
-      "levelNew": "Yeni Seviye"
+      "levelNew": "Yeni Seviye",
+      "masking": "Liderlik tablosu ad görünürlüğü",
+      "maskingMasked": "Maskeli (Ayşe Y.)",
+      "maskingFull": "Tam ad (Ayşe Yılmaz)",
+      "maskingHidden": "Gizli (Katılımcı)"
+    },
+    "questions": {
+      "title": "Soru & Cevap Moderasyonu",
+      "desc": "Portal sorularını yanıtlayın veya gizleyin; yanıtlar katılımcının soru geçmişinde görünür.",
+      "loadFail": "Sorular yüklenemedi",
+      "saved": "Moderasyon kaydedildi",
+      "fail": "İşlem başarısız",
+      "empty": "Bu durumda soru yok.",
+      "filter_ALL": "Tümü",
+      "filter_PENDING": "Bekleyen",
+      "filter_ANSWERED": "Yanıtlanan",
+      "filter_HIDDEN": "Gizlenen",
+      "answerPh": "Yanıtınızı yazın…",
+      "reply": "Yanıtla",
+      "hide": "Gizle",
+      "show": "Yayına Al",
+      "authorAnon": "Anonim",
+      "status_PENDING": "Bekliyor",
+      "status_ANSWERED": "Yanıtlandı",
+      "status_HIDDEN": "Gizlendi"
     }
   }
 }

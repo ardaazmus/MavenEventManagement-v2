@@ -2893,7 +2893,8 @@
     "program": {
       "title": "Agenda",
       "empty": "No published sessions yet — the agenda will appear here soon.",
-      "speakers": "Speakers"
+      "speakers": "Speakers",
+      "ics": "Add to Calendar"
     },
     "speakers": {
       "title": "Speakers",
@@ -2906,7 +2907,8 @@
       "title": "Sponsors",
       "empty": "No visible sponsors for this event.",
       "untiered": "Supporters",
-      "website": "Website"
+      "website": "Website",
+      "detail": "Sponsor Detail"
     },
     "map": {
       "title": "Venue Map",
@@ -2932,7 +2934,8 @@
         "PENDING": "Awaiting answer",
         "ANSWERED": "Answered",
         "HIDDEN": "Hidden"
-      }
+      },
+      "answerLabel": "Organizer reply"
     },
     "forms": {
       "title": "Forms & Quizzes",
@@ -3053,7 +3056,8 @@
       "levelUp": "Level up!",
       "levelUpDesc": "Congratulations — you are now at {level} level.",
       "pointsWon": "Points earned!",
-      "pointsWonDesc": "+{points} points added to your account."
+      "pointsWonDesc": "+{points} points added to your account.",
+      "anon": "Participant"
     },
     "form": {
       "title": "Form"
@@ -3310,7 +3314,13 @@
       "saved": "Channel settings saved",
       "savedDesc": "Notification channels updated.",
       "saveFail": "Failed to save channels",
-      "loadFail": "Failed to load channel config"
+      "loadFail": "Failed to load channel config",
+      "reports": "Send Reports",
+      "reportsRefresh": "Refresh",
+      "reportsEmpty": "No send records yet.",
+      "reportsTotal": "{count} records",
+      "reportsOk": "{count} ok",
+      "reportsFail": "{count} failed"
     },
     "chrome": {
       "title": "Screen Top Bars",
@@ -3345,7 +3355,31 @@
       "levelsHint": "Thresholds must be ascending — passing a threshold levels the participant up with a confetti celebration.",
       "levelAdd": "Add level",
       "levelRemove": "Remove last level",
-      "levelNew": "New Level"
+      "levelNew": "New Level",
+      "masking": "Leaderboard name visibility",
+      "maskingMasked": "Masked (Ayşe Y.)",
+      "maskingFull": "Full name (Ayşe Yılmaz)",
+      "maskingHidden": "Hidden (Participant)"
+    },
+    "questions": {
+      "title": "Q&A Moderation",
+      "desc": "Reply to or hide portal questions; replies appear in the participant question history.",
+      "loadFail": "Failed to load questions",
+      "saved": "Moderation saved",
+      "fail": "Action failed",
+      "empty": "No questions in this state.",
+      "filter_ALL": "All",
+      "filter_PENDING": "Pending",
+      "filter_ANSWERED": "Answered",
+      "filter_HIDDEN": "Hidden",
+      "answerPh": "Write your reply…",
+      "reply": "Reply",
+      "hide": "Hide",
+      "show": "Publish",
+      "authorAnon": "Anonymous",
+      "status_PENDING": "Pending",
+      "status_ANSWERED": "Answered",
+      "status_HIDDEN": "Hidden"
     }
   }
 }

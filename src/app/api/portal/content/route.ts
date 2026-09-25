@@ -383,7 +383,7 @@ export async function GET(req: NextRequest) {
           ? { session: { personId: session!.personId } }
           : { sessionId: session!.id }),
       },
-      select: { id: true, body: true, status: true, createdAt: true, programSessionId: true },
+      select: { id: true, body: true, status: true, answerBody: true, answeredAt: true, createdAt: true, programSessionId: true },
       orderBy: { createdAt: "desc" },
       take: 20,
     });

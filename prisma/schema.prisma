@@ -2194,6 +2194,8 @@ model PortalQuestion {
   displayName      String? // anonim değilse görünen ad
   isAnonymous      Boolean  @default(false)
   status           String   @default("PENDING") // PENDING|ANSWERED|HIDDEN
+  answerBody       String? // moderatör yanıtı (yanıtla/gizle moderasyonu)
+  answeredAt       DateTime?
   createdAt        DateTime @default(now())
 
   edition        EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)

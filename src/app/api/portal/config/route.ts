@@ -179,7 +179,7 @@ export async function PUT(req: NextRequest) {
       chrome?: { topHeader?: Record<string, boolean>; eventBar?: Record<string, boolean> } | null;
       // ── Oyunlaştırma (§ gamification — formlarla etkileşimli) ──
       gameEnabled?: boolean;
-      gameConfig?: { points?: Record<string, number>; levels?: { name: string; min: number }[]; qaCap?: number } | null;
+      gameConfig?: { points?: Record<string, number>; levels?: { name: string; min: number }[]; qaCap?: number; masking?: string } | null;
     };
     if (!body.editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
     const ctx = await resolveEditionContext(body.editionId, { required: true });
@@ -334,6 +334,20 @@ export async function PUT(req: NextRequest) {
         const qaCap = Number((body.gameConfig as { qaCap?: unknown }).qaCap);
         const cleanGame: Record<string, unknown> = { points, levels: levels.length >= 2 ? levels : [] };
         if (Number.isFinite(qaCap)) cleanGame.qaCap = Math.max(1, Math.min(50, Math.round(qaCap)));
+        // liderlik ad-masking politikası — yalnız bilinen değerler; eksikse mevcut config'teki değer korunur
+        const masking = String((body.gameConfig as { masking?: unknown }).masking ?? "").toUpperCase();
+        if ("MASKED,FULL,HIDDEN".split(",").includes(masking)) {
+          cleanGame.masking = masking;
+        } else {
+          const cur = await db.eventPortalConfig.findUnique({
+            where: { editionId: eid },
+            select: { gameConfigJson: true },
+          });
+          const curMasking = cur?.gameConfigJson
+            ? (JSON.parse(cur.gameConfigJson) as { masking?: string }).masking
+            : undefined;
+          if (curMasking) cleanGame.masking = curMasking;
+        }
         if (levels.length >= 2) data.gameConfigJson = JSON.stringify(cleanGame);
       } else {
         data.gameConfigJson = null;

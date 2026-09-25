@@ -1,9 +1,10 @@
 // ─── Maven Katılımcı Portalı — Service Worker (PWA shell) ────────────────────
 // Strateji: API her zaman ağ (canlı veri; hata → 503 JSON), statik varlıklar
-// cache-first + arka plan güncellemesi. Kanca sürüm anahtarı CACHE adında —
-// güncelleme dağıtımında ad değişirse eski önbellek activate'te temizlenir.
-const CACHE = "maven-portal-v1";
-const SHELL = ["/portal-icon-192.png", "/portal-icon-512.png", "/manifest.webmanifest"];
+// cache-first + arka plan güncellemesi, gezinme istekleri çevrimdışında
+// offline.html'e düşer (PWA offline fallback). Kanca sürüm anahtarı CACHE
+// adında — güncelleme dağıtımında ad değişirse eski önbellek activate'te temizlenir.
+const CACHE = "maven-portal-v2";
+const SHELL = ["/portal-icon-192.png", "/portal-icon-512.png", "/manifest.webmanifest", "/offline.html"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -35,6 +36,14 @@ self.addEventListener("fetch", (event) => {
             headers: { "Content-Type": "application/json" },
           }),
       ),
+    );
+    return;
+  }
+
+  // gezinme (SPA kökü): önce ağ; çevrimdışı → offline fallback sayfası
+  if (req.mode === "navigate") {
+    event.respondWith(
+      fetch(req).catch(async () => (await caches.match("/offline.html")) || Response.error()),
     );
     return;
   }

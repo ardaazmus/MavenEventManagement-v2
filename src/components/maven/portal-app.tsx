@@ -86,7 +86,7 @@ type GameData = {
   nextLevelMin: number | null;
   pct: number;
   quests: GameQuest[];
-  leaderboard: { rank: number; name: string; points: number; you: boolean }[];
+  leaderboard: { rank: number; name: string | null; points: number; you: boolean }[];
   isAuth: boolean;
 };
 // font ailesi anahtarı → CSS stack — lib/portal-fonts (sistem + Google Fonts) tek kaynak
@@ -137,7 +137,7 @@ type PortalContent = {
   announcements?: Announcement[];
   blocks?: { id: string; type: string; title: string; payloadJson: string | null }[];
   b2b?: B2bMeeting[];
-  myQuestions?: { id: string; body: string; status: string; createdAt: string; programSessionId: string | null }[];
+  myQuestions?: { id: string; body: string; status: string; answerBody?: string | null; answeredAt?: string | null; createdAt: string; programSessionId: string | null }[];
 };
 type MeData = {
   person: { id: string; firstName: string; lastName: string; email: string | null; title: string | null; company: string | null; photoUrl: string | null; linkedin: string | null };
@@ -208,6 +208,41 @@ function loadReminders(slug: string): MarkedReminder[] {
   } catch {
     return [];
   }
+}
+
+// Takvime ekle (ICS) — program oturumunu .ics olarak indirir (RFC 5545, UTC zaman).
+// Bağımlılıksız istemci-indirme: dosya Blob olarak oluşturulup <a download> ile verilir.
+function downloadIcs(s: ProgramItem) {
+  const stamp = (iso: string) => new Date(iso).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const esc = (v: string) => v.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+  const desc = [s.description ?? "", s.speakers.length ? s.speakers.map((x) => x.name).join(", ") : ""]
+    .filter(Boolean)
+    .join("\n");
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Maven//Event Portal//TR",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "BEGIN:VEVENT",
+    `UID:${s.id}@maven-portal`,
+    `DTSTAMP:${stamp(new Date().toISOString())}`,
+    `DTSTART:${stamp(s.startTime)}`,
+    `DTEND:${stamp(s.endTime)}`,
+    `SUMMARY:${esc(s.title)}`,
+  ];
+  if (desc) lines.push(`DESCRIPTION:${esc(desc)}`);
+  if (s.room) lines.push(`LOCATION:${esc(s.room)}`);
+  lines.push("END:VEVENT", "END:VCALENDAR");
+  const blob = new Blob([lines.join("\r\n")], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${s.title.slice(0, 40).replace(/[^\p{L}\p{N} _-]/gu, "").trim() || "session"}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 function saveReminders(slug: string, items: MarkedReminder[]) {
   try {
@@ -1350,15 +1385,21 @@ function ProgramScreen({ content, onBack, sessionKey }: { content: PortalContent
                           </div>
                         )}
                         {s.cmeCredits ? <p className="mt-2 text-[10px] text-teal-700 dark:text-teal-300">+{s.cmeCredits} CME</p> : null}
-                        <Button
-                          size="sm"
-                          variant={reminded ? "secondary" : "outline"}
-                          className="mt-2 h-7 text-[11px]"
-                          onClick={() => toggleReminder(s)}
-                        >
-                          {reminded ? <Icons.BellRing className="size-3" /> : <Icons.Bell className="size-3" />}
-                          {reminded ? t("portalApp.reminder.remove") : t("portalApp.reminder.add")}
-                        </Button>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <Button
+                            size="sm"
+                            variant={reminded ? "secondary" : "outline"}
+                            className="h-7 text-[11px]"
+                            onClick={() => toggleReminder(s)}
+                          >
+                            {reminded ? <Icons.BellRing className="size-3" /> : <Icons.Bell className="size-3" />}
+                            {reminded ? t("portalApp.reminder.remove") : t("portalApp.reminder.add")}
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => downloadIcs(s)}>
+                            <Icons.CalendarPlus className="size-3" />
+                            {t("portalApp.program.ics")}
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1452,8 +1493,11 @@ function SpeakersScreen({ content, onBack }: { content: PortalContent; onBack: (
 // ─── SPONSORLAR (§3.3 nav-3) ────────────────────────────────────────────────
 function SponsorsScreen({ content }: { content: PortalContent }) {
   const { t } = useLang();
+  const [selected, setSelected] = useState<string | null>(null);
   const sponsors = content.sponsors ?? [];
-  const tiers = useMemo(() => {
+  const current = sponsors.find((s) => s.organizationId === selected);
+  // katman gruplama — liste küçük olduğundan memo gerektirmez (erken-return ile uyumlu)
+  const tiers = (() => {
     const map = new Map<string, SponsorItem[]>();
     for (const s of sponsors) {
       const tier = s.tierName ?? t("portalApp.sponsors.untiered");
@@ -1462,7 +1506,42 @@ function SponsorsScreen({ content }: { content: PortalContent }) {
       map.set(tier, arr);
     }
     return [...map.entries()];
-  }, [sponsors, t]);
+  })();
+
+  // detay kartı — sponsor logoları başlıklarla aynı kart deseninde tam içerik gösterir
+  if (current) {
+    return (
+      <ScreenShell title={t("portalApp.sponsors.detail")} onBack={() => setSelected(null)} icon={<Icons.Handshake className="size-4" />}>
+        <div className="rounded-xl border bg-white p-4 text-center shadow-sm dark:bg-card">
+          <div className="mx-auto grid size-20 place-items-center overflow-hidden rounded-2xl border bg-muted">
+            {current.logoUrl ? (
+              <img src={current.logoUrl} alt={current.name} className="size-full object-contain p-1" />
+            ) : (
+              <Icons.Building2 className="size-8 text-muted-foreground" />
+            )}
+          </div>
+          <h2 className="mt-2 text-sm font-bold">{current.name}</h2>
+          <p className="text-xs text-muted-foreground">{[current.city, current.country].filter(Boolean).join(", ") || "—"}</p>
+          {current.tierName && (
+            <span className="mt-2 inline-flex rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
+              {current.tierName}
+            </span>
+          )}
+          {current.description && <p className="mt-3 whitespace-pre-line text-left text-[11px] leading-relaxed text-muted-foreground">{current.description}</p>}
+          {current.website && (
+            <a
+              href={current.website.startsWith("http") ? current.website : `https://${current.website}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center gap-1 rounded-full bg-teal-50 px-3 py-1.5 text-[11px] font-medium text-teal-700 hover:underline dark:bg-teal-900/40 dark:text-teal-200"
+            >
+              <Icons.ExternalLink className="size-3" /> {t("portalApp.sponsors.website")}
+            </a>
+          )}
+        </div>
+      </ScreenShell>
+    );
+  }
 
   return (
     <ScreenShell title={t("portalApp.sponsors.title")} icon={<Icons.Handshake className="size-4" />}>
@@ -1475,7 +1554,11 @@ function SponsorsScreen({ content }: { content: PortalContent }) {
               <h3 className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">{tier}</h3>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {items.map((s) => (
-                  <div key={s.organizationId} className="rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
+                  <button
+                    key={s.organizationId}
+                    onClick={() => setSelected(s.organizationId)}
+                    className="rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 dark:bg-card"
+                  >
                     <div className="flex items-center gap-2.5">
                       <div className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg border bg-muted">
                         {s.logoUrl ? (
@@ -1488,14 +1571,10 @@ function SponsorsScreen({ content }: { content: PortalContent }) {
                         <p className="truncate text-xs font-semibold">{s.name}</p>
                         <p className="truncate text-[10px] text-muted-foreground">{[s.city, s.country].filter(Boolean).join(", ") || "—"}</p>
                       </div>
+                      <Icons.ChevronRight className="size-4 shrink-0 text-muted-foreground" />
                     </div>
                     {s.description && <p className="mt-2 line-clamp-2 text-[11px] text-muted-foreground">{s.description}</p>}
-                    {s.website && (
-                      <a href={s.website.startsWith("http") ? s.website : `https://${s.website}`} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-teal-700 hover:underline dark:text-teal-300">
-                        <Icons.ExternalLink className="size-3" /> {t("portalApp.sponsors.website")}
-                      </a>
-                    )}
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -1629,6 +1708,13 @@ function QaScreen({ content, sessionKey, onSubmitted, onGameRefresh }: { content
                     {t(`portalApp.qa.status.${q.status}`)}
                   </span>
                 </div>
+                {q.status === "ANSWERED" && q.answerBody ? (
+                  <div className="mt-2 rounded-lg border-l-2 border-teal-500 bg-muted/30 px-2 py-1.5">
+                    <p className="text-[10px] font-semibold text-teal-700 dark:text-teal-300">{t("portalApp.qa.answerLabel")}</p>
+                    <p className="mt-0.5 whitespace-pre-line text-[11px] leading-relaxed">{q.answerBody}</p>
+                    {q.answeredAt ? <p className="mt-1 text-[9px] text-muted-foreground">{fmtDateTime(q.answeredAt)}</p> : null}
+                  </div>
+                ) : null}
                 <p className="mt-1 text-[10px] text-muted-foreground">{fmtDateTime(q.createdAt)}</p>
               </div>
             ))}
@@ -2139,7 +2225,7 @@ function GameScreen({
                   {r.rank}
                 </span>
                 <Icons.Crown className={cn("size-3.5 shrink-0", r.rank === 1 ? "text-amber-500" : "opacity-0")} />
-                <span className="min-w-0 flex-1 truncate text-xs">{r.name || t("portalApp.game.guest")}{r.you ? ` · ${t("portalApp.game.you")}` : ""}</span>
+                <span className="min-w-0 flex-1 truncate text-xs">{r.name || (r.you && !data.isAuth ? t("portalApp.game.guest") : t("portalApp.game.anon"))}{r.you ? ` · ${t("portalApp.game.you")}` : ""}</span>
                 <span className="shrink-0 text-xs font-bold tabular-nums">{r.points}</span>
               </div>
             ))

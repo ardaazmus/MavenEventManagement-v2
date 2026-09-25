@@ -10,6 +10,10 @@ import { extractSession, validatePortalSession } from "@/lib/api/portal-access";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_POINTS: Record<string, number> = { FORM_SUBMIT: 20, QA_SUBMIT: 10, B2B_ACCEPT: 15 };
+// Liderlik gizlilik politikası (organizatör seçimi): MASKED="Ayşe Y." | FULL="Ayşe Yılmaz"
+// | HIDDEN=isim yok (istemci "Katılımcı" gösterir). Varsayılan MASKED.
+type Masking = "MASKED" | "FULL" | "HIDDEN";
+const MASKING_VALUES: Masking[] = ["MASKED", "FULL", "HIDDEN"];
 const DEFAULT_LEVELS = [
   { name: "Bronz", min: 0 },
   { name: "Gümüş", min: 50 },
@@ -37,12 +41,14 @@ export async function GET(req: NextRequest) {
     let pointsCfg = { ...DEFAULT_POINTS };
     let qaCap = 5;
     let levels = DEFAULT_LEVELS;
+    let masking: Masking = "MASKED";
     if (config.gameConfigJson) {
       try {
-        const p = JSON.parse(config.gameConfigJson) as { points?: Record<string, number>; qaCap?: number; levels?: { name: string; min: number }[] };
+        const p = JSON.parse(config.gameConfigJson) as { points?: Record<string, number>; qaCap?: number; levels?: { name: string; min: number }[]; masking?: string };
         if (p.points && typeof p.points === "object") pointsCfg = { ...pointsCfg, ...p.points };
         if (Number.isFinite(p.qaCap)) qaCap = Math.max(1, Math.min(50, Math.round(Number(p.qaCap))));
         if (Array.isArray(p.levels) && p.levels.length >= 2) levels = p.levels;
+        if (p.masking && MASKING_VALUES.includes(p.masking as Masking)) masking = p.masking as Masking;
       } catch {
         /* bozuk json → varsayılan */
       }
@@ -120,9 +126,12 @@ export async function GET(req: NextRequest) {
     const personMap = new Map(persons.map((p) => [p.id, p]));
     const leaderboard = top.map((r, i) => {
       const p = r.personId ? personMap.get(r.personId) : null;
-      const name = p
-        ? `${p.firstName} ${(p.lastName || "").slice(0, 1)}${p.lastName ? "." : ""}`.trim()
-        : "";
+      let name: string | null = null;
+      if (p && masking === "FULL") name = `${p.firstName} ${p.lastName}`.trim();
+      if (p && masking === "MASKED") {
+        name = `${p.firstName} ${(p.lastName || "").slice(0, 1)}${p.lastName ? "." : ""}`.trim();
+      }
+      // masking === "HIDDEN" → name null (istemci "Katılımcı" gösterir); GUEST her zaman null
       return { rank: i + 1, name, points: r.points, you: r.sessionId === session.id };
     });
 

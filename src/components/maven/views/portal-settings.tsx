@@ -211,7 +211,7 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
     iconOverrides: Record<string, IconOverride>; iconLayout: Record<string, number>;
     // ── ekran üst-bantları + oyunlaştırma ──
     chrome: { topHeader: Record<string, boolean>; eventBar: Record<string, boolean> };
-    gameEnabled: boolean; gamePoints: Record<string, number>; gameLevels: GameLevel[]; gameQaCap: number;
+    gameEnabled: boolean; gamePoints: Record<string, number>; gameLevels: GameLevel[]; gameQaCap: number; gameMasking: string;
   }>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [magicOpen, setMagicOpen] = useState(false);
@@ -286,6 +286,10 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
         gameQaCap: (() => {
           const g = parseJsonObj<{ qaCap?: number }>(data.config.gameConfigJson, {});
           return Number.isFinite(g.qaCap) ? Math.max(1, Math.min(50, Math.round(Number(g.qaCap)))) : DEFAULT_GAME_CONFIG.qaCap;
+        })(),
+        gameMasking: (() => {
+          const g = parseJsonObj<{ masking?: string }>(data.config.gameConfigJson, {});
+          return ["MASKED", "FULL", "HIDDEN"].includes(g.masking ?? "") ? (g.masking as string) : "MASKED";
         })(),
       });
       setDirty(false);
@@ -371,6 +375,7 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
           points: draft.gamePoints,
           levels: draft.gameLevels,
           qaCap: draft.gameQaCap,
+          masking: draft.gameMasking,
         },
       });
       toast({ title: t("portalSettings.saved"), description: t("portalSettings.savedDesc") });
@@ -805,6 +810,18 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
                     aria-label={t("portalSettings.game.qaCap")}
                   />
                 </div>
+                {/* liderlik ad-masking politikası — gizlilik: maske/tam ad/gizli */}
+                <div className="mt-2 flex items-center gap-2 rounded-lg border border-dashed p-2.5">
+                  <p className="min-w-0 flex-1 text-[11px] text-muted-foreground">{t("portalSettings.game.masking")}</p>
+                  <Select value={draft.gameMasking} onValueChange={(v) => patch("gameMasking", v)}>
+                    <SelectTrigger className="h-8 w-48 shrink-0 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="MASKED">{t("portalSettings.game.maskingMasked")}</SelectItem>
+                      <SelectItem value="FULL">{t("portalSettings.game.maskingFull")}</SelectItem>
+                      <SelectItem value="HIDDEN">{t("portalSettings.game.maskingHidden")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div>
@@ -941,6 +958,9 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
 
       {/* ── §5.4+ Dış Bildirim Kanalları — WhatsApp (şirket mobil telefonu) + SMS ── */}
       <NotificationChannelsCard editionId={editionId} />
+
+      {/* ── §3.2 Q&A Moderasyon — soruları yanıtla/gizle ── */}
+      <QuestionsModerationCard editionId={editionId} />
 
       {/* ── §5.5 İçerik Bağlama ── */}
       <SectionCard title={t("portalSettings.content.title")} desc={t("portalSettings.content.desc")}>
@@ -2003,6 +2023,244 @@ function NotificationChannelsCard({ editionId }: { editionId: string }) {
             <p className="w-full text-[10px] text-muted-foreground">{t("portalSettings.channels.lastTest")}: {cfg.lastTestStatus}</p>
           )}
         </div>
+
+        {/* gönderim raporları — IntegrationLog (channel:*) son kayıtlar */}
+        <ChannelReportsSection editionId={editionId} />
+      </div>
+    </SectionCard>
+  );
+}
+
+// Gönderim raporları bölümü — notify.ts logChannelBatch IntegrationLog kayıtları.
+// Tekil gönderim kanıtı + hata ayıklama; özet alanları PII içermez.
+type ChannelReport = {
+  id: string; method: string | null; endpoint: string | null; ok: boolean;
+  statusCode: number | null; summary: string | null; createdAt: string;
+};
+
+function ChannelReportsSection({ editionId }: { editionId: string }) {
+  const { t } = useLang();
+  const [items, setItems] = useState<ChannelReport[] | null>(null);
+  const [counts, setCounts] = useState<{ total: number; ok: number; fail: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    try {
+      const d = await apiGet<{ items: ChannelReport[]; counts: { total: number; ok: number; fail: number } }>(
+        `/api/notifications/channels/reports?editionId=${encodeURIComponent(editionId)}`,
+      );
+      setItems(d.items);
+      setCounts(d.counts);
+    } catch {
+      // rapor yüklenemese kanal yapılandırması etkilenmez — sessiz
+    } finally {
+      setBusy(false);
+    }
+  }, [editionId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <Icons.ListChecks className="size-4 text-teal-600" />
+          <p className="text-xs font-semibold">{t("portalSettings.channels.reports")}</p>
+        </div>
+        <Button variant="ghost" size="sm" className="h-7" onClick={() => void load()} disabled={busy}>
+          {busy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.RefreshCw className="size-3.5" />} {t("portalSettings.channels.reportsRefresh")}
+        </Button>
+      </div>
+      {counts && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px]">{t("portalSettings.channels.reportsTotal", { count: counts.total })}</span>
+          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">{t("portalSettings.channels.reportsOk", { count: counts.ok })}</span>
+          {counts.fail > 0 && (
+            <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] text-red-700 dark:bg-red-900/30 dark:text-red-300">{t("portalSettings.channels.reportsFail", { count: counts.fail })}</span>
+          )}
+        </div>
+      )}
+      <div className="maven-scroll mt-2 max-h-56 space-y-1.5 overflow-y-auto">
+        {!items || items.length === 0 ? (
+          <p className="py-3 text-center text-[11px] text-muted-foreground">{t("portalSettings.channels.reportsEmpty")}</p>
+        ) : (
+          items.map((r) => (
+            <div key={r.id} className="flex items-start gap-2 rounded-lg border bg-muted/10 px-2 py-1.5">
+              <span className={cn("mt-0.5 grid size-5 shrink-0 place-items-center rounded-full", r.ok ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300")}>
+                {r.ok ? <Icons.Check className="size-3" /> : <Icons.X className="size-3" />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[11px] font-medium">
+                  {r.method === "WHATSAPP" ? t("portalSettings.channels.waTitle") : r.method === "SMS" ? t("portalSettings.channels.smsTitle") : (r.method ?? "—")}
+                  {r.statusCode ? <span className="ml-1 font-normal text-muted-foreground">· {r.statusCode}</span> : null}
+                </p>
+                <p className="truncate text-[10px] text-muted-foreground" title={r.summary ?? ""}>{r.summary ?? "—"}</p>
+              </div>
+              <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground">
+                {new Date(r.createdAt).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Q&A MODERASYON KARTI (§3.2) — soruları yanıtla / gizle / yeniden yayınla ─
+// /api/portal/questions (admin) kullanır; katılımcı yanıtları portal Q&A geçmişinde görür.
+type PortalQuestionRow = {
+  id: string; body: string; status: string; answerBody: string | null; answeredAt: string | null;
+  displayName: string | null; isAnonymous: boolean; createdAt: string;
+};
+const QUESTION_FILTERS = ["ALL", "PENDING", "ANSWERED", "HIDDEN"] as const;
+
+function QuestionsModerationCard({ editionId }: { editionId: string }) {
+  const { t } = useLang();
+  const { toast } = useToast();
+  const [items, setItems] = useState<PortalQuestionRow[] | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [answerDraft, setAnswerDraft] = useState<Record<string, string>>({});
+  const [filter, setFilter] = useState<(typeof QUESTION_FILTERS)[number]>("ALL");
+
+  const load = useCallback(async () => {
+    try {
+      const d = await apiGet<{ items: PortalQuestionRow[] }>(
+        `/api/portal/questions?editionId=${encodeURIComponent(editionId)}`,
+      );
+      setItems(d.items);
+    } catch (e) {
+      toast({ title: t("portalSettings.questions.loadFail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    }
+  }, [editionId, t, toast]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const moderate = async (id: string, body: { status?: string; answerBody?: string | null }) => {
+    setBusyId(id);
+    try {
+      await apiSend("/api/portal/questions", "PATCH", { id, ...body });
+      setAnswerDraft((d) => ({ ...d, [id]: "" }));
+      await load();
+      toast({ title: t("portalSettings.questions.saved") });
+    } catch (e) {
+      toast({ title: t("portalSettings.questions.fail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const all = items ?? [];
+  const shown = all.filter((q) => filter === "ALL" || q.status === filter);
+  const pendingCount = all.filter((q) => q.status === "PENDING").length;
+
+  return (
+    <SectionCard title={t("portalSettings.questions.title")} desc={t("portalSettings.questions.desc")}>
+      <div className="space-y-3">
+        {/* durum filtreleri */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {QUESTION_FILTERS.map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-[11px] font-medium transition",
+                filter === f ? "bg-teal-600 text-white" : "bg-muted text-muted-foreground hover:bg-muted/70",
+              )}
+            >
+              {t(`portalSettings.questions.filter_${f}`)}
+              {f === "PENDING" && pendingCount > 0 ? ` · ${pendingCount}` : ""}
+            </button>
+          ))}
+        </div>
+
+        {!items ? (
+          <Loading rows={3} />
+        ) : shown.length === 0 ? (
+          <p className="py-4 text-center text-[11px] text-muted-foreground">{t("portalSettings.questions.empty")}</p>
+        ) : (
+          <div className="maven-scroll max-h-96 space-y-2 overflow-y-auto">
+            {shown.map((q) => (
+              <div key={q.id} className="rounded-lg border p-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] leading-snug">{q.body}</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      {q.isAnonymous || !q.displayName ? t("portalSettings.questions.authorAnon") : q.displayName}
+                      {" · "}
+                      {new Date(q.createdAt).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+                      q.status === "ANSWERED"
+                        ? "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200"
+                        : q.status === "HIDDEN"
+                          ? "bg-muted text-muted-foreground"
+                          : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+                    )}
+                  >
+                    {t(`portalSettings.questions.status_${q.status}`)}
+                  </span>
+                </div>
+
+                {q.status === "ANSWERED" && q.answerBody ? (
+                  <div className="mt-2 rounded-lg border-l-2 border-teal-500 bg-muted/30 px-2 py-1.5">
+                    <p className="whitespace-pre-line text-[11px] leading-relaxed">{q.answerBody}</p>
+                    {q.answeredAt ? (
+                      <p className="mt-1 text-[9px] text-muted-foreground">
+                        {new Date(q.answeredAt).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* aksiyonlar: yanıtla (PENDING/ANSWERED) · gizle/yayına al */}
+                <div className="mt-2 space-y-1.5">
+                  {q.status !== "HIDDEN" ? (
+                    <div className="flex items-end gap-1.5">
+                      <Textarea
+                        value={answerDraft[q.id] ?? q.answerBody ?? ""}
+                        onChange={(e) => setAnswerDraft((d) => ({ ...d, [q.id]: e.target.value }))}
+                        placeholder={t("portalSettings.questions.answerPh")}
+                        rows={2}
+                        maxLength={1000}
+                        className="min-h-0 flex-1 text-[11px]"
+                        aria-label={t("portalSettings.questions.answerPh")}
+                      />
+                      <Button
+                        size="sm"
+                        className="h-7 shrink-0 text-[11px]"
+                        disabled={busyId === q.id || !(answerDraft[q.id] ?? q.answerBody ?? "").trim()}
+                        onClick={() => void moderate(q.id, { answerBody: (answerDraft[q.id] ?? "").trim() })}
+                      >
+                        {busyId === q.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Reply className="size-3" />}
+                        {t("portalSettings.questions.reply")}
+                      </Button>
+                    </div>
+                  ) : null}
+                  <div className="flex gap-1.5">
+                    {q.status !== "HIDDEN" ? (
+                      <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground" disabled={busyId === q.id} onClick={() => void moderate(q.id, { status: "HIDDEN" })}>
+                        <Icons.EyeOff className="size-3" /> {t("portalSettings.questions.hide")}
+                      </Button>
+                    ) : (
+                      <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" disabled={busyId === q.id} onClick={() => void moderate(q.id, { status: "PENDING" })}>
+                        <Icons.Eye className="size-3" /> {t("portalSettings.questions.show")}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </SectionCard>
   );

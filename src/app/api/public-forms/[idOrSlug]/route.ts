@@ -39,6 +39,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       logicRules: f.logicRules,
       logicMode: f.logicMode,
       logicAction: f.logicAction,
+      gotoStep: f.gotoStep, // FORM-EXP3: adım dallanma hedefi (yalnız sunum verisi)
       conditionField: f.conditionField,
       conditionValue: f.conditionValue,
       points: f.points,

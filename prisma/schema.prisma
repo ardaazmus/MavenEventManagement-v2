@@ -558,6 +558,8 @@ model FormDefinition {
   // — FORM-EXP2: çok-adımlı form + gönderim bildirimi —
   enableSteps     Boolean @default(false) // alanlar adımlara (sayfalara) bölünür; dış sayfada adım adım doldurma
   notifyEmail     String? // yeni gönderimde bildirim e-postası (boşsa bildirim yok; bastırma/kota denetimli)
+  // — FORM-EXP3: yanıtlayana onay e-postası —
+  confirmEmail    Boolean @default(false) // gönderim başarılıysa yanıtlayana onay e-postası (kota/bastırma denetimli)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -590,7 +592,8 @@ model FormField {
   // — F-EXP: mantık kapıları + genişletilmiş bileşenler —
   logicRules      String? // JSON: [{"field":<fieldId>,"op":EQ|NEQ|CONTAINS|GT|LT|EMPTY|NOT_EMPTY,"value":string}] — çoklu koşul
   logicMode       String? // ANY|ALL — koşulların birleşim biçimi (OR/AND kapısı)
-  logicAction     String? // SHOW|HIDE — koşul sağlanınca alan gösterilir/gizlenir
+  logicAction     String? // SHOW|HIDE|GOTO — koşul sağlanınca göster/gizle/adıma atla
+  gotoStep        Int?    // logicAction=GOTO: koşul sağlanınca gidilecek adım (2..20)
   points          Int?    // QA_QUIZ ağırlık puanı (varsayılan 1; puanlama ağırlıklı)
   columns         String? // MATRIX: satır-bazlı kolonlar (options=satırlar)
 

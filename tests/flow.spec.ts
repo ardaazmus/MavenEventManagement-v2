@@ -5,6 +5,26 @@ import { PrismaClient } from "@prisma/client";
 
 const db = new PrismaClient();
 
+// FORM-EXP3: seed tabanındaki kayıt formu captchaEnabled=true (varsayılan) — gönderi
+// HMAC challenge ile açılır (corrections.spec'teki solveChallenge ile AYRI sözleşme).
+// Kopya helper (flow bağımsızlığı): soru metninden cevap hesaplanır.
+async function solveChallenge(
+  request: import("@playwright/test").APIRequestContext,
+  formId: string,
+): Promise<{ challengeToken: string; challengeAnswer: string } | Record<string, never>> {
+  const pub = await request.get(`/api/public-forms/${formId}`);
+  if (!pub.ok()) return {};
+  const data = (await pub.json()) as { challenge?: { question: string; token: string } | null };
+  const ch = data.challenge;
+  if (!ch) return {};
+  const m = ch.question.match(/(\d+)\s*([+−-])\s*(\d+)/);
+  if (!m) return {};
+  const a = Number(m[1]);
+  const b = Number(m[3]);
+  const answer = m[2] === "+" ? a + b : a - b;
+  return { challengeToken: ch.token, challengeAnswer: String(answer) };
+}
+
 test.describe.serial("E2E golden flow — register→pay→badge→scan", () => {
   let editionId = "";
   let personId = "";
@@ -46,6 +66,7 @@ test.describe.serial("E2E golden flow — register→pay→badge→scan", () => 
           answers,
           elapsedSeconds: 30,
           commsOptIn: true, // TASK-B 14 fonksiyonel opt-in
+          ...(await solveChallenge(request, form.id)), // FORM-EXP3: captcha-on taban ile çalışır
         },
       });
       expect([200, 201]).toContain(res.status());

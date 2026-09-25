@@ -6,7 +6,7 @@
 // sonuç ekranı · KVKK rıza kutusu. Embed modunda shell'siz, iframe-içi render eder.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { apiSend } from "@/lib/client";
-import { isFieldVisible } from "@/lib/form-logic";
+import { isFieldVisible, computeNextStep } from "@/lib/form-logic";
 import { useLang, t } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,7 @@ interface PublicField {
   options?: string | null; columns?: string | null;
   placeholder?: string | null; helpText?: string | null;
   logicRules?: string | null; logicMode?: string | null; logicAction?: string | null;
+  gotoStep?: number | null; // FORM-EXP3: adım dallanma hedefi (logicAction=GOTO)
   conditionField?: string | null; conditionValue?: string | null;
   points?: number | null; mobileInteractive?: boolean;
   width?: number | null; // STUDIO-DND: tasarımcıdaki elle genişlik %
@@ -203,6 +204,7 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
   const [results, setResults] = useState<PublicResults | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stepNo, setStepNo] = useState(1); // FORM-EXP2: geçerli adım (enableSteps açıkken)
+  const stepHistoryRef = useRef<number[]>([]); // FORM-EXP3: dallanma yolu — Geri, gerçek geldiği adıma döner
   const startRef = useRef<number>(Date.now());
 
   const load = async () => {
@@ -215,6 +217,7 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
       setForm(data);
       setChallenge(data.challenge ?? null);
       setStepNo(1); // FORM-EXP2: form her yüklendiğinde ilk adımdan başla
+      stepHistoryRef.current = []; // FORM-EXP3: yol geçmişi sıfırlanır
       startRef.current = Date.now();
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : t("forms.publicNotFound"));
@@ -325,6 +328,7 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
     setCaptchaAnswer("");
     setHoneypot("");
     setStepNo(1); // FORM-EXP2: tekrar doldurmada ilk adıma dön
+    stepHistoryRef.current = []; // FORM-EXP3
     startRef.current = Date.now();
     if (form?.captchaEnabled) load(); // tek-kullanım challenge tazele
   };
@@ -447,7 +451,17 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
       setError(t("forms.stepMissing", { fields: missing.map((f) => f.label).join(", ") }));
       return;
     }
-    setStepNo((s) => Math.min(maxStep, s + 1));
+    // FORM-EXP3: adım dallanma — mantık kapısı GOTO sağlanırsa hedef adıma atla,
+    // aksi halde doğal akış. Geri, gerçek geldiği adıma döner (yol geçmişi).
+    const next = stepsMode ? computeNextStep(form.fields, ans, stepNo, maxStep) : stepNo + 1;
+    if (next === stepNo) return;
+    stepHistoryRef.current.push(stepNo);
+    setStepNo(Math.min(maxStep, Math.max(1, next)));
+  };
+  const goBack = () => {
+    setError(null);
+    const prev = stepHistoryRef.current.pop();
+    setStepNo((s) => Math.max(1, prev ?? s - 1)); // FORM-EXP3: geçmiş boşsa doğal geri
   };
 
   return wrap(
@@ -529,7 +543,7 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
           {/* FORM-EXP2: adım gezinmesi — Geri/İleri (yalnız adımlı mod, son adım hariç) */}
           {stepsMode && !isLast && (
             <div className="flex items-center gap-2">
-              <Button variant="outline" className="flex-1" disabled={stepNo <= 1 || busy} onClick={() => { setError(null); setStepNo((s) => Math.max(1, s - 1)); }}>
+              <Button variant="outline" className="flex-1" disabled={stepNo <= 1 || busy} onClick={goBack}>
                 <ChevronLeft className="size-4" /> {t("forms.stepBack")}
               </Button>
               <Button className="flex-1" onClick={goNext}>
@@ -601,6 +615,12 @@ export function PublicFormPage({ idOrSlug, embed = false }: { idOrSlug: string; 
 
           {isLast && (
           <>
+          {/* FORM-EXP3: dallanmada son adıma atlanabilir — Geri burada da gerekli */}
+          {stepsMode && stepNo > 1 && (
+            <Button variant="outline" className="w-full" disabled={busy} onClick={goBack}>
+              <ChevronLeft className="size-4" /> {t("forms.stepBack")}
+            </Button>
+          )}
           <Button className="w-full" disabled={busy} onClick={submit}>
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
             {isReg ? t("forms.publicSubmitReg") : t("forms.publicSubmit")}

@@ -37,6 +37,7 @@ interface FormFieldDef {
   sensitivity: string; mobileInteractive: boolean; conditionField?: string | null; conditionValue?: string | null;
   correctAnswer?: string | null;
   logicRules?: string | null; logicMode?: string | null; logicAction?: string | null;
+  gotoStep?: number | null; // FORM-EXP3: dallanma hedef adımı (logicAction=GOTO)
   points?: number | null; columns?: string | null;
   width?: number | null; // STUDIO-DND: tuvaldeki genişlik %
   step?: number | null; // FORM-EXP2: adım/sayfa numarası (enableSteps açıkken)
@@ -48,6 +49,7 @@ interface FormDef {
   blockedDomains?: string | null; enableOnlinePayment: boolean; defaultCategoryId?: string | null;
   captchaEnabled: boolean; hasPublicResults: boolean; slug?: string | null;
   enableSteps?: boolean; notifyEmail?: string | null; // FORM-EXP2
+  confirmEmail?: boolean; // FORM-EXP3: yanıtlayana onay e-postası
   fields: FormFieldDef[]; _count?: { submissions: number };
 }
 interface SubmissionRow {
@@ -190,6 +192,7 @@ export function FormCenterView() {
     enableOnlinePayment: false, defaultCategoryId: "AUTO",
     captchaEnabled: true, hasPublicResults: false, slug: "",
     enableSteps: false, notifyEmail: "", // FORM-EXP2
+    confirmEmail: false, // FORM-EXP3
   });
 
   // Yanıtlar sekmesi filtreleri + detay dialogu
@@ -289,6 +292,7 @@ export function FormCenterView() {
       slug: f.slug ?? "",
       enableSteps: f.enableSteps ?? false,
       notifyEmail: f.notifyEmail ?? "",
+      confirmEmail: f.confirmEmail ?? false,
     });
   }, [selectedFormId, formList]);
 
@@ -381,6 +385,7 @@ export function FormCenterView() {
         defaultCategoryId: settings.defaultCategoryId === "AUTO" ? null : settings.defaultCategoryId,
         enableSteps: settings.enableSteps, // FORM-EXP2
         notifyEmail: settings.notifyEmail, // FORM-EXP2 — "" → null (sanitize)
+        confirmEmail: settings.confirmEmail, // FORM-EXP3
       });
       toast({ title: t("forms.toastSettingsSaved"), description: selectedForm.name });
       reload();
@@ -451,6 +456,9 @@ export function FormCenterView() {
         logicRules: draft.logicRules.length > 0 ? JSON.stringify(draft.logicRules) : null,
         logicMode: draft.logicRules.length > 0 ? draft.logicMode : null,
         logicAction: draft.logicRules.length > 0 ? draft.logicAction : null,
+        // FORM-EXP3: dallanma hedefi — yalnız GOTO'da anlamlı; geçersizse null (sunucu fail-safe)
+        gotoStep: draft.logicAction === "GOTO" && numOr(draft.gotoStep, 0) >= 1
+          ? Math.min(20, Math.max(2, Math.round(numOr(draft.gotoStep, 0)))) : null,
         // STUDIO-DND: elle ayarlanan genişlik (25..100 aralığına sabitlenir)
         width: draft.type === "SECTION" ? 100 : Math.min(100, Math.max(25, numOr(draft.width, 100))),
         // FORM-EXP2: adım/sayfa (1..20; enableSteps kapalıyken sunucu yoksayar)
@@ -597,6 +605,7 @@ export function FormCenterView() {
         logicRules: f.logicRules ?? null,
         logicMode: f.logicMode ?? null,
         logicAction: f.logicAction ?? null,
+        gotoStep: f.gotoStep ?? null, // FORM-EXP3
         order: selectedForm.fields.length + 1,
       });
       const ids = [...selectedForm.fields].sort((a, b) => a.order - b.order).map((x) => x.id);
@@ -808,6 +817,34 @@ export function FormCenterView() {
       bump();
     } catch (e) {
       toast({ title: t("forms.toastActionError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // FORM-EXP3: gönderileri CSV dışa aktar — BOM+; ayraçlı (Excel TR dostu), alan sütunları
+  // tasarımcı sırasıyla; istemci blob indirmesi (aynı-origin oturumla, API 500'ü yüzeyler)
+  const exportSubsCsv = async () => {
+    if (!selectedFormId) return;
+    setBusy("export-csv");
+    try {
+      const res = await fetch(`/api/form-submissions/export?formId=${encodeURIComponent(selectedFormId)}`);
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? t("forms.exportError"));
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(selectedForm?.slug || selectedFormId).slice(0, 60)}-responses.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: t("forms.exportOk"), description: selectedForm?.name });
+    } catch (e) {
+      toast({ title: t("forms.exportError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -1294,6 +1331,21 @@ export function FormCenterView() {
                           />
                           <p className="text-[11px] text-muted-foreground">{t("forms.notifyEmailDesc")}</p>
                         </div>
+                        {/* FORM-EXP3: yanıtlayana onay e-postası */}
+                        <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 p-2.5">
+                          <div className="min-w-0">
+                            <p className="flex items-center gap-1.5 text-sm font-medium">
+                              <Icons.MailCheck className="size-4 text-teal-600" /> {t("forms.confirmEmailTitle")}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{t("forms.confirmEmailDesc")}</p>
+                          </div>
+                          <Switch
+                            checked={settings.confirmEmail}
+                            disabled={busy !== null}
+                            aria-label={t("forms.confirmEmailTitle")}
+                            onCheckedChange={(v) => setSettings({ ...settings, confirmEmail: v })}
+                          />
+                        </div>
                         <Button size="sm" disabled={busy !== null} onClick={saveFormSettings}>
                           <Icons.Check className="size-4" /> {t("forms.save")}
                         </Button>
@@ -1455,7 +1507,20 @@ export function FormCenterView() {
             </div>
           </div>
 
-          <SectionCard title={t("forms.submissionsTitle")} desc={t("forms.submissionsDesc")}>
+          <SectionCard
+            title={t("forms.submissionsTitle")}
+            desc={t("forms.submissionsDesc")}
+            action={selectedFormId ? (
+              <Button
+                size="sm" variant="outline" className="shrink-0"
+                disabled={busy !== null || subLoading}
+                onClick={exportSubsCsv}
+              >
+                {busy === "export-csv" ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Download className="size-3.5" />}
+                <span className="hidden sm:inline">{t("forms.exportCsv")}</span>
+              </Button>
+            ) : undefined}
+          >
             {!selectedFormId ? (
               <EmptyState title={t("forms.selectForm")} desc={t("forms.selectFormEmptyDesc")} />
             ) : subLoading ? (

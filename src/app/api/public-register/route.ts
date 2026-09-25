@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { evaluateSpam, registerSubmissionHits } from "@/lib/spam-guard";
 import { verifyChallenge } from "@/lib/form-challenge";
-import { filterVisibleAnswers, isFieldVisible } from "@/lib/form-logic";
+import { filterVisibleAnswers, isFieldVisible, computeVisitedSteps } from "@/lib/form-logic";
 import { createRegistrationFromSubmission } from "@/lib/api/registration-chain";
 import { ActivityType } from "@/lib/api/activity";
 import { enforceRateLimit, enforceRateLimitById, clientIp } from "@/lib/rate-limit";
@@ -75,10 +75,16 @@ export async function POST(req: NextRequest) {
 
     // Zorunlu alan kontrolü (ALWAYS required, yalnız MANTIK KAPISINDAN GÖRÜNÜR alanlar —
     // koşulla gizlenen zorunlu alan hata üretmez; görünür koşullu zorunlu alan üretilir)
+    // FORM-EXP3: adım dallanması — ziyaret-edilecek adımlar CEVAPLARDAN türetilir
+    // (computeVisitedSteps; istemciden gelen yol verisi yok). Dallanıp atlanan adımın
+    // zorunlu alanları istenmez; dallanma yoksa yol [1..maxStep] — davranış korunur.
     const labelIndex = new Map(form.fields.map((f) => [f.label, f.id]));
+    const maxStepF = Math.max(1, ...form.fields.map((f) => (form.enableSteps ? f.step ?? 1 : 1)));
+    const visitedSteps = new Set(form.enableSteps ? computeVisitedSteps(form.fields, answers, maxStepF) : [1]);
     const missing = form.fields.filter(
       (f) =>
         f.required === "ALWAYS" && f.type !== "SECTION" &&
+        visitedSteps.has(form.enableSteps ? f.step ?? 1 : 1) &&
         isFieldVisible(f, answers, labelIndex) &&
         !String(answers[f.id] ?? "").trim()
     );
@@ -223,6 +229,29 @@ export async function POST(req: NextRequest) {
           ].join("\n"),
         }).then((r) => {
           if (!r.ok) console.warn("POST /api/public-register [notify]", r.error ?? "bilinmiyor"); // PII yok
+        }).catch(() => undefined);
+      }
+
+      // FORM-EXP3: yanıtlayana onay e-postası — form ayarında confirmEmail açıksa
+      // gönderenin KENDİ adresine paylaşımlı motorla ateşle-unut onay (aynı kota/
+      // bastırma/soğuma denetimleri; hata gönderi akışını asla etkilemez, PII'siz log).
+      if (form.confirmEmail && EMAIL_RE.test(email)) {
+        const confNo = (chain?.registration as { confirmationNo?: string } | undefined)?.confirmationNo;
+        void dispatchMail({
+          recipients: [email],
+          subject: `Gönderiminiz alındı: ${form.name}`,
+          text: [
+            `Merhaba ${submission.respondentName},`,
+            `"${form.name}" formundaki gönderiminiz başarıyla alındı.`,
+            `Gönderi no: ${submission.id}`,
+            `Durum: ${status === "APPROVED" ? "Onaylandı" : "İncelemede"}`,
+            ...(confNo ? [`Teyit no: ${confNo}`] : []),
+            ...(quizScore != null ? [`Quiz puanınız: ${quizScore} (${quizCorrect}/${quizTotal})`] : []),
+            "",
+            "Teşekkür ederiz.",
+          ].join("\n"),
+        }).then((r) => {
+          if (!r.ok) console.warn("POST /api/public-register [confirm]", r.error ?? "bilinmiyor"); // PII yok
         }).catch(() => undefined);
       }
     }

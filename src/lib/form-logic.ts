@@ -16,10 +16,20 @@ export interface LogicCarrier {
   // F-EXP kuralları
   logicRules?: string | null; // JSON LogicRule[]
   logicMode?: string | null; // ANY|ALL
-  logicAction?: string | null; // SHOW|HIDE
+  logicAction?: string | null; // SHOW|HIDE|GOTO
   // eski (legacy) tek-koşul alanları — geriye uyumluluk
   conditionField?: string | null; // kaynak alanın ETİKETİ (eski davranış)
   conditionValue?: string | null;
+}
+
+// FORM-EXP3 — adım dallanma (step branching): GOTO kapısı taşıyıcısı.
+// Sunucu ve istemci AYNI yürüyüşü yapar: ziyaret edilen adımlar cevaplardan
+// türetilir (istemci değerini ASLA güvenmez) → bot sahte "visitedSteps"
+// göndererek zorunlu alanları atlayamaz.
+export interface BranchCarrier extends LogicCarrier {
+  id?: string;
+  step?: number | null; // alanın adımı (1..20)
+  gotoStep?: number | null; // logicAction=GOTO hedef adımı
 }
 
 /** logicRules JSON'unu güvenle çöz — bozuk/eksik → boş dizi (fail-open gösterim). */
@@ -89,7 +99,10 @@ export function isFieldVisible(
   answers: Record<string, string>,
   labelIndex?: Map<string, string>,
 ): boolean {
+  // FORM-EXP3: GOTO (adım dallanma) alanı bir YÖNLENDİRME sorusudur — kendi koşulu
+  // görünürlüğünü DOLDURMAZ (aksi halde soru, cevaplanana dek ekranda görünmezdi).
   const rules = parseLogicRules(f.logicRules);
+  if (f.logicAction === "GOTO") return true;
   if (rules.length > 0) {
     const mode = f.logicMode === "ALL" ? "ALL" : "ANY";
     const satisfied = mode === "ALL" ? rules.every((r) => evalRule(r, answers)) : rules.some((r) => evalRule(r, answers));
@@ -123,4 +136,59 @@ export function filterVisibleAnswers<T extends { id: string } & LogicCarrier & {
     if (isFieldVisible(f, answers, labelIndex)) out[f.id] = answers[f.id];
   }
   return out;
+}
+
+// ─── FORM-EXP3: adım dallanma (GOTO) ────────────────────────────────────────
+
+/**
+ * Geçerli adımın GOTO kapılarını değerlendirip SONRAKİ adımı döndürür.
+ * fields alan-sıralı (order asc) gelir; aynı adımda birden çok GOTO sağlanırsa
+ * ALAN SIRASINDA ilk sağlanan kazanır (deterministik). Hedef geçersizse
+ * (mevcut adımla aynı / sınırlar dışı) doğal akış (currentStep+1) kullanılır.
+ * GOTO kapısı olmayan akışlarda sonuç daima currentStep+1 — mevcut davranış korunur.
+ */
+export function computeNextStep<T extends BranchCarrier & { type?: string }>(
+  fields: T[],
+  answers: Record<string, string>,
+  currentStep: number,
+  maxStep: number,
+): number {
+  const natural = Math.min(maxStep, currentStep + 1);
+  for (const f of fields) {
+    if (f.type === "SECTION") continue;
+    if ((f.step ?? 1) !== currentStep) continue;
+    if (f.logicAction !== "GOTO") continue;
+    const rules = parseLogicRules(f.logicRules);
+    if (rules.length === 0) continue;
+    const mode = f.logicMode === "ALL" ? "ALL" : "ANY";
+    const satisfied = mode === "ALL" ? rules.every((r) => evalRule(r, answers)) : rules.some((r) => evalRule(r, answers));
+    if (!satisfied) continue;
+    const target = Math.round(f.gotoStep ?? 0);
+    if (Number.isFinite(target) && target >= 1 && target <= maxStep && target !== currentStep) return target;
+    return natural; // bozuk hedef → doğal akış (fail-safe)
+  }
+  return natural;
+}
+
+/**
+ * Cevaplardan ziyaret-edilecek adım yolunu türetir (1'den maxStep'e GOTO yürüyüşü).
+ * Sunucu zorunlu-alan denetimini BU yol üzerinden yapar:
+ * dallanmayla atlanan adımın zorunlu alanları istenmez (Google Forms davranışı),
+ * istemcinin sahte "visitedSteps"ine ise hiç bakılmaz. Döngü koruması:
+ * aynı adıma ikinci giriş yürüyüşü keser (sonuç yine deterministik).
+ */
+export function computeVisitedSteps<T extends BranchCarrier & { type?: string }>(
+  fields: T[],
+  answers: Record<string, string>,
+  maxStep: number,
+): number[] {
+  const visited: number[] = [];
+  const seen = new Set<number>();
+  let cur = 1;
+  while (cur >= 1 && cur <= maxStep && !seen.has(cur) && visited.length <= maxStep + 1) {
+    seen.add(cur);
+    visited.push(cur);
+    cur = computeNextStep(fields, answers, cur, maxStep);
+  }
+  return visited.length > 0 ? visited : [1];
 }

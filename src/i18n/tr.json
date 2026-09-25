@@ -1942,7 +1942,23 @@
         "o3": "Organizasyon",
         "o4": "Mekân"
       }
-    }
+    },
+    "logicGoto": "Adıma git",
+    "logicGotoHint": "Koşul sağlanırsa form bu adıma atlar; atlanan adımın zorunlu alanları istenmez",
+    "logicGotoTarget": "Hedef adım",
+    "shareEmail": "E-posta ile paylaş",
+    "shareLinkedin": "LinkedIn'de paylaş",
+    "shareNative": "Cihazla paylaş",
+    "sharePlatforms": "Platformlarda paylaş",
+    "sharePlatformsNote": "Bağlantı seçtiğin platformda açılır — formu doldurabilmeleri için yayında ve Herkese Açık olmalı",
+    "shareTelegram": "Telegram'da paylaş",
+    "shareWhatsapp": "WhatsApp'ta paylaş",
+    "shareX": "X'te paylaş",
+    "confirmEmailTitle": "Yanıtlayana onay e-postası",
+    "confirmEmailDesc": "Gönderim alındığında formu doldurana otomatik onay e-postası gider (kota + bastırma listesi denetimli)",
+    "exportCsv": "CSV indir",
+    "exportOk": "CSV dışa aktarıldı",
+    "exportError": "CSV dışa aktarılamadı"
   },
   "archive": {
     "title": "Arşiv",

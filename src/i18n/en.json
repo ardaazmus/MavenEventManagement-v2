@@ -1942,7 +1942,23 @@
         "o3": "Organization",
         "o4": "Venue"
       }
-    }
+    },
+    "logicGoto": "Go to step",
+    "logicGotoHint": "If the condition is met, the form jumps to this step; required fields on skipped steps are not requested",
+    "logicGotoTarget": "Target step",
+    "shareEmail": "Share via email",
+    "shareLinkedin": "Share on LinkedIn",
+    "shareNative": "Share via device",
+    "sharePlatforms": "Share on platforms",
+    "sharePlatformsNote": "The link opens on the chosen platform — the form must be published and public for others to fill it",
+    "shareTelegram": "Share on Telegram",
+    "shareWhatsapp": "Share on WhatsApp",
+    "shareX": "Share on X",
+    "confirmEmailTitle": "Respondent confirmation email",
+    "confirmEmailDesc": "When a submission arrives, an automatic confirmation email is sent to the respondent (quota + suppression-list guarded)",
+    "exportCsv": "Download CSV",
+    "exportOk": "CSV exported",
+    "exportError": "CSV export failed"
   },
   "archive": {
     "title": "Archive",

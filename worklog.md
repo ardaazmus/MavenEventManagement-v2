@@ -1856,3 +1856,57 @@ Stage Summary:
 - Kalan riskler: (1) dev server OOM dalgalanması — health-poll + restart protokolü gerekli; (2) SIRALI Playwright zorunlu (paralel dosyalar DB yarışı); (3) şablon alan etiketleri uygulama anındaki dile göre yazılır (sonradan dil değişimi formları çevirmez — içeriğe gömülü veri); (4) çok-adımlı + mantık kapısı birlikte kullanımında adım atlanabilir alan boş kalırsa sunucu yine ALWAYS-required'ı denetler (istemci adım-içi denetimi UX için).
 - Sonraki adım önerileri: adımlar arası dallanma (step branching), yanıtlayana onay e-postası, form yanıtları CSV/Excel dışa aktarım, şablonu düzenle/kaydet (kullanıcı şablonu), PHASE 6/7 maddeleri.
 - Cron: 15 dk webDevReview job 413251 yeniden kuruldu (eski 410685 exec-limit nedeniyle donmuştu).
+
+---
+Task ID: FORM-EXP3 (kalan işler: adım dallanma + yanıtlayana onay + CSV dışa aktarım + platform paylaşımı)
+Agent: Z.ai Code (ana ajan)
+Task: Form sisteminin kalan genişletmesi — adımlar arası dallanma (mantık kapısı GOTO), yanıtlayana onay e-postası, form yanıtları CSV dışa aktarımı, farklı platformlarda paylaşım düğmeleri; kapılar yeşil kalacak.
+
+Work Log:
+
+## SCHEMA ✓
+- FormDefinition.confirmEmail Boolean @default(false) (yanıtlayana onay e-postası), FormField.gotoStep Int? (logicAction=GOTO hedef adımı 2..20) — db:push ✓ + dev server RESTART zorunlu (Prisma client cache dersi).
+
+## ADIM DALLANMA (GOTO) ✓
+- src/lib/form-logic.ts: computeNextStep(fields, answers, currentStep, maxStep) — aynı adımda koşulu sağlayan İLK GOTO alanı (alan sırası deterministik) hedefe atlar; hedef geçersizse doğal akış (fail-safe). computeVisitedSteps — 1'den yürüyüş, seen-set + maxStep+1 adım tavanı (döngü koruması).
+- GÜVEN MODELİ: sunucu ziyaret-edilecek adımları CEVAPLARDAN türetir (computeVisitedSteps; istemciden "visitedSteps" ALINMAZ) → bot sahte yol verisiyle zorunlu alanları atlayamaz. public-register: required denetimi visitedSteps ∩ görünür ∩ ALWAYS; enableSteps=false'ta davranış değişmez.
+- isFieldVisible DÜZELTMESİ (tarayıcı kanıtında yakalandı): logicAction=GOTO alanı YÖNLENDİRME sorusudur — kendi koşulu görünürlüğünü dolduramazdı (soru cevaplanana dek görünmezdi!) → GOTO erken-dönüş true.
+- public-form.tsx: İleri → adım-içi zorunlu denetim → computeNextStep; Geri → stepHistoryRef yolu (dallanmadan Geri gerçek geldiği adıma döner; boşsa doğal geri). SON ADIMDA artık Geri de var (dallanıp sona atlayan kullanıcı kilitlenmez).
+- Stüdyo (form-studio.tsx): FieldDraft.gotoStep; koşul-eylem seçene "Adıma git" (yalnız enableSteps açıkken görünür); seçilince Hedef adım seçici (alanın adımından ileri 2..20, ön-seçili bir sonraki adım) + ipucu. form-center: saveField PUT gotoStep (yalnız GOTO'da, geçersizse null), duplicateField gotoStep'i taşır, FormFieldDef/FormDef tipleri genişledi.
+
+## YANITLAYANA ONAY E-POSTASI ✓
+- public-register: !isSpam && form.confirmEmail && EMAIL_RE → dispatchMail ATEŞLE-UNUT alıcı = gönderenin kendi adresi; metin: form adı, gönderi no, durum (Onaylandı/İncelemede), teyit no (kayıt zinciri varsa), quiz puanı (varsa). Kota/bastırma/soğuma paylaşımlı motorda; hata akışı asla etkilemez (PII'siz warn log).
+- Stüdyo Ayarlar kartına "Yanıtlayana onay e-postası" anahtarı (MailCheck ikonu) — saveFormSettings PUT confirmEmail.
+- KANIT: confirmEmail=true formda gönderim → IntegrationLog method=MAIL statusCode=250 ok=true "Gönderiminiz alındı: EXP3 Branch Test" recipients=[gönderen].
+
+## CSV DIŞA AKTARIM ✓
+- YENİ src/app/api/form-submissions/export/route.ts (statik rota [id] önceliği kazanır): GET ?formId= → form-stats ile AYNI G0-b deseni (resolveContext + edisyon-kiracı 404). CSV: BOM + ; ayraç + CRLF (Excel TR dostu), hücreler kaçışlı tırnak; sabit 14 özet sütunu (Gönderi No/Tarih/Durum TR/Ad/E-posta/Kuruluş/Telefon/Kaynak/Spam/Quiz 3/Süre/Teyit No) + tasarımcı sırasıyla alan başına sütun; MULTI/CHECKBOX/RANKING/MATRIX cevapları JSON diziden " | " birleşim; 5000 satır tavanı (OOM) + sınır notu satırı; Content-Disposition form-<slug|id>-responses.csv.
+- UI: Gönderiler SectionCard action'a "CSV indir" düğmesi (mobilde ikon; busy Loader2) → fetch+blob indirme + toast (exportOk/exportError i18n).
+- KANIT: curl → 200, header 14+5 alan sütunu, 8 satır, TR karakterler sağlam (İlkay, Kuruluş, İncelemede).
+
+## PLATFORM PAYLAŞIMI ✓
+- SharePanel (form-studio.tsx): "Platformlarda paylaş" satırı — WhatsApp (wa.me/?text=), Telegram (t.me/share/url), X (twitter.com/intent/tweet), LinkedIn (share-offsite), E-posta (mailto:subject+body), cihaz destekliyorsa NATIVE Web Share düğmesi (navigator.share; useEffect ile hydration-güvenli algı). Hepsi noopener noreferrer + aria-label/title i18n. QR/iframe/kısa bağlantı zaten vardı — platform düğmeleri eksikti.
+
+## DÜZELTME (flow.spec kök nedenli) ✓
+- flow KAYIT adımı 400'a düştü: seed tabanındaki "Online Kayıt Formu" captchaEnabled=true (Prisma varsayılanı — seed açıkça yazmaz) ama flow.spec challenge ÇÖZMEDEN gönderiyordu; önceki oturumlar UI'de captcha'yı kapatıp açtığından drift görünürdü. flow.spec'e corrections.spec'teki sözleşmeyle AYNI solveChallenge helper'ı (kopya; flow bağımsızlığı) eklendi → 6/6.
+
+## i18n ✓
+- forms.* +21 yaprak (confirmEmail*, exportCsv/Ok/Error, sharePlatforms+6 platform, logicGoto/Target/Hint) tr+en; bake ✓ (2602 yaprak SİMETRİK); hardcoded-scan: 76 dosya 0 ihlal.
+
+## KAPILAR (SIRALI koşu) ✓
+- tsc 0; lint 0.
+- Playwright SIRALI: corrections 22 + ui-corrections 6 + goldens 4 + flow 6 + phase0 16 + phase2 9 + phase3 11 + phase4 14 = **88 PASS / 0 FAIL**.
+- flag-ON protokolü: sunucu MAVEN_AUTH=on + playwright MAVEN_AUTH=on (İKİSİ de gerekli — süit skip kapısı süreç-env'ine bakar) → auth 7/7 + phase1 13/13 + middleware 3/3 = 23/23 → flag-off'a dön + health authEnabled:false kanıtlı.
+- Test sonrası: POST /api/seed ile demo baseline (goldens 4/4 parite kanıtı); P0/P3 spec kalıntısı 4 test formu manuel temizlendi.
+
+## KANIT (agent-browser) ✓
+- Dallanma akışı (embed sayfası): "Dağ" seç → İleri → "Adım 3 / 3" (2 atlandı) ✓; son-adım Geri → "Adım 1 / 3" ✓; "Deniz" seç → İleri → "Adım 2 / 3" (doğal) ✓.
+- API tarafı: Dağ → step-2 zorunlu alan boş olmasına rağmen APPROVED; Deniz → 422 "Zorunlu alanlar eksik: Şehir turu notu" (sunucu yolu cevaplardan türetiyor — sahte yol kanıtı).
+- Stüdyo: platform düğmeleri (5 link href'leri doğru + TR/EN), onay-e-postası anahtarı, GOTO seçeneği (yalnız steps-on'da) + Hedef adım ön-seçimi; Gelen Kutusu CSV düğmesi; EN dilinde tüm yeni metinler.
+
+Stage Summary:
+- Form sistemi artık koşullu adım dallanmasını destekliyor (Google Forms tarzı "cevaba göre adıma git"): yol sunucuda cevaplardan türetildiği için botlar zorunlu alanları dallanma bahanesiyle atlayamaz; yanıtlayana otomatik onay e-postası gidebilir; tüm gönderiler tek tıkla Excel-dostu CSV'ye iner; form bağlantısı 6 platform + cihaz paylaşımıyla dağıtılır.
+- Değişen: prisma/schema.prisma, src/lib/form-logic.ts, src/app/api/public-register/route.ts, src/app/api/public-forms/[idOrSlug]/route.ts, YENİ src/app/api/form-submissions/export/route.ts, src/components/maven/{form-studio.tsx, public-form.tsx, views/form-center.tsx}, tests/flow.spec.ts (solveChallenge), src/i18n/_new/forms.{tr,en}.json + bake.
+- Kalan riskler: (1) dev server OOM dalgalanması — health-poll + restart protokolü; (2) SIRALI Playwright zorunlu (paralel dosyalar DB yarışı); flow+phase spec'leri kalıntı bırakır → seed öncesi/sonrası temizlik; (3) dallanma döngüsü stüdyoda engellenmez (ileri-yönlü hedef seçimi + sunucu seen-set koruması var; UX uyarısı sonraki iş); (4) CSV 5000 satır tavanı büyük formlarda manuel bölme gerektirir.
+- Sonraki adım önerileri: kullanıcı-şablonu kaydet/düzenle (FormDefinition.isTemplate), form yanıt analitiği kartı (form-stats UI zenginleştirme), dallanma hedefi geçersizse stüdyo uyarı çipi, PHASE 6/7 (K1 Lead Retrieval, K8 PromoCode, K5 live-poll).
+- Cron: 15 dk webDevReview job 413310 kuruldu (eski job'lar exec-limit nedeniyle devre dışıydı).

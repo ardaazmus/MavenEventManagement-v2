@@ -19,7 +19,7 @@ import {
   Type, AlignLeft, Hash, Mail, Phone, Link2, Calendar, Clock, Globe, CircleDot,
   ListChecks, CheckSquare, ToggleLeft, Vote, Star, Gauge, HelpCircle, Rows3,
   PenTool, FileText, Heading2, Upload, Plus, Trash2, Copy, QrCode, ExternalLink,
-  ShieldCheck, BarChart3, Loader2,
+  ShieldCheck, BarChart3, Loader2, Share2, MessageCircle, Send, Twitter, Linkedin,
 } from "lucide-react";
 
 // ─── Palet ───────────────────────────────────────────────────────────────────
@@ -86,6 +86,7 @@ export interface FieldDraft {
   required: string; conditionField: string; conditionValue: string; sensitivity: string;
   mobileInteractive: boolean; correctAnswer: string; points: string;
   logicRules: LogicRule[]; logicMode: string; logicAction: string;
+  gotoStep: string; // FORM-EXP3: logicAction=GOTO hedef adımı (2..20; "" = yok)
   width: string; // STUDIO-DND: % genişlik (25..100)
   step: string; // FORM-EXP2: adım/sayfa numarası (1..20)
 }
@@ -107,6 +108,7 @@ export function draftFromField(f: {
   conditionField?: string | null; conditionValue?: string | null; sensitivity: string;
   mobileInteractive: boolean; correctAnswer?: string | null; points?: number | null;
   logicRules?: string | null; logicMode?: string | null; logicAction?: string | null;
+  gotoStep?: number | null; // FORM-EXP3
   width?: number | null; step?: number | null;
 }): FieldDraft {
   return {
@@ -116,6 +118,7 @@ export function draftFromField(f: {
     sensitivity: f.sensitivity, mobileInteractive: f.mobileInteractive,
     correctAnswer: f.correctAnswer ?? "", points: f.points != null ? String(f.points) : "1",
     logicRules: parseLogicRules(f.logicRules), logicMode: f.logicMode ?? "ANY", logicAction: f.logicAction ?? "SHOW",
+    gotoStep: f.gotoStep != null ? String(f.gotoStep) : "",
     width: String(f.width ?? 100),
     step: String(Math.max(1, f.step ?? 1)),
   };
@@ -352,15 +355,40 @@ export function FieldPropertiesPanel({
             </div>
             <div className="grid gap-1">
               <Label className="text-xs">{t("forms.logicActionLabel")}</Label>
-              <Select value={draft.logicAction} onValueChange={(v) => upd({ logicAction: v })}>
+              <Select
+                value={draft.logicAction}
+                onValueChange={(v) => upd({
+                  logicAction: v,
+                  // FORM-EXP3: GOTO'ya geçildiğinde hedef ön-seçilir (bir sonraki adım)
+                  ...(v === "GOTO" && !draft.gotoStep
+                    ? { gotoStep: String(Math.min(20, (Number(draft.step) || 1) + 1)) }
+                    : {}),
+                })}
+              >
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="SHOW">{t("forms.logicShow")}</SelectItem>
                   <SelectItem value="HIDE">{t("forms.logicHide")}</SelectItem>
+                  {enableSteps && <SelectItem value="GOTO">{t("forms.logicGoto")}</SelectItem>}
                 </SelectContent>
               </Select>
             </div>
           </div>
+          {/* FORM-EXP3: dallanma hedefi — koşul sağlanınca gidilecek adım (yalnız GOTO) */}
+          {draft.logicAction === "GOTO" && enableSteps && (
+            <div className="grid gap-1">
+              <Label className="text-xs">{t("forms.logicGotoTarget")}</Label>
+              <Select value={draft.gotoStep} onValueChange={(v) => upd({ gotoStep: v })}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={t("forms.logicGotoTarget")} /></SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 20 }, (_, i) => i + 1)
+                    .filter((n) => n > (Number(draft.step) || 1))
+                    .map((n) => <SelectItem key={n} value={String(n)}>{t("forms.stepLabel")} {n}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">{t("forms.logicGotoHint")}</p>
+            </div>
+          )}
         </div>
       )}
       <Button
@@ -413,10 +441,16 @@ export function SharePanel({
 }) {
   const [qrData, setQrData] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [canNativeShare, setCanNativeShare] = useState(false); // FORM-EXP3: Web Share API (yalnız istemci)
   const origin = useMemo(() => (typeof window !== "undefined" ? window.location.origin : ""), []);
   const publicRef = slug.trim() || form.id;
   const link = `${origin}/?form=${encodeURIComponent(publicRef)}`;
+  const shareText = `${form.name} — ${link}`;
   const embed = `<iframe src="${link}&embed=1" width="100%" height="720" frameborder="0" style="border:0;border-radius:12px" title="${form.name}"></iframe>`;
+
+  useEffect(() => {
+    setCanNativeShare(typeof navigator !== "undefined" && typeof navigator.share === "function");
+  }, []);
 
   const copy = async (text: string, key: string) => {
     try {
@@ -488,6 +522,38 @@ export function SharePanel({
         ) : (
           <Button size="sm" variant="outline" onClick={makeQr}>{t("forms.qrShow")}</Button>
         )}
+      </div>
+
+      {/* FORM-EXP3: platform paylaşım düğmeleri — farklı platformlarda paylaşım */}
+      <div className="grid gap-1">
+        <Label className="text-xs">{t("forms.sharePlatforms")}</Label>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <a href={`https://wa.me/?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer" aria-label={t("forms.shareWhatsapp")} title={t("forms.shareWhatsapp")}>
+            <Button type="button" size="icon" variant="outline" className="size-9" tabIndex={-1}><MessageCircle className="size-4" /></Button>
+          </a>
+          <a href={`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(form.name)}`} target="_blank" rel="noopener noreferrer" aria-label={t("forms.shareTelegram")} title={t("forms.shareTelegram")}>
+            <Button type="button" size="icon" variant="outline" className="size-9" tabIndex={-1}><Send className="size-4" /></Button>
+          </a>
+          <a href={`https://twitter.com/intent/tweet?url=${encodeURIComponent(link)}&text=${encodeURIComponent(form.name)}`} target="_blank" rel="noopener noreferrer" aria-label={t("forms.shareX")} title={t("forms.shareX")}>
+            <Button type="button" size="icon" variant="outline" className="size-9" tabIndex={-1}><Twitter className="size-4" /></Button>
+          </a>
+          <a href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(link)}`} target="_blank" rel="noopener noreferrer" aria-label={t("forms.shareLinkedin")} title={t("forms.shareLinkedin")}>
+            <Button type="button" size="icon" variant="outline" className="size-9" tabIndex={-1}><Linkedin className="size-4" /></Button>
+          </a>
+          <a href={`mailto:?subject=${encodeURIComponent(form.name)}&body=${encodeURIComponent(shareText)}`} aria-label={t("forms.shareEmail")} title={t("forms.shareEmail")}>
+            <Button type="button" size="icon" variant="outline" className="size-9" tabIndex={-1}><Mail className="size-4" /></Button>
+          </a>
+          {canNativeShare && (
+            <Button
+              type="button" size="icon" variant="outline" className="size-9"
+              aria-label={t("forms.shareNative")} title={t("forms.shareNative")}
+              onClick={() => { void navigator.share({ title: form.name, url: link }).catch(() => undefined); }}
+            >
+              <Share2 className="size-4" />
+            </Button>
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground">{t("forms.sharePlatformsNote")}</p>
       </div>
 
       <Separator />

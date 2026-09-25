@@ -336,19 +336,19 @@ export function AccommodationView() {
     const preview = isLogo ? hotelForm.logoUrl : hotelForm.imageUrl;
     const inputId = isLogo ? "hotel-logo-input" : "hotel-cover-input";
     return (
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <p className="flex items-center gap-1.5 text-xs font-semibold"><Icons.Image className="size-3.5 text-muted-foreground" /> {isLogo ? "Otel logosu" : "Kapak görseli"}</p>
-        <div className="flex items-center gap-2.5">
-          <span className={cn("grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg border", preview ? "bg-white" : "bg-muted")}>
-            {preview ? <img src={preview} alt={isLogo ? "Logo önizleme" : "Kapak önizleme"} className={cn("size-full", isLogo ? "object-contain p-1" : "object-cover")} /> : <Icons.Building2 className="size-5 text-muted-foreground/50" />}
+        <div className="flex items-center gap-2">
+          <span className={cn("grid size-10 shrink-0 place-items-center overflow-hidden rounded-md border", preview ? "bg-white" : "bg-muted")}>
+            {preview ? <img src={preview} alt={isLogo ? "Logo önizleme" : "Kapak önizleme"} className={cn("size-full", isLogo ? "object-contain p-0.5" : "object-cover")} /> : <Icons.Building2 className="size-4 text-muted-foreground/50" />}
           </span>
-          <div className="min-w-0 space-y-1">
-            <label htmlFor={inputId} className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border bg-card px-2 text-[11px] font-medium transition-colors hover:bg-muted">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <label htmlFor={inputId} className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-md border bg-card px-1.5 text-[11px] font-medium transition-colors hover:bg-muted">
               {hotelMediaBusy === kind ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Upload className="size-3" />}
               {preview ? "Değiştir" : "Görsel seç"}
             </label>
             {preview && (
-              <button type="button" className="block text-[10px] text-rose-600 hover:underline" onClick={() => { setHotelForm((p) => ({ ...p, [isLogo ? "logoUrl" : "imageUrl"]: "" })); setHotelPending((p) => ({ ...p, [kind]: undefined })); }}>
+              <button type="button" className="text-[10px] text-rose-600 hover:underline" onClick={() => { setHotelForm((p) => ({ ...p, [isLogo ? "logoUrl" : "imageUrl"]: "" })); setHotelPending((p) => ({ ...p, [kind]: undefined })); }}>
                 Kaldır
               </button>
             )}
@@ -405,7 +405,7 @@ export function AccommodationView() {
         {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (hotels ?? []).length === 0 ? (
           <EmptyState title="Henüz oda bloğu tanımlanmadı" desc="'Otel Ekle' ile ilk oteli ekleyin — logo, adres, ilgili kişi ve e-posta ayrıntılarıyla." />
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {(hotels ?? []).map((h) => (
               <div
                 key={h.id}
@@ -413,17 +413,12 @@ export function AccommodationView() {
                 title="Çift tık: oteli düzenle"
                 className="cursor-pointer overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md"
               >
-                {h.imageUrl && (
-                  <div className="aspect-video min-h-0 w-full overflow-hidden bg-muted">
-                    <img src={h.imageUrl} alt={`${h.name} kapak görseli`} loading="lazy" className="size-full object-cover" />
-                  </div>
-                )}
-                <div className="space-y-3 p-4">
+                <div className="space-y-2.5 p-3">
                   <div className="flex items-start gap-3">
                     {h.logoUrl ? (
-                      <img src={h.logoUrl} alt={`${h.name} logosu`} className="size-12 shrink-0 rounded-lg border bg-white object-contain p-1" />
+                      <img src={h.logoUrl} alt={`${h.name} logosu`} className="size-11 shrink-0 rounded-lg border bg-white object-contain p-0.5" />
                     ) : (
-                      <span className="grid size-12 shrink-0 place-items-center rounded-lg border bg-muted text-muted-foreground"><Icons.Building className="size-5" /></span>
+                      <span className="grid size-11 shrink-0 place-items-center rounded-lg border bg-muted text-muted-foreground"><Icons.Building className="size-5" /></span>
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold">{h.name}</p>
@@ -435,6 +430,14 @@ export function AccommodationView() {
                         </p>
                       ) : null}
                     </div>
+                    {h.imageUrl && (
+                      <img
+                        src={h.imageUrl}
+                        alt={`${h.name} kapak görseli`}
+                        loading="lazy"
+                        className="hidden h-14 w-24 shrink-0 rounded-lg border object-cover sm:block"
+                      />
+                    )}
                     <button
                       type="button"
                       aria-label={`${h.name} otelini düzenle`}

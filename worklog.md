@@ -1910,3 +1910,18 @@ Stage Summary:
 - Kalan riskler: (1) dev server OOM dalgalanması — health-poll + restart protokolü; (2) SIRALI Playwright zorunlu (paralel dosyalar DB yarışı); flow+phase spec'leri kalıntı bırakır → seed öncesi/sonrası temizlik; (3) dallanma döngüsü stüdyoda engellenmez (ileri-yönlü hedef seçimi + sunucu seen-set koruması var; UX uyarısı sonraki iş); (4) CSV 5000 satır tavanı büyük formlarda manuel bölme gerektirir.
 - Sonraki adım önerileri: kullanıcı-şablonu kaydet/düzenle (FormDefinition.isTemplate), form yanıt analitiği kartı (form-stats UI zenginleştirme), dallanma hedefi geçersizse stüdyo uyarı çipi, PHASE 6/7 (K1 Lead Retrieval, K8 PromoCode, K5 live-poll).
 - Cron: 15 dk webDevReview job 413310 kuruldu (eski job'lar exec-limit nedeniyle devre dışıydı).
+---
+Task ID: HOTEL-COMPACT (otel görsel alanları compact)
+Agent: Z.ai Code (ana ajan)
+Task: Konaklama görünümünde otel görsel alanlarının (kapak görseli, logo, diyaloğa gömülü logo/kapak seçicileri) compact hale getirilmesi.
+
+Work Log:
+- accommodation.tsx otel kartı: TAM GENİŞLİKTE aspect-video kapak bandı KALDIRILDI (kart başına ~700-800×420px görsel alanı); kapak artık başlık satırında sağda 96×56 (h-14 w-24) rounded-lg thumb (sm+ ekranlarda; mobilde hidden — satır tek sırada kalır). Logo size-12→size-11, kart iç dolgusu p-4→p-3, dış aralık space-y-4→space-y-3. Alt bilgiler (adres/chip/e-posta/blok stok çizelgesi) AYNEN korundu.
+- Otel Ekle/Düzenle diyaloğu medya seçicileri: önizleme size-12→size-10 (rounded-md), "Değiştir" h-7→h-6 px-1.5, "Kaldır" dikey satırdan çıkarılıp Değiştir'in YANINA inline taşındı (flex-wrap) — seçici artık tek satır.
+- Yanlış pozitif temizliği: form-center.tsx "Fragment is not defined" + hydration hataları tarayıcıda göründü → kaynak doğru (Fragment import'lu, tsc/lint 0), sunucu-taze chunk da doğru (react["Fragment"] namespace referansı) → kök neden ÖNCEKİ OTURUMUN ortasındaki edit anından tarayıcı-önbellekli bozuk Fast-Refresh chunk'ı. agent-browser close+reopen (taze context) → 0 hata. Dev server da protokole göre restart edildi (uptime kanıtlı).
+
+Stage Summary:
+- Kanıt (agent-browser, 1440×900 + 390×844): kapak thumb 96×56, kapaksız kart 134px, kapaklı kart kompakt; mobilde kapak thumb gizli, logo 44px; diyalog seçicileri tek satır ("Otel logosu" + "Kapak görseli" size-10 önizleme); Form Merkezi 0 hata render; sayfa hataları 0.
+- Değişen: src/components/maven/views/accommodation.tsx (3 blok: renderHotelMediaPicker, otel kartı kapak→thumb, kart header'ı). tsc 0, lint 0, i18n-hardcoded-scan 76 dosya 0 ihlal (yeni metin YOK — mevcut TR stringler korundu).
+- Ekran görüntüleri: tool-results/hotel-compact-cards.png, hotel-compact-dialog.png, hotel-compact-mobile3.png, hotel-compact-verified.png.
+- Not: Tarayıcı-önbellekli eski chunk belirtileri (parse/ReferenceError) görülürse kök neden koddan ÖNCE taze context'tir (close+reopen).

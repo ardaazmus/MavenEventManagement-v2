@@ -28,6 +28,7 @@ type PublishChecks = {
 type EditionRow = {
   id: string; name: string; status: string; isPublished: boolean;
   startDate?: string | null; endDate?: string | null; city?: string | null;
+  logoUrl?: string | null; headerImageUrl?: string | null; description?: string | null;
   series?: { name: string } | null;
   capabilities?: { id: string; key: string; enabled: boolean }[];
   _count?: { registrations?: number; participations?: number; sponsorAgreements?: number; sessions?: number; tasks?: number };
@@ -201,6 +202,22 @@ export function EditionsView() {
               action={<StatusBadge map={EDITION_STATUS} value={e.status} />}
               className={cn(currentEditionId === e.id && "ring-2 ring-primary/40")}
             >
+              {/* Etkinlik kimliği bandı — üst firma görsellerinden bağımsız, edisyon bazlı (kullanıcı mimarisi) */}
+              {e.headerImageUrl && (
+                <div className="relative -mx-4 -mt-4 mb-3 h-24 sm:h-28">
+                  { }
+                  <img src={e.headerImageUrl} alt={t("editions.headerAlt", { name: e.name })} loading="lazy" className="absolute inset-0 size-full object-cover" />
+                  <div aria-hidden className="absolute inset-0 bg-gradient-to-t from-black/45 via-black/10 to-transparent" />
+                  {e.logoUrl && (
+                     
+                    <img src={e.logoUrl} alt={t("editions.logoAlt", { name: e.name })} loading="lazy" className="absolute bottom-2.5 left-3 size-10 rounded-lg border-2 border-white/70 bg-white object-contain p-0.5 shadow" />
+                  )}
+                </div>
+              )}
+              {!e.headerImageUrl && e.logoUrl && (
+                 
+                <img src={e.logoUrl} alt={t("editions.logoAlt", { name: e.name })} loading="lazy" className="mb-2 size-10 rounded-lg border bg-white object-contain p-0.5" />
+              )}
               <div className="flex flex-wrap items-center gap-1.5">
                 {e.isPublished ? <Chip tone="emerald">yayında — kayıt bağlantısı açık</Chip> : <Chip tone="amber">taslak — katılımcılar göremez</Chip>}
                 <Chip>{e._count?.registrations ?? 0} kayıt</Chip>

@@ -272,6 +272,9 @@ model EventEdition {
   coverColor  String?   // UI vurgu rengi
   languages   String?   // "tr,en"
   isFeatured  Boolean   @default(false)
+  // — Etkinlik kimliği (kullanıcı isteği: üst firma ayarlarından AYRI, edisyon bazlı) —
+  logoUrl     String?   // etkinlik logosu — etkinlik kartı + ayarlar (medya/dataURL)
+  headerImageUrl String? // etkinlik kartı başlık görseli — etkinlik kartı bandı (medya/dataURL)
   // — Dış portal header tasarımı (kullanıcı isteği: arka resim + başlık) —
   portalHeaderTitle    String?
   portalHeaderSubtitle String?

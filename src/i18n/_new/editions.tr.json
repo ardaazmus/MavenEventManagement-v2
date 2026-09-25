@@ -3,6 +3,8 @@
     "published": "Etkinlik yayınlandı",
     "draftCreated": "Etkinlik taslağı oluşturuldu",
     "capsOpened": "{n} yetenek açıldı. Ayarlar → Yetenekler'den her zaman değiştirebilirsiniz.",
-    "createDraft": "Taslağı Oluştur"
+    "createDraft": "Taslağı Oluştur",
+    "headerAlt": "{name} etkinlik başlık görseli",
+    "logoAlt": "{name} etkinlik logosu"
   }
 }

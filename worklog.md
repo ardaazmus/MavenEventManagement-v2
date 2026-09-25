@@ -1997,3 +1997,47 @@ Stage Summary:
 - Kalan riskler: (1) dev server OOM dalgalanması sürüyor — health-poll + restart protokolü; (2) Şablonlarım kiracı-geneli: eski edisyonun şablonu yeni edisyona kopyalanabilir (istenir); klonun defaultCategoryId/enableOnlinePayment kopyalanmaz (kategori edisyon-bağlı — elle kurulur); (3) ui-corrections artık 16 test (worklog'daki eski "6" sayısı güncellendi).
 - Sonraki adım önerileri: form yanıt sayfası sayfalama/arama zenginleştirme, PHASE 6/7 (K1 Lead Retrieval, K8 PromoCode, K5 live-poll), şablon kartına "kaynak form silindiğinde şablon da düşer" uyarısı yerine arşiv-koruma (isTemplate=true olan formun silinmesini engelleme kuralı).
 - Cron: 15 dk webDevReview job 413355 aktif.
+---
+Task ID: SETTINGS-SPLIT (kullanıcı mimarisi — üst firma vs etkinlik ayarları)
+Agent: Z.ai Code (ana ajan)
+Task: Kullanıcı sorusu: "Üst firma (Maven) logo/dil ayarları ile etkinliğin kendi ayarları farklı alanda olmalı; dil bir kez genel seçilmeli, her etkinliğin kendi logosu + kart başlık görseli olmalı." Değerlendirme + yapıyı bozmadan uygulama.
+
+Work Log:
+## DEĞERLENDİRME ✓
+- Kullanıcının önerisi MANTIKLI ve yapıyı bozmuyor: mevcut kodda dil ZATEN globaldi (useLang + localStorage "maven.lang") ama LanguageCard/TenantIdentityCard edisyon-ayarları görünümünün İÇİNDE duruyordu (yanıltıcı kapsam). Yetenekler+atamalar gerçekten edisyon-bazlı. Çözüm: ayarlar sayfası İKİ kapsam grubuna bölündü; etkinliğe logoUrl+headerImageUrl alanları EKLENDİ (additive — sıfır migration riski).
+
+## SCHEMA ✓
+- EventEdition += logoUrl (etkinlik logosu), headerImageUrl (kart başlık görseli) — db:push ✓ + dev restart (Prisma client cache dersi). Registry generic PUT zaten geçiriyor (FORBIDDEN=id,createdAt yalnız) — YENİ API ROTA GEREKMEDİ.
+
+## UI (onsite.tsx) ✓
+- SettingsGroup: kırık-kenarlı kapsam başlığı (ikon + başlık | sm: çizgili açıklama | kapsam çipi). Mobil: dikey yığın.
+- GRUP 1 "Üst Firma Ayarları" (Building2, çip: "Kapsam: tüm etkinlikler"): TenantIdentityCard + LanguageCard (dil bir kez — mevcut global sistem).
+- GRUP 2 "Bu Etkinliğin Ayarları" (CalendarRange, çip: "Kapsam: yalnız bu etkinlik"): YENİ EventIdentityCard + Yetenekler + Kurum Atamaları.
+- EventIdentityCard: canlı etkinlik-kartı önizlemesi (band+logo+ad+tarih), logo seçici (300KB kare), başlık görseli seçici (600KB geniş), ad/açıklama/şehir/mekân/tarih/vurgu-rengi alanları; tarih sözleşmesi sihirbazla birebir (startDate zorunlu, endDate ≥ startDate); PUT /api/editions/{id} → bootstrap+bump.
+
+## DÜZELTME (ilk açılışta yakalandı) ✓
+- Ayarlar sayfası client-exception: Radix Select <SelectItem value=""> YASAK — "Nötr" seçeneği value:"" idi. "none" değeriyle harmanlandı (coverColor "none"↔"" map). Taze-contextte doğrulandı: 0 hata. (Önceki oturumdaki "about:blank/snapshot boş" tesadüfî browser oturum kapanmasıydı — chunk-değil.)
+
+## ETKİNLİK KARTI (editions.tsx) ✓
+- headerImageUrl varsa: kart üstü bant (h-24/sm:h-28, -mx-4 -mt-4 bleed, overflow-hidden clip) + gradient + sol-alt logo overlay (size-10 white border). Yalnız logo varsa: chip üstü tek logo. Yoksa: mevcut sade kart.
+
+## i18n ✓
+- settingsView.* +43 yaprak (grup başlıkları, kapsam çipleri, event identity alanları, renk etiketleri, hata mesajları) + editions.headerAlt/logoAlt — tr+en SİMETRİK; bake ✓ (2659 yaprak); hardcoded-scan 76 dosya 0 ihlal.
+
+## KAPILAR ✓
+- tsc 0; lint 0; i18n scan 0.
+- Playwright SIRALI: corrections 22 + ui-corrections 6 + phase2 9 + phase3 11 + phase4 14 + phase0 16 + goldens 1 + flow 6 + middleware 2 = **87 PASS / 0 FAIL** (auth 7 skip — flag-OFF, beklenen). Sonrası POST /api/seed → baseline (forms:4, people:28) ✓.
+
+## KANIT (agent-browser, taze context) ✓
+- Ayarlar: iki grup başlığı + EventIdentityCard render; seçicilere upload → önizleme bant+logo anında güncellendi; "Etkinliği Kaydet" → toast + API'de logoUrl/headerImageUrl True.
+- Etkinlikler: kart bandı 486×112 + logo overlay + section clip — görsel kanıt tool-results/settings-edition-card-banner.png.
+- TR/EN: tüm yeni metinler iki dilde doğrulandı (org/ed/identity/save/scope çipleri). Mobil 390px: grup başlığı yığın + kartlar stacked temiz.
+- Ekran görüntüleri: settings-split-top.png, settings-split-group2.png, settings-en-group2.png, settings-mobile2.png, settings-mobile-group2.png, settings-edition-card-banner.png.
+- NOT: seed baseline'e döndürdüğü için demo edisyonlarda logo/header boş — kullanıcı kendi görselini yükler; feature kalıcı (DB kolonları).
+
+Stage Summary:
+- Ayarlar artık kullanıcının önerdiği mimaride: ÜST FİRMA (logo+slogan+iletişim+tek-dil, tüm etkinliklerde ortak) ⟷ BU ETKİNLİK (etkinlik logosu, kart başlık görseli, bilgiler, yetenekler, atamalar — yalnız seçili edisyon). Etkinlik kartları kendi görselleriyle süslenir; tenant görsellerinden bağımsız.
+- Değişen: prisma/schema.prisma (+2 kolon), src/lib/store.ts (EditionLite tipleri), src/components/maven/views/onsite.tsx (SettingsGroup + EventIdentityCard + grup düzeni + Select düzeltmesi), src/components/maven/views/editions.tsx (kart bandı+logo), src/i18n/_new/{onsite,editions}.{tr,en}.json + bake.
+- Kalan riskler: (1) dev server OOM dalgalanması sürüyor — health-poll+restart protokolü; (2) EventIdentityCard'ta slug/seri/şablon bilinçli düzenlenmiyor (slug çakışma riski); (3) dataURL görseller bootstrap payload'ını büyütür (600KB sınırı mevcut; ileride medya sistemi URL'ine taşınabilir).
+- Sonraki adım önerileri: Form yanıt sayfası sayfalama, PHASE 6/7 (K1 Lead Retrieval, K8 PromoCode, K5 live-poll), edition header görselinin Dış Portal vitrinine de yansıtılması.
+- Cron: 15 dk webDevReview job aktif.

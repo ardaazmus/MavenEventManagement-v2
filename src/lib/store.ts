@@ -14,6 +14,10 @@ export interface EditionLite {
   venueName?: string | null;
   city?: string | null;
   coverColor?: string | null;
+  description?: string | null;
+  // Etkinlik kimliği (üst firmadan ayrı, edisyon bazlı — kullanıcı mimarisi)
+  logoUrl?: string | null;
+  headerImageUrl?: string | null;
   template?: string | null;
   seriesId?: string | null;
   series?: { id: string; name: string } | null;

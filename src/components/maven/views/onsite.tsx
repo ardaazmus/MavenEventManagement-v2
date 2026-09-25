@@ -1877,11 +1877,35 @@ export function SettingsView() {
 
   const enabledCount = CAPABILITIES.filter((cap) => edition.capabilities?.find((c) => c.key === cap.key && c.enabled)).length;
 
+  // KULLANICI MİMARİSİ: ayarlar İKİ kapsama ayrılır —
+  //  1) ÜST FİRMA (kiracı geneli): firma logosu, slogan, iletişim, arayüz dili (bir kez seçilir)
+  //  2) BU ETKİNLİK (edisyon bazlı): etkinlik logosu, kart görselleri, yetenekler, atamalar
   return (
     <div className="space-y-5">
       <PageHeader title={t("settingsView.title")} desc={t("settingsView.desc")} />
-      <LanguageCard />
+
+      {/* ── GRUP 1 · ÜST FİRMA — tüm etkinliklerde ortak ── */}
+      <SettingsGroup
+        icon="Building2"
+        title={t("settingsView.orgGroupTitle")}
+        desc={t("settingsView.orgGroupDesc")}
+        scope={<Chip tone="violet"><Icons.Globe2 className="size-3" /> {t("settingsView.orgGroupScope")}</Chip>}
+      />
       <TenantIdentityCard />
+      <LanguageCard />
+
+      {/* ── GRUP 2 · BU ETKİNLİK — yalnız seçili edisyonda geçerli ── */}
+      <SettingsGroup
+        icon="CalendarRange"
+        title={t("settingsView.editionGroupTitle")}
+        desc={t("settingsView.editionGroupDesc")}
+        scope={
+          <Chip tone="teal">
+            <Icons.CalendarDays className="size-3" /> {t("settingsView.editionGroupScope")}
+          </Chip>
+        }
+      />
+      <EventIdentityCard />
       <SectionCard
         title={t("settingsView.capabilities")}
         desc={t("settingsView.capabilitiesDesc")}
@@ -1928,6 +1952,263 @@ export function SettingsView() {
         )}
       </SectionCard>
     </div>
+  );
+}
+
+// ─── Ayarlar: kapsam grubu başlığı (kullanıcı mimarisi — üst firma vs etkinlik ayrımı) ──
+// Kırık-kenarlı ayırıcı: hangi kartların KİM için olduğunu görsel olarak netleştirir.
+function SettingsGroup({ icon, title, desc, scope }: { icon: string; title: string; desc: string; scope: React.ReactNode }) {
+  const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[icon] ?? Icons.Settings;
+  // mobil: dikey yığın (ikon+başlık / açıklama / kapsam çipi) · sm+: tek satır — başlık | çizgili açıklama | çip
+  return (
+    <div aria-label={title} className="flex flex-col gap-2 rounded-xl border border-dashed border-primary/25 bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:gap-3">
+      <div className="flex items-center gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+          <Icon className="size-4" />
+        </span>
+        <p className="text-sm font-semibold leading-tight">{title}</p>
+      </div>
+      <p className="text-xs leading-relaxed text-muted-foreground sm:min-w-0 sm:flex-1 sm:border-l sm:border-border/70 sm:pl-3">{desc}</p>
+      <div className="sm:ml-auto">{scope}</div>
+    </div>
+  );
+}
+
+// ─── Ayarlar: Etkinlik Kimliği (kullanıcı mimarisi — üst firmadan AYRI, edisyon bazlı) ──
+// Etkinlik logosu + kart başlık görseli + temel bilgiler. PUT /api/editions/{id} YALNIZCA bu
+// edisyona yazar; üst firma kartı (TenantIdentityCard) ve dil (LanguageCard) etkilenmez.
+const EVENT_COLORS: { key: string; labelKey: string }[] = [
+  { key: "teal", labelKey: "settingsView.colorTeal" },
+  { key: "amber", labelKey: "settingsView.colorAmber" },
+  { key: "violet", labelKey: "settingsView.colorViolet" },
+  { key: "rose", labelKey: "settingsView.colorRose" },
+  { key: "", labelKey: "settingsView.colorNeutral" },
+];
+
+export function EventIdentityCard() {
+  useLang(); // dil değişiminde yeniden render
+  const { editions, currentEditionId, bootstrap, bump } = useApp();
+  const { toast } = useToast();
+  const edition = editions.find((e) => e.id === currentEditionId);
+  const [busy, setBusy] = useState(false);
+  const logoRef = useRef<HTMLInputElement>(null);
+  const headerRef = useRef<HTMLInputElement>(null);
+  const [form, setForm] = useState({
+    name: "", description: "", city: "", venueName: "", startDate: "", endDate: "", coverColor: "", logoUrl: "", headerImageUrl: "",
+  });
+
+  // edisyon değişince formu doldur (async desen — TenantIdentityCard ile aynı, lint uyumlu)
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (!alive || !edition) return;
+      setForm({
+        name: edition.name ?? "",
+        description: edition.description ?? "",
+        city: edition.city ?? "",
+        venueName: edition.venueName ?? "",
+        startDate: edition.startDate ? String(edition.startDate).slice(0, 10) : "",
+        endDate: edition.endDate ? String(edition.endDate).slice(0, 10) : "",
+        coverColor: edition.coverColor ?? "",
+        logoUrl: edition.logoUrl ?? "",
+        headerImageUrl: edition.headerImageUrl ?? "",
+      });
+    });
+    return () => { alive = false; };
+  }, [edition?.id]);  
+
+  // tarih sözleşmesi — kurulum sihirbazı ve registry validate ile birebir aynı kural
+  const dateError = (() => {
+    if (!form.startDate) return t("settingsView.eventStartRequired");
+    const s = new Date(form.startDate);
+    if (Number.isNaN(s.getTime())) return t("settingsView.eventStartInvalid");
+    if (form.endDate) {
+      const e = new Date(form.endDate);
+      if (Number.isNaN(e.getTime())) return t("settingsView.eventEndInvalid");
+      if (e < s) return t("settingsView.eventEndBeforeStart");
+    }
+    return null;
+  })();
+
+  const pickImage = (file: File | null, maxKb: number, field: "logoUrl" | "headerImageUrl", tooBigDesc: string) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast({ title: t("settingsView.invalidFile"), description: t("settingsView.invalidFileDesc"), variant: "destructive" });
+      return;
+    }
+    if (file.size > maxKb * 1024) {
+      toast({ title: t("settingsView.fileTooLarge"), description: tooBigDesc, variant: "destructive" });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setForm((f) => ({ ...f, [field]: String(reader.result ?? "") }));
+    reader.readAsDataURL(file);
+  };
+
+  const save = async () => {
+    if (!edition) return;
+    if (dateError) {
+      toast({ title: dateError, variant: "destructive" });
+      return;
+    }
+    setBusy(true);
+    try {
+      await apiSend(`/api/editions/${edition.id}`, "PUT", {
+        name: form.name.trim(),
+        description: form.description || null,
+        city: form.city || null,
+        venueName: form.venueName || null,
+        startDate: new Date(form.startDate).toISOString(),
+        endDate: form.endDate ? new Date(form.endDate).toISOString() : null,
+        coverColor: form.coverColor || null,
+        logoUrl: form.logoUrl || null,
+        headerImageUrl: form.headerImageUrl || null,
+      });
+      await bootstrap(); // store tazelenir — üst şerit, etkinlik kartları ve önizleme güncellenir
+      bump();
+      toast({ title: t("settingsView.eventSaved"), description: t("settingsView.eventSavedDesc") });
+    } catch (e) {
+      toast({ title: t("settingsView.eventSaveFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <SectionCard
+      title={t("settingsView.eventIdentity")}
+      desc={t("settingsView.eventIdentityDesc")}
+      action={<Chip tone="teal">{edition?.slug ?? "—"}</Chip>}
+    >
+      {/* Canlı önizleme — etkinlik kartının (Etkinlikler görünümü) bandı + logo satırının aynısı */}
+      <div className="mb-4">
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("settingsView.eventPreviewTitle")}</p>
+        <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="relative h-24 bg-muted sm:h-28">
+            {form.headerImageUrl ? (
+               
+              <img src={form.headerImageUrl} alt={t("settingsView.eventHeaderAlt", { name: edition?.name ?? "" })} className="absolute inset-0 size-full object-cover" />
+            ) : (
+              <div className="grid h-full place-items-center text-xs text-muted-foreground/70">{t("settingsView.noHeaderImage")}</div>
+            )}
+          </div>
+          <div className="flex items-center gap-3 p-3">
+            {form.logoUrl ? (
+               
+              <img src={form.logoUrl} alt={t("settingsView.eventLogoAlt", { name: edition?.name ?? "" })} className="size-11 shrink-0 rounded-lg border bg-white object-contain p-0.5" />
+            ) : (
+              <span className="grid size-11 shrink-0 place-items-center rounded-lg border bg-muted/50 font-bold text-muted-foreground">{(form.name || edition?.name || "E").slice(0, 1)}</span>
+            )}
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">{form.name || edition?.name || "—"}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {form.startDate ? fmtDate(form.startDate) : "—"}{form.city ? ` · ${form.city}` : ""}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* medya seçiciler — logo (kare) + başlık görseli (geniş) */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border bg-muted/20 p-3">
+          <p className="text-xs font-semibold">{t("settingsView.pickEventLogo")}</p>
+          <div className="mt-2 flex items-center gap-2.5">
+            {form.logoUrl ? (
+               
+              <img src={form.logoUrl} alt={t("settingsView.eventLogoAlt", { name: edition?.name ?? "" })} className="size-12 shrink-0 rounded-md border bg-white object-contain p-0.5" />
+            ) : (
+              <span className="grid size-12 shrink-0 place-items-center rounded-md border border-dashed bg-background text-muted-foreground"><Icons.Image className="size-4" /></span>
+            )}
+            <div className="flex flex-col items-start gap-1">
+              <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={(e) => pickImage(e.target.files?.[0] ?? null, 300, "logoUrl", t("settingsView.fileTooLargeDesc"))} />
+              <Button size="sm" variant="outline" className="h-7" onClick={() => logoRef.current?.click()}>
+                <Icons.ImagePlus className="size-3.5" /> {t("settingsView.pickEventLogo")}
+              </Button>
+              {form.logoUrl && (
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-rose-600 hover:text-rose-700" onClick={() => setForm((f) => ({ ...f, logoUrl: "" }))}>
+                  <Icons.Trash2 className="size-3" /> {t("settingsView.remove")}
+                </Button>
+              )}
+            </div>
+          </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">{t("settingsView.eventLogoHint")}</p>
+        </div>
+
+        <div className="rounded-lg border bg-muted/20 p-3">
+          <p className="text-xs font-semibold">{t("settingsView.pickHeaderImage")}</p>
+          <div className="mt-2 flex items-center gap-2.5">
+            {form.headerImageUrl ? (
+               
+              <img src={form.headerImageUrl} alt={t("settingsView.eventHeaderAlt", { name: edition?.name ?? "" })} className="h-12 w-20 shrink-0 rounded-md border object-cover" />
+            ) : (
+              <span className="grid h-12 w-20 shrink-0 place-items-center rounded-md border border-dashed bg-background text-muted-foreground"><Icons.Images className="size-4" /></span>
+            )}
+            <div className="flex flex-col items-start gap-1">
+              <input ref={headerRef} type="file" accept="image/*" className="hidden" onChange={(e) => pickImage(e.target.files?.[0] ?? null, 600, "headerImageUrl", t("settingsView.headerTooLargeDesc"))} />
+              <Button size="sm" variant="outline" className="h-7" onClick={() => headerRef.current?.click()}>
+                <Icons.Images className="size-3.5" /> {t("settingsView.pickHeaderImage")}
+              </Button>
+              {form.headerImageUrl && (
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-rose-600 hover:text-rose-700" onClick={() => setForm((f) => ({ ...f, headerImageUrl: "" }))}>
+                  <Icons.Trash2 className="size-3" /> {t("settingsView.remove")}
+                </Button>
+              )}
+            </div>
+          </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">{t("settingsView.headerImageHint")}</p>
+        </div>
+      </div>
+
+      {/* bilgi alanları — yalnız bu etkinliğe yazar */}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="ed-name">{t("settingsView.fEventName")}</Label>
+          <Input id="ed-name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+        </div>
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="ed-desc">{t("settingsView.fEventDesc")}</Label>
+          <Textarea id="ed-desc" rows={2} value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ed-city">{t("settingsView.fCity")}</Label>
+          <Input id="ed-city" value={form.city} onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ed-venue">{t("settingsView.fVenue")}</Label>
+          <Input id="ed-venue" value={form.venueName} onChange={(e) => setForm((f) => ({ ...f, venueName: e.target.value }))} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ed-start">{t("settingsView.fStart")}</Label>
+          <Input id="ed-start" type="date" aria-required="true" aria-invalid={dateError ? true : undefined} value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ed-end">{t("settingsView.fEnd")}</Label>
+          <Input id="ed-end" type="date" aria-invalid={dateError ? true : undefined} value={form.endDate} onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))} />
+        </div>
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label>{t("settingsView.fCoverColor")}</Label>
+          <Select value={form.coverColor || "none"} onValueChange={(v) => setForm((f) => ({ ...f, coverColor: v === "none" ? "" : v }))}>
+            <SelectTrigger aria-label={t("settingsView.fCoverColor")}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {/* DÜZELTME: Radix SelectItem value:"" yasak — nötr "none" ile harmanlanır */}
+              {EVENT_COLORS.map((c) => (
+                <SelectItem key={c.key || "none"} value={c.key || "none"}>{t(c.labelKey)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {dateError && (
+          <p role="alert" className="sm:col-span-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+            {dateError}
+          </p>
+        )}
+      </div>
+
+      <div className="mt-4 flex justify-end">
+        <Button onClick={save} disabled={busy || !form.name.trim() || !form.startDate}>
+          {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Check className="size-4" />} {t("settingsView.saveEvent")}
+        </Button>
+      </div>
+    </SectionCard>
   );
 }
 

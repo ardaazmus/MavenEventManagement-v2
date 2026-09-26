@@ -301,6 +301,21 @@
       "questsDone": "{done}/{total} completed",
       "remaining": "{points} points left",
       "maxLevel": "Top level!"
+    },
+    "notifCenter": {
+      "title": "Notifications",
+      "ariaOpen": "Open notification center",
+      "announcements": "Announcements",
+      "reminders": "Upcoming reminders",
+      "emptyAnn": "No announcements yet — new ones will appear here.",
+      "emptyRem": "No planned reminders. Tap \"Remind me\" on a session in the agenda.",
+      "offsetsLabel": "Reminders: {offsets} min before",
+      "inMin": "in {n} min",
+      "inHour": "in {n} h",
+      "now": "now",
+      "minAgo": "{n} min ago",
+      "hourAgo": "{n} h ago",
+      "liveHint": "live"
     }
   },
   "portalSettings": {
@@ -395,7 +410,11 @@
       "sent": "Announcement sent",
       "sentDesc": "It reaches users with the portal open instantly.",
       "fail": "Could not send announcement",
-      "sentCount": "{count} announcements sent to date"
+      "sentCount": "{count} announcements sent to date",
+      "distribTitle": "External channel delivery:",
+      "distribNone": "No external channel delivery — WhatsApp/SMS channels are off or no phone recipients found.",
+      "distribWa": "WhatsApp {sent}/{attempted}",
+      "distribSms": "SMS {sent}/{attempted}"
     },
     "content": {
       "title": "Content Mapping",

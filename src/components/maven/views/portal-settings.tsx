@@ -63,6 +63,12 @@ type Analytics = {
   announcements: number;
 };
 type MagicResult = { items: { personId: string; name: string; email: string | null; token: string; expiresAt: string; mailed: boolean }[]; skipped: { personId: string; reason: string }[] };
+// Canlı duyuru dış kanal dağıtım özeti (POST /api/portal/announcements yanıtındaki "channels")
+type AnnChannelSummary = {
+  ok: boolean;
+  wa: { attempted: number; sent: number; error?: string };
+  sms: { attempted: number; sent: number; error?: string };
+};
 
 const WIDGET_ORDER: { key: string; icon: typeof Icons.Home }[] = [
   { key: "agenda", icon: Icons.CalendarDays },
@@ -224,6 +230,8 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
   const [annLevel, setAnnLevel] = useState("INFO");
   const [annTarget, setAnnTarget] = useState("ALL");
   const [annBusy, setAnnBusy] = useState(false);
+  // dış kanal (WA/SMS) dağıtım özeti — undefined: henüz gönderim yok, null: dış kanal devre dışı, obje: özet (CRON-4)
+  const [annChannels, setAnnChannels] = useState<AnnChannelSummary | null | undefined>(undefined);
 
   const load = useCallback(async () => {
     setLoadErr(null);
@@ -414,7 +422,8 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
   const sendAnnouncement = async () => {
     setAnnBusy(true);
     try {
-      await apiSend("/api/portal/announcements", "POST", { editionId, title: annTitle.trim(), message: annMessage.trim(), level: annLevel, target: annTarget });
+      const res = await apiSend<{ channels: AnnChannelSummary | null }>("/api/portal/announcements", "POST", { editionId, title: annTitle.trim(), message: annMessage.trim(), level: annLevel, target: annTarget });
+      setAnnChannels(res.channels ?? null);
       toast({ title: t("portalSettings.announce.sent"), description: t("portalSettings.announce.sentDesc") });
       setAnnTitle("");
       setAnnMessage("");
@@ -952,6 +961,36 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
               {annBusy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Send className="size-4" />} {t("portalSettings.announce.send")}
             </Button>
             {analytics && <p className="mt-1.5 text-[11px] text-muted-foreground">{t("portalSettings.announce.sentCount", { count: analytics.announcements })}</p>}
+
+            {/* dış kanal (WA/SMS) dağıtım özeti (CRON-4) — gönderim sonrası görünür */}
+            {annChannels === null && (
+              <p className="mt-2 rounded-lg border border-dashed bg-muted/20 p-2 text-[11px] text-muted-foreground">{t("portalSettings.announce.distribNone")}</p>
+            )}
+            {annChannels && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border bg-muted/20 p-2">
+                <span className="text-[10px] font-semibold text-muted-foreground">{t("portalSettings.announce.distribTitle")}</span>
+                {([
+                  { key: "wa", label: t("portalSettings.announce.distribWa", { sent: annChannels.wa.sent, attempted: annChannels.wa.attempted }), ch: annChannels.wa, cls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" },
+                  { key: "sms", label: t("portalSettings.announce.distribSms", { sent: annChannels.sms.sent, attempted: annChannels.sms.attempted }), ch: annChannels.sms, cls: "bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300" },
+                ] as const).map(({ key, label, ch, cls }) => {
+                  const partial = ch.attempted > ch.sent;
+                  const chipCls = ch.error || (partial && ch.sent === 0)
+                    ? "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+                    : partial
+                      ? "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                      : cls;
+                  return (
+                    <span
+                      key={key}
+                      title={ch.error ?? label}
+                      className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", chipCls)}
+                    >
+                      {label}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </SectionCard>

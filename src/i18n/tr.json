@@ -3079,7 +3079,22 @@
     "form": {
       "title": "Form"
     },
-    "otherEventsPast": "Geçmiş"
+    "otherEventsPast": "Geçmiş",
+    "notifCenter": {
+      "title": "Bildirimler",
+      "ariaOpen": "Bildirim merkezini aç",
+      "announcements": "Duyurular",
+      "reminders": "Yaklaşan hatırlatıcılar",
+      "emptyAnn": "Henüz duyuru yok — yeni duyurular burada görünür.",
+      "emptyRem": "Planlı hatırlatıcı yok. Programda bir oturuma \"Hatırlat\" deyin.",
+      "offsetsLabel": "Hatırlatma: {offsets} dk önce",
+      "inMin": "{n} dk sonra",
+      "inHour": "{n} sa sonra",
+      "now": "şimdi",
+      "minAgo": "{n} dk önce",
+      "hourAgo": "{n} sa önce",
+      "liveHint": "canlı"
+    }
   },
   "portalSettings": {
     "openPortal": "Mobil Portalı Aç",
@@ -3173,7 +3188,11 @@
       "sent": "Duyuru gönderildi",
       "sentDesc": "Portal açık olan kullanıcılara anında düşer.",
       "fail": "Duyuru gönderilemedi",
-      "sentCount": "Bugüne kadar {count} duyuru gönderildi"
+      "sentCount": "Bugüne kadar {count} duyuru gönderildi",
+      "distribTitle": "Dış kanal dağıtımı:",
+      "distribNone": "Dış kanal dağıtımı yapılmadı — WhatsApp/SMS kanalları kapalı ya da telefonlu alıcı bulunamadı.",
+      "distribWa": "WhatsApp {sent}/{attempted}",
+      "distribSms": "SMS {sent}/{attempted}"
     },
     "content": {
       "title": "İçerik Bağlama",

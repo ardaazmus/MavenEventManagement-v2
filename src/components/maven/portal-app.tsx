@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useLang, t } from "@/lib/i18n";
@@ -252,6 +253,229 @@ function saveReminders(slug: string, items: MarkedReminder[]) {
   }
 }
 
+// bildirim merkezi (CRON-4) — okunmadı takibi (son açma zamanı) + duyuru kapatma kalıcılığı
+const notifReadStorage = (slug: string) => `maven.portal.notifread.${slug}`;
+const annDismissStorage = (slug: string) => `maven.portal.anndismiss.${slug}`;
+function loadNotifReadMs(slug: string): number {
+  try {
+    const v = Number(localStorage.getItem(notifReadStorage(slug)));
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+function saveNotifReadMs(slug: string, ms: number) {
+  try {
+    localStorage.setItem(notifReadStorage(slug), String(ms));
+  } catch {
+    /* yoksay */
+  }
+}
+function loadAnnDismissed(slug: string): string | null {
+  try {
+    return localStorage.getItem(annDismissStorage(slug));
+  } catch {
+    return null;
+  }
+}
+function saveAnnDismissed(slug: string, id: string | null) {
+  try {
+    if (id) localStorage.setItem(annDismissStorage(slug), id);
+    else localStorage.removeItem(annDismissStorage(slug));
+  } catch {
+    /* yoksay */
+  }
+}
+
+// ─── BİLDİRİM ÇANI — okunmamış sayacıyla (CRON-4) ───────────────────────
+function NotifBellButton({ unread, accent, onClick, label }: { unread: number; accent: string; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="relative grid size-8 shrink-0 place-items-center rounded-full transition hover:bg-muted active:scale-95"
+    >
+      <Icons.Bell className="size-4 text-foreground/80" />
+      {unread > 0 && (
+        <span
+          className="absolute -right-0.5 -top-0.5 grid min-w-[16px] place-items-center rounded-full px-1 text-[9px] font-bold leading-4 text-white"
+          style={{ backgroundColor: accent }}
+        >
+          {unread > 9 ? "9+" : unread}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ─── HAFİF BİLDİRİM MERKEZİ (CRON-4) — duyuru geçmişi + yaklaşan hatırlatıcılar ──
+// Ağ isteği YOK: anket listesi (20 sn polling zaten çekiyor) + localStorage hatırlatıcıları
+// ve B2B randevuları (hatırlatıcı motoruyla BİREBİR kaynaklar) kullanılır.
+const ANN_LEVEL_STYLE: Record<string, { chip: string; icon: typeof Icons.Megaphone }> = {
+  URGENT: { chip: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300", icon: Icons.AlertTriangle },
+  WARNING: { chip: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300", icon: Icons.ShieldAlert },
+  INFO: { chip: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300", icon: Icons.Megaphone },
+};
+function NotificationCenterSheet({
+  open,
+  onOpenChange,
+  announcements,
+  content,
+  editionSlug,
+  offsets,
+  notificationsEnabled,
+  accent,
+  lastReadMs,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  announcements: Announcement[];
+  content: PortalContent;
+  editionSlug: string;
+  offsets: number[];
+  notificationsEnabled: boolean;
+  accent: string;
+  lastReadMs: number;
+}) {
+  const { t } = useLang();
+  // yaklaşan hatırlatıcılar — hatırlatıcı motoruyla aynı hedef kümesi (gelecek zamanli)
+  const upcoming = useMemo(() => {
+    if (!open) return [];
+    const now = Date.now();
+    const out: { key: string; fireAt: number; title: string; body: string; kind: "B2B" | "SESSION" }[] = [];
+    for (const m of content.b2b ?? []) {
+      if (!m.startsAt || m.status === "DECLINED" || m.status === "CANCELLED") continue;
+      const at = new Date(m.startsAt).getTime();
+      if (at <= now) continue;
+      out.push({ key: `b2b:${m.assignmentId}`, fireAt: at, title: t("portalApp.reminder.b2bTitle"), body: `${m.subject} — ${fmtDateTime(m.startsAt)}`, kind: "B2B" });
+    }
+    for (const r of loadReminders(editionSlug)) if (r.fireAt > now) out.push({ ...r, kind: "SESSION" });
+    return out.sort((a, b) => a.fireAt - b.fireAt).slice(0, 6);
+  }, [open, content, editionSlug, t]);
+
+  const countdown = (fireAt: number): string => {
+    const mins = Math.max(0, Math.round((fireAt - Date.now()) / 60_000));
+    if (mins < 60) return t("portalApp.notifCenter.inMin", { n: mins });
+    const h = Math.floor(mins / 60);
+    if (h < 24) return t("portalApp.notifCenter.inHour", { n: h });
+    return fmtDateTime(new Date(fireAt).toISOString());
+  };
+  const relTime = (iso: string): string => {
+    const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
+    if (m < 1) return t("portalApp.notifCenter.now");
+    if (m < 60) return t("portalApp.notifCenter.minAgo", { n: m });
+    const h = Math.floor(m / 60);
+    if (h < 24) return t("portalApp.notifCenter.hourAgo", { n: h });
+    return fmtDate(iso);
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="bottom" className="mx-auto max-h-[80dvh] w-full max-w-2xl rounded-t-2xl p-0">
+        <SheetHeader className="border-b px-4 pb-3 pt-3">
+          <SheetTitle className="flex items-center gap-2 text-sm">
+            <span className="grid size-7 place-items-center rounded-lg text-white" style={{ backgroundColor: accent }}>
+              <Icons.Bell className="size-3.5" />
+            </span>
+            {t("portalApp.notifCenter.title")}
+            <span className="ml-auto flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+              <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+              {t("portalApp.notifCenter.liveHint")}
+            </span>
+          </SheetTitle>
+          <SheetDescription className="sr-only">{t("portalApp.notifCenter.announcements")} — {t("portalApp.notifCenter.reminders")}</SheetDescription>
+        </SheetHeader>
+        <div className="maven-scroll max-h-[64dvh] space-y-4 overflow-y-auto px-4 py-3">
+          {/* ── DUYURULAR — tam geçmiş + okunmadı noktası ── */}
+          <section aria-label={t("portalApp.notifCenter.announcements")}>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("portalApp.notifCenter.announcements")}</p>
+            {announcements.length === 0 ? (
+              <div className="mt-1.5 rounded-xl border border-dashed p-4 text-center">
+                <Icons.Megaphone className="mx-auto size-4 text-muted-foreground" />
+                <p className="mt-1 text-[11px] text-muted-foreground">{t("portalApp.notifCenter.emptyAnn")}</p>
+              </div>
+            ) : (
+              <ul className="mt-1.5 space-y-1.5">
+                {announcements.map((a) => {
+                  const st = ANN_LEVEL_STYLE[a.level] ?? ANN_LEVEL_STYLE.INFO;
+                  const unread = new Date(a.createdAt).getTime() > lastReadMs;
+                  const Ico = st.icon;
+                  return (
+                    <li key={a.id} className={cn("relative flex items-start gap-2.5 rounded-xl border p-2.5", unread && "bg-muted/30")}>
+                      {unread && <span className="absolute right-2.5 top-2.5 size-2 rounded-full" style={{ backgroundColor: accent }} />}
+                      <span className={cn("mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg", st.chip)}>
+                        <Ico className="size-3.5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-2">
+                          <p className="min-w-0 truncate text-xs font-semibold">{a.title}</p>
+                          <span className="ml-auto shrink-0 text-[9px] tabular-nums text-muted-foreground">{relTime(a.createdAt)}</span>
+                        </div>
+                        <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{a.message}</p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          {/* ── YAKLAŞAN HATIRLATICILAR — işaretli oturumlar + B2B randevuları ── */}
+          <section aria-label={t("portalApp.notifCenter.reminders")}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("portalApp.notifCenter.reminders")}</p>
+              {notificationsEnabled && (
+                <span className="rounded-full bg-muted px-1.5 py-px text-[9px] text-muted-foreground">
+                  {t("portalApp.notifCenter.offsetsLabel", { offsets: offsets.join(" / ") })}
+                </span>
+              )}
+            </div>
+            {!notificationsEnabled ? (
+              <div className="mt-1.5 rounded-xl border border-dashed p-3">
+                <p className="text-xs font-medium">{t("portalApp.reminder.disabledTitle")}</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalApp.reminder.disabledDesc")}</p>
+              </div>
+            ) : upcoming.length === 0 ? (
+              <div className="mt-1.5 rounded-xl border border-dashed p-4 text-center">
+                <Icons.BellOff className="mx-auto size-4 text-muted-foreground" />
+                <p className="mt-1 text-[11px] text-muted-foreground">{t("portalApp.notifCenter.emptyRem")}</p>
+              </div>
+            ) : (
+              <ul className="mt-1.5 space-y-1.5">
+                {upcoming.map((r) => (
+                  <li key={r.key} className="flex items-start gap-2.5 rounded-xl border p-2.5">
+                    <span
+                      className={cn(
+                        "mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg",
+                        r.kind === "B2B"
+                          ? "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300"
+                          : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+                      )}
+                    >
+                      {r.kind === "B2B" ? <Icons.Handshake className="size-3.5" /> : <Icons.BellRing className="size-3.5" />}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-semibold">{r.title}</p>
+                      <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">{r.body}</p>
+                    </div>
+                    <span
+                      className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold tabular-nums"
+                      style={{ backgroundColor: `${accent}1a`, color: accent }}
+                    >
+                      {countdown(r.fireAt)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 const SESSION_TYPE_COLORS: Record<string, string> = {
   KEYNOTE: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
   TALK: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200",
@@ -274,6 +498,10 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   const [fatal, setFatal] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState<string | null>(null);
   const sessionRef = useRef<string | null>(null);
+  // ── bildirim merkezi (CRON-4): canlı duyuru listesi + okunmadı takibi ──
+  const [liveAnnouncements, setLiveAnnouncements] = useState<Announcement[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [lastReadMs, setLastReadMs] = useState(0);
 
   const fetchContent = useCallback(
     async (sessionKey: string | null) => {
@@ -326,6 +554,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
       // 3) içerik
       const data = await fetchContent(sessionKey);
       setContent(data);
+      if (data.announcements?.length) setLiveAnnouncements(data.announcements); // anlık bildirim merkezi tohumu
       setSessionKey(sessionKey); // await sonrası — senkron setState yok
       if (data.phase === "ACTIVE" && sessionKey) {
         setPhase("ACTIVE");
@@ -348,6 +577,26 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     // bootstrap asenkron akıştır — microtask'ta başlat (senkron setState yok)
     void Promise.resolve().then(() => bootstrap());
   }, []);
+
+  // okunmadı taban çizgisi — localStorage'dan (SSR güvenli: mount sonrası)
+  useEffect(() => {
+    setLastReadMs(loadNotifReadMs(editionSlug));
+  }, [editionSlug]);
+
+  // bildirim merkezinde okundu işaretleme — KAPANIŞTA (okurken okunmadı noktası görünür kalır)
+  const markAnnouncementsRead = useCallback(() => {
+    const newest = liveAnnouncements[0]?.createdAt;
+    if (!newest) return;
+    const ms = new Date(newest).getTime();
+    if (ms > lastReadMs) {
+      saveNotifReadMs(editionSlug, ms);
+      setLastReadMs(ms);
+    }
+  }, [liveAnnouncements, lastReadMs, editionSlug]);
+  const unreadNotifCount = useMemo(
+    () => liveAnnouncements.filter((a) => new Date(a.createdAt).getTime() > lastReadMs).length,
+    [liveAnnouncements, lastReadMs],
+  );
 
   const cfg = content?.config;
 
@@ -387,6 +636,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
         const res = await apiGet<{ items: Announcement[] }>("/api/portal/announcements", {
           headers: { "x-portal-session": sessionRef.current! },
         });
+        setLiveAnnouncements(res.items); // bildirim merkezi listesi (son 10)
         const fresh = res.items.filter((a) => new Date(a.createdAt).getTime() > new Date(lastPollRef.current).getTime());
         if (res.items.length > 0) {
           lastPollRef.current = res.items[0].createdAt;
@@ -732,9 +982,12 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
               <Icons.Building2 className="size-4 text-muted-foreground" />
             )}
             <span className="truncate text-xs font-medium text-muted-foreground">{content.tenant.name}</span>
-            <span className="ml-auto rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
-              {kind === "AUTH" ? t("portalApp.badge.auth") : t("portalApp.badge.guest")}
-            </span>
+            <div className="ml-auto flex items-center gap-1.5">
+              <NotifBellButton unread={unreadNotifCount} accent={accent} onClick={() => setNotifOpen(true)} label={t("portalApp.notifCenter.ariaOpen")} />
+              <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
+                {kind === "AUTH" ? t("portalApp.badge.auth") : t("portalApp.badge.guest")}
+              </span>
+            </div>
           </div>
           {otherEventsSorted.length > 0 && (
             <div className="maven-scroll -mx-4 mt-2 flex gap-2 overflow-x-auto px-4 pb-2" role="list" aria-label={t("portalApp.otherEvents")}>
@@ -825,7 +1078,8 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
               <p className="truncate text-[10px] text-muted-foreground">{content.edition.portalHeaderTitle || content.edition.name}</p>
               <p className="truncate text-xs font-semibold">{screenBarTitle(screen)}</p>
             </div>
-            <span className="ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: `${accent}1a`, color: accent }}>
+            <NotifBellButton unread={unreadNotifCount} accent={accent} onClick={() => setNotifOpen(true)} label={t("portalApp.notifCenter.ariaOpen")} />
+            <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: `${accent}1a`, color: accent }}>
               {kind === "AUTH" ? t("portalApp.badge.auth") : t("portalApp.badge.guest")}
             </span>
           </div>
@@ -841,6 +1095,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
         {screen === "home" && (
           <HomeScreen
             content={content}
+            editionSlug={editionSlug}
             kind={kind}
             accent={accent}
             iconOverrides={iconOverrides}
@@ -967,6 +1222,22 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
           })}
         </div>
       </nav>
+
+      {/* ── Hafif Bildirim Merkezi (CRON-4) — duyuru geçmişi + yaklaşan hatırlatıcılar ── */}
+      <NotificationCenterSheet
+        open={notifOpen}
+        onOpenChange={(o) => {
+          setNotifOpen(o);
+          if (!o) markAnnouncementsRead(); // kapanışta okundu — okurken noktalar görünür kalır
+        }}
+        announcements={liveAnnouncements}
+        content={content}
+        editionSlug={editionSlug}
+        offsets={cfg?.notifications?.offsets?.length ? cfg.notifications.offsets : [60, 30, 10]}
+        notificationsEnabled={Boolean(cfg?.notifications?.enabled)}
+        accent={accent}
+        lastReadMs={lastReadMs}
+      />
     </div>
   );
 }
@@ -1176,6 +1447,7 @@ function LoginScreen({
 // ─── ANASAYFA — Dashboard Grid (§3.2) ───────────────────────────────────────
 function HomeScreen({
   content,
+  editionSlug,
   kind,
   accent,
   iconOverrides,
@@ -1186,6 +1458,7 @@ function HomeScreen({
   onOpenForm,
 }: {
   content: PortalContent;
+  editionSlug: string;
   kind: "GUEST" | "AUTH" | null;
   accent: string;
   iconOverrides: Record<string, IconOverride>;
@@ -1199,8 +1472,13 @@ function HomeScreen({
   const cfg = content.config!;
   const program = content.program ?? [];
   const nextSession = program.find((s) => new Date(s.startTime).getTime() > Date.now());
-  const announcement = content.announcements?.[0];
-  const [dismissed, setDismissed] = useState<string | null>(null);
+  // duyuru görünürlüğü (CRON-4): kapatılan duyuru kalıcı — kapatılmamış EN GÜNCEL duyuru gösterilir
+  const [dismissed, setDismissed] = useState<string | null>(() => loadAnnDismissed(editionSlug));
+  const dismiss = (id: string) => {
+    setDismissed(id);
+    saveAnnDismissed(editionSlug, id);
+  };
+  const announcement = (content.announcements ?? []).find((a) => a.id !== dismissed);
 
   const widgets = cfg.widgets;
   const WIDGET_META: Record<string, { label: string; icon: typeof Icons.Home; sub: string; target: string }> = {
@@ -1229,7 +1507,7 @@ function HomeScreen({
             <p className="text-xs font-semibold">{announcement.title}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">{announcement.message}</p>
           </div>
-          <button onClick={() => setDismissed(announcement.id)} aria-label={t("portalApp.announce.dismiss")} className="rounded p-0.5 text-muted-foreground hover:text-foreground">
+          <button onClick={() => dismiss(announcement.id)} aria-label={t("portalApp.announce.dismiss")} className="rounded p-0.5 text-muted-foreground hover:text-foreground">
             <Icons.X className="size-3.5" />
           </button>
         </div>

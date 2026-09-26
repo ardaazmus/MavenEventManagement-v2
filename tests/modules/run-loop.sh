@@ -21,7 +21,7 @@ restart_server() {
   echo "[restart] FAILED — health never 200" >> "$OUT"; return 1
 }
 
-SPECS=(01-auth-login 02-dashboard 03-bottom-nav 04-program-ics 05-program-capacity-409 06-sponsors 07-floor-plan 08-profile 09-forms 10-gamification 11-qa 12-announcements 13-notification-center 14-channels-admin 15-admin-cards 16-pwa-offline 17-i18n)
+SPECS=(01-auth-login 02-dashboard 03-bottom-nav 04-program-ics 05-program-capacity-409 06-sponsors 07-floor-plan 08-profile 09-forms 10-gamification 11-qa 12-announcements 13-notification-center 14-channels-admin 15-admin-cards 16-pwa-offline 17-i18n 19-accommodation-manual)
 
 TOTAL_PASS=0; TOTAL_FAIL=0; FAILED_SUITES=()
 for s in "${SPECS[@]}"; do

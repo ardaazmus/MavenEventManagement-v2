@@ -44,6 +44,10 @@ interface PersonRow {
 interface CompanionRow {
   id: string; participationId: string; name: string; type: string; notes?: string | null;
 }
+interface ParticipationRow {
+  id: string;
+  person: { id: string; firstName: string; lastName: string; email?: string | null };
+}
 
 const NO_SHOW_NOTE = "Gerçekleşmeyen konaklama ücreti faturaya no-show kalemi olarak yansır — sistemden düşme kaydıdır.";
 const COMPANION_AGE = { ADULT: "Yetişkin", CHILD: "Çocuk", INFANT: "Bebek (0-2)" } as const;
@@ -57,6 +61,7 @@ export function AccommodationView() {
   const { data: hotels, error, reload, loading } = useApi<HotelRow[]>(() => listEntity<HotelRow>("hotels", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
   const { data: reservations, reload: reloadRes } = useApi<ReservationRow[]>(() => listEntity<ReservationRow>("reservations", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
   const { data: people, reload: reloadPeople } = useApi<PersonRow[]>(() => listEntity<PersonRow>("people", { tenantId: tenant?.id ?? undefined, limit: 500 }), [tenant?.id, refreshKey]);
+  const { data: participations } = useApi<ParticipationRow[]>(() => listEntity<ParticipationRow>("participations", { editionId: currentEditionId ?? undefined, limit: 500 }), [currentEditionId, refreshKey]);
 
   // ── düzenleme / no-show / misafir diyaloğu durumları
   const [editRes, setEditRes] = useState<ReservationRow | null>(null);
@@ -78,6 +83,23 @@ export function AccommodationView() {
   });
   const [hotelPending, setHotelPending] = useState<{ logo?: { dataUrl: string }; cover?: { dataUrl: string } }>({});
   const [hotelMediaBusy, setHotelMediaBusy] = useState<"logo" | "cover" | null>(null);
+
+  // ── MANUEL REZERVASYON — kullanıcı ilkesi: tek veri girişi kaynağı olmamalı,
+  // her zaman manuel giriş de olmalı (Konaklama: telefon/e-postayla gelen talepler)
+  const [resOpen, setResOpen] = useState(false);
+  const [resForm, setResForm] = useState({
+    guestMode: "participant", participationId: "", filter: "", guestName: "",
+    hotelId: "", blockId: "__none__", roomTypeId: "__none__",
+    checkIn: "", checkOut: "", occupancyType: "SINGLE",
+    payerType: "SELF", payerName: "", rate: "", status: "REQUESTED", notes: "",
+  });
+  // ── stok yönetimi: oda tipi / blok / gecelik stok (otel kartından açılır)
+  const [rtDialog, setRtDialog] = useState<HotelRow | null>(null);
+  const [rtForm, setRtForm] = useState({ name: "", capacity: "2", price: "" });
+  const [blkDialog, setBlkDialog] = useState<HotelRow | null>(null);
+  const [blkForm, setBlkForm] = useState({ name: "", roomTypeId: "__none__", releaseDate: "" });
+  const [stockDialog, setStockDialog] = useState<{ hotel: HotelRow; block: HotelRow["blocks"][number] } | null>(null);
+  const [stockForm, setStockForm] = useState({ from: "", to: "", rooms: "10", mode: "add" });
 
   const { data: companions, reload: reloadCompanions } = useApi<CompanionRow[]>(
     () => listEntity<CompanionRow>("companions", { participationId: guestRes?.primaryGuest?.id ?? "__none__" }),
@@ -330,6 +352,168 @@ export function AccommodationView() {
     } finally { setBusy(false); }
   };
 
+  // ── manuel rezervasyon: türetilmiş değerler + gönderim ──
+  const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const parseDayLocal = (v: string) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(`${v}T12:00:00`) : null);
+  const sameDayLocal = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  const resHotel = (hotels ?? []).find((h) => h.id === resForm.hotelId) ?? null;
+  const resBlock = resHotel?.blocks.find((b) => b.id === resForm.blockId) ?? null;
+  const resNights = (() => {
+    const a = parseDayLocal(resForm.checkIn);
+    const b = parseDayLocal(resForm.checkOut);
+    if (!a || !b) return null;
+    const n = Math.round((b.getTime() - a.getTime()) / 86400000);
+    return n >= 1 ? n : null;
+  })();
+  const resStockPreview = (() => {
+    if (!resBlock || !resNights) return null;
+    const a = parseDayLocal(resForm.checkIn)!;
+    const out: { label: string; free: number | null }[] = [];
+    for (let i = 0; i < Math.min(resNights, 30); i++) {
+      const d = new Date(a.getTime() + i * 86400000);
+      const inv = resBlock.inventoryNights.find((n) => sameDayLocal(new Date(n.date), d));
+      out.push({ label: fmtDate(d), free: inv ? inv.totalRooms - inv.reservedRooms : null });
+    }
+    return out;
+  })();
+  const resPeople = (participations ?? []).filter((p) => {
+    const q = resForm.filter.trim().toLowerCase();
+    if (!q) return true;
+    return `${p.person.firstName} ${p.person.lastName} ${p.person.email ?? ""}`.toLowerCase().includes(q);
+  }).slice(0, 300);
+  const resSubmitReady = Boolean(currentEditionId) && resNights !== null
+    && (resForm.guestMode === "participant" ? Boolean(resForm.participationId) : resForm.guestName.trim().length >= 2);
+  // bloksuz + oda tipi seçiliyse kontrat fiyatı ipucu (kuruş → ₺)
+  const resRoomTypePrice = resHotel && !resBlock && resForm.roomTypeId !== "__none__"
+    ? resHotel.roomTypes.find((rt) => rt.id === resForm.roomTypeId)?.pricePerNight ?? null
+    : null;
+
+  const openManualRes = () => {
+    setResForm({
+      guestMode: "participant", participationId: "", filter: "", guestName: "",
+      hotelId: "", blockId: "__none__", roomTypeId: "__none__",
+      checkIn: "", checkOut: "", occupancyType: "SINGLE",
+      payerType: "SELF", payerName: "", rate: "", status: "REQUESTED", notes: "",
+    });
+    setResOpen(true);
+  };
+
+  const submitManualRes = async () => {
+    if (!currentEditionId || !resNights) return;
+    setBusy(true);
+    try {
+      const payload: Record<string, unknown> = {
+        editionId: currentEditionId,
+        checkIn: resForm.checkIn,
+        checkOut: resForm.checkOut,
+        occupancyType: resForm.occupancyType,
+        payerType: resForm.payerType,
+        payerName: resForm.payerName.trim() || null,
+        status: resForm.status,
+        notes: resForm.notes.trim() || null,
+        ratePerNight: resForm.rate.trim() ? toMinor(Number(resForm.rate) || 0) : null,
+      };
+      if (resForm.guestMode === "participant") payload.participationId = resForm.participationId;
+      else payload.guestName = resForm.guestName.trim();
+      if (resForm.blockId !== "__none__") {
+        payload.blockId = resForm.blockId;
+        payload.hotelId = resForm.hotelId;
+      } else if (resForm.hotelId) {
+        payload.hotelId = resForm.hotelId;
+        if (resForm.roomTypeId !== "__none__") payload.roomTypeId = resForm.roomTypeId;
+      }
+      const r = await apiSend<{ nights: number; stockConsumed: boolean }>("/api/reservations/manual", "POST", payload);
+      toast({ title: t("accIo.createdTitle"), description: t(r.stockConsumed ? "accIo.createdStock" : "accIo.createdNoStock", { nights: r.nights }) });
+      setResOpen(false);
+      reloadRes(); reload(); bump();
+    } catch (e) {
+      toast({ title: t("accIo.failTitle"), description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  // ── stok yönetimi: oda tipi / blok / gecelik stok aralığı ──
+  const openRoomType = (h: HotelRow) => {
+    setRtForm({ name: "", capacity: "2", price: "" });
+    setRtDialog(h);
+  };
+
+  const saveRoomType = async () => {
+    if (!rtDialog || !rtForm.name.trim()) return;
+    setBusy(true);
+    try {
+      await apiSend("/api/room-types", "POST", {
+        hotelId: rtDialog.id,
+        name: rtForm.name.trim(),
+        capacity: Math.max(1, Math.round(Number(rtForm.capacity) || 2)),
+        pricePerNight: toMinor(Number(rtForm.price) || 0),
+        currency: "TRY",
+      });
+      toast({ title: t("accIo.rtSaved"), description: `${rtForm.name.trim()} · ${rtDialog.name}` });
+      setRtDialog(null);
+      reload(); bump();
+    } catch (e) {
+      toast({ title: t("accIo.failTitle"), description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const openBlock = (h: HotelRow) => {
+    setBlkForm({ name: "", roomTypeId: h.roomTypes[0]?.id ?? "__none__", releaseDate: "" });
+    setBlkDialog(h);
+  };
+
+  const saveBlock = async () => {
+    if (!blkDialog || !blkForm.name.trim() || blkForm.roomTypeId === "__none__") return;
+    setBusy(true);
+    try {
+      await apiSend("/api/room-blocks", "POST", {
+        hotelId: blkDialog.id,
+        roomTypeId: blkForm.roomTypeId,
+        name: blkForm.name.trim(),
+        releaseDate: blkForm.releaseDate || null,
+      });
+      toast({ title: t("accIo.blockSaved"), description: `${blkForm.name.trim()} · ${blkDialog.name}` });
+      setBlkDialog(null);
+      reload(); bump();
+    } catch (e) {
+      toast({ title: t("accIo.failTitle"), description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const openStock = (h: HotelRow, b: HotelRow["blocks"][number]) => {
+    const today = new Date();
+    setStockForm({ from: isoDay(today), to: isoDay(new Date(today.getTime() + 6 * 86400000)), rooms: "10", mode: "add" });
+    setStockDialog({ hotel: h, block: b });
+  };
+
+  const saveStock = async () => {
+    if (!stockDialog || !stockForm.from || !stockForm.to) return;
+    setBusy(true);
+    try {
+      const r = await apiSend<{ upserted: number }>("/api/room-stock", "POST", {
+        blockId: stockDialog.block.id,
+        from: stockForm.from,
+        to: stockForm.to,
+        totalRooms: Math.max(0, Math.round(Number(stockForm.rooms) || 0)),
+        mode: stockForm.mode,
+      });
+      toast({ title: t("accIo.stockSaved"), description: t("accIo.stockSavedDesc", { n: r.upserted, rooms: Math.max(0, Math.round(Number(stockForm.rooms) || 0)) }) });
+      setStockDialog(null);
+      reload(); bump();
+    } catch (e) {
+      toast({ title: t("accIo.failTitle"), description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const exportRoomingList = () => {
+    if (!currentEditionId) {
+      toast({ title: t("accIo.needEdition"), variant: "destructive" });
+      return;
+    }
+    toast({ title: t("accIo.exportTitle") });
+    window.open(`/api/reservations/export?editionId=${currentEditionId}`, "_blank");
+  };
+
   // diyaloğa gömülü medya seçici (logo / kapak)
   const renderHotelMediaPicker = (kind: "logo" | "cover") => {
     const isLogo = kind === "logo";
@@ -433,14 +617,34 @@ export function AccommodationView() {
                             </p>
                           ) : null}
                         </div>
-                        <button
-                          type="button"
-                          aria-label={`${h.name} otelini düzenle`}
-                          onClick={() => openEditHotel(h)}
-                          className="grid size-7 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        >
-                          <Icons.Pencil className="size-3.5" />
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <button
+                            type="button"
+                            aria-label={`${h.name} — oda tipi ekle`}
+                            title={t("accIo.rtBtn")}
+                            onClick={() => openRoomType(h)}
+                            className="grid size-7 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <Icons.BedSingle className="size-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`${h.name} — oda bloğu ekle`}
+                            title={t("accIo.blockBtn")}
+                            onClick={() => openBlock(h)}
+                            className="grid size-7 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <Icons.Layers className="size-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`${h.name} otelini düzenle`}
+                            onClick={() => openEditHotel(h)}
+                            className="grid size-7 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <Icons.Pencil className="size-3.5" />
+                          </button>
+                        </div>
                       </div>
 
                       {(h.address || h.checkInNote || h.contactName || h.contactPhone) && (
@@ -497,6 +701,14 @@ export function AccommodationView() {
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <span>satılabilir {total} oda-gece · ayrılan {reserved} (%{total ? Math.round((reserved / total) * 100) : 0})</span>
                             {b.releaseDate && <Chip tone={new Date(b.releaseDate) < new Date(Date.now() + 7 * 86400000) ? "rose" : "neutral"}>release {fmtDate(b.releaseDate)}</Chip>}
+                            <button
+                              type="button"
+                              aria-label={`${b.name} gecelik stoğunu ekle veya uzat`}
+                              onClick={() => openStock(h, b)}
+                              className="inline-flex h-6 items-center gap-1 rounded-md border bg-card px-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted"
+                            >
+                              <Icons.PackagePlus className="size-3" /> {t("accIo.stockBtn")}
+                            </button>
                           </div>
                         </div>
                         {/* gecelik stok çizelgesi */}
@@ -523,7 +735,20 @@ export function AccommodationView() {
         )}
       </SectionCard>
 
-      <SectionCard title="Rezervasyonlar" desc="varış/çıkış, doluluk tipi, gecelik fiyat, misafir bağlantıları — rezervasyon ile ödeyen aynı olmak zorunda değil (§35)">
+      <SectionCard
+        title="Rezervasyonlar"
+        desc="varış/çıkış, doluluk tipi, gecelik fiyat, misafir bağlantıları — rezervasyon ile ödeyen aynı olmak zorunda değil (§35)"
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={exportRoomingList} disabled={!currentEditionId}>
+              <Icons.FileDown className="size-4" /> {t("accIo.exportBtn")}
+            </Button>
+            <Button size="sm" onClick={openManualRes} disabled={!currentEditionId}>
+              <Icons.BedDouble className="size-4" /> {t("accIo.manualBtn")}
+            </Button>
+          </div>
+        }
+      >
         {(reservations ?? []).length === 0 ? (
           <EmptyState title="Rezervasyon yok" />
         ) : (
@@ -916,6 +1141,302 @@ export function AccommodationView() {
             <Button onClick={saveHotel} disabled={busy || !hotelForm.name.trim()}>
               {busy ? "Kaydediliyor…" : hotelDialog?.target ? "Kaydet" : "Otel Ekle"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MANUEL REZERVASYON — detaylı tekil giriş (kullanıcı ilkesi: her veri türünde manuel giriş) */}
+      <Dialog open={resOpen} onOpenChange={(o) => !o && setResOpen(false)}>
+        <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Icons.BedDouble className="size-4 text-teal-600" /> {t("accIo.manualTitle")}</DialogTitle>
+            <DialogDescription>{t("accIo.manualDesc")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <fieldset className="space-y-2.5 rounded-lg border p-3">
+              <legend className="px-1 text-xs font-semibold">{t("accIo.sectionGuest")}</legend>
+              <div className="space-y-1.5">
+                <Label htmlFor="mr-guestmode">{t("accIo.guestMode")}</Label>
+                <Select value={resForm.guestMode} onValueChange={(v) => setResForm({ ...resForm, guestMode: v, participationId: "", guestName: "" })}>
+                  <SelectTrigger id="mr-guestmode" aria-label={t("accIo.guestMode")}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="participant">{t("accIo.guestModeParticipant")}</SelectItem>
+                    <SelectItem value="free">{t("accIo.guestModeFree")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {resForm.guestMode === "participant" ? (
+                <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mr-pfilter">{t("accIo.participantSearch")}</Label>
+                    <Input id="mr-pfilter" value={resForm.filter} onChange={(e) => setResForm({ ...resForm, filter: e.target.value })} placeholder={t("accIo.participantSearchPh")} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mr-participant">{t("accIo.participantLabel")}</Label>
+                    <Select value={resForm.participationId || "__none__"} onValueChange={(v) => setResForm({ ...resForm, participationId: v === "__none__" ? "" : v })}>
+                      <SelectTrigger id="mr-participant" aria-label={t("accIo.participantLabel")}><SelectValue /></SelectTrigger>
+                      <SelectContent className="max-h-64">
+                        <SelectItem value="__none__">{t("accIo.participantChoose")}</SelectItem>
+                        {resPeople.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>{p.person.firstName} {p.person.lastName}{p.person.email ? ` · ${p.person.email}` : ""}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label htmlFor="mr-gname">{t("accIo.freeGuestName")}</Label>
+                  <Input id="mr-gname" value={resForm.guestName} onChange={(e) => setResForm({ ...resForm, guestName: e.target.value })} placeholder={t("accIo.freeGuestNamePh")} />
+                </div>
+              )}
+            </fieldset>
+
+            <fieldset className="space-y-2.5 rounded-lg border p-3">
+              <legend className="px-1 text-xs font-semibold">{t("accIo.sectionStay")}</legend>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="mr-hotel">{t("accIo.hotel")}</Label>
+                  <Select value={resForm.hotelId || "__none__"} onValueChange={(v) => setResForm({ ...resForm, hotelId: v === "__none__" ? "" : v, blockId: "__none__", roomTypeId: "__none__" })}>
+                    <SelectTrigger id="mr-hotel" aria-label={t("accIo.hotel")}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">{t("accIo.blockNone")}</SelectItem>
+                      {(hotels ?? []).map((h) => <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="mr-block">{t("accIo.block")}</Label>
+                  <Select value={resForm.blockId} onValueChange={(v) => setResForm({ ...resForm, blockId: v, roomTypeId: "__none__" })} disabled={!resHotel}>
+                    <SelectTrigger id="mr-block" aria-label={t("accIo.block")}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">{t("accIo.blockNone")}</SelectItem>
+                      {(resHotel?.blocks ?? []).map((b) => <SelectItem key={b.id} value={b.id}>{b.name} · {b.roomType.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {resHotel && !resBlock && (
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label htmlFor="mr-rt">{t("accIo.roomType")}</Label>
+                    <Select value={resForm.roomTypeId} onValueChange={(v) => setResForm({ ...resForm, roomTypeId: v })}>
+                      <SelectTrigger id="mr-rt" aria-label={t("accIo.roomType")}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">{t("accIo.roomTypeNone")}</SelectItem>
+                        {resHotel.roomTypes.map((rt) => <SelectItem key={rt.id} value={rt.id}>{rt.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {resBlock && (
+                  <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground sm:col-span-2">
+                    <Icons.Info className="size-3" aria-hidden /> {t("accIo.roomType")}: <b className="font-medium">{resBlock.roomType.name}</b> ({t("accIo.roomTypeFromBlock")})
+                  </p>
+                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="mr-in">{t("accIo.checkIn")}</Label>
+                  <Input id="mr-in" type="date" value={resForm.checkIn} onChange={(e) => setResForm({ ...resForm, checkIn: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="mr-out">{t("accIo.checkOut")}</Label>
+                  <Input id="mr-out" type="date" value={resForm.checkOut} onChange={(e) => setResForm({ ...resForm, checkOut: e.target.value })} />
+                </div>
+              </div>
+              {resForm.checkIn && resForm.checkOut && (
+                resNights === null ? (
+                  <p className="text-xs font-medium text-rose-600" role="alert">{t("accIo.nightsInvalid")}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground"><b className="text-foreground tabular-nums">{resNights}</b> {t("accIo.nights")}</p>
+                )
+              )}
+              {resStockPreview && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-medium text-muted-foreground">{t("accIo.stockPreview")}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {resStockPreview.map((s) => (
+                      <span key={s.label} className={cn("rounded-md border px-1.5 py-1 text-[10px] tabular-nums", s.free === null ? "border-amber-300 bg-amber-50 text-amber-800" : s.free === 0 ? "border-rose-300 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-800")}>
+                        {s.label}: {s.free === null ? t("accIo.stockMissing") : s.free === 0 ? t("accIo.stockFull") : s.free}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </fieldset>
+
+            <fieldset className="space-y-2.5 rounded-lg border p-3">
+              <legend className="px-1 text-xs font-semibold">{t("accIo.sectionFinance")}</legend>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="mr-occ">{t("accIo.occupancyType")}</Label>
+                  <Select value={resForm.occupancyType} onValueChange={(v) => setResForm({ ...resForm, occupancyType: v })}>
+                    <SelectTrigger id="mr-occ" aria-label={t("accIo.occupancyType")}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(OCCUPANCY_TYPE).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="mr-payer">{t("accIo.payerType")}</Label>
+                  <Select value={resForm.payerType} onValueChange={(v) => setResForm({ ...resForm, payerType: v })}>
+                    <SelectTrigger id="mr-payer" aria-label={t("accIo.payerType")}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="SELF">{t("accIo.payerSelf")}</SelectItem>
+                      <SelectItem value="ORGANIZATION">{t("accIo.payerOrganization")}</SelectItem>
+                      <SelectItem value="SPONSOR">{t("accIo.payerSponsor")}</SelectItem>
+                      <SelectItem value="ORGANIZER">{t("accIo.payerOrganizer")}</SelectItem>
+                      <SelectItem value="SPEAKER_HOSPITALITY">{t("accIo.payerSpeaker")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {["ORGANIZATION", "SPONSOR"].includes(resForm.payerType) && (
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label htmlFor="mr-payername">{t("accIo.payerName")} *</Label>
+                    <Input id="mr-payername" value={resForm.payerName} onChange={(e) => setResForm({ ...resForm, payerName: e.target.value })} placeholder="Delta Üniversitesi…" aria-required="true" />
+                    <p className="text-[11px] text-muted-foreground">{t("accIo.payerNameReq")}</p>
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="mr-rate">{t("accIo.ratePerNight")}</Label>
+                  <Input id="mr-rate" type="number" min={0} step={100} value={resForm.rate} onChange={(e) => setResForm({ ...resForm, rate: e.target.value })} className="tabular-nums" placeholder={resRoomTypePrice != null ? String(fromMinor(resRoomTypePrice)) : undefined} />
+                  <p className="text-[11px] text-muted-foreground">{t("accIo.rateFromRoomType")}</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="mr-status">{t("accIo.status")}</Label>
+                  <Select value={resForm.status} onValueChange={(v) => setResForm({ ...resForm, status: v })}>
+                    <SelectTrigger id="mr-status" aria-label={t("accIo.status")}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {["REQUESTED", "RESERVED", "CONFIRMED", "WAITLIST"].map((s) => (
+                        <SelectItem key={s} value={s}>{label(ACCOMMODATION_STATUS, s)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {resForm.status === "CONFIRMED" && (
+                    <p className="flex items-start gap-1 text-[11px] text-amber-700">
+                      <Icons.Info className="mt-0.5 size-3 shrink-0" aria-hidden /> {t("accIo.statusHintConfirm")}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="mr-notes">{t("accIo.notes")}</Label>
+                  <Textarea id="mr-notes" rows={2} value={resForm.notes} onChange={(e) => setResForm({ ...resForm, notes: e.target.value })} placeholder={t("accIo.notesPh")} />
+                </div>
+              </div>
+            </fieldset>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResOpen(false)}>Vazgeç</Button>
+            <Button onClick={submitManualRes} disabled={busy || !resSubmitReady}>
+              {busy ? t("accIo.submitting") : t("accIo.submit")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Oda tipi ekle — otel kartı üzerinden */}
+      <Dialog open={Boolean(rtDialog)} onOpenChange={(o) => !o && setRtDialog(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Icons.BedSingle className="size-4 text-teal-600" /> {rtDialog ? t("accIo.rtTitle", { hotel: rtDialog.name }) : ""}</DialogTitle>
+            <DialogDescription>{t("accIo.rtDesc")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="rt-name">{t("accIo.rtName")} *</Label>
+              <Input id="rt-name" value={rtForm.name} onChange={(e) => setRtForm({ ...rtForm, name: e.target.value })} placeholder={t("accIo.rtNamePh")} />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="rt-cap">{t("accIo.rtCapacity")}</Label>
+                <Input id="rt-cap" type="number" min={1} max={10} value={rtForm.capacity} onChange={(e) => setRtForm({ ...rtForm, capacity: e.target.value })} className="tabular-nums" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="rt-price">{t("accIo.rtPrice")}</Label>
+                <Input id="rt-price" type="number" min={0} step={100} value={rtForm.price} onChange={(e) => setRtForm({ ...rtForm, price: e.target.value })} className="tabular-nums" />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRtDialog(null)}>Vazgeç</Button>
+            <Button onClick={saveRoomType} disabled={busy || !rtForm.name.trim()}>{busy ? "…" : t("accIo.rtBtn")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Oda bloğu ekle — otel kartı üzerinden */}
+      <Dialog open={Boolean(blkDialog)} onOpenChange={(o) => !o && setBlkDialog(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Icons.Layers className="size-4 text-teal-600" /> {blkDialog ? t("accIo.blockTitle", { hotel: blkDialog.name }) : ""}</DialogTitle>
+            <DialogDescription>{t("accIo.blockDesc")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="blk-name">{t("accIo.blockName")} *</Label>
+              <Input id="blk-name" value={blkForm.name} onChange={(e) => setBlkForm({ ...blkForm, name: e.target.value })} placeholder={t("accIo.blockNamePh")} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="blk-rt">{t("accIo.blockRoomType")} *</Label>
+              {blkDialog && blkDialog.roomTypes.length === 0 ? (
+                <p className="rounded-md border border-dashed px-2.5 py-2 text-[11px] text-muted-foreground">{t("accIo.blockNeedRoomType")}</p>
+              ) : (
+                <Select value={blkForm.roomTypeId} onValueChange={(v) => setBlkForm({ ...blkForm, roomTypeId: v })}>
+                  <SelectTrigger id="blk-rt" aria-label={t("accIo.blockRoomType")}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {(blkDialog?.roomTypes ?? []).map((rt) => <SelectItem key={rt.id} value={rt.id}>{rt.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="blk-release">{t("accIo.blockRelease")}</Label>
+              <Input id="blk-release" type="date" value={blkForm.releaseDate} onChange={(e) => setBlkForm({ ...blkForm, releaseDate: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBlkDialog(null)}>Vazgeç</Button>
+            <Button onClick={saveBlock} disabled={busy || !blkForm.name.trim() || blkForm.roomTypeId === "__none__" || !blkDialog || blkDialog.roomTypes.length === 0}>{busy ? "…" : t("accIo.blockBtn")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Gecelik stok ekle / uzat — blok kartı üzerinden */}
+      <Dialog open={Boolean(stockDialog)} onOpenChange={(o) => !o && setStockDialog(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Icons.PackagePlus className="size-4 text-teal-600" /> {stockDialog ? t("accIo.stockTitle", { block: stockDialog.block.name }) : ""}</DialogTitle>
+            <DialogDescription>{t("accIo.stockDesc")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="stk-from">{t("accIo.stockFrom")} *</Label>
+                <Input id="stk-from" type="date" value={stockForm.from} onChange={(e) => setStockForm({ ...stockForm, from: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="stk-to">{t("accIo.stockTo")} *</Label>
+                <Input id="stk-to" type="date" value={stockForm.to} onChange={(e) => setStockForm({ ...stockForm, to: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="stk-rooms">{t("accIo.stockRooms")} *</Label>
+                <Input id="stk-rooms" type="number" min={0} max={5000} value={stockForm.rooms} onChange={(e) => setStockForm({ ...stockForm, rooms: e.target.value })} className="tabular-nums" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="stk-mode">{t("accIo.stockMode")}</Label>
+                <Select value={stockForm.mode} onValueChange={(v) => setStockForm({ ...stockForm, mode: v })}>
+                  <SelectTrigger id="stk-mode" aria-label={t("accIo.stockMode")}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="add">{t("accIo.stockModeAdd")}</SelectItem>
+                    <SelectItem value="set">{t("accIo.stockModeSet")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p className="flex items-start gap-1.5 rounded-lg bg-muted/40 px-2.5 py-2 text-[11px] text-muted-foreground">
+              <Icons.Info className="mt-0.5 size-3 shrink-0" aria-hidden /> {t("accIo.stockHint")}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStockDialog(null)}>Vazgeç</Button>
+            <Button onClick={saveStock} disabled={busy || !stockForm.from || !stockForm.to}>{busy ? "…" : t("accIo.stockBtn")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -87,6 +87,8 @@ export function AccommodationView() {
   // ── MANUEL REZERVASYON — kullanıcı ilkesi: tek veri girişi kaynağı olmamalı,
   // her zaman manuel giriş de olmalı (Konaklama: telefon/e-postayla gelen talepler)
   const [resOpen, setResOpen] = useState(false);
+  // ── DOSYA İÇE AKTARMA — otel rooming listeleri / e-postayla gelen rezervasyon listeleri
+  const [fileImportOpen, setFileImportOpen] = useState(false);
   const [resForm, setResForm] = useState({
     guestMode: "participant", participationId: "", filter: "", guestName: "",
     hotelId: "", blockId: "__none__", roomTypeId: "__none__",
@@ -740,6 +742,9 @@ export function AccommodationView() {
         desc="varış/çıkış, doluluk tipi, gecelik fiyat, misafir bağlantıları — rezervasyon ile ödeyen aynı olmak zorunda değil (§35)"
         action={
           <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setFileImportOpen(true)} disabled={!currentEditionId}>
+              <Icons.FileUp className="size-4" /> {t("accImp.btn")}
+            </Button>
             <Button size="sm" variant="outline" onClick={exportRoomingList} disabled={!currentEditionId}>
               <Icons.FileDown className="size-4" /> {t("accIo.exportBtn")}
             </Button>
@@ -1440,6 +1445,262 @@ export function AccommodationView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Dosyadan içe aktarma — otel rooming listeleri / e-postayla gelen rezervasyon listeleri */}
+      <ImportReservationsDialog
+        open={fileImportOpen}
+        onOpenChange={setFileImportOpen}
+        editionId={currentEditionId}
+        onImported={() => { reloadRes(); reload(); bump(); }}
+      />
     </div>
+  );
+}
+
+// ─── DOSYADAN REZERVASYON İÇE AKTARMA (xlsx/csv) ───────────────────────────
+// REG-IO / CC-IMPORT iki-fazlı diyaloğu: dosya seç → sunucuda önizleme (yazım yok)
+// → İçe Al → sonuç kartları. Blok eşleşen Teyit satırları gecelik stok tüketir;
+// otel/blok adları sunucuda çözülür, bilinmeyen ad sorulardır (satır atlanır).
+
+interface ResImportPreview {
+  mode: "preview";
+  total: number;
+  valid: number;
+  toCreate: number;
+  offInventory: number;
+  stockNights: number;
+  issues: { row: number; guest: string; kind: string; reason: string }[];
+  mapping: Record<string, string>;
+  sample: { row: number; guest: string; hotel: string; dates: string; status: string; action: "stock" | "noStock" | "free" }[];
+}
+interface ResImportResult {
+  mode: "commit";
+  created: number;
+  skipped: number;
+  stockNights: number;
+  total: number;
+  failures: { row: number; guest: string; reason: string }[];
+}
+
+const RES_ISSUE_KIND_KEYS: Record<string, string> = { VALIDATION: "issueValidation", DUPLICATE_FILE: "issueDupFile", DUPLICATE_DB: "issueDupDb" };
+
+function ImportReservationsDialog({ open, onOpenChange, editionId, onImported }: {
+  open: boolean; onOpenChange: (o: boolean) => void; editionId: string | null; onImported: () => void;
+}) {
+  const { t } = useLang();
+  const { toast } = useToast();
+  const [phase, setPhase] = useState<"idle" | "parsing" | "previewing" | "preview" | "committing" | "done">("idle");
+  const [fileName, setFileName] = useState("");
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [defaultStatus, setDefaultStatus] = useState("REQUESTED");
+  const [preview, setPreview] = useState<ResImportPreview | null>(null);
+  const [result, setResult] = useState<ResImportResult | null>(null);
+
+  const reset = () => { setPhase("idle"); setRows([]); setPreview(null); setResult(null); setFileName(""); setDefaultStatus("REQUESTED"); };
+
+  const downloadTemplate = async () => {
+    const XLSX = await import("xlsx");
+    const headers = [t("accImp.tplGuest"), t("accImp.tplEmail"), t("accImp.tplHotel"), t("accImp.tplBlock"), t("accImp.tplCheckIn"), t("accImp.tplCheckOut"), t("accImp.tplOccupancy"), t("accImp.tplPayerType"), t("accImp.tplPayerName"), t("accImp.tplRate"), t("accImp.tplStatus"), t("accImp.tplNotes")];
+    const sample = [
+      ["Ayşe Yılmaz", "", t("accImp.tplHotelSample"), t("accImp.tplBlockSample"), "12.05.2026", "15.05.2026", t("accImp.occDouble"), t("accImp.payerSelf"), "", "3500", t("accImp.stConfirm"), ""],
+      ["Demo Misafir", "", "", "", "13.05.2026", "14.05.2026", t("accImp.occSingle"), t("accImp.payerOrg"), "Örnek A.Ş.", "", t("accImp.stRequest"), "telefonla geldi"],
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([headers, ...sample]), "Sablon");
+    XLSX.writeFile(wb, "rezervasyon-import-sablonu.xlsx");
+  };
+
+  const handleFile = async (file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: t("accImp.failTitle"), description: t("accImp.fileTooBig"), variant: "destructive" });
+      return;
+    }
+    setFileName(file.name); setPhase("parsing");
+    try {
+      const XLSX = await import("xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      if (!ws) throw new Error(t("accImp.fileEmpty"));
+      const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "", raw: false });
+      if (parsed.length === 0) throw new Error(t("accImp.fileNoRows"));
+      setRows(parsed);
+      setPhase("previewing");
+      const pv = await apiSend<ResImportPreview>("/api/reservations/import", "POST", {
+        editionId, rows: parsed, defaultStatus: defaultStatus || undefined,
+      });
+      setPreview(pv); setPhase("preview");
+    } catch (e) {
+      toast({ title: t("accImp.failTitle"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+      setPhase("idle");
+    }
+  };
+
+  const commit = async () => {
+    if (rows.length === 0 || !editionId) return;
+    setPhase("committing");
+    try {
+      const res = await apiSend<ResImportResult>("/api/reservations/import", "POST", {
+        editionId, rows, commit: true, defaultStatus: defaultStatus || undefined,
+      });
+      setResult(res); setPhase("done");
+      toast({ title: t("accImp.doneTitle"), description: t("accImp.doneDesc", { created: res.created, skipped: res.skipped }) });
+      onImported();
+    } catch (e) {
+      toast({ title: t("accImp.failTitle"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+      setPhase("preview");
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o && phase !== "committing") { onOpenChange(false); reset(); } }}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{t("accImp.title")}</DialogTitle>
+          <DialogDescription>{t("accImp.desc")}</DialogDescription>
+        </DialogHeader>
+
+        {/* 1) varsayılan durum + dosya seçimi + şablon */}
+        {phase === "idle" && (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs" htmlFor="res-imp-status">{t("accImp.defaultStatus")}</Label>
+              <Select value={defaultStatus} onValueChange={setDefaultStatus}>
+                <SelectTrigger id="res-imp-status" aria-label={t("accImp.defaultStatus")}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="REQUESTED">{t("accImp.stRequest")}</SelectItem>
+                  <SelectItem value="WAITLIST">{t("accImp.stWait")}</SelectItem>
+                  <SelectItem value="RESERVED">{t("accImp.stReserve")}</SelectItem>
+                  <SelectItem value="CONFIRMED">{t("accImp.stConfirm")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">{t("accImp.defaultStatusHint")}</p>
+            </div>
+            <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed p-6 text-center transition-colors hover:bg-muted/40">
+              <Icons.FileSpreadsheet className="size-8 text-muted-foreground" aria-hidden />
+              <span className="text-sm font-medium">{t("accImp.pickFile")}</span>
+              {fileName && <span className="text-xs text-muted-foreground">{fileName}</span>}
+              <input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
+            </label>
+            <div className="flex justify-center">
+              <Button variant="link" size="sm" className="gap-1.5 text-xs" onClick={() => void downloadTemplate()}>
+                <Icons.Download className="size-3.5" aria-hidden />{t("accImp.template")}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {(phase === "parsing" || phase === "previewing") && (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground" role="status">
+            <Icons.Loader2 className="size-4 animate-spin" aria-hidden />
+            {phase === "parsing" ? t("accImp.parsing") : t("accImp.previewing")}
+          </div>
+        )}
+
+        {/* 2) önizleme — sayım çipleri + sorunlar + tablo */}
+        {phase === "preview" && preview && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Chip tone="neutral">{t("accImp.rowsTotal", { n: preview.total })}</Chip>
+              <Chip tone="emerald">{t("accImp.rowsValid", { n: preview.valid })}</Chip>
+              <Chip tone="teal">{t("accImp.toCreate", { n: preview.toCreate })}</Chip>
+              {preview.offInventory > 0 && <Chip tone="amber">{t("accImp.offInventory", { n: preview.offInventory })}</Chip>}
+              {preview.stockNights > 0 && <Chip tone="sky">{t("accImp.stockNights", { n: preview.stockNights })}</Chip>}
+              {preview.issues.length > 0 && <Chip tone="rose">{t("accImp.rowsIssues", { n: preview.issues.length })}</Chip>}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {Object.keys(preview.mapping).length > 0
+                ? t("accImp.mappedCols", { cols: Object.values(preview.mapping).join(", ") })
+                : t("accImp.colNotMapped")}
+            </p>
+
+            {preview.issues.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">{t("accImp.issuesTitle")}</p>
+                <ul className="maven-scroll max-h-40 space-y-1.5 overflow-y-auto rounded-lg border p-2.5">
+                  {preview.issues.slice(0, 100).map((x) => (
+                    <li key={`${x.row}-${x.kind}-${x.reason}`} className="flex items-start gap-2 text-xs">
+                      <Chip tone={x.kind === "DUPLICATE_FILE" ? "amber" : "rose"}>{t(`accImp.${RES_ISSUE_KIND_KEYS[x.kind] ?? "issueValidation"}`)}</Chip>
+                      <span className="min-w-0 flex-1"><b>{x.guest}</b> · {x.reason}</span>
+                      <span className="shrink-0 text-muted-foreground">#{x.row}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div>
+              <p className="mb-1.5 text-xs font-semibold text-muted-foreground">{t("accImp.previewTitle", { n: Math.min(8, preview.total) })}</p>
+              <div className="maven-scroll max-h-52 overflow-y-auto rounded-lg border">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+                    <tr className="text-left text-muted-foreground">
+                      <th className="px-2.5 py-2 font-medium">#</th>
+                      <th className="px-2.5 py-2 font-medium">{t("accImp.headerGuest")}</th>
+                      <th className="px-2.5 py-2 font-medium">{t("accImp.headerHotel")}</th>
+                      <th className="px-2.5 py-2 font-medium">{t("accImp.headerDates")}</th>
+                      <th className="px-2.5 py-2 font-medium">{t("accImp.headerAction")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.sample.map((s) => (
+                      <tr key={s.row} className="border-t">
+                        <td className="px-2.5 py-1.5 text-muted-foreground">{s.row}</td>
+                        <td className="max-w-32 truncate px-2.5 py-1.5 font-medium">{s.guest}</td>
+                        <td className="max-w-36 truncate px-2.5 py-1.5">{s.hotel}</td>
+                        <td className="px-2.5 py-1.5 tabular-nums" dir="ltr">{s.dates}</td>
+                        <td className="px-2.5 py-1.5">
+                          <Chip tone={s.action === "stock" ? "sky" : s.action === "free" ? "amber" : "teal"}>
+                            {s.action === "stock" ? t("accImp.actionStock") : s.action === "free" ? t("accImp.actionFree") : t("accImp.actionNoStock")}
+                          </Chip>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 3) sonuç */}
+        {phase === "done" && result && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="rounded-lg bg-emerald-50 p-3 dark:bg-emerald-900/20"><p className="text-lg font-semibold tabular-nums">{result.created}</p><p className="text-muted-foreground">{t("accImp.resCreated")}</p></div>
+              <div className="rounded-lg bg-sky-50 p-3 dark:bg-sky-900/20"><p className="text-lg font-semibold tabular-nums">{result.stockNights}</p><p className="text-muted-foreground">{t("accImp.resStock")}</p></div>
+              <div className="rounded-lg bg-amber-50 p-3 dark:bg-amber-900/20"><p className="text-lg font-semibold tabular-nums">{result.skipped}</p><p className="text-muted-foreground">{t("accImp.resSkipped")}</p></div>
+            </div>
+            {result.failures.length > 0 && (
+              <ul className="maven-scroll max-h-32 space-y-1.5 overflow-y-auto rounded-lg border p-2.5">
+                {result.failures.slice(0, 50).map((f) => (
+                  <li key={`f-${f.row}`} className="flex items-start gap-2 text-xs">
+                    <span className="shrink-0 text-muted-foreground">#{f.row}</span>
+                    <span className="min-w-0 flex-1"><b>{f.guest}</b> · {f.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          {phase === "preview" && (
+            <Button variant="outline" onClick={reset}>{t("common.cancel")}</Button>
+          )}
+          {phase !== "preview" && phase !== "done" && (
+            <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.close")}</Button>
+          )}
+          {phase === "preview" && (
+            <Button onClick={() => void commit()} disabled={preview?.valid === 0}>
+              <Icons.FileUp className="size-3.5" /> {t("accImp.commitBtn", { n: preview?.valid ?? 0 })}
+            </Button>
+          )}
+          {phase === "done" && (
+            <Button onClick={() => { onOpenChange(false); reset(); }}>{t("common.close")}</Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

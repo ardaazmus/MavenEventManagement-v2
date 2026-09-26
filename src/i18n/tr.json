@@ -2944,7 +2944,16 @@
     },
     "forms": {
       "title": "Formlar & Quizler",
-      "empty": "Açık form bulunmuyor."
+      "empty": "Açık form bulunmuyor.",
+      "pendingGroup": "Devam eden",
+      "completedGroup": "Tamamlandı",
+      "type": {
+        "REGISTRATION": "Kayıt",
+        "SURVEY": "Anket",
+        "FEEDBACK": "Geri Bildirim",
+        "QA_MOBILE": "Q&A",
+        "CUSTOM": "Form"
+      }
     },
     "b2b": {
       "title": "B2B Görüşmelerim",
@@ -3062,7 +3071,10 @@
       "levelUpDesc": "Tebrikler — artık {level} seviyesindesin.",
       "pointsWon": "Puan kazandın!",
       "pointsWonDesc": "+{points} puan hesabına eklendi.",
-      "anon": "Katılımcı"
+      "anon": "Katılımcı",
+      "questsDone": "{done}/{total} tamamlandı",
+      "remaining": "{points} puan kaldı",
+      "maxLevel": "En üst seviye!"
     },
     "form": {
       "title": "Form"

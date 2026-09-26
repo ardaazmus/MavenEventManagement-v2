@@ -13,8 +13,15 @@ if (!edition) {
   process.exit(1);
 }
 
-// 1) yapılandırma: aktif portal + kod + tema + kroki (mevcut değerler korunur)
+// 1) yapılandırma: aktif portal + kod + tema + kroki + oyunlaştırma (demo vitrini)
+// CRON-3: gameEnabled artık deterministik AÇIK — oyunlaştırma (görevler, puanlar,
+// liderlik) demo akışının parçası; masking varsayılan MASKED (gizlilik).
 const existing = await db.eventPortalConfig.findUnique({ where: { editionId: edition.id } });
+const demoGameConfig = JSON.stringify({
+  points: { FORM_SUBMIT: 20, QA_SUBMIT: 10, B2B_ACCEPT: 15 },
+  qaCap: 5,
+  masking: "MASKED",
+});
 const config = await db.eventPortalConfig.upsert({
   where: { editionId: edition.id },
   create: {
@@ -24,6 +31,8 @@ const config = await db.eventPortalConfig.upsert({
     themeColor: "#0d9488",
     venueMapUrl: "/portal-kroki-demo.png",
     venueMapEnabled: true,
+    gameEnabled: true,
+    gameConfigJson: existing?.gameConfigJson ?? demoGameConfig,
     headerEventsJson: JSON.stringify(
       (await db.eventEdition.findMany({ where: { tenantId: edition.tenantId, isPublished: true, NOT: { id: edition.id } }, select: { id: true } })).map((e) => e.id),
     ),
@@ -34,9 +43,11 @@ const config = await db.eventPortalConfig.upsert({
     venueMapUrl: existing?.venueMapUrl ?? "/portal-kroki-demo.png",
     venueMapEnabled: existing?.venueMapEnabled ?? true,
     themeColor: existing?.themeColor ?? "#0d9488",
+    gameEnabled: true,
+    gameConfigJson: existing?.gameConfigJson ?? demoGameConfig,
   },
 });
-console.log("config:", { enabled: config.portalEnabled, code: config.eventCode, map: config.venueMapEnabled });
+console.log("config:", { enabled: config.portalEnabled, code: config.eventCode, map: config.venueMapEnabled, game: config.gameEnabled });
 
 // 2) B2B demo — yalnız hiç plan yoksa oluştur (idempotent)
 const planCount = await db.b2bPlan.count({ where: { editionId: edition.id } });

@@ -188,7 +188,16 @@
     },
     "forms": {
       "title": "Forms & Quizzes",
-      "empty": "No open forms."
+      "empty": "No open forms.",
+      "pendingGroup": "In progress",
+      "completedGroup": "Completed",
+      "type": {
+        "REGISTRATION": "Registration",
+        "SURVEY": "Survey",
+        "FEEDBACK": "Feedback",
+        "QA_MOBILE": "Q&A",
+        "CUSTOM": "Form"
+      }
     },
     "b2b": {
       "title": "My B2B Meetings",
@@ -288,7 +297,10 @@
       "sponsorVisit": "Visit"
     },
     "game": {
-      "anon": "Participant"
+      "anon": "Participant",
+      "questsDone": "{done}/{total} completed",
+      "remaining": "{points} points left",
+      "maxLevel": "Top level!"
     }
   },
   "portalSettings": {

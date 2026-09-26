@@ -856,7 +856,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
         {screen === "sponsors" && <SponsorsScreen content={content} />}
         {screen === "map" && <VenueMapScreen content={content} />}
         {screen === "qa" && <QaScreen content={content} sessionKey={sessionKey} onSubmitted={() => void refreshContent()} onGameRefresh={() => void fetchGame()} />}
-        {screen === "forms" && <FormsScreen content={content} onOpenForm={openForm} />}
+        {screen === "forms" && <FormsScreen content={content} gameData={gameData} accent={accent} onOpenForm={openForm} />}
         {screen === "form" && (
           <FormScreen
             content={content}
@@ -875,7 +875,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             onNavigate={gotoScreen}
           />
         )}
-        {screen === "b2b" && <B2bScreen content={content} sessionKey={sessionKey} onChanged={() => void bootstrap()} />}
+        {screen === "b2b" && <B2bScreen content={content} sessionKey={sessionKey} onChanged={() => { void bootstrap(); void fetchGame(); }} />}
         {screen === "profile" && (
           <ProfileScreen
             content={content}
@@ -1765,28 +1765,99 @@ function QaScreen({ content, sessionKey, onSubmitted, onGameRefresh }: { content
 }
 
 // ─── FORMLAR & QUIZLER (§3.2 widget hedefi) ─────────────────────────────────
-function FormsScreen({ content, onOpenForm }: { content: PortalContent; onOpenForm: (id: string | null) => void }) {
+// Oyunlaştırma bağlıysa formlar görev durumuyla eşleşir: gönderilenler
+// "Tamamlandı" grubuna düşer (yeşil-tik + soluk), puanlık formlarda +puan
+// rozeti ve form türü etiketi (Kayıt/Anket/Geri Bildirim…) görünür.
+function FormsScreen({
+  content,
+  gameData,
+  accent,
+  onOpenForm,
+}: {
+  content: PortalContent;
+  gameData: GameData | null;
+  accent: string;
+  onOpenForm: (id: string | null) => void;
+}) {
   const { t } = useLang();
   const forms = content.forms ?? [];
+  const questByForm = useMemo(() => {
+    const m = new Map<string, { done: boolean; points: number }>();
+    if (!gameData?.enabled) return m;
+    for (const q of gameData.quests) {
+      if (q.kind !== "FORM") continue;
+      m.set(q.key.slice("form:".length), { done: q.done, points: q.points });
+    }
+    return m;
+  }, [gameData]);
+  const gameOn = Boolean(gameData?.enabled) && questByForm.size > 0;
+  const pending = forms.filter((f) => !questByForm.get(f.id)?.done);
+  const completed = forms.filter((f) => questByForm.get(f.id)?.done);
+
+  const formRow = (f: { id: string; name: string; description: string | null; type: string; slug: string | null }) => {
+    const q = questByForm.get(f.id);
+    const done = Boolean(q?.done);
+    const TypeIcon =
+      f.type === "REGISTRATION" ? Icons.UserPlus :
+      f.type === "SURVEY" || f.type === "QA_MOBILE" ? Icons.ListChecks :
+      f.type === "FEEDBACK" ? Icons.MessageSquareHeart : Icons.FileText;
+    const typeLabel = t(`portalApp.forms.type.${f.type || "CUSTOM"}`);
+    return (
+      <button
+        key={f.id}
+        role="listitem"
+        onClick={() => onOpenForm(f.slug ?? f.id)}
+        className={cn(
+          "flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 active:scale-[0.99] dark:bg-card",
+          done && "opacity-75",
+        )}
+      >
+        <div
+          className={cn("grid size-10 shrink-0 place-items-center rounded-lg", !done && "bg-teal-50 text-teal-700 dark:bg-teal-900/40 dark:text-teal-200", done && "text-white")}
+          style={done ? { backgroundColor: accent } : undefined}
+        >
+          {done ? <Icons.Check className="size-5" /> : <TypeIcon className="size-5" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className={cn("truncate text-xs font-semibold", done && "line-through opacity-70")}>{f.name}</p>
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <span className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">{typeLabel}</span>
+            {f.description && <p className="truncate text-[11px] text-muted-foreground">{f.description}</p>}
+          </div>
+        </div>
+        {gameOn && q && !q.done && q.points > 0 && (
+          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${accent}1a`, color: accent }}>
+            +{q.points}
+          </span>
+        )}
+        {done ? <Icons.CheckCircle2 className="size-4 shrink-0" style={{ color: accent }} /> : <Icons.ExternalLink className="size-4 shrink-0 text-muted-foreground" />}
+      </button>
+    );
+  };
+
   return (
     <ScreenShell title={t("portalApp.forms.title")} icon={<Icons.ClipboardList className="size-4" />}>
       {forms.length === 0 ? (
         <EmptyMini text={t("portalApp.forms.empty")} />
-      ) : (
+      ) : gameOn ? (
         <div className="space-y-2" role="list">
-          {forms.map((f) => (
-            <button key={f.id} role="listitem" onClick={() => onOpenForm(f.slug ?? f.id)} className="flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 dark:bg-card">
-              <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-teal-50 text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
-                <Icons.FileText className="size-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold">{f.name}</p>
-                {f.description && <p className="line-clamp-1 text-[11px] text-muted-foreground">{f.description}</p>}
-              </div>
-              <Icons.ExternalLink className="size-4 shrink-0 text-muted-foreground" />
-            </button>
-          ))}
+          {pending.length > 0 && (
+            <h3 className="mb-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              {t("portalApp.forms.pendingGroup")}
+              <span className="rounded-full bg-muted px-2 py-px text-[10px] font-bold normal-case">{pending.length}</span>
+            </h3>
+          )}
+          {pending.map(formRow)}
+          {completed.length > 0 && (
+            <h3 className="mb-1.5 mt-4 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              {t("portalApp.forms.completedGroup")}
+              <span className="rounded-full bg-muted px-2 py-px text-[10px] font-bold normal-case">{completed.length}</span>
+            </h3>
+          )}
+          {completed.map(formRow)}
         </div>
+      ) : (
+        <div className="space-y-2" role="list">{forms.map(formRow)}</div>
       )}
     </ScreenShell>
   );
@@ -1817,8 +1888,12 @@ function B2bScreen({ content, sessionKey, onChanged }: { content: PortalContent;
     if (!sessionKey) return;
     setBusyId(m.assignmentId);
     try {
-      await portalSend("/api/portal/interact", { action: "B2B_RESPOND", assignmentId: m.assignmentId, response, note: extra }, sessionKey);
+      const r = (await portalSend("/api/portal/interact", { action: "B2B_RESPOND", assignmentId: m.assignmentId, response, note: extra }, sessionKey)) as { game?: { awarded: number } | null } | null;
       toast({ title: t(`portalApp.b2b.done.${response}`) });
+      // puan tutarlılığı — form/QA ile aynı "Puan kazandın!" bildirimi (oyunlaştırma açıkken)
+      if (r?.game?.awarded && r.game.awarded > 0) {
+        toast({ title: t("portalApp.game.pointsWon"), description: t("portalApp.game.pointsWonDesc", { points: r.game.awarded }) });
+      }
       setResched(null);
       setNote("");
       onChanged();
@@ -2181,7 +2256,7 @@ function GameScreen({
     >
       {confettiKey > 0 && <Confetti key={confettiKey} accent={accent} />}
 
-      {/* seviye kartı */}
+      {/* seviye kartı — ilerleme çubuğu + "kaç puan kaldı" teşviki */}
       <div className="relative overflow-hidden rounded-2xl border p-4 shadow-sm" style={{ background: `linear-gradient(135deg, ${accent}14, transparent 60%)` }}>
         <div className="flex items-center gap-3">
           <div className="grid size-14 shrink-0 place-items-center rounded-2xl text-white shadow-sm animate-[portal-pop-in_0.5s_ease-out]" style={{ backgroundColor: accent }}>
@@ -2190,20 +2265,36 @@ function GameScreen({
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("portalApp.game.currentLevel")}</p>
             <p className="text-lg font-bold leading-tight">{data.level}</p>
-            <p className="text-xs text-muted-foreground">
-              {t("portalApp.game.points", { points: data.points })}
-              {data.nextLevel ? ` · ${t("portalApp.game.nextLevel", { level: data.nextLevel, min: data.nextLevelMin ?? 0 })}` : ""}
-            </p>
+            <p className="text-xs text-muted-foreground">{t("portalApp.game.points", { points: data.points })}</p>
           </div>
         </div>
         <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={data.pct} aria-valuemin={0} aria-valuemax={100}>
           <div className="h-full rounded-full transition-all duration-500" style={{ width: `${data.pct}%`, backgroundColor: accent }} />
         </div>
+        {data.nextLevel ? (
+          <div className="mt-2 flex items-center justify-between gap-2 text-[11px]">
+            <span className="truncate text-muted-foreground">{t("portalApp.game.nextLevel", { level: data.nextLevel, min: data.nextLevelMin ?? 0 })}</span>
+            <span className="shrink-0 font-semibold" style={{ color: accent }}>
+              {t("portalApp.game.remaining", { points: Math.max(0, (data.nextLevelMin ?? 0) - data.points) })}
+            </span>
+          </div>
+        ) : (
+          <p className="mt-2 flex items-center justify-end gap-1 text-[11px] font-semibold" style={{ color: accent }}>
+            <Icons.Medal className="size-3.5" /> {t("portalApp.game.maxLevel")}
+          </p>
+        )}
       </div>
 
-      {/* görev listesi */}
+      {/* görev listesi — tamamlanma sayacı + mini ilerleme çubukları */}
       <div>
-        <h3 className="mb-1.5 mt-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">{t("portalApp.game.quests")}</h3>
+        <h3 className="mb-1.5 mt-4 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+          {t("portalApp.game.quests")}
+          {data.quests.length > 0 && (
+            <span className="rounded-full px-2 py-px text-[10px] font-bold normal-case" style={{ backgroundColor: `${accent}1a`, color: accent }}>
+              {t("portalApp.game.questsDone", { done: data.quests.filter((q) => q.done).length, total: data.quests.length })}
+            </span>
+          )}
+        </h3>
         <div className="space-y-2" role="list">
           {data.quests.length === 0 && <EmptyMini text={t("portalApp.game.noQuests")} />}
           {data.quests.map((q) => {
@@ -2233,7 +2324,12 @@ function GameScreen({
                 <span className="min-w-0 flex-1">
                   <span className={cn("block truncate text-xs font-semibold", q.done && "line-through opacity-60")}>{questLabel}</span>
                   {typeof q.progress === "number" && typeof q.target === "number" && (
-                    <span className="mt-0.5 block text-[10px] text-muted-foreground">{q.progress} / {q.target}</span>
+                    <span className="mt-1 flex items-center gap-1.5">
+                      <span className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                        <span className="block h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, Math.round((q.progress / Math.max(1, q.target)) * 100))}%`, backgroundColor: accent }} />
+                      </span>
+                      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{q.progress}/{q.target}</span>
+                    </span>
                   )}
                 </span>
                 <span

@@ -3066,7 +3066,8 @@
     },
     "form": {
       "title": "Form"
-    }
+    },
+    "otherEventsPast": "Past"
   },
   "portalSettings": {
     "openPortal": "Open Mobile Portal",

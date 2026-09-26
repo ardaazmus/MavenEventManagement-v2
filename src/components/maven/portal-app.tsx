@@ -663,6 +663,33 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     { key: "profile", label: t("portalApp.nav.profile"), icon: Icons.UserRound },
   ].sort((a, b) => navOrder(a.key) - navOrder(b.key));
   const sponsor = cfg.portalSponsor ?? null;
+  // "neredeyim" deseni — kompakt barda ekran başlığı (ScreenShell başlıklarıyla BİREBİR aynı anahtarlar)
+  const screenBarTitle = (s: string): string => {
+    switch (s) {
+      case "program": return t("portalApp.program.title");
+      case "speakers": return t("portalApp.speakers.title");
+      case "sponsors": return t("portalApp.sponsors.title");
+      case "map": return t("portalApp.map.title");
+      case "qa": return t("portalApp.qa.title");
+      case "forms": return t("portalApp.forms.title");
+      case "form": return t("portalApp.form.title");
+      case "b2b": return t("portalApp.b2b.title");
+      case "game": return t("portalApp.game.title");
+      case "profile": return t("portalApp.profile.title");
+      default: return "";
+    }
+  };
+  // diğer etkinlikler: yaklaşanlar önce (en-yakın tarih üstte), geçmişler en sonda (en-yeni geçmiş önce)
+  const nowMs = Date.now();
+  const otherEventsSorted = [...(content.otherEvents ?? [])].sort((a, b) => {
+    const ta = a.startDate ? new Date(a.startDate).getTime() : Number.MAX_SAFE_INTEGER;
+    const tb = b.startDate ? new Date(b.startDate).getTime() : Number.MAX_SAFE_INTEGER;
+    const ua = ta >= nowMs;
+    const ub = tb >= nowMs;
+    if (ua !== ub) return ua ? -1 : 1;
+    return ua ? ta - tb : tb - ta;
+  });
+  const isPastEvent = (e: { startDate: string | null }) => (e.startDate ? new Date(e.startDate).getTime() < nowMs : false);
   const headerBgStyle = {
     backgroundColor: design?.headerBgColor || undefined,
     backgroundImage: design?.headerBgImage ? `url(${design.headerBgImage})` : undefined,
@@ -709,10 +736,12 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
               {kind === "AUTH" ? t("portalApp.badge.auth") : t("portalApp.badge.guest")}
             </span>
           </div>
-          {(content.otherEvents?.length ?? 0) > 0 && (
+          {otherEventsSorted.length > 0 && (
             <div className="maven-scroll -mx-4 mt-2 flex gap-2 overflow-x-auto px-4 pb-2" role="list" aria-label={t("portalApp.otherEvents")}>
-              {content.otherEvents!.map((e) => (
-                <div key={e.id} className="w-44 shrink-0 rounded-lg border bg-muted/30 p-2" role="listitem">
+              {otherEventsSorted.map((e) => {
+                const past = isPastEvent(e);
+                return (
+                <div key={e.id} className={`w-44 shrink-0 rounded-lg border bg-muted/30 p-2${past ? " opacity-70" : ""}`} role="listitem">
                   <div className="flex items-center gap-1.5">
                     {e.logoUrl ? (
                       <img src={e.logoUrl} alt="" className="size-5 rounded object-contain" />
@@ -720,12 +749,18 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
                       <Icons.CalendarRange className="size-3.5 text-muted-foreground" />
                     )}
                     <span className="truncate text-[11px] font-medium">{e.name}</span>
+                    {past && (
+                      <span className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-px text-[9px] font-medium text-muted-foreground">
+                        {t("portalApp.otherEventsPast")}
+                      </span>
+                    )}
                   </div>
                   <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
                     {[e.city, e.startDate ? fmtDate(e.startDate) : null].filter(Boolean).join(" · ") || "—"}
                   </p>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -785,7 +820,11 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
                 <Icons.CalendarRange className="size-3.5" style={{ color: accent }} />
               )}
             </div>
-            <span className="truncate text-xs font-semibold">{content.edition.portalHeaderTitle || content.edition.name}</span>
+            {/* "neredeyim": üst satır etkinlik bağlamı, alt satır kalın ekran başlığı */}
+            <div className="min-w-0 flex-1 leading-tight">
+              <p className="truncate text-[10px] text-muted-foreground">{content.edition.portalHeaderTitle || content.edition.name}</p>
+              <p className="truncate text-xs font-semibold">{screenBarTitle(screen)}</p>
+            </div>
             <span className="ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: `${accent}1a`, color: accent }}>
               {kind === "AUTH" ? t("portalApp.badge.auth") : t("portalApp.badge.guest")}
             </span>

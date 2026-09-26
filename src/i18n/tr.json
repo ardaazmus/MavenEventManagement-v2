@@ -3066,7 +3066,8 @@
     },
     "form": {
       "title": "Form"
-    }
+    },
+    "otherEventsPast": "Geçmiş"
   },
   "portalSettings": {
     "openPortal": "Mobil Portalı Aç",

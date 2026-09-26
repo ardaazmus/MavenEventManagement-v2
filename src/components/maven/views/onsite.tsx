@@ -20,6 +20,7 @@ import { useLang, t, tLabel, exportI18nJson, importI18nJson } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DatabaseMigrationCard } from "./db-migration-card";
+import { NotificationChannelsCard } from "./notification-channels-card";
 
 // ─── SAHA ───────────────────────────────────────────────────────────────────
 
@@ -1953,7 +1954,17 @@ export function SettingsView() {
         )}
       </SectionCard>
 
-      {/* ── GRUP 3 · GEÇİCİ: Veritabanı & Migration — SQLite → MySQL/MariaDB taşınma denetimi ── */}
+      {/* ── GRUP 3 · GENEL İLETİŞİM: Bildirim Kanalları — WhatsApp & SMS (etkinlik geneli,
+          mobil portal ayarlarından BAĞIMSIZ — kullanıcı kararı) ── */}
+      <SettingsGroup
+        icon="MessagesSquare"
+        title={t("settingsView.comms.groupTitle")}
+        desc={t("settingsView.comms.groupDesc")}
+        scope={<Chip tone="teal"><Icons.MessageCircle className="size-3" /> {t("settingsView.comms.scopeChip")}</Chip>}
+      />
+      <NotificationChannelsCard editionId={edition.id} />
+
+      {/* ── GRUP 4 · GEÇİCİ: Veritabanı & Migration — SQLite → MySQL/MariaDB taşınma denetimi ── */}
       <SettingsGroup
         icon="DatabaseBackup"
         title={t("settingsView.dbm.groupTitle")}

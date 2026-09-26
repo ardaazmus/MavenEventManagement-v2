@@ -2254,3 +2254,19 @@ Stage Summary:
 - Dev sunucu sağlıklı (/api/health 200, uptime ~23 dk); baseline restore prosedürü tüm tur mesajlarına işlendi.
 - Riskler: (1) cron servisi geçmişte "exec limits exceeded" ile job'ları devre dışı bırakmıştı — turların tamamlanmaması ihtimalinde worklog'daki Task ID zinciri (CRON-1..10 → CRON-E2E) kesinti yerini gösterir; eksik tur elle yeniden oluşturulabilir. (2) Servis-saat/sandbox-saat farkı ~5 saat — takvimler servis saatine göre kuruldu. (3) Bir tur 25 dk'yı aşarsa sonraki turun bekleme+devam protokolü çakışmayı önler.
 - Sonraki adım: turlar otomatik ilerler; her tur worklog'a CRON-N bölümü bırakır. E2E bitiminde modül-bazlı PASS/FAIL tablosu CRON-E2E bölümünde olur.
+---
+Task ID: CHANNELS-MOVE-GENERAL
+Agent: Z.ai Code (ana oturum — kullanıcı canlı talebi)
+Task: Kullanıcı kararı — "Bildirim Kanalları — WhatsApp & SMS mobil portalın değil genel iletişim özelliği olmalı. Sonrasında kalan işlere devam et." Kart Portal Ayarları'ndan (Dış Portal) genel Ayarlar görünümüne taşındı.
+
+Work Log:
+- notification-channels-card.tsx (YENİ dosya): NotificationChannelsCard + ChannelReportsSection + WA/SMS sağlayıcı sabitleri portal-settings.tsx'ten (eski 1720-2112 bloğu) kelimesi kelimesine taşındı; NotificationChannelsCard artık export ediliyor. API uçları/davranış/i18n anahtarları (portalSettings.channels.*) DEĞİŞMEDİ — yalnız konum değişti.
+- portal-settings.tsx: 393 satırlık blok + render noktası kaldırıldı (2268→1876 satır); yerine İngilizce yönlendirme yorumu bırakıldı (i18n scan JSX-yorum metni yakaladığı için TR yazılmadı).
+- onsite.tsx SettingsView: GRUP 3 · GENEL İLETİŞİM başlığı (SettingsGroup, MessagesSquare ikonu, teal "Genel iletişim" chip'i) + <NotificationChannelsCard editionId={edition.id} />; eski DB & Migration grubu GRUP 4 · GEÇİCİ olarak yeniden etiketlendi (i18n anahtarı aynı).
+- i18n: YENİ parça dosyaları src/i18n/_new/communication.{tr,en}.json → settingsView.comms.{groupTitle,groupDesc,scopeChip} (3+3 yaprak); i18n-merge bake → 3168 yaprak tr/en SİMETRİK.
+
+Stage Summary:
+- Teslim edilenler: WhatsApp & SMS bildirim kanalları artık Ayarlar → "İletişim & Bildirim Kanalları" (Genel iletişim) grubunda — mobil portal ayarlarından bağımsız; portal ayarlarında kart KALDIRILDI (Q&A moderasyonu ve tüm diğer kartlar yerinde).
+- Kanıtlar (agent-browser, taze oturum): Ayarlar'da grup+card render ✓ (config yüklü, "Son test: SMS BAŞARILI — SIMULATED" + Gönderim Raporu 2 kayıt görünüyor); Portal Ayarları'nda "Bildirim Kanalları — WhatsApp" 0 eşleşme ✓; EN modunda "Communication & Notification Channels / General communication" ✓; ekran görüntüleri tool-results/channels-move-settings-{tr,en,en2}.png.
+- Kapılar: tsc 0; lint 0; i18n scan 0 (81 dosya). Dev sunucu bu tur sırasında bir kez düştü (CRON-1 oturumu kaynaklı olabilecek restart/çökme) — restart protokolüyle geri getirildi; sonrasında derleme hatası yok.
+- Sonraki turlar için NOT: Kanal kartı artık portal-settings.tsx'te DEĞİL — CRON-4 (bildirim deneyimi) ve CRON-6 (admin ayarlar IA) turları kartı onsite.tsx SettingsView + notification-channels-card.tsx üzerinde çalışmalı.

@@ -1275,6 +1275,11 @@
       "generatedAt": "Generated at",
       "refresh": "Refresh",
       "loadFail": "Failed to load migration status"
+    },
+    "comms": {
+      "groupTitle": "Communication & Notification Channels",
+      "groupDesc": "Event-wide WhatsApp & SMS delivery — a general communication feature, independent of the mobile portal settings.",
+      "scopeChip": "General communication"
     }
   },
   "scientific": {

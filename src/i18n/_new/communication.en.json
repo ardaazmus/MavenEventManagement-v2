@@ -1,0 +1,9 @@
+{
+  "settingsView": {
+    "comms": {
+      "groupTitle": "Communication & Notification Channels",
+      "groupDesc": "Event-wide WhatsApp & SMS delivery — a general communication feature, independent of the mobile portal settings.",
+      "scopeChip": "General communication"
+    }
+  }
+}

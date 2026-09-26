@@ -1,0 +1,9 @@
+{
+  "settingsView": {
+    "comms": {
+      "groupTitle": "İletişim & Bildirim Kanalları",
+      "groupDesc": "Etkinlik geneli WhatsApp & SMS gönderimi — mobil portal ayarlarından bağımsız genel iletişim özelliği.",
+      "scopeChip": "Genel iletişim"
+    }
+  }
+}

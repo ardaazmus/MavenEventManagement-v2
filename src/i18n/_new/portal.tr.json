@@ -326,7 +326,31 @@
     "save": "Ayarları Kaydet",
     "saved": "Ayarlar kaydedildi",
     "savedDesc": "Portal yapılandırması güncellendi.",
+    "savedAt": "Kaydedildi",
     "saveFail": "Kaydedilemedi",
+    "backup": {
+      "title": "Yapılandırma Yedekleme",
+      "desc": "Portal ayarlarını JSON dosyası olarak yedekleyin veya başka bir ortama taşıyın.",
+      "exportTitle": "Dışa Aktar",
+      "exportDesc": "Sunucudaki son kaydedilmiş yapılandırmayı indirir — düzenlenmemiş taslağı değil.",
+      "exportBtn": "JSON İndir",
+      "exported": "Yapılandırma indirildi",
+      "exportedDesc": "Dosyayı güvenli bir yerde saklayın.",
+      "importTitle": "İçe Aktar",
+      "importDesc": "Yedek JSON dosyasını yükler — alanlar taslağa doldurulur, Kaydet'e basınca uygulanır.",
+      "importBtn": "JSON Yükle",
+      "imported": "Yapılandırma içe aktarıldı",
+      "importedDesc": "Alanlar taslağa dolduruldu — inceleyin ve Kaydet'e basın.",
+      "importFail": "Dosya okunamadı",
+      "importInvalid": "Geçersiz yapılandırma dosyası",
+      "safetyNote": "İçe aktarma sunucuya doğrudan yazmaz — tüm alanlar mevcut Kaydet doğrulamasından geçer."
+    },
+    "leaveGuard": {
+      "title": "Kaydedilmemiş değişiklikler",
+      "desc": "Bu sekmeden ayrılırsanız yapılandırma değişiklikleri kaybolur. Ayrılmak istiyor musunuz?",
+      "stay": "Kal",
+      "leave": "Ayrıl ve değişiklikleri at"
+    },
     "formStatus": {
       "PUBLISHED": "Yayında",
       "DRAFT": "Taslak",

@@ -191,34 +191,109 @@ function parseJsonArr(raw: string | null): string[] {
   }
 }
 
+// ─── CRON-6: taslak tipi + config→draft eşleyici (tek kaynak) ────────────────
+// load() (sunucudan) VE yedek içe aktarma (JSON dosyasından) AYNI eşleyiciyi
+// kullanır — içe aktarma sunucuya doğrudan yazmaz; doldurduğu taslak mevcut
+// Kaydet doğrulamasından (PUT /api/portal/config) geçer.
+type PortalDraft = {
+  portalEnabled: boolean; maintenanceMessage: string; countdownTo: string;
+  eventCode: string; allowRegistrationRedirect: boolean; registrationFormId: string;
+  portalLogoUrl: string; portalBannerUrl: string; themeColor: string;
+  headerEvents: string[]; bottomNav: Record<string, boolean>;
+  widgets: WidgetRow[]; notificationsEnabled: boolean; offsets: number[];
+  sponsorIds: string[]; venueMapUrl: string; venueMapEnabled: boolean; pwaEnabled: boolean;
+  headerTitle: string; headerSubtitle: string;
+  // ── tasarım (§5.2+) ──
+  fontFamily: string; fontScale: number;
+  headerBgColor: string; footerBgColor: string; contentBgColor: string;
+  headerBgImage: string; footerBgImage: string; contentBgImage: string;
+  portalSponsorLogoUrl: string; portalSponsorName: string; portalSponsorUrl: string;
+  iconOverrides: Record<string, IconOverride>; iconLayout: Record<string, number>;
+  // ── ekran üst-bantları + oyunlaştırma ──
+  chrome: { topHeader: Record<string, boolean>; eventBar: Record<string, boolean> };
+  gameEnabled: boolean; gamePoints: Record<string, number>; gameLevels: GameLevel[]; gameQaCap: number; gameMasking: string;
+};
+
+type ConfigSource = { config: PortalConfig; header: { title: string; subtitle: string } };
+
+function configToDraft(data: ConfigSource): PortalDraft {
+  return {
+    portalEnabled: data.config.portalEnabled,
+    maintenanceMessage: data.config.maintenanceMessage ?? "",
+    countdownTo: data.config.countdownTo ? new Date(data.config.countdownTo).toISOString().slice(0, 16) : "",
+    eventCode: data.config.eventCode ?? "",
+    allowRegistrationRedirect: data.config.allowRegistrationRedirect,
+    registrationFormId: data.config.registrationFormId ?? "",
+    portalLogoUrl: data.config.portalLogoUrl ?? "",
+    portalBannerUrl: data.config.portalBannerUrl ?? "",
+    themeColor: data.config.themeColor ?? "#0d9488",
+    headerEvents: parseJsonArr(data.config.headerEventsJson),
+    bottomNav: parseJsonObj(data.config.bottomNavJson, { program: true, sponsors: true, map: true }),
+    widgets: parseWidgetsJson(data.config.widgetsJson).sort((a, b) => a.order - b.order),
+    notificationsEnabled: data.config.notificationsEnabled,
+    offsets: parseJsonArr(data.config.notifyOffsetsJson).map(Number).filter((n) => Number.isFinite(n) && n > 0),
+    sponsorIds: parseJsonArr(data.config.sponsorIdsJson),
+    venueMapUrl: data.config.venueMapUrl ?? "",
+    venueMapEnabled: data.config.venueMapEnabled,
+    pwaEnabled: data.config.pwaEnabled,
+    headerTitle: data.header.title,
+    headerSubtitle: data.header.subtitle,
+    // ── tasarım alanları ──
+    fontFamily: data.config.fontFamily ?? "system",
+    fontScale: data.config.fontScale ?? 100,
+    headerBgColor: data.config.headerBgColor ?? "",
+    footerBgColor: data.config.footerBgColor ?? "",
+    contentBgColor: data.config.contentBgColor ?? "",
+    headerBgImage: data.config.headerBgImage ?? "",
+    footerBgImage: data.config.footerBgImage ?? "",
+    contentBgImage: data.config.contentBgImage ?? "",
+    portalSponsorLogoUrl: data.config.portalSponsorLogoUrl ?? "",
+    portalSponsorName: data.config.portalSponsorName ?? "",
+    portalSponsorUrl: data.config.portalSponsorUrl ?? "",
+    iconOverrides: parseIconOverrides(data.config.iconOverridesJson),
+    iconLayout: parseIconLayout(data.config.iconLayoutJson),
+    // ekran üst-bantları — kayıtlı chromeJson veya varsayılanlar
+    chrome: (() => {
+      const saved = parseJsonObj<{ topHeader?: Record<string, boolean>; eventBar?: Record<string, boolean> }>(data.config.chromeJson, {});
+      return {
+        topHeader: { ...DEFAULT_CHROME.topHeader, ...(typeof saved.topHeader === "object" && saved.topHeader ? saved.topHeader : {}) },
+        eventBar: { ...DEFAULT_CHROME.eventBar, ...(typeof saved.eventBar === "object" && saved.eventBar ? saved.eventBar : {}) },
+      };
+    })(),
+    // oyunlaştırma — kayıtlı gameConfigJson veya varsayılanlar
+    gameEnabled: data.config.gameEnabled ?? false,
+    gamePoints: (() => {
+      const g = parseJsonObj<{ points?: Record<string, number> }>(data.config.gameConfigJson, {});
+      return { ...DEFAULT_GAME_CONFIG.points, ...(g.points ?? {}) };
+    })(),
+    gameLevels: (() => {
+      const g = parseJsonObj<{ levels?: GameLevel[] }>(data.config.gameConfigJson, {});
+      return Array.isArray(g.levels) && g.levels.length >= 2 ? g.levels : DEFAULT_GAME_CONFIG.levels.map((l) => ({ ...l }));
+    })(),
+    gameQaCap: (() => {
+      const g = parseJsonObj<{ qaCap?: number }>(data.config.gameConfigJson, {});
+      return Number.isFinite(g.qaCap) ? Math.max(1, Math.min(50, Math.round(Number(g.qaCap)))) : DEFAULT_GAME_CONFIG.qaCap;
+    })(),
+    gameMasking: (() => {
+      const g = parseJsonObj<{ masking?: string }>(data.config.gameConfigJson, {});
+      return ["MASKED", "FULL", "HIDDEN"].includes(g.masking ?? "") ? (g.masking as string) : "MASKED";
+    })(),
+  };
+}
+
 // ─── ana sekme bileşeni ─────────────────────────────────────────────────────
-export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string; portalSlug: string | null }) {
+export function PortalSettingsTab({ editionId, portalSlug, onDirtyChange }: { editionId: string; portalSlug: string | null; onDirtyChange?: (dirty: boolean) => void }) {
   const { t } = useLang();
   const { toast } = useToast();
   const [payload, setPayload] = useState<ConfigPayload | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // CRON-6: son başarılı kayıt zamanı — üst barda "Kaydedildi · HH:MM" rozeti
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
   // taslak — config alanlarının düzenlenebilir kopyası
-  const [draft, setDraft] = useState<null | {
-    portalEnabled: boolean; maintenanceMessage: string; countdownTo: string;
-    eventCode: string; allowRegistrationRedirect: boolean; registrationFormId: string;
-    portalLogoUrl: string; portalBannerUrl: string; themeColor: string;
-    headerEvents: string[]; bottomNav: Record<string, boolean>;
-    widgets: WidgetRow[]; notificationsEnabled: boolean; offsets: number[];
-    sponsorIds: string[]; venueMapUrl: string; venueMapEnabled: boolean; pwaEnabled: boolean;
-    headerTitle: string; headerSubtitle: string;
-    // ── tasarım (§5.2+) ──
-    fontFamily: string; fontScale: number;
-    headerBgColor: string; footerBgColor: string; contentBgColor: string;
-    headerBgImage: string; footerBgImage: string; contentBgImage: string;
-    portalSponsorLogoUrl: string; portalSponsorName: string; portalSponsorUrl: string;
-    iconOverrides: Record<string, IconOverride>; iconLayout: Record<string, number>;
-    // ── ekran üst-bantları + oyunlaştırma ──
-    chrome: { topHeader: Record<string, boolean>; eventBar: Record<string, boolean> };
-    gameEnabled: boolean; gamePoints: Record<string, number>; gameLevels: GameLevel[]; gameQaCap: number; gameMasking: string;
-  }>(null);
+  const [draft, setDraft] = useState<PortalDraft | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [magicOpen, setMagicOpen] = useState(false);
   const [magicBusy, setMagicBusy] = useState(false);
@@ -238,68 +313,7 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
     try {
       const data = await apiGet<ConfigPayload>(`/api/portal/config?editionId=${encodeURIComponent(editionId)}`);
       setPayload(data);
-      setDraft({
-        portalEnabled: data.config.portalEnabled,
-        maintenanceMessage: data.config.maintenanceMessage ?? "",
-        countdownTo: data.config.countdownTo ? new Date(data.config.countdownTo).toISOString().slice(0, 16) : "",
-        eventCode: data.config.eventCode ?? "",
-        allowRegistrationRedirect: data.config.allowRegistrationRedirect,
-        registrationFormId: data.config.registrationFormId ?? "",
-        portalLogoUrl: data.config.portalLogoUrl ?? "",
-        portalBannerUrl: data.config.portalBannerUrl ?? "",
-        themeColor: data.config.themeColor ?? "#0d9488",
-        headerEvents: parseJsonArr(data.config.headerEventsJson),
-        bottomNav: parseJsonObj(data.config.bottomNavJson, { program: true, sponsors: true, map: true }),
-        widgets: parseWidgetsJson(data.config.widgetsJson).sort((a, b) => a.order - b.order),
-        notificationsEnabled: data.config.notificationsEnabled,
-        offsets: parseJsonArr(data.config.notifyOffsetsJson).map(Number).filter((n) => Number.isFinite(n) && n > 0),
-        sponsorIds: parseJsonArr(data.config.sponsorIdsJson),
-        venueMapUrl: data.config.venueMapUrl ?? "",
-        venueMapEnabled: data.config.venueMapEnabled,
-        pwaEnabled: data.config.pwaEnabled,
-        headerTitle: data.header.title,
-        headerSubtitle: data.header.subtitle,
-        // ── tasarım alanları ──
-        fontFamily: data.config.fontFamily ?? "system",
-        fontScale: data.config.fontScale ?? 100,
-        headerBgColor: data.config.headerBgColor ?? "",
-        footerBgColor: data.config.footerBgColor ?? "",
-        contentBgColor: data.config.contentBgColor ?? "",
-        headerBgImage: data.config.headerBgImage ?? "",
-        footerBgImage: data.config.footerBgImage ?? "",
-        contentBgImage: data.config.contentBgImage ?? "",
-        portalSponsorLogoUrl: data.config.portalSponsorLogoUrl ?? "",
-        portalSponsorName: data.config.portalSponsorName ?? "",
-        portalSponsorUrl: data.config.portalSponsorUrl ?? "",
-        iconOverrides: parseIconOverrides(data.config.iconOverridesJson),
-        iconLayout: parseIconLayout(data.config.iconLayoutJson),
-        // ekran üst-bantları — kayıtlı chromeJson veya varsayılanlar
-        chrome: (() => {
-          const saved = parseJsonObj<{ topHeader?: Record<string, boolean>; eventBar?: Record<string, boolean> }>(data.config.chromeJson, {});
-          return {
-            topHeader: { ...DEFAULT_CHROME.topHeader, ...(typeof saved.topHeader === "object" && saved.topHeader ? saved.topHeader : {}) },
-            eventBar: { ...DEFAULT_CHROME.eventBar, ...(typeof saved.eventBar === "object" && saved.eventBar ? saved.eventBar : {}) },
-          };
-        })(),
-        // oyunlaştırma — kayıtlı gameConfigJson veya varsayılanlar
-        gameEnabled: data.config.gameEnabled ?? false,
-        gamePoints: (() => {
-          const g = parseJsonObj<{ points?: Record<string, number> }>(data.config.gameConfigJson, {});
-          return { ...DEFAULT_GAME_CONFIG.points, ...(g.points ?? {}) };
-        })(),
-        gameLevels: (() => {
-          const g = parseJsonObj<{ levels?: GameLevel[] }>(data.config.gameConfigJson, {});
-          return Array.isArray(g.levels) && g.levels.length >= 2 ? g.levels : DEFAULT_GAME_CONFIG.levels.map((l) => ({ ...l }));
-        })(),
-        gameQaCap: (() => {
-          const g = parseJsonObj<{ qaCap?: number }>(data.config.gameConfigJson, {});
-          return Number.isFinite(g.qaCap) ? Math.max(1, Math.min(50, Math.round(Number(g.qaCap)))) : DEFAULT_GAME_CONFIG.qaCap;
-        })(),
-        gameMasking: (() => {
-          const g = parseJsonObj<{ masking?: string }>(data.config.gameConfigJson, {});
-          return ["MASKED", "FULL", "HIDDEN"].includes(g.masking ?? "") ? (g.masking as string) : "MASKED";
-        })(),
-      });
+      setDraft(configToDraft(data));
       setDirty(false);
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : "Yapılandırma alınamadı");
@@ -309,6 +323,22 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
   useEffect(() => {
     void load();
   }, [load]);
+
+  // CRON-6: dirty durumunu üst bileşene bildir — sekme değiştirme koruması için
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  // CRON-6: kaydedilmemiş değişiklikle sekme kapatma/yenileme koruması (tarayıcı düzeyi)
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = ""; // modern tarayıcılar için zorunlu
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
 
   useEffect(() => {
     let alive = true;
@@ -387,6 +417,7 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
         },
       });
       toast({ title: t("portalSettings.saved"), description: t("portalSettings.savedDesc") });
+      setLastSavedAt(new Date().toISOString());
       await load();
     } catch (e) {
       toast({ title: t("portalSettings.saveFail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
@@ -444,6 +475,74 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
     setDirty(true);
   };
 
+  // ── CRON-6: yapılandırma yedekleme — dışa aktar (sunucudaki kayıtlı hali) / içe aktar (taslağı doldur) ──
+  const exportConfig = () => {
+    if (!payload) return;
+    const exportPayload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      editionId,
+      portalSlug,
+      config: payload.config,
+      header: payload.header,
+    };
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+    a.href = url;
+    a.download = `portal-config-${portalSlug ?? editionId.slice(0, 8)}-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast({ title: t("portalSettings.backup.exported"), description: t("portalSettings.backup.exportedDesc") });
+  };
+
+  const onImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = ""; // aynı dosya tekrar seçilebilsin
+    if (!f || !payload) return;
+    if (f.size > 2_000_000) {
+      toast({ title: t("portalSettings.backup.importFail"), description: t("portalSettings.brand.imgSize", { kb: 1953 }), variant: "destructive" });
+      return;
+    }
+    void f.text().then((raw) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        toast({ title: t("portalSettings.backup.importInvalid"), variant: "destructive" });
+        return;
+      }
+      // kabul edilen şekiller: {config:{...}} (dışa aktarım çıktısı) veya düz config nesnesi
+      let cfg: unknown = null;
+      let headerFromFile: { title?: string; subtitle?: string } | undefined;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const o = parsed as Record<string, unknown>;
+        if (o.config && typeof o.config === "object" && !Array.isArray(o.config)) {
+          cfg = o.config;
+          if (o.header && typeof o.header === "object" && !Array.isArray(o.header)) headerFromFile = o.header as { title?: string; subtitle?: string };
+        } else {
+          cfg = parsed;
+        }
+      }
+      if (!cfg) {
+        toast({ title: t("portalSettings.backup.importInvalid"), variant: "destructive" });
+        return;
+      }
+      const header = {
+        title: headerFromFile?.title ?? payload.header.title,
+        subtitle: headerFromFile?.subtitle ?? payload.header.subtitle,
+      };
+      setDraft(configToDraft({ config: cfg as PortalConfig, header }));
+      setDirty(true);
+      toast({ title: t("portalSettings.backup.imported"), description: t("portalSettings.backup.importedDesc") });
+    }).catch(() => {
+      toast({ title: t("portalSettings.backup.importFail"), variant: "destructive" });
+    });
+  };
+
   if (loadErr) return <ErrorState message={loadErr} onRetry={() => void load()} />;
   if (!payload || !draft) return <Loading rows={6} />;
 
@@ -465,7 +564,12 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
           draft.portalEnabled ? "bg-teal-50 text-teal-700 dark:bg-teal-900/40 dark:text-teal-200" : "bg-amber-50 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200")}>
           {draft.portalEnabled ? <><Icons.RadioTower className="size-3" /> {t("portalSettings.statusActive")}</> : <><Icons.PauseCircle className="size-3" /> {t("portalSettings.statusPassive")}</>}
         </span>
-        {dirty && <span className="text-[11px] text-amber-600">{t("portalSettings.unsaved")}</span>}
+        {dirty && <span className="text-[11px] font-medium text-amber-600">{t("portalSettings.unsaved")}</span>}
+        {!dirty && lastSavedAt && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
+            <Icons.CheckCircle2 className="size-3" /> {t("portalSettings.savedAt")} · {new Date(lastSavedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </span>
+        )}
         <Button className="ml-auto" onClick={() => void save()} disabled={saving}>
           {saving ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Save className="size-4" />} {t("portalSettings.save")}
         </Button>
@@ -1144,6 +1248,44 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
             </div>
           </div>
         )}
+      </SectionCard>
+
+      {/* ── CRON-6: Yapılandırma Yedekleme — dışa aktar / içe aktar ──
+          Güvenlik modeli: dışa aktarım SUNUCUDAKİ KAYITLI hali verir (taslağı değil);
+          içe aktarma sunucuya ASLA doğrudan yazmaz — yalnız taslağı doldurur ve
+          mevcut PUT doğrulamasından (Kaydet) geçmek zorundadır. */}
+      <SectionCard title={t("portalSettings.backup.title")} desc={t("portalSettings.backup.desc")}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="flex flex-col items-start gap-2 rounded-lg border bg-muted/10 p-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold">
+              <Icons.Download className="size-3.5 text-teal-600" /> {t("portalSettings.backup.exportTitle")}
+            </p>
+            <p className="text-[11px] leading-snug text-muted-foreground">{t("portalSettings.backup.exportDesc")}</p>
+            <Button variant="outline" size="sm" className="mt-auto" onClick={exportConfig} disabled={!payload}>
+              <Icons.Download className="size-3.5" /> {t("portalSettings.backup.exportBtn")}
+            </Button>
+          </div>
+          <div className="flex flex-col items-start gap-2 rounded-lg border bg-muted/10 p-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold">
+              <Icons.Upload className="size-3.5 text-teal-600" /> {t("portalSettings.backup.importTitle")}
+            </p>
+            <p className="text-[11px] leading-snug text-muted-foreground">{t("portalSettings.backup.importDesc")}</p>
+            <label className="mt-auto inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-3 text-xs hover:bg-muted/50">
+              <Icons.Upload className="size-3.5" />
+              {t("portalSettings.backup.importBtn")}
+              <input
+                type="file"
+                className="sr-only"
+                accept=".json,application/json"
+                aria-label={t("portalSettings.backup.importBtn")}
+                onChange={onImportFile}
+              />
+            </label>
+          </div>
+        </div>
+        <p className="flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground">
+          <Icons.ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-teal-600" /> {t("portalSettings.backup.safetyNote")}
+        </p>
       </SectionCard>
 
       {/* ── Magic Link diyaloğu (§5.1) ── */}

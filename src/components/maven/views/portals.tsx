@@ -1372,6 +1372,24 @@ export function PortalsView() {
   const { currentEditionId, editions } = useApp();
   const edition = editions.find((e) => e.id === currentEditionId);
   const [tab, setTab] = useState("participant");
+  // CRON-6: kaydedilmemiş portal-ayarları koruması — sekme değişimini onayla
+  const [portalDirty, setPortalDirty] = useState(false);
+  const [pendingTab, setPendingTab] = useState<string | null>(null);
+  const { t } = useLang();
+
+  const handleTabChange = (v: string) => {
+    if (tab === "ayarlar" && v !== "ayarlar" && portalDirty) {
+      setPendingTab(v);
+      return;
+    }
+    setTab(v);
+  };
+
+  const confirmLeave = () => {
+    if (pendingTab) setTab(pendingTab);
+    setPendingTab(null);
+    setPortalDirty(false); // taslak sekme değişimiyle düşecek — rozet temizlensin
+  };
 
   // R10-c: portal header taslağı — edisyon kaydı geldiğinde sunucudaki değerlerle doldurulur
   const [headerDraft, setHeaderDraft] = useState<PortalHeaderDraft>({ title: "", subtitle: "", imageUrl: "", accent: "#0d9488" });
@@ -1397,12 +1415,15 @@ export function PortalsView() {
         title="Dış Portal"
         desc="Sponsor ve katılımcı self-servis görünümü — ayrı uygulama, ortak kimlik ilkesiyle gerçek verilerin dışarıdan hali."
       >
-        <Tabs value={tab} onValueChange={setTab}>
+        <Tabs value={tab} onValueChange={handleTabChange}>
           <TabsList>
             <TabsTrigger value="participant" className="gap-1.5"><Icons.UserRound className="size-3.5" /> Katılımcı</TabsTrigger>
             <TabsTrigger value="sponsor" className="gap-1.5"><Icons.Handshake className="size-3.5" /> Sponsor</TabsTrigger>
             <TabsTrigger value="vitrin" className="gap-1.5"><Icons.Store className="size-3.5" /> Firma Vitrini</TabsTrigger>
-            <TabsTrigger value="ayarlar" className="gap-1.5"><Icons.SlidersHorizontal className="size-3.5" /> Portal Ayarları</TabsTrigger>
+            <TabsTrigger value="ayarlar" className="gap-1.5">
+              <Icons.SlidersHorizontal className="size-3.5" /> Portal Ayarları
+              {portalDirty && <span className="size-1.5 rounded-full bg-amber-500" aria-label={t("portalSettings.unsaved")} />}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </PageHeader>
@@ -1413,7 +1434,7 @@ export function PortalsView() {
         !edition ? (
           <EmptyState title="Edisyon seçin" desc="Portal ayarları için bir edisyon gerekli." />
         ) : (
-          <PortalSettingsTab editionId={edition.id} portalSlug={edition.slug} />
+          <PortalSettingsTab editionId={edition.id} portalSlug={edition.slug} onDirtyChange={setPortalDirty} />
         )
       ) : !edition ? (
         <EmptyState title="Edisyon seçin" desc="Portal önizlemesi için bir edisyon gerekli." />
@@ -1429,6 +1450,22 @@ export function PortalsView() {
           )}
         </div>
       )}
+
+      {/* ── CRON-6: kaydedilmemiş değişiklik koruması — sekme ayrılış onayı ── */}
+      <Dialog open={pendingTab !== null} onOpenChange={(o) => !o && setPendingTab(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm">
+              <Icons.AlertTriangle className="size-4 text-amber-500" /> {t("portalSettings.leaveGuard.title")}
+            </DialogTitle>
+            <DialogDescription className="text-xs">{t("portalSettings.leaveGuard.desc")}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" size="sm" onClick={() => setPendingTab(null)}>{t("portalSettings.leaveGuard.stay")}</Button>
+            <Button variant="destructive" size="sm" onClick={confirmLeave}>{t("portalSettings.leaveGuard.leave")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

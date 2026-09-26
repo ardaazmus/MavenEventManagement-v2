@@ -326,7 +326,31 @@
     "save": "Save Settings",
     "saved": "Settings saved",
     "savedDesc": "Portal configuration updated.",
+    "savedAt": "Saved",
     "saveFail": "Could not save",
+    "backup": {
+      "title": "Configuration Backup",
+      "desc": "Back up the portal settings as a JSON file or move them to another environment.",
+      "exportTitle": "Export",
+      "exportDesc": "Downloads the last saved configuration from the server — not the unsaved draft.",
+      "exportBtn": "Download JSON",
+      "exported": "Configuration downloaded",
+      "exportedDesc": "Store the file in a safe place.",
+      "importTitle": "Import",
+      "importDesc": "Loads a backup JSON file — fields fill the draft and apply when you press Save.",
+      "importBtn": "Upload JSON",
+      "imported": "Configuration imported",
+      "importedDesc": "Fields filled the draft — review and press Save.",
+      "importFail": "Could not read the file",
+      "importInvalid": "Invalid configuration file",
+      "safetyNote": "Import never writes directly to the server — all fields pass the existing Save validation."
+    },
+    "leaveGuard": {
+      "title": "Unsaved changes",
+      "desc": "If you leave this tab, configuration changes will be lost. Do you want to leave?",
+      "stay": "Stay",
+      "leave": "Leave and discard changes"
+    },
     "formStatus": {
       "PUBLISHED": "Published",
       "DRAFT": "Draft",

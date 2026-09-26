@@ -1,6 +1,6 @@
 "use client";
 // Kayıt & Katılımcılar — çok eksenli durum (kayıt × ödeme × katılım ayrı), onay akışı, LCV, bekleme listesi
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -45,6 +45,12 @@ interface WaitlistData {
 }
 interface PersonLite { id: string; firstName: string; lastName: string; email?: string | null; company?: string | null }
 
+// ── İçe aktarma sözleşmeleri (/api/registrations/import) ──
+interface ImportIssue { row: number; name: string; kind: "VALIDATION" | "CATEGORY" | "DUPLICATE_FILE" | "DUPLICATE_DB" | "CAPACITY" | "ERROR"; reason: string }
+interface ImportPreview { mode: "preview"; total: number; valid: number; issues: ImportIssue[]; mapping: Record<string, string>; categories: { input: string; resolved: string | null }[]; editionName: string }
+interface ImportResult { mode: "commit"; imported: number; skipped: ImportIssue[]; confirmationNos: string[]; total: number }
+interface ManualResult { registrationId: string; confirmationNo: string; status: string; personCreated: boolean; orderCreated: boolean }
+
 export function RegistrationsView() {
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
@@ -55,6 +61,11 @@ export function RegistrationsView() {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<"list" | "waitlist" | "lcv">("list");
+
+  // ── Manuel kayıt + içe/dışa aktarma (form-dışı kayıt yüzeyleri) ──
+  const [manualOpen, setManualOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   // ── R10-a: çift tıkla tam durum düzenleme — kişi + katılım + kayıt tek diyaloğda ──
   const [editOpen, setEditOpen] = useState(false);
@@ -185,7 +196,17 @@ export function RegistrationsView() {
               </SelectContent>
             </Select>
             <Input placeholder="Ad / e-posta / kayıt no…" value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-64" />
-            <Button variant="ghost" size="sm" onClick={reload}><Icons.RefreshCw className="size-4" /></Button>
+            <Button variant="ghost" size="sm" onClick={reload} aria-label="Listeyi yenile"><Icons.RefreshCw className="size-4" /></Button>
+            {/* ── Manuel kayıt + içe/dışa aktarma: form-dışı kayıt yüzeyleri ── */}
+            <Button size="sm" className="gap-1.5" disabled={!currentEditionId} onClick={() => setManualOpen(true)}>
+              <Icons.UserPlus className="size-4" aria-hidden />{t("regIo.manual.btn")}
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5" disabled={!currentEditionId} onClick={() => setImportOpen(true)}>
+              <Icons.FileUp className="size-4" aria-hidden />{t("regIo.import.btn")}
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5" disabled={!currentEditionId} onClick={() => setExportOpen(true)}>
+              <Icons.FileDown className="size-4" aria-hidden />{t("regIo.export.btn")}
+            </Button>
             <span className="ml-auto flex items-center gap-2">
               <Chip tone="neutral">
                 <span className="inline-flex items-center gap-1"><Icons.MousePointerClick className="size-3" aria-hidden />Çift tıklama ile de açılır</span>
@@ -458,6 +479,24 @@ export function RegistrationsView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Manuel Kayıt — detaylı tekil giriş (form-dışı kayıtlar) ── */}
+      <ManualRegistrationDialog
+        open={manualOpen} onOpenChange={setManualOpen} editionId={currentEditionId}
+        categories={categories ?? []}
+        onSaved={() => { reload(); bump(); }}
+      />
+      {/* ── Toplu İçe Aktarma — Excel/CSV, önizleme + commit ── */}
+      <ImportRegistrationsDialog
+        open={importOpen} onOpenChange={setImportOpen} editionId={currentEditionId}
+        categories={categories ?? []}
+        onImported={() => { reload(); bump(); }}
+      />
+      {/* ── Dışa Aktarma — Excel + resmi onay belgesi modu ── */}
+      <ExportRegistrationsDialog
+        open={exportOpen} onOpenChange={setExportOpen} editionId={currentEditionId}
+        statusFilter={statusFilter} q={q}
+      />
     </div>
   );
 }
@@ -836,5 +875,490 @@ function WaitlistTab({ editionId, categories, onChanged }: { editionId: string |
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ── Manuel Kayıt — detaylı tekil giriş (form-dışı: e-posta, telefon, saha) ──
+// Kişi yoksa oluşturulur; e-posta eşleşirse mevcut kişiye kayıt açılır (canlı uyarı).
+// ══════════════════════════════════════════════════════════════════════════
+function ManualRegistrationDialog({ open, onOpenChange, editionId, categories, onSaved }: {
+  open: boolean; onOpenChange: (o: boolean) => void; editionId: string | null; categories: CategoryRow[]; onSaved: () => void;
+}) {
+  const { t } = useLang();
+  const { toast } = useToast();
+  const emptyManual = { firstName: "", lastName: "", email: "", phone: "", title: "", company: "", city: "", country: "", attendance: "NOT_ARRIVED", categoryId: "", status: "CONFIRMED", fundingSource: "SELF_PAID", notes: "" };
+  const [form, setForm] = useState(emptyManual);
+  const [busy, setBusy] = useState(false);
+  const [emailHit, setEmailHit] = useState<PersonLite | null>(null);
+
+  // canlı e-posta eşleşmesi — mevcut kişiye kayıt açılacağını önceden bildir
+  useEffect(() => {
+    const email = form.email.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setEmailHit(null); return; }
+    let alive = true;
+    const timer = setTimeout(async () => {
+      try {
+        const people = await listEntity<PersonLite>("people", { q: email, limit: 10 });
+        if (!alive) return;
+        setEmailHit(people.find((p) => (p.email ?? "").toLowerCase() === email) ?? null);
+      } catch { if (alive) setEmailHit(null); }
+    }, 400);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [form.email]);
+
+  const submit = async () => {
+    if (!editionId) return;
+    setBusy(true);
+    try {
+      const res = await apiSend<ManualResult>("/api/registrations/manual", "POST", {
+        editionId,
+        firstName: form.firstName, lastName: form.lastName,
+        email: form.email || null, phone: form.phone || null, title: form.title || null,
+        company: form.company || null, city: form.city || null, country: form.country || null,
+        attendance: form.attendance, categoryId: form.categoryId || null,
+        status: form.status, fundingSource: form.fundingSource, notes: form.notes || null,
+      });
+      toast({ title: t("regIo.manual.createdTitle"), description: t("regIo.manual.createdDesc", { no: res.confirmationNo, status: label(REGISTRATION_STATUS, res.status) }) });
+      setForm(emptyManual); setEmailHit(null);
+      onOpenChange(false); onSaved();
+    } catch (e) {
+      toast({ title: t("regIo.manual.failTitle"), description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const field = (key: keyof typeof emptyManual, labelKey: string, type = "text", id?: string) => (
+    <div>
+      <Label htmlFor={id}>{t(labelKey)}</Label>
+      <Input id={id} type={type} className="mt-1" value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
+    </div>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onOpenChange(false); }}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t("regIo.manual.title")}</DialogTitle>
+          <DialogDescription>{t("regIo.manual.desc")}</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <section>
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <Icons.User className="size-3.5" aria-hidden /> {t("regIo.manual.sectionPerson")}
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {field("firstName", "regIo.manual.firstName", "text", "manual-firstName")}
+              {field("lastName", "regIo.manual.lastName", "text", "manual-lastName")}
+              <div className="sm:col-span-2">
+                <div><Label htmlFor="manual-email">{t("regIo.manual.email")}</Label>
+                  <Input id="manual-email" type="email" className="mt-1" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                </div>
+                {emailHit && (
+                  <div className="mt-1.5 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300" role="status">
+                    <Icons.Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    <span>{t("regIo.manual.emailExists", { name: `${emailHit.firstName} ${emailHit.lastName}` })}</span>
+                  </div>
+                )}
+              </div>
+              {field("phone", "regIo.manual.phone", "tel")}
+              {field("title", "regIo.manual.jobTitle")}
+              {field("company", "regIo.manual.company")}
+              {field("city", "regIo.manual.city")}
+              {field("country", "regIo.manual.country")}
+            </div>
+          </section>
+
+          <section>
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <Icons.ScanLine className="size-3.5" aria-hidden /> {t("regIo.manual.sectionAttendance")}
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label>{t("regIo.manual.attendance")}</Label>
+                <Select value={form.attendance} onValueChange={(v) => setForm({ ...form, attendance: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(ATTENDANCE_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>{t("regIo.manual.status")}</Label>
+                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {["DRAFT", "SUBMITTED", "PENDING_APPROVAL", "CONFIRMED"].map((k) => (
+                      <SelectItem key={k} value={k}>{label(REGISTRATION_STATUS, k)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <Icons.ClipboardList className="size-3.5" aria-hidden /> {t("regIo.manual.sectionReg")}
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <Label>{t("regIo.manual.category")}</Label>
+                <Select
+                  value={form.categoryId === "" ? "none" : form.categoryId}
+                  onValueChange={(v) => setForm({ ...form, categoryId: v === "none" ? "" : v })}
+                >
+                  <SelectTrigger className="mt-1"><SelectValue placeholder={t("regIo.manual.categoryPh")} /></SelectTrigger>
+                  <SelectContent className="maven-scroll max-h-64">
+                    <SelectItem value="none">{t("regIo.manual.categoryNone")}</SelectItem>
+                    {categories.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.name} · {c.basePrice > 0 ? `${(c.basePrice / 100).toLocaleString("tr-TR")} ${c.currency}` : "ücretsiz"}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="sm:col-span-2">
+                <Label>{t("regIo.manual.funding")}</Label>
+                <Select value={form.fundingSource} onValueChange={(v) => setForm({ ...form, fundingSource: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent className="maven-scroll max-h-64">
+                    {Object.entries(FUNDING_SOURCES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="sm:col-span-2">
+                <Label>{t("regIo.manual.notes")}</Label>
+                <Textarea rows={2} className="mt-1" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder={t("regIo.manual.notesPh")} />
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>Vazgeç</Button>
+          <Button onClick={submit} disabled={busy || !form.firstName.trim() || !form.lastName.trim()}>
+            {busy ? <><Icons.Loader2 className="size-4 animate-spin" />{t("regIo.manual.submitting")}</> : <><Icons.UserPlus className="size-4" />{t("regIo.manual.submit")}</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ── Toplu İçe Aktarma — Excel/CSV → önizleme → commit ──────────────────────
+// Firma listeleri ve e-postayla gelen toplu kayıtlar; mükerrer/hatalı satırlar
+// önizlemede işaretlenir, commit'te otomatik atlanıp raporlanır.
+// ══════════════════════════════════════════════════════════════════════════
+const ISSUE_KIND_KEYS: Record<string, string> = {
+  VALIDATION: "issueValidation", CATEGORY: "issueCategory", DUPLICATE_FILE: "issueDupFile",
+  DUPLICATE_DB: "issueDupDb", CAPACITY: "issueCapacity", ERROR: "issueError",
+};
+
+function ImportRegistrationsDialog({ open, onOpenChange, editionId, categories, onImported }: {
+  open: boolean; onOpenChange: (o: boolean) => void; editionId: string | null; categories: CategoryRow[]; onImported: () => void;
+}) {
+  const { t } = useLang();
+  const { toast } = useToast();
+  const [phase, setPhase] = useState<"idle" | "parsing" | "previewing" | "preview" | "committing" | "done">("idle");
+  const [fileName, setFileName] = useState("");
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [defaultStatus, setDefaultStatus] = useState("CONFIRMED");
+  const [defaultFunding, setDefaultFunding] = useState("SELF_PAID");
+
+  const reset = () => { setPhase("idle"); setRows([]); setPreview(null); setResult(null); setFileName(""); };
+
+  const downloadTemplate = async () => {
+    const XLSX = await import("xlsx");
+    const headers = [
+      t("regIo.manual.firstName"), t("regIo.manual.lastName"), t("regIo.manual.email"), t("regIo.manual.phone"),
+      t("regIo.manual.jobTitle"), t("regIo.manual.company"), t("regIo.manual.city"), t("regIo.manual.country"),
+      t("regIo.manual.category"), t("regIo.manual.notes"),
+    ];
+    const sample = [
+      ["Ayşe", "Yılmaz", "ayse@ornek.com", "+905551112233", "Proje Direktörü", "Örnek A.Ş.", "İstanbul", "Türkiye", categories[0]?.name ?? "", ""],
+      ["Mehmet", "Demir", "mehmet@ornek.com", "", "", "Diğer Ltd.", "Ankara", "Türkiye", "", ""],
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([headers, ...sample]), "Sablon");
+    XLSX.writeFile(wb, "kayit-import-sablonu.xlsx");
+  };
+
+  const handleFile = async (file: File) => {
+    if (!editionId) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: t("regIo.import.failTitle"), description: "Dosya 5 MB sınırını aşıyor", variant: "destructive" });
+      return;
+    }
+    setFileName(file.name); setPhase("parsing");
+    try {
+      const XLSX = await import("xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      if (!ws) throw new Error("Boş dosya");
+      const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "", raw: false });
+      if (parsed.length === 0) throw new Error("Dosyada satır bulunamadı");
+      setRows(parsed);
+      setPhase("previewing");
+      const pv = await apiSend<ImportPreview>("/api/registrations/import", "POST", {
+        editionId, rows: parsed, defaultStatus, defaultFundingSource: defaultFunding,
+      });
+      setPreview(pv); setPhase("preview");
+    } catch (e) {
+      toast({ title: t("regIo.import.failTitle"), description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      setPhase("idle");
+    }
+  };
+
+  const commit = async () => {
+    if (!editionId || rows.length === 0) return;
+    setPhase("committing");
+    try {
+      const res = await apiSend<ImportResult>("/api/registrations/import", "POST", {
+        editionId, rows, commit: true, defaultStatus, defaultFundingSource: defaultFunding,
+      });
+      setResult(res); setPhase("done");
+      toast({ title: t("regIo.import.doneTitle"), description: t("regIo.import.doneDesc", { imported: res.imported, skipped: res.skipped.length }) });
+      onImported();
+    } catch (e) {
+      toast({ title: t("regIo.import.failTitle"), description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      setPhase("preview");
+    }
+  };
+
+  const issueLine = (x: ImportIssue) => (
+    <li key={`${x.row}-${x.kind}-${x.reason}`} className="flex items-start gap-2 text-xs">
+      <Chip tone={x.kind === "CAPACITY" || x.kind === "DUPLICATE_DB" || x.kind === "DUPLICATE_FILE" ? "amber" : "rose"}>{t(`regIo.import.${ISSUE_KIND_KEYS[x.kind] ?? "issueError"}`)}</Chip>
+      <span className="min-w-0 flex-1"><b>{x.name}</b> · {x.reason}</span>
+      <span className="shrink-0 text-muted-foreground">#{x.row}</span>
+    </li>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o && phase !== "committing") { onOpenChange(false); reset(); } }}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{t("regIo.import.title")}</DialogTitle>
+          <DialogDescription>{t("regIo.import.desc")}</DialogDescription>
+        </DialogHeader>
+
+        {/* 1) dosya seçimi + şablon */}
+        {phase === "idle" && (
+          <div className="space-y-3">
+            <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed p-6 text-center transition-colors hover:bg-muted/40">
+              <Icons.FileSpreadsheet className="size-8 text-muted-foreground" aria-hidden />
+              <span className="text-sm font-medium">{t("regIo.import.pickFile")}</span>
+              {fileName && <span className="text-xs text-muted-foreground">{fileName}</span>}
+              <input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
+            </label>
+            <div className="flex justify-center">
+              <Button variant="link" size="sm" className="gap-1.5 text-xs" onClick={() => void downloadTemplate()}>
+                <Icons.Download className="size-3.5" aria-hidden />{t("regIo.import.template")}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {(phase === "parsing" || phase === "previewing") && (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground" role="status">
+            <Icons.Loader2 className="size-4 animate-spin" aria-hidden />
+            {phase === "parsing" ? t("regIo.import.parsing") : t("regIo.import.previewing")}
+          </div>
+        )}
+
+        {/* 2) önizleme — sayım çipleri + sorunlar + tablo */}
+        {phase === "preview" && preview && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Chip tone="neutral">{t("regIo.import.rowsTotal", { n: preview.total })}</Chip>
+              <Chip tone="emerald">{t("regIo.import.rowsValid", { n: preview.valid })}</Chip>
+              {preview.issues.length > 0 && <Chip tone="rose">{t("regIo.import.rowsIssues", { n: preview.issues.length })}</Chip>}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {Object.keys(preview.mapping).length > 0
+                ? t("regIo.import.mappedCols", { cols: Object.values(preview.mapping).join(", ") })
+                : t("regIo.import.colNotMapped")}
+            </p>
+
+            {/* toplu varsayılanlar — kolon yoksa uygulanan durum/fon kaynağı */}
+            <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-2">
+              <div>
+                <Label className="text-xs">{t("regIo.import.defaultStatus")}</Label>
+                <Select value={defaultStatus} onValueChange={setDefaultStatus}>
+                  <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {["DRAFT", "SUBMITTED", "PENDING_APPROVAL", "CONFIRMED"].map((k) => (
+                      <SelectItem key={k} value={k}>{label(REGISTRATION_STATUS, k)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">{t("regIo.import.defaultFunding")}</Label>
+                <Select value={defaultFunding} onValueChange={setDefaultFunding}>
+                  <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent className="maven-scroll max-h-60">
+                    {Object.entries(FUNDING_SOURCES).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {preview.issues.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">{t("regIo.import.issuesTitle")}</p>
+                <ul className="maven-scroll max-h-40 space-y-1.5 overflow-y-auto rounded-lg border p-2.5">
+                  {preview.issues.slice(0, 100).map(issueLine)}
+                </ul>
+              </div>
+            )}
+
+            <div>
+              <p className="mb-1.5 text-xs font-semibold text-muted-foreground">{t("regIo.import.previewTitle", { n: Math.min(8, preview.total) })}</p>
+              <div className="maven-scroll max-h-52 overflow-y-auto rounded-lg border">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+                    <tr className="text-left text-muted-foreground">
+                      <th className="px-2.5 py-2 font-medium">#</th>
+                      <th className="px-2.5 py-2 font-medium">{t("regIo.import.headerName")}</th>
+                      <th className="px-2.5 py-2 font-medium">{t("regIo.import.headerEmail")}</th>
+                      <th className="px-2.5 py-2 font-medium">{t("regIo.import.headerCompany")}</th>
+                      <th className="px-2.5 py-2 font-medium">{t("regIo.import.headerCategory")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.slice(0, 8).map((r, i) => (
+                      <tr key={i} className="border-t">
+                        <td className="px-2.5 py-1.5 text-muted-foreground">{i + 1}</td>
+                        <td className="px-2.5 py-1.5">{[r.firstName, r.lastName].filter(Boolean).join(" ") || "—"}</td>
+                        <td className="px-2.5 py-1.5">{String(r.email ?? "") || "—"}</td>
+                        <td className="px-2.5 py-1.5">{String(r.company ?? "") || "—"}</td>
+                        <td className="px-2.5 py-1.5">{String(r.category ?? "") || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <DialogFooter className="flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={reset}>{t("regIo.import.repick")}</Button>
+              <Button size="sm" disabled={preview.valid === 0} onClick={commit}>
+                <Icons.FileUp className="size-4" aria-hidden />{t("regIo.import.commit", { n: preview.valid })}
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {/* 3) sonuç */}
+        {phase === "committing" && (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground" role="status">
+            <Icons.Loader2 className="size-4 animate-spin" aria-hidden />{t("regIo.import.committing")}
+          </div>
+        )}
+        {phase === "done" && result && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950">
+              <Icons.CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+              <p className="text-sm font-medium">{t("regIo.import.doneDesc", { imported: result.imported, skipped: result.skipped.length })}</p>
+            </div>
+            {result.skipped.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">{t("regIo.import.skippedTitle")}</p>
+                <ul className="maven-scroll max-h-40 space-y-1.5 overflow-y-auto rounded-lg border p-2.5">
+                  {result.skipped.slice(0, 100).map(issueLine)}
+                </ul>
+              </div>
+            )}
+            <DialogFooter>
+              <Button size="sm" onClick={() => { onOpenChange(false); reset(); }}>Tamam</Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ── Dışa Aktarma — Excel listesi + resmi onay belgesi modu ─────────────────
+// Kurum/kuruluş "kayıtlarınız tamamlandı — son resmi onay" yazışmaları için
+// başlık + künye + tablo + imza bloğu içeren belge formatı.
+// ══════════════════════════════════════════════════════════════════════════
+function ExportRegistrationsDialog({ open, onOpenChange, editionId, statusFilter, q }: {
+  open: boolean; onOpenChange: (o: boolean) => void; editionId: string | null; statusFilter: string; q: string;
+}) {
+  const { t } = useLang();
+  const { toast } = useToast();
+  const [company, setCompany] = useState("");
+  const [official, setOfficial] = useState(false);
+
+  // kurum filtresi girilince resmi belge modu otomatik önerilir (olay-güdümlü — effect yok)
+  const onCompanyChange = (value: string) => {
+    setCompany(value);
+    if (value.trim()) setOfficial(true);
+  };
+
+  const doExport = () => {
+    if (!editionId) return;
+    const sp = new URLSearchParams({ editionId });
+    if (statusFilter !== "ALL") sp.set("status", statusFilter);
+    if (q.trim()) sp.set("q", q.trim());
+    if (company.trim()) sp.set("company", company.trim());
+    if (official) sp.set("official", "1");
+    window.location.href = `/api/registrations/export?${sp.toString()}`;
+    toast({ title: t("regIo.export.startedTitle"), description: t("regIo.export.startedDesc") });
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t("regIo.export.title")}</DialogTitle>
+          <DialogDescription>{t("regIo.export.desc")}</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="rounded-lg border bg-muted/40 p-3">
+            <p className="mb-1 text-xs font-semibold text-muted-foreground">{t("regIo.export.scope")}</p>
+            <div className="flex flex-wrap gap-1.5">
+              <Chip tone="neutral">
+                {statusFilter === "ALL" ? t("regIo.export.scopeAll") : t("regIo.export.scopeStatus", { status: label(REGISTRATION_STATUS, statusFilter) })}
+              </Chip>
+              {q.trim() && <Chip tone="teal">{t("regIo.export.scopeQ", { q: q.trim() })}</Chip>}
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="export-company">{t("regIo.export.company")}</Label>
+            <Input id="export-company" className="mt-1" value={company} onChange={(e) => onCompanyChange(e.target.value)} placeholder={t("regIo.export.companyPh")} />
+          </div>
+
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition-colors hover:bg-muted/40">
+            <input
+              type="checkbox"
+              checked={official}
+              onChange={(e) => setOfficial(e.target.checked)}
+              className="mt-0.5 size-4 shrink-0 accent-teal-600"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{t("regIo.export.official")}</span>
+              <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{t("regIo.export.officialHint")}</span>
+            </span>
+          </label>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Vazgeç</Button>
+          <Button onClick={doExport}><Icons.FileDown className="size-4" aria-hidden />{t("regIo.export.download")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

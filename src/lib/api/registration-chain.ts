@@ -15,7 +15,8 @@
 import { db } from "@/lib/db";
 import { ActivityType } from "./activity";
 
-function readableNo(prefix: string): string {
+// export: manuel/toplu içe-aktarma zinciri (manual-registration.ts) aynı üreticiyi paylaşır
+export function readableNo(prefix: string): string {
   const t = Date.now().toString(36).toUpperCase();
   const r = Math.floor(Math.random() * 900 + 100);
   return `${prefix}-${t}${r}`;

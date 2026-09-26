@@ -425,36 +425,85 @@ export const EDITION_STATUS: Record<string, string> = {
   ARCHIVED: "Arşiv",
 };
 
-// ─── Modül menüsü (§53) — capability kapalıysa menü görünmez ───────────────
+// ─── Modül menüsü (§53 + UI-AKIS 2026) — sektör-yaşam-döngüsü grupları + ROL matrisi ──
+// SEKTÖR HİZALAMASI (Cvent/Bizzabo/Whova/Ex Ordo IA deseni): yönetim yüzeyi 7 yaşam
+// döngüsü grubuna ayrılır — Genel Takip → Kurulum → CRM & İletişim → Kayıt & Finans →
+// Bilimsel & Program → Sponsor & Katılım → Konaklama & Saha. Eski 3-grup düzeninde
+// "edition" grubu 17 modülle düz liste olmuştu (kullanıcı geri bildirimi: akış karmaşık).
+// KAYIPSIZLIK KURALI: 26 modülün TAMAMI korunur — yalnız grup ve sıra değişir.
+// HAK YÖNETİMİ (§48): her modülde `roles` — "*" (tüm personel) veya rol id listesi.
+// Rol bilinmiyorsa (auth kapalı / oturum yok) TÜM modüller görünür (geriye-uyum).
+export type StaffRole =
+  | "ORG_OWNER" | "ORG_ADMIN" | "EVENT_MANAGER" | "FINANCE_MANAGER" | "REGISTRATION_MANAGER"
+  | "SPONSORSHIP_MANAGER" | "SCIENTIFIC_MANAGER" | "PROGRAM_MANAGER" | "ONSITE_MANAGER";
+
+export const ALL_STAFF_ROLES: readonly StaffRole[] = [
+  "ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "FINANCE_MANAGER", "REGISTRATION_MANAGER",
+  "SPONSORSHIP_MANAGER", "SCIENTIFIC_MANAGER", "PROGRAM_MANAGER", "ONSITE_MANAGER",
+];
+
+export const MODULE_GROUPS = [
+  { id: "overview", labelKey: "shell.groupOverview", icon: "LayoutDashboard" },
+  { id: "setup", labelKey: "shell.groupSetup", icon: "CalendarRange" },
+  { id: "crm", labelKey: "shell.groupCrm", icon: "Users" },
+  { id: "registration", labelKey: "shell.groupRegistration", icon: "ClipboardList" },
+  { id: "program", labelKey: "shell.groupProgram", icon: "GraduationCap" },
+  { id: "engagement", labelKey: "shell.groupEngagement", icon: "Handshake" },
+  { id: "logistics", labelKey: "shell.groupLogistics", icon: "ScanLine" },
+] as const;
+
+export type ModuleGroup = (typeof MODULE_GROUPS)[number]["id"];
+
+// rol × modül matrisi — sektör rol modeli (Owner/Admin=her şey; Event Manager=kurulum-
+// hariç her şey; Finance/Registration/Sponsorship/Scientific/Program/Onsite yöneticileri
+// kendi alanları + ortak yüzeyler). Kural: her modülde en az bir rol; OWNER/ADMIN her zaman.
 
 export const MODULES = [
-  { id: "dashboard", label: "Genel Bakış", icon: "LayoutDashboard", capability: null, group: "workspace" },
-  { id: "editions", label: "Etkinlikler", icon: "CalendarRange", capability: null, group: "workspace" },
-  { id: "portals", label: "Dış Portal", icon: "Globe", capability: null, group: "workspace" },
-  { id: "people", label: "Kişiler", icon: "Users", capability: null, group: "people" },
-  { id: "organizations", label: "Kurum/Kuruluşlar", icon: "Building2", capability: null, group: "people" },
-  { id: "registrations", label: "Kayıt & Katılımcılar", icon: "ClipboardList", capability: "REGISTRATION", group: "edition" },
-  { id: "forms", label: "Form Merkezi", icon: "FileInput", capability: null, group: "edition" },
-  { id: "accounting", label: "Muhasebe", icon: "Calculator", capability: "REGISTRATION", group: "edition" },
-  { id: "scientific", label: "Bilimsel", icon: "GraduationCap", capability: "SCIENTIFIC", group: "edition" },
-  { id: "program", label: "Program", icon: "Clock", capability: "PROGRAM", group: "edition" },
-  { id: "social", label: "Sosyal & Tur Planı", icon: "PartyPopper", capability: "SOCIAL_EVENTS", group: "edition" },
-  { id: "b2b", label: "B2B Planı", icon: "Briefcase", capability: "B2B_MEETINGS", group: "edition" },
-  { id: "sponsorship", label: "Sponsor & Fuar", icon: "Handshake", capability: "SPONSORSHIP", group: "edition" },
-  { id: "floors", label: "Floor Studio", icon: "Map", capability: "FLOOR_PLAN", group: "edition" },
-  { id: "accommodation", label: "Konaklama", icon: "BedDouble", capability: "ACCOMMODATION", group: "edition" },
-  { id: "finance", label: "Ödeme & Ek Hizmet", icon: "CreditCard", capability: "REGISTRATION", group: "edition" },
-  { id: "communications", label: "İletişim", icon: "Megaphone", capability: "COMMUNICATIONS", group: "edition" },
-  { id: "onsite", label: "Sahada", icon: "ScanLine", capability: "BADGING", group: "edition" },
-  { id: "badges", label: "Yaka Kartı Baskı", icon: "Printer", capability: "BADGING", group: "edition" },
-  { id: "certificates", label: "Belgeler", icon: "Award", capability: "CERTIFICATES", group: "edition" },
-  { id: "operations", label: "Operasyon", icon: "ListChecks", capability: null, group: "workspace" },
-  { id: "media", label: "Medya Arşivi", icon: "FolderOpen", capability: null, group: "workspace" },
-  { id: "archive", label: "Arşiv", icon: "Archive", capability: null, group: "workspace" },
-  { id: "integrations", label: "API Geçidi", icon: "PlugZap", capability: null, group: "workspace" },
-  { id: "compliance", label: "Uyumluluk", icon: "ShieldCheck", capability: null, group: "workspace" },
-  { id: "settings", label: "Ayarlar", icon: "Settings", capability: null, group: "workspace" },
+  // ── 1) Genel Takip — portföy özeti, görevler, tamamlanan etkinlik arşivi
+  { id: "dashboard", label: "Genel Bakış", icon: "LayoutDashboard", capability: null, group: "overview", roles: "*" },
+  { id: "operations", label: "Operasyon", icon: "ListChecks", capability: null, group: "overview", roles: "*" },
+  { id: "archive", label: "Arşiv", icon: "Archive", capability: null, group: "overview", roles: "*" },
+  // ── 2) Etkinlik Kurulumu — seri/edisyon, kimlik, portal, uyumluluk, entegrasyon
+  { id: "editions", label: "Etkinlikler", icon: "CalendarRange", capability: null, group: "setup", roles: "*" },
+  { id: "settings", label: "Ayarlar", icon: "Settings", capability: null, group: "setup", roles: "*" },
+  { id: "portals", label: "Dış Portal", icon: "Globe", capability: null, group: "setup", roles: "*" },
+  { id: "compliance", label: "Uyumluluk", icon: "ShieldCheck", capability: null, group: "setup", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER"] },
+  { id: "integrations", label: "API Geçidi", icon: "PlugZap", capability: null, group: "setup", roles: ["ORG_OWNER", "ORG_ADMIN"] },
+  // ── 3) CRM & İletişim — kişi/kurum datası + çok kanallı kampanyalar
+  { id: "people", label: "Kişiler", icon: "Users", capability: null, group: "crm", roles: "*" },
+  { id: "organizations", label: "Kurum/Kuruluşlar", icon: "Building2", capability: null, group: "crm", roles: "*" },
+  { id: "communications", label: "İletişim", icon: "Megaphone", capability: "COMMUNICATIONS", group: "crm", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "REGISTRATION_MANAGER", "SPONSORSHIP_MANAGER", "SCIENTIFIC_MANAGER", "PROGRAM_MANAGER"] },
+  // ── 4) Kayıt & Finans — kayıt akışı, formlar, ödeme, tek muhasebe defteri
+  { id: "registrations", label: "Kayıt & Katılımcılar", icon: "ClipboardList", capability: "REGISTRATION", group: "registration", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "FINANCE_MANAGER", "REGISTRATION_MANAGER", "ONSITE_MANAGER"] },
+  { id: "forms", label: "Form Merkezi", icon: "FileInput", capability: null, group: "registration", roles: "*" },
+  { id: "finance", label: "Ödeme & Ek Hizmet", icon: "CreditCard", capability: "REGISTRATION", group: "registration", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "FINANCE_MANAGER", "REGISTRATION_MANAGER"] },
+  { id: "accounting", label: "Muhasebe", icon: "Calculator", capability: "REGISTRATION", group: "registration", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "FINANCE_MANAGER"] },
+  // ── 5) Bilimsel & Program — çağrı/bildiri, oturum programı, sosyal plan
+  { id: "scientific", label: "Bilimsel", icon: "GraduationCap", capability: "SCIENTIFIC", group: "program", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "SCIENTIFIC_MANAGER", "PROGRAM_MANAGER"] },
+  { id: "program", label: "Program", icon: "Clock", capability: "PROGRAM", group: "program", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "SCIENTIFIC_MANAGER", "PROGRAM_MANAGER"] },
+  { id: "social", label: "Sosyal & Tur Planı", icon: "PartyPopper", capability: "SOCIAL_EVENTS", group: "program", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "PROGRAM_MANAGER"] },
+  // ── 6) Sponsor & Katılım — paketler, B2B, fuar alanı, medya
+  { id: "sponsorship", label: "Sponsor & Fuar", icon: "Handshake", capability: "SPONSORSHIP", group: "engagement", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "SPONSORSHIP_MANAGER", "FINANCE_MANAGER"] },
+  { id: "b2b", label: "B2B Planı", icon: "Briefcase", capability: "B2B_MEETINGS", group: "engagement", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "SPONSORSHIP_MANAGER"] },
+  { id: "floors", label: "Floor Studio", icon: "Map", capability: "FLOOR_PLAN", group: "engagement", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "SPONSORSHIP_MANAGER", "PROGRAM_MANAGER", "ONSITE_MANAGER"] },
+  { id: "media", label: "Medya Arşivi", icon: "FolderOpen", capability: null, group: "engagement", roles: "*" },
+  // ── 7) Konaklama & Saha — oda blokları, tarama, yaka, belge
+  { id: "accommodation", label: "Konaklama", icon: "BedDouble", capability: "ACCOMMODATION", group: "logistics", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "ONSITE_MANAGER", "REGISTRATION_MANAGER"] },
+  { id: "onsite", label: "Sahada", icon: "ScanLine", capability: "BADGING", group: "logistics", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "ONSITE_MANAGER"] },
+  { id: "badges", label: "Yaka Kartı Baskı", icon: "Printer", capability: "BADGING", group: "logistics", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "ONSITE_MANAGER", "REGISTRATION_MANAGER"] },
+  { id: "certificates", label: "Belgeler", icon: "Award", capability: "CERTIFICATES", group: "logistics", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "ONSITE_MANAGER", "SCIENTIFIC_MANAGER"] },
 ] as const;
+
+export type ModuleDef = (typeof MODULES)[number];
+
+// rol × modül görünürlüğü — SAF fonksiyon (test edilebilir). role=null (auth kapalı,
+// oturum yok) → her şey görünür: mevcut davranış korunur, testler etkilenmez.
+export function roleCanSee(mod: Pick<ModuleDef, "roles">, role: string | null | undefined): boolean {
+  if (!role) return true;
+  if (mod.roles === "*") return true;
+  if (role === "ORG_OWNER" || role === "ORG_ADMIN") return true; // üst firma sahibi/yöneticisi her şeyi görür
+  return (mod.roles as readonly string[]).includes(role);
+}
 
 // ─── Yardımcılar ────────────────────────────────────────────────────────────
 

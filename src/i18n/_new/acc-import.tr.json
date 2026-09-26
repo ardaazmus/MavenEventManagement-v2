@@ -64,6 +64,11 @@
     "payerSpeaker": "Konuşmacı Ağırlama",
     "fileTooBig": "Dosya 5 MB sınırını aşıyor",
     "fileEmpty": "Boş dosya",
-    "fileNoRows": "Dosyada satır bulunamadı"
+    "fileNoRows": "Dosyada satır bulunamadı",
+    "shortageLabel": "Stok yetersizse",
+    "shortageReject": "Satırı reddet (raporla)",
+    "shortageWaitlist": "Bekleme listesine al",
+    "shortageHint": "Teyit satırında oda stoğu yetersizse kayıt reddedilir YA DA bekleme listesine (WAITLIST) alınır — stok asla aşılmaz.",
+    "doneWaitlisted": "{n} satır bekleme listesine alındı."
   }
 }

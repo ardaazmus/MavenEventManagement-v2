@@ -402,6 +402,7 @@ export async function previewReservationImport(opts: {
 export interface ReservationCommitResult {
   mode: "commit";
   created: number;
+  waitlisted: number; // stok yetersizliğinden bekleme listesine alınan satırlar
   skipped: number; // sorun satırları (doğrulama/dosya-içi/DB mükerrer) + çekirdek retleri
   stockNights: number;
   total: number;
@@ -412,12 +413,13 @@ export async function commitReservationImport(opts: {
   editionId: string;
   rows: Record<string, unknown>[];
   defaultStatus?: string | null;
+  onStockShortage?: "reject" | "WAITLIST";
   actorName: string;
 }): Promise<ReservationCommitResult> {
   const { norm } = normalizeReservationHeaders(opts.rows);
   const parsed = norm.map((r, i) => parseReservationRow(r, i + 1));
 
-  const result: ReservationCommitResult = { mode: "commit", created: 0, skipped: 0, stockNights: 0, total: parsed.length, failures: [] };
+  const result: ReservationCommitResult = { mode: "commit", created: 0, waitlisted: 0, skipped: 0, stockNights: 0, total: parsed.length, failures: [] };
   const edition = await db.eventEdition.findUnique({
     where: { id: opts.editionId },
     select: { tenantId: true },
@@ -447,21 +449,45 @@ export async function commitReservationImport(opts: {
         const hotel = r.hotelText ? hotels.byName.get(normKey(r.hotelText)) ?? null : null;
         const block = hotel && r.blockText ? hotels.blocks.get(`${hotel.id}›${normKey(r.blockText)}`) ?? null : null;
         const byEmail = r.email ? participationByEmail.get(r.email) ?? null : null;
-        const made: ManualReservationResult = await createManualReservation({
-          editionId: opts.editionId,
-          participationId: byEmail?.id ?? null,
-          guestName: byEmail ? null : r.guestName, // katılım bağlıysa ad çekirdekten türetilir
-          blockId: block?.id ?? null,
-          checkIn: r.checkIn!,
-          checkOut: r.checkOut!,
-          occupancyType: r.occupancyType,
-          payerType: r.payerType ?? "SELF",
-          payerName: r.payerName,
-          ratePerNight: r.rate != null ? Math.round(r.rate * 100) : null, // ₺ major → kuruş minor
-          status: r.status ?? opts.defaultStatus ?? "REQUESTED",
-          notes: r.notes,
-          actorName: opts.actorName,
-        });
+        const wantedStatus = r.status ?? opts.defaultStatus ?? "REQUESTED";
+        let made: ManualReservationResult;
+        try {
+          made = await createManualReservation({
+            editionId: opts.editionId,
+            participationId: byEmail?.id ?? null,
+            guestName: byEmail ? null : r.guestName, // katılım bağlıysa ad çekirdekten türetilir
+            blockId: block?.id ?? null,
+            checkIn: r.checkIn!,
+            checkOut: r.checkOut!,
+            occupancyType: r.occupancyType,
+            payerType: r.payerType ?? "SELF",
+            payerName: r.payerName,
+            ratePerNight: r.rate != null ? Math.round(r.rate * 100) : null, // ₺ major → kuruş minor
+            status: wantedStatus,
+            notes: r.notes,
+            actorName: opts.actorName,
+          });
+        } catch (first) {
+          // stok yetersizliği politikası: "WAITLIST" ise kayıt BEKLEME LİSTESİNE alınır
+          // (WAITLIST stok tüketmez — çekirdek invariant). Varsayılan: satır reddedilir.
+          if (!(first instanceof ManualReservationError) || first.code !== "STOCK" || opts.onStockShortage !== "WAITLIST") throw first;
+          made = await createManualReservation({
+            editionId: opts.editionId,
+            participationId: byEmail?.id ?? null,
+            guestName: byEmail ? null : r.guestName,
+            blockId: block?.id ?? null,
+            checkIn: r.checkIn!,
+            checkOut: r.checkOut!,
+            occupancyType: r.occupancyType,
+            payerType: r.payerType ?? "SELF",
+            payerName: r.payerName,
+            ratePerNight: r.rate != null ? Math.round(r.rate * 100) : null,
+            status: "WAITLIST",
+            notes: r.notes ? `${r.notes} (stok yetersizliği — bekleme listesine alındı)` : "stok yetersizliği — bekleme listesine alındı",
+            actorName: opts.actorName,
+          });
+          result.waitlisted += 1;
+        }
         result.created += 1;
         if (made.stockConsumed) result.stockNights += made.nights;
       } catch (e) {

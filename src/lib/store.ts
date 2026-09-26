@@ -51,6 +51,7 @@ interface AppState {
   refreshKey: number;
   loading: boolean;
   error: string | null;
+  me: { authenticated: boolean; role: string | null; name: string | null } | null; // §48 rol filtresi (auth-off → role null)
   setModule: (m: string) => void;
   setCurrentEdition: (id: string) => void;
   bump: () => void;
@@ -68,6 +69,7 @@ export const useApp = create<AppState>((set, get) => ({
   refreshKey: 0,
   loading: true,
   error: null,
+  me: null,
   setModule: (m) => {
     set({ module: m });
     try { window.localStorage.setItem("maven.module", m); } catch { /* yoksay */ }
@@ -92,10 +94,19 @@ export const useApp = create<AppState>((set, get) => ({
   bootstrap: async () => {
     set({ loading: true, error: null });
     try {
-      const res = await fetch("/api/bootstrap", { cache: "no-store" });
+      // §48: oturum kimliği paralel çekilir — hata/başarısızlık role=null sayılır
+      // (auth-off veya endpoint yok → TÜM modüller görünür, davranış değişmez)
+      const [res, meRes] = await Promise.all([
+        fetch("/api/bootstrap", { cache: "no-store" }),
+        fetch("/api/auth/me", { cache: "no-store" }).catch(() => null),
+      ]);
       const data = await res.json();
+      let me: AppState["me"] = { authenticated: false, role: null, name: null };
+      if (meRes && meRes.ok) {
+        try { me = await meRes.json(); } catch { /* role=null kalır */ }
+      }
       if (!data.tenant) {
-        set({ tenant: null, editions: [], modelCount: 0, loading: false });
+        set({ tenant: null, editions: [], modelCount: 0, me, loading: false });
         return;
       }
       const editions: EditionLite[] = data.editions ?? [];
@@ -111,7 +122,7 @@ export const useApp = create<AppState>((set, get) => ({
         editions[0]?.id ??
         null;
       const persistedModule = typeof window !== "undefined" ? window.localStorage.getItem("maven.module") : null;
-      set({ tenant: data.tenant, editions, modelCount: typeof data.modelCount === "number" ? data.modelCount : 0, currentEditionId: current, module: persistedModule ?? "dashboard", loading: false });
+      set({ tenant: data.tenant, editions, modelCount: typeof data.modelCount === "number" ? data.modelCount : 0, currentEditionId: current, module: persistedModule ?? "dashboard", me, loading: false });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "Bağlantı hatası", loading: false });
     }

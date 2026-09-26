@@ -1,7 +1,8 @@
 "use client";
-// Kabuk: sidebar (§53 modül menüsü — capability kapalıysa gizli), üst şerit (bağlam seçici), footer
+// Kabuk: sidebar (§53 modül menüsü — yetenek kapalıysa VE rol kapalıysa gizli, UI-AKIS 2026
+// 7 sektör-yaşam-döngüsü grubu), üst şerit (bağlam seçici + oturum kimliği), footer
 import { useApp, hasCapability } from "@/lib/store";
-import { MODULES, EDITION_STATUS, label, fmtDate } from "@/lib/constants";
+import { MODULES, MODULE_GROUPS, roleCanSee, EDITION_STATUS, label, fmtDate } from "@/lib/constants";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,14 +22,9 @@ function ModuleIcon({ name, className }: { name: string; className?: string }) {
 }
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
-  const { module, setModule, editions, currentEditionId, tenant } = useApp();
+  const { module, setModule, editions, currentEditionId, tenant, me } = useApp();
   const edition = editions.find((e) => e.id === currentEditionId);
-
-  const groups: { id: string; label: string }[] = [
-    { id: "workspace", label: t("shell.workspaceGroup") },
-    { id: "people", label: t("shell.peopleGroup") },
-    { id: "edition", label: edition ? `${t("shell.editionGroup")} — ${edition.name}` : t("shell.editionGroup") },
-  ];
+  const role = me?.role ?? null;
 
   return (
     <nav aria-label={t("shell.srMenu")} className="flex h-full flex-col gap-1 overflow-y-auto maven-scroll px-3 py-4">
@@ -49,19 +45,27 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
       <Separator className="bg-sidebar-border/60" />
-      {groups.map((g) => {
-        const items = MODULES.filter((m) => m.group === g.id && visibleFor(m.capability, edition));
+      {/* UI-AKIS 2026: 7 sektör-yaşam-döngüsü grubu — Genel Takış → Kurulum → CRM &
+          İletişim → Kayıt & Finans → Bilimsel & Program → Sponsor & Katılım →
+          Konaklama & Saha. Görünürlük: yetenek + ROL matrisi (§48). */}
+      {MODULE_GROUPS.map((g) => {
+        const items = MODULES.filter(
+          (m) => m.group === g.id && visibleFor(m.capability, edition) && roleCanSee(m, role),
+        );
         if (items.length === 0) return null;
+        const GroupIcon = (Icons as unknown as Record<string, Icons.LucideIcon>)[g.icon] ?? Icons.Circle;
         return (
           <div key={g.id} className="mt-3">
-            <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">{g.label}</p>
+            <p className="flex items-center gap-1.5 px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
+              <GroupIcon className="size-3" aria-hidden /> {t(g.labelKey)}
+            </p>
             {items.map((m) => (
               <button
                 key={m.id}
                 onClick={() => { setModule(m.id); onNavigate?.(); }}
                 aria-current={module === m.id ? "page" : undefined}
                 className={cn(
-                  "group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-primary/40",
+                  "group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-primary/40",
                   module === m.id
                     ? "bg-sidebar-primary/15 font-medium text-sidebar-primary"
                     : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:pl-3"
@@ -108,7 +112,7 @@ function currentEditionOf() {
 }
 
 export function Shell({ children }: { children: React.ReactNode }) {
-  const { tenant, editions, currentEditionId, setCurrentEdition, module, loading, error, bootstrap, seed, modelCount } = useApp();
+  const { tenant, editions, currentEditionId, setCurrentEdition, module, loading, error, bootstrap, seed, modelCount, me } = useApp();
   const { lang, setLang: setUiLang } = useLang();
   const edition = editions.find((e) => e.id === currentEditionId);
   const activeModule = MODULES.find((m) => m.id === module);
@@ -198,9 +202,31 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 <Icons.RefreshCw className={cn("size-4", loading && "animate-spin text-primary")} />
               </Button>
               <NotificationBell />
-              <Avatar className="size-8">
-                <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">EK</AvatarFallback>
-              </Avatar>
+              {/* UI-AKIS 2026: oturum kimliği — ad baş harfleri + rol etiketi;
+                  oturum yoksa (auth-off/serbest mod) nötr gösterge */}
+              {me?.authenticated ? (
+                <div className="flex items-center gap-2">
+                  <span className="hidden max-w-36 truncate text-xs text-muted-foreground xl:inline">{me.name}</span>
+                  <Badge variant="outline" className="hidden gap-1 md:flex">
+                    <Icons.ShieldCheck className="size-3 text-primary" aria-hidden />
+                    {t(`staffRole.${me.role ?? ""}`)}
+                  </Badge>
+                  <Avatar className="size-8">
+                    <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
+                      {(me.name ?? "?")
+                        .split(" ")
+                        .map((p) => p.slice(0, 1).toLocaleUpperCase("tr-TR"))
+                        .slice(0, 2)
+                        .join("") || "?"}
+                    </AvatarFallback>
+                  </Avatar>
+                </div>
+              ) : (
+                <Badge variant="outline" className="gap-1" title={t("shell.freeModeHint")}>
+                  <Icons.Unlock className="size-3 text-amber-500" aria-hidden />
+                  <span className="hidden sm:inline">{t("shell.freeMode")}</span>
+                </Badge>
+              )}
             </div>
           </div>
           {edition && (

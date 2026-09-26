@@ -1476,6 +1476,7 @@ interface ResImportPreview {
 interface ResImportResult {
   mode: "commit";
   created: number;
+  waitlisted: number;
   skipped: number;
   stockNights: number;
   total: number;
@@ -1493,10 +1494,11 @@ function ImportReservationsDialog({ open, onOpenChange, editionId, onImported }:
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [defaultStatus, setDefaultStatus] = useState("REQUESTED");
+  const [onStockShortage, setOnStockShortage] = useState("reject");
   const [preview, setPreview] = useState<ResImportPreview | null>(null);
   const [result, setResult] = useState<ResImportResult | null>(null);
 
-  const reset = () => { setPhase("idle"); setRows([]); setPreview(null); setResult(null); setFileName(""); setDefaultStatus("REQUESTED"); };
+  const reset = () => { setPhase("idle"); setRows([]); setPreview(null); setResult(null); setFileName(""); setDefaultStatus("REQUESTED"); setOnStockShortage("reject"); };
 
   const downloadTemplate = async () => {
     const XLSX = await import("xlsx");
@@ -1542,9 +1544,10 @@ function ImportReservationsDialog({ open, onOpenChange, editionId, onImported }:
     try {
       const res = await apiSend<ResImportResult>("/api/reservations/import", "POST", {
         editionId, rows, commit: true, defaultStatus: defaultStatus || undefined,
+        onStockShortage: onStockShortage === "WAITLIST" ? "WAITLIST" : undefined,
       });
       setResult(res); setPhase("done");
-      toast({ title: t("accImp.doneTitle"), description: t("accImp.doneDesc", { created: res.created, skipped: res.skipped }) });
+      toast({ title: t("accImp.doneTitle"), description: t("accImp.doneDesc", { created: res.created, skipped: res.skipped }) + (res.waitlisted > 0 ? " " + t("accImp.doneWaitlisted", { n: res.waitlisted }) : "") });
       onImported();
     } catch (e) {
       toast({ title: t("accImp.failTitle"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
@@ -1575,6 +1578,17 @@ function ImportReservationsDialog({ open, onOpenChange, editionId, onImported }:
                 </SelectContent>
               </Select>
               <p className="text-[10px] text-muted-foreground">{t("accImp.defaultStatusHint")}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs" htmlFor="res-imp-shortage">{t("accImp.shortageLabel")}</Label>
+              <Select value={onStockShortage} onValueChange={setOnStockShortage}>
+                <SelectTrigger id="res-imp-shortage" aria-label={t("accImp.shortageLabel")}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="reject">{t("accImp.shortageReject")}</SelectItem>
+                  <SelectItem value="WAITLIST">{t("accImp.shortageWaitlist")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">{t("accImp.shortageHint")}</p>
             </div>
             <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed p-6 text-center transition-colors hover:bg-muted/40">
               <Icons.FileSpreadsheet className="size-8 text-muted-foreground" aria-hidden />

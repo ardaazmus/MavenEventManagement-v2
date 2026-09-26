@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
       rows?: Record<string, unknown>[];
       commit?: boolean;
       defaultStatus?: string;
+      onStockShortage?: string;
     };
     const editionId = typeof body.editionId === "string" ? body.editionId : "";
     if (!editionId) return NextResponse.json({ error: "editionId zorunludur" }, { status: 400 });
@@ -54,6 +55,8 @@ export async function POST(req: NextRequest) {
         ? body.defaultStatus
         : null;
 
+    const onStockShortage = body.onStockShortage === "WAITLIST" ? "WAITLIST" as const : "reject" as const;
+
     // ── PREVIEW: yazım yok ──
     if (body.commit !== true) {
       const preview = await previewReservationImport({ editionId, rows: rawRows, defaultStatus });
@@ -67,7 +70,7 @@ export async function POST(req: NextRequest) {
       const u = await db.user.findUnique({ where: { id: actor.uid }, select: { name: true, role: true } });
       actorName = u?.name ?? actor.role;
     }
-    const result = await commitReservationImport({ editionId, rows: rawRows, defaultStatus, actorName });
+    const result = await commitReservationImport({ editionId, rows: rawRows, defaultStatus, onStockShortage, actorName });
     return NextResponse.json(result, { status: 201 });
   } catch (e) {
     console.error("POST /api/reservations/import", e instanceof Error ? e.message : e);

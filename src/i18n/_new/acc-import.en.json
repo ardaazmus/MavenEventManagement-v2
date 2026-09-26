@@ -64,6 +64,11 @@
     "payerSpeaker": "Speaker Hospitality",
     "fileTooBig": "File exceeds the 5 MB limit",
     "fileEmpty": "Empty file",
-    "fileNoRows": "No rows found in file"
+    "fileNoRows": "No rows found in file",
+    "shortageLabel": "If stock is insufficient",
+    "shortageReject": "Reject the row (report it)",
+    "shortageWaitlist": "Place on waitlist",
+    "shortageHint": "If a confirmed row lacks room stock it is rejected OR placed on the waitlist (WAITLIST) — stock is never overbooked.",
+    "doneWaitlisted": "{n} rows placed on waitlist."
   }
 }

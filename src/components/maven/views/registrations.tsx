@@ -66,6 +66,7 @@ export function RegistrationsView() {
   const [manualOpen, setManualOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [approvalMailOpen, setApprovalMailOpen] = useState(false);
 
   // ── R10-a: çift tıkla tam durum düzenleme — kişi + katılım + kayıt tek diyaloğda ──
   const [editOpen, setEditOpen] = useState(false);
@@ -206,6 +207,9 @@ export function RegistrationsView() {
             </Button>
             <Button size="sm" variant="outline" className="gap-1.5" disabled={!currentEditionId} onClick={() => setExportOpen(true)}>
               <Icons.FileDown className="size-4" aria-hidden />{t("regIo.export.btn")}
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5 border-teal-200 text-teal-700 hover:bg-teal-50" disabled={!currentEditionId} onClick={() => setApprovalMailOpen(true)}>
+              <Icons.MailCheck className="size-4" aria-hidden />{t("regMail.btn")}
             </Button>
             <span className="ml-auto flex items-center gap-2">
               <Chip tone="neutral">
@@ -496,6 +500,10 @@ export function RegistrationsView() {
       <ExportRegistrationsDialog
         open={exportOpen} onOpenChange={setExportOpen} editionId={currentEditionId}
         statusFilter={statusFilter} q={q}
+      />
+      {/* ── Kurum Onay Postası — birleştirilmiş "kayıtlarınız tamamlandı" maili ── */}
+      <ApprovalMailDialog
+        open={approvalMailOpen} onOpenChange={setApprovalMailOpen} editionId={currentEditionId}
       />
     </div>
   );
@@ -1357,6 +1365,171 @@ function ExportRegistrationsDialog({ open, onOpenChange, editionId, statusFilter
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Vazgeç</Button>
           <Button onClick={doExport}><Icons.FileDown className="size-4" aria-hidden />{t("regIo.export.download")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Kurum Onay Postası — birleştirilmiş "kayıtlarınız tamamlandı + son resmî onay" ──
+// Kullanıcı ilkesi: firma/kurum/kuruluşlar kayıtlarının tamamlandığına dair resmî
+// onay ister. Her seçilen kuruma TEK mektup gönderilir; içinde kurumun onaylı
+// katılımcı tablosu vardır (ad, kategori, teyit no, durum). Alıcı: Organization
+// genel e-postası. Önizleme yazım yapmaz; gönderim dispatchMail çekirdeğinden geçer.
+interface ApprovalOrgRow {
+  organizationId: string;
+  name: string;
+  email: string | null;
+  approvedCount: number;
+}
+interface ApprovalSendReport {
+  mode: "send";
+  sent: number;
+  failed: number;
+  totalApproved: number;
+  details: { organizationId: string; name: string; approvedCount: number; ok: boolean; error?: string }[];
+}
+
+function ApprovalMailDialog({ open, onOpenChange, editionId }: { open: boolean; onOpenChange: (o: boolean) => void; editionId: string | null }) {
+  const { t } = useLang();
+  const { toast } = useToast();
+  const [orgs, setOrgs] = useState<ApprovalOrgRow[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [report, setReport] = useState<ApprovalSendReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadPreview = async () => {
+    if (!editionId) return;
+    setOrgs(null); setReport(null); setError(null); setSelected(new Set());
+    try {
+      const res = await apiSend<{ mode: string; organizations: ApprovalOrgRow[] }>("/api/registrations/approval-mail", "POST", { editionId });
+      setOrgs(res.organizations ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Hata");
+    }
+  };
+
+  // açılışta önizleme yükle
+  useEffect(() => {
+    if (open && editionId) void loadPreview();
+  }, [open, editionId]);
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const selectable = (orgs ?? []).filter((o) => Boolean(o.email) && o.approvedCount > 0);
+
+  const send = async () => {
+    if (!editionId || selected.size === 0) return;
+    setBusy(true);
+    try {
+      const res = await apiSend<ApprovalSendReport>("/api/registrations/approval-mail", "POST", {
+        editionId, mode: "send", organizationIds: [...selected],
+      });
+      setReport(res);
+      toast({
+        title: t("regMail.doneTitle"),
+        description: t("regMail.doneDesc", { sent: res.sent, failed: res.failed, n: res.totalApproved }),
+        variant: res.failed > 0 ? "destructive" : undefined,
+      });
+    } catch (e) {
+      toast({ title: t("regMail.failTitle"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) setReport(null); }}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{t("regMail.title")}</DialogTitle>
+          <DialogDescription>{t("regMail.desc")}</DialogDescription>
+        </DialogHeader>
+
+        {!report && (
+          <div className="space-y-3">
+            {orgs === null ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground" role="status">
+                <Icons.Loader2 className="size-4 animate-spin" aria-hidden />{t("regMail.loading")}
+              </div>
+            ) : error ? (
+              <ErrorState message={error} onRetry={() => void loadPreview()} />
+            ) : orgs.length === 0 ? (
+              <EmptyState title={t("regMail.emptyTitle")} desc={t("regMail.emptyDesc")} />
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-muted-foreground">{t("regMail.listTitle", { n: orgs.length })}</p>
+                  <button
+                    type="button"
+                    className="text-[11px] font-medium text-teal-700 hover:underline"
+                    onClick={() => setSelected(new Set(selectable.map((o) => o.organizationId)))}
+                  >
+                    {t("regMail.selectAll")}
+                  </button>
+                </div>
+                <div className="maven-scroll max-h-64 space-y-1.5 overflow-y-auto rounded-lg border p-2">
+                  {orgs.map((o) => {
+                    const reachable = Boolean(o.email) && o.approvedCount > 0;
+                    return (
+                      <label key={o.organizationId} className={cn("flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 text-sm transition-colors", !reachable && "cursor-not-allowed opacity-55", selected.has(o.organizationId) && "border-teal-300 bg-teal-50/50 dark:bg-teal-900/10")}>
+                        <input
+                          type="checkbox"
+                          disabled={!reachable}
+                          checked={selected.has(o.organizationId)}
+                          onChange={() => toggle(o.organizationId)}
+                          className="mt-0.5 size-4 shrink-0 accent-teal-600"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{o.name}</span>
+                          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                            <Chip tone="emerald">{t("regMail.approvedCount", { n: o.approvedCount })}</Chip>
+                            {o.email ? <span dir="ltr">{o.email}</span> : <span className="text-amber-600">{t("regMail.noEmail")}</span>}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="flex items-start gap-1.5 rounded-lg bg-muted/40 px-2.5 py-2 text-[11px] text-muted-foreground">
+                  <Icons.Info className="mt-0.5 size-3 shrink-0" aria-hidden />{t("regMail.hint")}
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
+        {report && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="rounded-lg bg-emerald-50 p-3 dark:bg-emerald-900/20"><p className="text-lg font-semibold tabular-nums">{report.sent}</p><p className="text-muted-foreground">{t("regMail.resSent")}</p></div>
+              <div className="rounded-lg bg-sky-50 p-3 dark:bg-sky-900/20"><p className="text-lg font-semibold tabular-nums">{report.totalApproved}</p><p className="text-muted-foreground">{t("regMail.resApproved")}</p></div>
+              <div className="rounded-lg bg-amber-50 p-3 dark:bg-amber-900/20"><p className="text-lg font-semibold tabular-nums">{report.failed}</p><p className="text-muted-foreground">{t("regMail.resFailed")}</p></div>
+            </div>
+            {report.details.filter((d) => !d.ok).length > 0 && (
+              <ul className="maven-scroll max-h-32 space-y-1.5 overflow-y-auto rounded-lg border p-2.5">
+                {report.details.filter((d) => !d.ok).map((d) => (
+                  <li key={d.organizationId} className="text-xs"><b>{d.name}</b> · {d.error}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          {!report && (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
+              <Button onClick={() => void send()} disabled={busy || selectable.length === 0 || selected.size === 0}>
+                <Icons.MailCheck className="size-4" aria-hidden />{busy ? t("regMail.sending") : t("regMail.sendBtn", { n: selected.size })}
+              </Button>
+            </>
+          )}
+          {report && <Button onClick={() => { onOpenChange(false); setReport(null); }}>{t("common.close")}</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

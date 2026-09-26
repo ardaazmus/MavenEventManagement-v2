@@ -1412,16 +1412,16 @@ export function PortalsView() {
   return (
     <div>
       <PageHeader
-        title="Dış Portal"
-        desc="Sponsor ve katılımcı self-servis görünümü — ayrı uygulama, ortak kimlik ilkesiyle gerçek verilerin dışarıdan hali."
+        title={t("portalsView.page.title")}
+        desc={t("portalsView.page.desc")}
       >
         <Tabs value={tab} onValueChange={handleTabChange}>
-          <TabsList>
-            <TabsTrigger value="participant" className="gap-1.5"><Icons.UserRound className="size-3.5" /> Katılımcı</TabsTrigger>
-            <TabsTrigger value="sponsor" className="gap-1.5"><Icons.Handshake className="size-3.5" /> Sponsor</TabsTrigger>
-            <TabsTrigger value="vitrin" className="gap-1.5"><Icons.Store className="size-3.5" /> Firma Vitrini</TabsTrigger>
+          <TabsList aria-label={t("portalsView.page.title")}>
+            <TabsTrigger value="participant" className="gap-1.5"><Icons.UserRound className="size-3.5" /> {t("portalsView.tabs.participant")}</TabsTrigger>
+            <TabsTrigger value="sponsor" className="gap-1.5"><Icons.Handshake className="size-3.5" /> {t("portalsView.tabs.sponsor")}</TabsTrigger>
+            <TabsTrigger value="vitrin" className="gap-1.5"><Icons.Store className="size-3.5" /> {t("portalsView.tabs.vitrin")}</TabsTrigger>
             <TabsTrigger value="ayarlar" className="gap-1.5">
-              <Icons.SlidersHorizontal className="size-3.5" /> Portal Ayarları
+              <Icons.SlidersHorizontal className="size-3.5" /> {t("portalsView.tabs.ayarlar")}
               {portalDirty && <span className="size-1.5 rounded-full bg-amber-500" aria-label={t("portalSettings.unsaved")} />}
             </TabsTrigger>
           </TabsList>

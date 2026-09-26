@@ -135,6 +135,7 @@ function getLang(): Lang {
   if (!hydrated && typeof window !== "undefined") {
     current = readLocal();
     hydrated = true;
+    syncHtmlLang(current); // WCAG 3.1.1 — ilk client render'ında aktif dile hizala
   }
   return current;
 }
@@ -144,9 +145,18 @@ function subscribe(fn: () => void): () => void {
   return () => listeners.delete(fn);
 }
 
+// WCAG 3.1.1 Language of Page — <html lang> her zaman aktif arayüz dilini izler
+// (ekran okuyucular TR içerikle EN telaffuz karışımını böyle engellenir)
+function syncHtmlLang(lang: Lang): void {
+  if (typeof document !== "undefined") {
+    document.documentElement.lang = lang;
+  }
+}
+
 export function setLang(lang: Lang): void {
   current = lang;
   hydrated = true;
+  syncHtmlLang(lang);
   try {
     window.localStorage.setItem("maven.lang", lang);
   } catch {

@@ -3480,5 +3480,17 @@
       "stay": "Stay",
       "leave": "Leave and discard changes"
     }
+  },
+  "portalsView": {
+    "page": {
+      "title": "External Portal",
+      "desc": "Sponsor and participant self-service views — a separate application sharing one identity principle, the externally-facing form of real data."
+    },
+    "tabs": {
+      "participant": "Participant",
+      "sponsor": "Sponsor",
+      "vitrin": "Company Showcase",
+      "ayarlar": "Portal Settings"
+    }
   }
 }

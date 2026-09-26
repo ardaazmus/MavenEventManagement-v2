@@ -3480,5 +3480,17 @@
       "stay": "Kal",
       "leave": "Ayrıl ve değişiklikleri at"
     }
+  },
+  "portalsView": {
+    "page": {
+      "title": "Dış Portal",
+      "desc": "Sponsor ve katılımcı self-servis görünümü — ayrı uygulama, ortak kimlik ilkesiyle gerçek verilerin dışarıdan hali."
+    },
+    "tabs": {
+      "participant": "Katılımcı",
+      "sponsor": "Sponsor",
+      "vitrin": "Firma Vitrini",
+      "ayarlar": "Portal Ayarları"
+    }
   }
 }

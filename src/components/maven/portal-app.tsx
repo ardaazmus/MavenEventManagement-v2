@@ -27,8 +27,24 @@ import { fmtDate, fmtDateTime, fmtMoney } from "@/lib/constants";
 import { apiGet, apiSend } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { fontStackFor, loadGoogleFont } from "@/lib/portal-fonts";
+import dynamic from "next/dynamic";
 import { resolvePortalIcon } from "@/components/maven/portal-icon-library";
-import { PublicFormPage } from "@/components/maven/public-form";
+// PublicFormPage artık STATİK import EDİLMEZ — aşağıda dynamic (CRON-10 lazy chunk)
+
+// CRON-10: form motoru ağır bir pakettir — portala STATİK değil, form açılınca
+// yüklenir (ilk boyama bundle'ı küçülür); açılış anında hafif iskelet gösterilir
+const FormEngineSkeleton = () => (
+  <div className="grid min-h-[60dvh] w-full place-items-center bg-background" role="status" aria-label="Form yükleniyor">
+    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+      <Icons.Loader2 className="size-6 animate-spin" />
+      <p className="text-xs">Form yükleniyor…</p>
+    </div>
+  </div>
+);
+const PublicFormPageLazy = dynamic(
+  () => import("@/components/maven/public-form").then((m) => ({ default: m.PublicFormPage })),
+  { loading: FormEngineSkeleton, ssr: false },
+);
 
 // ─── tipler (API yanıt aynası) ──────────────────────────────────────────────
 type Phase = "LOADING" | "LOGIN" | "DISABLED" | "ACTIVE" | "ERROR";
@@ -1070,7 +1086,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             <span className="truncate text-xs font-medium text-muted-foreground">{content.tenant.name}</span>
             <div className="ml-auto flex items-center gap-1.5">
               <NotifBellButton unread={unreadNotifCount} accent={accent} onClick={() => setNotifOpen(true)} label={t("portalApp.notifCenter.ariaOpen")} />
-              <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
+              <span className="rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: `${accent}1a`, color: accent }}>
                 {kind === "AUTH" ? t("portalApp.badge.auth") : t("portalApp.badge.guest")}
               </span>
             </div>
@@ -1608,11 +1624,10 @@ function HomeScreen({
           const o = iconOverrides[w.key];
           const hasCustom = Boolean(o?.svg || o?.icon);
           return (
+            <div key={w.key} role="listitem" className="min-h-[92px]">
             <button
-              key={w.key}
-              role="listitem"
               onClick={() => onNavigate(meta.target)}
-              className="group flex min-h-[92px] flex-col items-start gap-1.5 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 hover:shadow active:scale-[0.97] dark:bg-card"
+              className="group flex h-full w-full flex-col items-start gap-1.5 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 hover:shadow active:scale-[0.97] dark:bg-card"
             >
               <span
                 className={cn("grid size-8 place-items-center rounded-lg text-white transition-transform", !hasCustom && "group-hover:scale-105")}
@@ -1632,6 +1647,7 @@ function HomeScreen({
                 <span className="mt-auto rounded-full bg-teal-50 px-1.5 py-0.5 text-[9px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">{t("portalApp.widget.authOnly")}</span>
               )}
             </button>
+            </div>
           );
         })}
       </div>
@@ -1967,7 +1983,8 @@ function SpeakersScreen({ content, onBack }: { content: PortalContent; onBack: (
       ) : (
         <div className="space-y-2" role="list">
           {speakers.map((s) => (
-            <button key={s.personId} role="listitem" onClick={() => setSelected(s.personId)} className="flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 dark:bg-card">
+            <div key={s.personId} role="listitem">
+            <button onClick={() => setSelected(s.personId)} className="flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 dark:bg-card">
               <div className="grid size-11 shrink-0 place-items-center overflow-hidden rounded-full border bg-muted">
                 {s.photoUrl ? (
                   <img src={s.photoUrl} alt={s.name} className="size-full object-cover" />
@@ -1984,6 +2001,7 @@ function SpeakersScreen({ content, onBack }: { content: PortalContent; onBack: (
               </div>
               <Icons.ChevronRight className="size-4 shrink-0 text-muted-foreground" />
             </button>
+            </div>
           ))}
         </div>
       )}
@@ -2265,9 +2283,8 @@ function FormsScreen({
       f.type === "FEEDBACK" ? Icons.MessageSquareHeart : Icons.FileText;
     const typeLabel = t(`portalApp.forms.type.${f.type || "CUSTOM"}`);
     return (
+      <div key={f.id} role="listitem">
       <button
-        key={f.id}
-        role="listitem"
         onClick={() => onOpenForm(f.slug ?? f.id)}
         className={cn(
           "flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 active:scale-[0.99] dark:bg-card",
@@ -2294,6 +2311,7 @@ function FormsScreen({
         )}
         {done ? <Icons.CheckCircle2 className="size-4 shrink-0" style={{ color: accent }} /> : <Icons.ExternalLink className="size-4 shrink-0 text-muted-foreground" />}
       </button>
+      </div>
     );
   };
 
@@ -2551,7 +2569,7 @@ function ProfileScreen({
                 <p className="truncate text-sm font-bold">{me ? `${me.person.firstName} ${me.person.lastName}` : "…"}</p>
                 <p className="truncate text-[11px] text-muted-foreground">{[me?.person.title, me?.person.company].filter(Boolean).join(" · ") || me?.person.email || "—"}</p>
               </div>
-              <span className="shrink-0 rounded-full bg-teal-100 px-2 py-0.5 text-[9px] font-medium text-teal-800 dark:bg-teal-900/40 dark:text-teal-200">{t("portalApp.badge.auth")}</span>
+              <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-medium" style={{ backgroundColor: `${accent}1a`, color: accent }}>{t("portalApp.badge.auth")}</span>
             </div>
             {meError && <p className="mt-2 text-[11px] text-red-600">{meError}</p>}
           </div>
@@ -2682,7 +2700,7 @@ function FormScreen({
   return (
     <ScreenShell title={form?.name ?? t("portalApp.form.title")} icon={<Icons.ClipboardList className="size-4" />} onBack={onBack}>
       <div className="-mx-1 overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card">
-        <PublicFormPage key={formRef} idOrSlug={formRef} embed onSubmitted={onSubmitted} />
+        <PublicFormPageLazy key={formRef} idOrSlug={formRef} embed onSubmitted={onSubmitted} />
       </div>
     </ScreenShell>
   );
@@ -2774,9 +2792,8 @@ function GameScreen({
             const IconC = q.kind === "FORM" ? Icons.ClipboardList : q.kind === "QA" ? Icons.MessageCircleQuestion : Icons.Handshake;
             const questLabel = q.kind === "QA" ? t("portalApp.game.questQa") : q.kind === "B2B" ? t("portalApp.game.questB2b") : q.label;
             return (
+              <div key={q.key} role="listitem">
               <button
-                key={q.key}
-                role="listitem"
                 onClick={isForm && formId ? () => onOpenForm(formId) : q.kind === "QA" ? () => onNavigate("qa") : q.kind === "B2B" ? () => onNavigate("b2b") : undefined}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition active:scale-[0.98] dark:bg-card",
@@ -2813,6 +2830,7 @@ function GameScreen({
                   +{q.points}
                 </span>
               </button>
+              </div>
             );
           })}
         </div>

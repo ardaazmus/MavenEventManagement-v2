@@ -21,7 +21,7 @@ import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DatabaseMigrationCard } from "./db-migration-card";
 import { NotificationChannelsCard } from "./notification-channels-card";
-import { CustomerDataCard, InstantBroadcastDialog, parseSendReport, BROADCAST_CHANNEL_LIST, type SendReportLite } from "./comms-crm";
+import { CustomerDataCard, InstantBroadcastDialog, ScheduleSendDialog, parseSendReport, BROADCAST_CHANNEL_LIST, type SendReportLite } from "./comms-crm";
 
 // ─── SAHA ───────────────────────────────────────────────────────────────────
 
@@ -1111,6 +1111,8 @@ interface CampaignRow {
   phase: string; audienceMode: string; customRecipients: string | null;
   templateId: string | null; providerId: string | null; formId: string | null; subject?: string | null;
   sentAt?: string | null; sentCount: number; deliveredCount: number; openCount: number; clickCount: number; failCount: number;
+  // — zamanlanmış gönderim (campaign-scheduler) —
+  scheduledAt?: string | null;
   // — çok kanallı gönderim + hiyerarşik kapsam (comms-broadcast) —
   channel?: string | null; channels?: string | null; audienceJson?: string | null; lastSendReport?: string | null;
 }
@@ -1266,6 +1268,20 @@ export function CommunicationsView() {
     } catch (e) {
       toast({ title: t("commsCrm.camp.sendFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
     } finally { setSendBusyId(null); }
+  };
+
+  // zamanlanmış gönderim — ileri tarih planla / iptal et (scheduledAt tetikleyicisi)
+  const [scheduleTarget, setScheduleTarget] = useState<CampaignRow | null>(null);
+  const [cancelBusyId, setCancelBusyId] = useState<string | null>(null);
+  const cancelSchedule = async (c: CampaignRow) => {
+    setCancelBusyId(c.id);
+    try {
+      await apiSend(`/api/campaigns/schedule?campaignId=${c.id}`, "DELETE");
+      toast({ title: t("schedSend.cancelOkTitle"), description: t("schedSend.cancelOkDesc", { name: c.name }) });
+      reload(); bump();
+    } catch (e) {
+      toast({ title: t("schedSend.cancelFail"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally { setCancelBusyId(null); }
   };
 
   // test gönderimi — yalnız test alıcısına (tek e-posta / tek telefon)
@@ -1493,6 +1509,10 @@ export function CommunicationsView() {
                 })}
                 {c.audienceJson && <Chip tone="teal">{t("commsCrm.camp.filteredAudience")}</Chip>}
                 <Chip tone={c.isSegmentFixed ? "teal" : "amber"}>{c.isSegmentFixed ? t("communications.fixedSegment") : t("communications.liveList")}</Chip>
+                {/* zamanlanmış gönderim çipi — scheduledAt tetikleyicisi */}
+                {c.status === "SCHEDULED" && c.scheduledAt && (
+                  <Chip tone="amber"><span className="inline-flex items-center gap-1"><Icons.CalendarClock className="size-3" aria-hidden /> {t("schedSend.scheduledAt", { time: fmtDateTime(c.scheduledAt) })}</span></Chip>
+                )}
                 <span className="ml-auto text-xs text-muted-foreground">{c.sentAt ? fmtDateTime(c.sentAt) : t("communications.notSent")}</span>
                 <div className="flex items-center gap-1">
                   {["DRAFT", "TESTED"].includes(c.status) && (
@@ -1503,7 +1523,15 @@ export function CommunicationsView() {
                       <Button size="sm" variant="outline" className="h-7 gap-1 border-teal-300 bg-teal-50 px-2 text-xs text-teal-800 hover:bg-teal-100 hover:text-teal-900" disabled={sendBusyId === c.id} onClick={() => void sendCampaign(c)} title={t("communications.sendBtnTitle")}>
                         {sendBusyId === c.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Send className="size-3" />} {t("communications.sendBtn")}
                       </Button>
+                      <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" disabled={cancelBusyId === c.id} onClick={() => setScheduleTarget(c)} title={t("schedSend.btnTitle")}>
+                        <Icons.CalendarClock className="size-3" /> {t("schedSend.btn")}
+                      </Button>
                     </>
+                  )}
+                  {c.status === "SCHEDULED" && (
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-900" disabled={cancelBusyId === c.id} onClick={() => void cancelSchedule(c)} title={t("schedSend.cancelTitle")}>
+                      {cancelBusyId === c.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.CalendarX2 className="size-3" />} {t("schedSend.cancelBtn")}
+                    </Button>
                   )}
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => openCampaignEdit(c)}>
                     <Icons.Pencil className="size-3" /> {t("communications.edit")}
@@ -1942,6 +1970,14 @@ export function CommunicationsView() {
 
       {/* 9 — ANLIK YAYIN (program değişikliği vb. — tek/toplu, çok kanallı) */}
       <InstantBroadcastDialog open={instantOpen} onOpenChange={setInstantOpen} onSent={() => { reload(); bump(); }} />
+      {/* zamanlanmış gönderim diyaloğu — ileri tarih planlama (scheduledAt) */}
+      <ScheduleSendDialog
+        open={scheduleTarget !== null}
+        campaignId={scheduleTarget?.id ?? ""}
+        campaignName={scheduleTarget?.name ?? ""}
+        onOpenChange={(o) => { if (!o) setScheduleTarget(null); }}
+        onScheduled={() => { reload(); bump(); }}
+      />
 
       {/* 10 — KAMPANYA TEST GÖNDERİMİ (yalnız test alıcısı) */}
       <Dialog open={testOpen} onOpenChange={setTestOpen}>

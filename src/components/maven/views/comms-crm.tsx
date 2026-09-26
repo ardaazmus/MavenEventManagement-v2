@@ -21,7 +21,7 @@ import { useLang } from "@/lib/i18n";
 import { useApp } from "@/lib/store";
 import { apiGet, apiSend, listEntity } from "@/lib/client";
 import { cn } from "@/lib/utils";
-import { CAMPAIGN_PHASE } from "@/lib/constants";
+import { CAMPAIGN_PHASE, fmtDateTime } from "@/lib/constants";
 
 // ─── tipler ─────────────────────────────────────────────────────────────────
 export interface CustomerRow {
@@ -682,6 +682,100 @@ export function InstantBroadcastDialog({ open, onOpenChange, onSent }: { open: b
           <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
           <Button onClick={() => void send()} disabled={busy || !canSend} aria-disabled={busy || !canSend}>
             {busy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Zap className="size-3.5" />} {busy ? t("commsCrm.instant.sending") : t("commsCrm.instant.send")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── ZAMANLANMIŞ GÖNDERİM DİYALOĞU (scheduledAt tetikleyicisi) ──────────────
+// Kampanya oluşturulduktan sonra ileri bir tarihte otomatik gitmesi planlanır;
+// zamani gelen kampanyaları sunucu içindeki 60 sn'lik kontrol döngüsü gönderir.
+// datetime-local girişi: tarayıcı-yerel saat → ISO'ya çevrilip API'ye gider.
+function toLocalInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function ScheduleSendDialog({
+  open,
+  campaignId,
+  campaignName,
+  onOpenChange,
+  onScheduled,
+}: {
+  open: boolean;
+  campaignId: string;
+  campaignName: string;
+  onOpenChange: (o: boolean) => void;
+  onScheduled: () => void;
+}) {
+  const { t } = useLang();
+  const { toast } = useToast();
+  const [when, setWhen] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const parsed = when ? new Date(when) : null;
+  const valid = parsed !== null && !Number.isNaN(parsed.getTime()) && parsed.getTime() > Date.now();
+  const min = toLocalInputValue(new Date(Date.now() + 60_000)); // en az 1 dk ileri
+
+  const schedule = async () => {
+    if (!campaignId || !parsed || !valid) return;
+    setBusy(true);
+    try {
+      await apiSend("/api/campaigns/schedule", "POST", { campaignId, scheduledAt: parsed.toISOString() });
+      toast({
+        title: t("schedSend.okTitle"),
+        description: t("schedSend.okDesc", { name: campaignName, time: fmtDateTime(parsed) }),
+      });
+      setWhen("");
+      onOpenChange(false);
+      onScheduled();
+    } catch (e) {
+      toast({ title: t("schedSend.fail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) setWhen(""); }}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md maven-scroll">
+        <DialogHeader>
+          <DialogTitle>{t("schedSend.title")}</DialogTitle>
+          <DialogDescription>{t("schedSend.desc", { name: campaignName })}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label className="text-xs" htmlFor="sched-when">{t("schedSend.fWhen")}</Label>
+            <Input
+              id="sched-when"
+              type="datetime-local"
+              value={when}
+              min={min}
+              onChange={(e) => setWhen(e.target.value)}
+              className="h-9 text-xs"
+              aria-required="true"
+              aria-invalid={when !== "" && !valid || undefined}
+            />
+            <p className="text-[10px] text-muted-foreground">{t("schedSend.fWhenHint")}</p>
+          </div>
+          {when !== "" && !valid && (
+            <p role="alert" className="text-[11px] font-medium text-rose-600">{t("schedSend.needFuture")}</p>
+          )}
+          {when !== "" && valid && parsed && (
+            <p className="flex items-center gap-1.5 rounded-lg border border-teal-300 bg-teal-50/60 px-2.5 py-2 text-[11px] font-medium text-teal-800 dark:bg-teal-900/20 dark:text-teal-200">
+              <Icons.CalendarClock className="size-3.5" aria-hidden />
+              {t("schedSend.selectedAt", { time: fmtDateTime(parsed) })}
+            </p>
+          )}
+          <p className="rounded-lg border border-dashed bg-muted/20 p-2.5 text-[11px] text-muted-foreground">{t("schedSend.tickNote")}</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
+          <Button onClick={() => void schedule()} disabled={busy || !valid} aria-disabled={busy || !valid}>
+            {busy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.CalendarClock className="size-3.5" />} {busy ? t("schedSend.scheduling") : t("schedSend.btn")}
           </Button>
         </DialogFooter>
       </DialogContent>

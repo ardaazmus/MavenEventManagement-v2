@@ -1,0 +1,23 @@
+{
+  "schedSend": {
+    "btn": "Schedule",
+    "btnTitle": "Plan automatic delivery at a future date",
+    "title": "Schedule Campaign",
+    "desc": "The \"{name}\" campaign will be sent automatically at the date you choose.",
+    "fWhen": "Send time",
+    "fWhenHint": "Pick a future date and time — when due, the campaign is automatically distributed to its audience.",
+    "needFuture": "You must pick a future time",
+    "selectedAt": "Planned: {time}",
+    "tickNote": "The server checks scheduled campaigns every minute; campaigns whose time passed while offline are processed on the first check after startup.",
+    "scheduling": "Scheduling…",
+    "okTitle": "Delivery scheduled",
+    "okDesc": "\"{name}\" has been planned for {time}.",
+    "fail": "Could not schedule",
+    "scheduledAt": "Scheduled · {time}",
+    "cancelBtn": "Cancel",
+    "cancelTitle": "Cancel the scheduled delivery",
+    "cancelOkTitle": "Schedule cancelled",
+    "cancelOkDesc": "\"{name}\" was moved back to draft.",
+    "cancelFail": "Could not cancel the schedule"
+  }
+}

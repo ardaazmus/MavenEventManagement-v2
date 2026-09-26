@@ -3794,5 +3794,26 @@
       "liveSend": "Gerçek",
       "lastReport": "Son gönderim raporu ({mode}):"
     }
+  },
+  "schedSend": {
+    "btn": "Zamanla",
+    "btnTitle": "İleri bir tarihte otomatik gönderim planla",
+    "title": "Kampanyayı Zamanla",
+    "desc": "\"{name}\" kampanyası seçeceğiniz tarihte otomatik olarak gönderilecek.",
+    "fWhen": "Gönderim zamanı",
+    "fWhenHint": "Gelecek bir tarih ve saat seçin — zamanı geldiğinde kampanya hedef kitlesine otomatik dağıtılır.",
+    "needFuture": "Gelecek bir zaman seçmelisiniz",
+    "selectedAt": "Planlandı: {time}",
+    "tickNote": "Sunucu her dakika zamanlanmış kampanyaları denetler; kapanma süresinde zamani geçen gönderimler açılışta ilk denetimde işlenir.",
+    "scheduling": "Zamanlanıyor…",
+    "okTitle": "Gönderim zamanlandı",
+    "okDesc": "\"{name}\" kampanyası {time} için planlandı.",
+    "fail": "Zamanlama yapılamadı",
+    "scheduledAt": "Zamanlandı · {time}",
+    "cancelBtn": "İptal Et",
+    "cancelTitle": "Zamanlanmış gönderimi iptal et",
+    "cancelOkTitle": "Zamanlama iptal edildi",
+    "cancelOkDesc": "\"{name}\" taslak durumuna alındı.",
+    "cancelFail": "Zamanlama iptal edilemedi"
   }
 }

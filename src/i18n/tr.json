@@ -3110,6 +3110,12 @@
       "done": "Oturuma kaydolundu",
       "cancelled": "Oturum kaydı iptal edildi",
       "fail": "Kayıt işlemi başarısız"
+    },
+    "swUpdate": {
+      "title": "Yeni sürüm hazır",
+      "desc": "Portalın güncel bir sürümü yüklendi — sayfayı yenileyerek başlayın.",
+      "reload": "Yenile",
+      "reloadA11y": "Güncellemeyi uygula ve sayfayı yenile"
     }
   },
   "portalSettings": {

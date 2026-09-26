@@ -364,7 +364,7 @@ export function ApiGatewayView() {
                     {/* başarı/başarısızlık mini çubuğu */}
                     <div className="mt-2.5">
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label={t("integrations.barAria", { ok: i.successCount, fail: i.failCount })}>
-                        <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${okPct}%` }} />
+                        <div className="h-full w-full origin-left rounded-full bg-emerald-500 transition-transform duration-500 ease-out" style={{ transform: `scaleX(${Math.min(100, Math.max(0, okPct)) / 100})` }} />
                       </div>
                       <p className="mt-1 text-[10px] tabular-nums text-muted-foreground">{t("integrations.barText", { ok: i.successCount, fail: i.failCount })}</p>
                     </div>

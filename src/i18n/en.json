@@ -3110,6 +3110,12 @@
       "done": "Registered for the session",
       "cancelled": "Session registration cancelled",
       "fail": "Registration failed"
+    },
+    "swUpdate": {
+      "title": "New version ready",
+      "desc": "An updated version of the portal has been installed — refresh to start using it.",
+      "reload": "Refresh",
+      "reloadA11y": "Apply the update and reload the page"
     }
   },
   "portalSettings": {

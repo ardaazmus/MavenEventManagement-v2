@@ -21,6 +21,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useLang, t } from "@/lib/i18n";
 import { fmtDate, fmtDateTime, fmtMoney } from "@/lib/constants";
 import { apiGet, apiSend } from "@/lib/client";
@@ -619,18 +620,75 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
 
   // ── PWA: service worker + install prompt ──
   const [deferredPrompt, setDeferredPrompt] = useState<{ prompt: () => void } | null>(null);
+  // CRON-8: yeni SW sürümü "installed" durumunda beklerken kullanıcıya toast göster
+  const [swUpdateReady, setSwUpdateReady] = useState(false);
+  const swRegRef = useRef<ServiceWorkerRegistration | null>(null);
   useEffect(() => {
     if (phase !== "ACTIVE") return;
     if (cfg?.pwaEnabled && "serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+      let visHandler: (() => void) | null = null;
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then((reg) => {
+          swRegRef.current = reg;
+          // çalışan bir SW varken yeni sürüm kurulursa güncelleme hazır demektir
+          // (ilk kurulumda controller yok → toast gösterilmez)
+          reg.addEventListener("updatefound", () => {
+            const nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener("statechange", () => {
+              if (nw.state === "installed" && navigator.serviceWorker.controller) {
+                setSwUpdateReady(true);
+              }
+            });
+          });
+          // uzun ömürlü seanslar: sekmeye dönüşte sessiz güncelleme kontrolü
+          visHandler = () => {
+            if (document.visibilityState === "visible") reg.update().catch(() => undefined);
+          };
+          document.addEventListener("visibilitychange", visHandler);
+        })
+        .catch(() => undefined);
+      return () => {
+        if (visHandler) document.removeEventListener("visibilitychange", visHandler);
+      };
     }
+  }, [phase, cfg?.pwaEnabled]);
+
+  // CRON-8: bekleyen SW'yi devreye al → controllerchange → tek seferlik reload
+  const applySwUpdate = useCallback(() => {
+    const waiting = swRegRef.current?.waiting;
+    if (!waiting) {
+      window.location.reload();
+      return;
+    }
+    navigator.serviceWorker.addEventListener("controllerchange", () => window.location.reload(), { once: true });
+    waiting.postMessage("SKIP_WAITING");
+  }, []);
+  useEffect(() => {
+    if (!swUpdateReady) return;
+    toast({
+      title: t("portalApp.swUpdate.title"),
+      description: t("portalApp.swUpdate.desc"),
+      duration: Infinity,
+      action: (
+        <ToastAction altText={t("portalApp.swUpdate.reloadA11y")} onClick={applySwUpdate}>
+          {t("portalApp.swUpdate.reload")}
+        </ToastAction>
+      ),
+    });
+  }, [swUpdateReady, applySwUpdate, toast]);
+
+  // ── PWA: install prompt — SW effect'inden BAĞIMSIZ (CRON-8 ayırması) ──
+  useEffect(() => {
+    if (phase !== "ACTIVE") return;
     const onBip = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as unknown as { prompt: () => void });
     };
     window.addEventListener("beforeinstallprompt", onBip);
     return () => window.removeEventListener("beforeinstallprompt", onBip);
-  }, [phase, cfg?.pwaEnabled]);
+  }, [phase]);
 
   const installApp = async () => {
     if (!deferredPrompt) return;
@@ -994,6 +1052,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
         fontFamily: design?.fontFamily && design.fontFamily !== "system" ? PORTAL_FONT_STACKS(design.fontFamily) : undefined,
         fontSize: design?.fontScale && design.fontScale !== 100 ? `${16 * (design.fontScale / 100)}px` : undefined,
         WebkitTapHighlightColor: "transparent", // native app hissi — dokunma vurgusu yok
+        paddingTop: "env(safe-area-inset-top)", // CRON-8: çentik/çentik güvenli üst boşluk (standalone PWA)
         ...contentBgStyle,
       }}
     >
@@ -1089,8 +1148,8 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
           banner + Maven bandı YOK (kullanıcı isteği: "Ana sayfa haricinde Maven ın üst bandı görünmesin") ── */}
       {showEventBar && screen !== "home" && (
         <div
-          className="sticky top-0 z-30 border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/80"
-          style={headerBgStyle}
+          className="sticky z-30 border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+          style={{ top: "env(safe-area-inset-top)", ...headerBgStyle }}
         >
           <div className="mx-auto flex h-12 w-full max-w-2xl items-center gap-2 px-4">
             <div className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md border bg-white dark:bg-card">
@@ -1116,7 +1175,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
       {/* ── ana içerik (§3.2-§3.4 + §4) — ekran geçiş animasyonu (mobil app hissi) ── */}
       <main
         className="mx-auto w-full max-w-2xl flex-1 px-4 pb-24 pt-3"
-        style={{ paddingBottom: sponsor?.logoUrl || sponsor?.name ? "calc(env(safe-area-inset-bottom) + 96px)" : undefined }}
+        style={{ paddingBottom: `calc(env(safe-area-inset-bottom) + ${sponsor?.logoUrl || sponsor?.name ? 132 : 96}px)` }}
       >
         <div key={screen} className="animate-[portal-screen-in_0.22s_ease-out]">
         {screen === "home" && (
@@ -1217,14 +1276,14 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
                 key={n.key}
                 onClick={() => setScreen(n.key)}
                 className={cn(
-                  "flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium transition-all active:scale-95 min-h-[52px]",
+                  "flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium transition-[color,background-color,transform] active:scale-95 min-h-[52px]",
                   active ? "text-primary" : "text-muted-foreground hover:text-foreground",
                 )}
                 aria-current={active ? "page" : undefined}
               >
                 {/* aktif-sekme pill'i — native uygulama hissi (kullanıcı isteği: mobil app feel) */}
                 <span
-                  className={cn("grid size-9 place-items-center rounded-full transition-all", active ? "scale-105" : "scale-100")}
+                  className={cn("grid size-9 place-items-center rounded-full transition-[transform,background-color]", active ? "scale-105" : "scale-100")}
                   style={active && !o?.svg ? { backgroundColor: `${accent}1f` } : undefined}
                 >
                   {o?.svg ? (
@@ -2681,7 +2740,7 @@ function GameScreen({
           </div>
         </div>
         <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={data.pct} aria-valuemin={0} aria-valuemax={100}>
-          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${data.pct}%`, backgroundColor: accent }} />
+          <div className="h-full w-full origin-left rounded-full transition-transform duration-500 ease-out" style={{ transform: `scaleX(${Math.min(100, Math.max(0, data.pct)) / 100})`, backgroundColor: accent }} />
         </div>
         {data.nextLevel ? (
           <div className="mt-2 flex items-center justify-between gap-2 text-[11px]">
@@ -2738,7 +2797,7 @@ function GameScreen({
                   {typeof q.progress === "number" && typeof q.target === "number" && (
                     <span className="mt-1 flex items-center gap-1.5">
                       <span className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-                        <span className="block h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, Math.round((q.progress / Math.max(1, q.target)) * 100))}%`, backgroundColor: accent }} />
+                        <span className="block h-full w-full origin-left rounded-full transition-transform duration-500 ease-out" style={{ transform: `scaleX(${Math.min(100, Math.round((q.progress / Math.max(1, q.target)) * 100)) / 100})`, backgroundColor: accent }} />
                       </span>
                       <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{q.progress}/{q.target}</span>
                     </span>

@@ -319,6 +319,12 @@
       "hourAgo": "{n} sa önce",
       "liveHint": "canlı"
     },
+    "swUpdate": {
+      "title": "Yeni sürüm hazır",
+      "desc": "Portalın güncel bir sürümü yüklendi — sayfayı yenileyerek başlayın.",
+      "reload": "Yenile",
+      "reloadA11y": "Güncellemeyi uygula ve sayfayı yenile"
+    },
     "sessionReg": {
       "regBtn": "Kaydol",
       "cancelBtn": "Kaydı İptal Et",

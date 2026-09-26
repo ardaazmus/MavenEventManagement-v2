@@ -1195,7 +1195,7 @@ export function PortalSettingsTab({ editionId, portalSlug, onDirtyChange }: { ed
                 {analytics.visits.byDay.map((d) => {
                   const max = Math.max(1, ...analytics.visits.byDay.map((x) => x.count));
                   return (
-                    <div key={d.day} className="flex-1 rounded-t bg-teal-500/70 transition-all" style={{ height: `${Math.max(6, (d.count / max) * 100)}%` }} title={`${d.day}: ${d.count}`} />
+                    <div key={d.day} className="flex-1 origin-bottom rounded-t bg-teal-500/70 transition-transform" style={{ transform: `scaleY(${Math.max(0.06, d.count / max)})` }} title={`${d.day}: ${d.count}`} />
                   );
                 })}
               </div>

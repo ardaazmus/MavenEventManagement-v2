@@ -335,3 +335,17 @@
 @media (prefers-reduced-motion: reduce) {
   .portal-screen-anim, .portal-confetti-dot { animation: none !important; }
 }
+
+/* ── CRON-8: hareket azaltma küresel güvenliği ────────────────────────────── */
+/* kullanıcı "azaltılmış hareket" tercih ettiğinde TÜM animasyon/geçişler kapanır
+   (tw-animate-css animate-in/out, Radix geçişleri, özel keyframe'ler dahil).
+   Yerleşim tetikleyen (width/height/top/left) animasyon YOKTUR — portal
+   animasyon disiplini transform/opacity-only: scale, translate, scaleX, fade. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -2,14 +2,19 @@
 // Strateji: API her zaman ağ (canlı veri; hata → 503 JSON), statik varlıklar
 // cache-first + arka plan güncellemesi, gezinme istekleri çevrimdışında
 // offline.html'e düşer (PWA offline fallback). Kanca sürüm anahtarı CACHE
-// adında — güncelleme dağıtımında ad değişirse eski önbellek activate'te temizlenir.
-const CACHE = "maven-portal-v2";
+// adında — güncelleme dağıtımında ad değişirse eski önbellek activate'te
+// temizlenir.
+//
+// Güncelleme akışı (CRON-8 — kullanıcı kontrollü): yeni SW "installed" durumunda
+// BEKLER (skipWaiting YOK); sayfa "Yeni sürüm hazır — Yenile" toast'u gösterir,
+// kullanıcı onaylayınca SKIP_WAITING mesajı gelir → activate + controllerchange
+// → sayfa yeniden yüklenir. İlk kurulumda activate'teki clients.claim() devreyi
+// sorunsuz alır (sayfa reload'u tetiklemez).
+const CACHE = "maven-portal-v3";
 const SHELL = ["/portal-icon-192.png", "/portal-icon-512.png", "/manifest.webmanifest", "/offline.html"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()),
-  );
+  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
 });
 
 self.addEventListener("activate", (event) => {
@@ -18,6 +23,11 @@ self.addEventListener("activate", (event) => {
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
+});
+
+// sayfa onaylı güncelleme: "Yenile" toast'u SKIP_WAITING gönderir (CRON-8)
+self.addEventListener("message", (event) => {
+  if (event.data === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("fetch", (event) => {
@@ -74,3 +84,4 @@ self.addEventListener("notificationclick", (event) => {
     }),
   );
 });
+

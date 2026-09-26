@@ -628,7 +628,7 @@ function WaitlistTab({ editionId, categories, onChanged }: { editionId: string |
                     </div>
                     <div className="mt-1.5 flex items-center gap-2">
                       <div className="h-1.5 w-full max-w-52 overflow-hidden rounded bg-muted">
-                        <div className={cn("h-full rounded transition-all", full ? "bg-rose-400" : pct >= 80 ? "bg-amber-400" : "bg-teal-500")} style={{ width: `${c.capacity == null ? 100 : pct}%` }} />
+                        <div className={cn("h-full w-full origin-left rounded transition-transform duration-500", full ? "bg-rose-400" : pct >= 80 ? "bg-amber-400" : "bg-teal-500")} style={{ transform: `scaleX(${c.capacity == null ? 1 : Math.min(100, Math.max(0, pct)) / 100})` }} />
                       </div>
                       <span className="text-xs tabular-nums text-muted-foreground">
                         {c.capacity == null ? `${c.taken} kayıt — sınırsız` : `${c.taken} / ${c.capacity} · boş ${c.seatsLeft}`}

@@ -916,7 +916,7 @@ export function ProgramView() {
                 <div className="flex flex-wrap items-center gap-2 gap-y-2 rounded-xl border bg-card px-4 py-3 shadow-sm sm:gap-3">
                   <span className="text-xs font-medium text-muted-foreground">{t("cme.coverage")}</span>
                   <div className="h-1.5 min-w-24 flex-1 overflow-hidden rounded bg-muted">
-                    <div className="h-full rounded bg-teal-500 transition-all duration-300" style={{ width: `${cme.summary.coveragePercent}%` }} />
+                    <div className="h-full w-full origin-left rounded bg-teal-500 transition-transform duration-300 ease-out" style={{ transform: `scaleX(${Math.min(100, Math.max(0, cme.summary.coveragePercent)) / 100})` }} />
                   </div>
                   <span className="whitespace-nowrap text-xs text-muted-foreground">{t("cme.coveragePercent", { p: cme.summary.coveragePercent })}</span>
                   <Button size="sm" variant="outline" className="ml-auto h-8 shrink-0" onClick={() => setReportOpen(true)} disabled={!currentEditionId}>

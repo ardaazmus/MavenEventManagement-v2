@@ -225,7 +225,9 @@
         "DECLINED": "Declined",
         "COMPLETED": "Completed",
         "CANCELLED": "Cancelled"
-      }
+      },
+      "loginCta": "Sign In",
+      "reschedPending": "Reschedule requested"
     },
     "profile": {
       "title": "Profile",
@@ -316,6 +318,20 @@
       "minAgo": "{n} min ago",
       "hourAgo": "{n} h ago",
       "liveHint": "live"
+    },
+    "sessionReg": {
+      "regBtn": "Register",
+      "cancelBtn": "Cancel Registration",
+      "registeredChip": "Registered",
+      "fullChip": "Full",
+      "fullTitle": "Session is full",
+      "fullDesc": "All seats for this session are taken. You can explore other sessions or set a reminder instead.",
+      "conflictTitle": "Time conflict",
+      "conflictDesc": "You are already registered for \"{session}\" at this time. Cancel that registration first.",
+      "guestCta": "Sign in to register",
+      "done": "Registered for the session",
+      "cancelled": "Session registration cancelled",
+      "fail": "Registration failed"
     }
   },
   "portalSettings": {

@@ -225,7 +225,9 @@
         "DECLINED": "Reddedildi",
         "COMPLETED": "Tamamlandı",
         "CANCELLED": "İptal"
-      }
+      },
+      "loginCta": "Giriş Yap",
+      "reschedPending": "Zaman talebi gönderildi"
     },
     "profile": {
       "title": "Profil",
@@ -316,6 +318,20 @@
       "minAgo": "{n} dk önce",
       "hourAgo": "{n} sa önce",
       "liveHint": "canlı"
+    },
+    "sessionReg": {
+      "regBtn": "Kaydol",
+      "cancelBtn": "Kaydı İptal Et",
+      "registeredChip": "Kayıtlısın",
+      "fullChip": "Kontenjan doldu",
+      "fullTitle": "Kontenjan doldu",
+      "fullDesc": "Bu oturum için tüm kontenjan tükenmiş. Başka bir oturuma göz atabilir veya hatırlatıcı kurabilirsin.",
+      "conflictTitle": "Saat çakışması",
+      "conflictDesc": "Bu saatte zaten \"{session}\" oturumuna kayıtlısın. Önce o kaydı iptal et.",
+      "guestCta": "Kaydolmak için giriş yap",
+      "done": "Oturuma kaydolundu",
+      "cancelled": "Oturum kaydı iptal edildi",
+      "fail": "Kayıt işlemi başarısız"
     }
   },
   "portalSettings": {

@@ -2204,3 +2204,21 @@ model PortalQuestion {
 
   @@index([editionId, status])
 }
+
+// ── OTURUM KAPASİTE KAYDI (portal §4 kapasite kayıtları) ────────────────────
+// Katılımcı (AUTH) kapasiteli (ProgramSession.capacity != null) yayındaki oturumlara
+// kaydolur. Eşzamanlılık değişmezleri: withLock(`sessreg:${sessionId}`) check-then-write
+// serileştirmesi + @@unique([sessionId, personId]) INVARIANT güvencesi; kapasite taşması
+// 409 SESSION_FULL, saat çakışması 409 TIME_CONFLICT döner. Mevcut modellere DOKUNULMADI
+// (additive-only; ilişki FK'sı yerine id tutuldu — silme davranışı portal okumasında filtre).
+model PortalSessionRegistration {
+  id        String   @id @default(cuid())
+  editionId String
+  sessionId String
+  personId  String
+  createdAt DateTime @default(now())
+
+  @@unique([sessionId, personId])
+  @@index([editionId, personId])
+  @@index([sessionId])
+}

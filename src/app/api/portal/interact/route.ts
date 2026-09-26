@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { withLock } from "@/lib/tx-lock";
 import { extractSession, validatePortalSession, touchSession, type PortalSessionRow } from "@/lib/api/portal-access";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ type SessionRow = PortalSessionRow;
 async function awardGamePoints(
   editionId: string,
   session: SessionRow,
-  action: "FORM_SUBMIT" | "QA_SUBMIT" | "B2B_ACCEPT",
+  action: "FORM_SUBMIT" | "QA_SUBMIT" | "B2B_ACCEPT" | "SESSION_REGISTER",
   refId: string,
 ): Promise<{ awarded: number; total: number } | null> {
   try {
@@ -32,7 +33,7 @@ async function awardGamePoints(
       select: { gameEnabled: true, gameConfigJson: true },
     });
     if (!config?.gameEnabled) return null;
-    let pointsCfg: Record<string, number> = { FORM_SUBMIT: 20, QA_SUBMIT: 10, B2B_ACCEPT: 15 };
+    let pointsCfg: Record<string, number> = { FORM_SUBMIT: 20, QA_SUBMIT: 10, B2B_ACCEPT: 15, SESSION_REGISTER: 5 };
     let qaCap = 5;
     if (config.gameConfigJson) {
       try {
@@ -98,6 +99,7 @@ export async function POST(req: NextRequest) {
       action?: string;
       widgetKey?: string;
       programSessionId?: string;
+      sessionId?: string; // oturum kapasite kaydı hedefi
       body?: string;
       isAnonymous?: boolean;
       displayName?: string;
@@ -236,6 +238,83 @@ export async function POST(req: NextRequest) {
       });
       const game = response === "ACCEPTED" ? await awardGamePoints(editionId, session, "B2B_ACCEPT", assignmentId) : null;
       return NextResponse.json({ ok: true, game });
+    }
+
+    // ── OTURUM KAPASİTE KAYDI — yalnız AUTH + kapasite/çakışma değişmezleri ──
+    // Eşzamanlılık: withLock(`sessreg:${sessionId}`) check-then-write serileştirmesi;
+    // @@unique([sessionId, personId]) ikinci güvence; kapasite taşması 409 SESSION_FULL,
+    // saat çakışması 409 TIME_CONFLICT (kod + dostu mesaj + conflictWith).
+    if (action === "SESSION_REGISTER" || action === "SESSION_UNREGISTER") {
+      if (session.kind !== "AUTH" || !session.personId) {
+        return NextResponse.json({ error: "Oturum kaydı yalnız kayıtlı katılımcılara açıktır", code: "AUTH_REQUIRED" }, { status: 403 });
+      }
+      const sessionId = body.sessionId ?? "";
+      const target = await db.programSession.findUnique({ where: { id: sessionId } });
+      if (!target || target.editionId !== editionId || !target.isVisible || target.status !== "PUBLISHED") {
+        return NextResponse.json({ error: "Oturum bulunamadı", code: "NOT_FOUND" }, { status: 404 });
+      }
+
+      if (action === "SESSION_UNREGISTER") {
+        // idempotent — kayıt yoksa da 200 (dostu davranış)
+        await db.portalSessionRegistration.deleteMany({ where: { sessionId, personId: session.personId } });
+        return NextResponse.json({ ok: true, registered: false });
+      }
+
+      // SESSION_REGISTER — check-then-write serileştirmesi (aynı oturuma eşzamanlı kayıt)
+      const result = await withLock(`sessreg:${sessionId}`, async () => {
+        const mine = await db.portalSessionRegistration.findUnique({
+          where: { sessionId_personId: { sessionId, personId: session.personId! } },
+        });
+        if (mine) return { ok: true as const, registered: true, alreadyRegistered: true, game: null };
+
+        // kapasite değişmezi — count + capacity karşılaştırması kilit altında
+        if (target.capacity !== null) {
+          const taken = await db.portalSessionRegistration.count({ where: { sessionId } });
+          if (taken >= target.capacity) {
+            return { conflict: "SESSION_FULL" as const };
+          }
+        }
+
+        // saat-çakışma değişmeni — aynı kişinin bu edisyondaki diğer kayıtlarıyla aralık testi
+        const myRegs = await db.portalSessionRegistration.findMany({
+          where: { editionId, personId: session.personId! },
+          select: { sessionId: true },
+        });
+        if (myRegs.length > 0) {
+          const others = await db.programSession.findMany({
+            where: { id: { in: myRegs.map((r) => r.sessionId) } },
+            select: { id: true, title: true, startTime: true, endTime: true },
+          });
+          const s1 = target.startTime.getTime();
+          const e1 = (target.endTime ?? target.startTime).getTime();
+          for (const o of others) {
+            const s2 = o.startTime.getTime();
+            const e2 = (o.endTime ?? o.startTime).getTime();
+            if (s1 < e2 && s2 < e1) return { conflict: "TIME_CONFLICT" as const, conflictWith: o.title };
+          }
+        }
+
+        await db.portalSessionRegistration.create({
+          data: { editionId, sessionId, personId: session.personId! },
+        });
+        return { ok: true as const, registered: true };
+      });
+
+      if ("conflict" in result) {
+        const msg = result.conflict === "SESSION_FULL"
+          ? "Bu oturumun kontenjanı doldu"
+          : "Bu saatte zaten başka bir oturuma kayıtlısın";
+        return NextResponse.json(
+          { error: msg, code: result.conflict, ...(result.conflict === "TIME_CONFLICT" ? { conflictWith: result.conflictWith } : {}) },
+          { status: 409 },
+        );
+      }
+
+      await db.portalAnalyticsLog.create({
+        data: { editionId, sessionId: session.id, kind: "SESSION_REG", meta: action },
+      });
+      const game = result.alreadyRegistered ? null : await awardGamePoints(editionId, session, "SESSION_REGISTER", sessionId);
+      return NextResponse.json({ ok: true, registered: true, ...(result.alreadyRegistered ? { alreadyRegistered: true } : {}), game });
     }
 
     return NextResponse.json({ error: "Bilinmeyen aksiyon" }, { status: 400 });

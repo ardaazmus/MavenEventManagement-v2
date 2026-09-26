@@ -257,10 +257,30 @@ export async function GET(req: NextRequest) {
       room: s.room?.name ?? null,
       track: s.track?.name ?? null,
       cmeCredits: s.cmeCredits,
+      capacity: s.capacity,
+      accessRule: s.accessRule,
       speakers: s.assignments
         .filter((a) => a.person)
         .map((a) => ({ personId: a.person!.id, name: `${a.person!.firstName} ${a.person!.lastName}`, role: a.role, photoUrl: a.person!.photoUrl })),
     }));
+
+    // kapasite dolulukları — tek sorguda grupla (N+1 yok); AUTH'ta kişinin kendi kayıtları da
+    const regCounts = await db.portalSessionRegistration.groupBy({
+      by: ["sessionId"],
+      where: { editionId: edition.id, sessionId: { in: programSessions.map((s) => s.id) } },
+      _count: { sessionId: true },
+    });
+    const regCountMap = new Map(regCounts.map((r) => [r.sessionId, r._count.sessionId]));
+    const programWithCounts = program.map((s) => ({ ...s, registeredCount: regCountMap.get(s.id) ?? 0 }));
+    const mySessionRegIds =
+      sessionKind === "AUTH" && session!.personId
+        ? (
+            await db.portalSessionRegistration.findMany({
+              where: { editionId: edition.id, personId: session!.personId },
+              select: { sessionId: true },
+            })
+          ).map((r) => r.sessionId)
+        : [];
 
     // konuşmacılar — program atamalarından türetilir (veri kopyası YOK)
     const speakerMap = new Map<string, { personId: string; name: string; title: string | null; company: string | null; photoUrl: string | null; bio: string | null; linkedin: string | null; sessions: { id: string; title: string; startTime: Date; role: string }[] }>();
@@ -339,6 +359,7 @@ export async function GET(req: NextRequest) {
       assignmentId: string; planId: string; subject: string; description: string | null;
       startsAt: Date | null; endsAt: Date | null; location: string | null; venue: string | null;
       status: string; myRole: string; personApproved: boolean; organizerApproved: boolean;
+      feedback: string | null;
       counterpart: { name: string; company: string | null }[];
     }[] = [];
     if (sessionKind === "AUTH" && session!.personId) {
@@ -369,6 +390,7 @@ export async function GET(req: NextRequest) {
         myRole: a.role,
         personApproved: a.personApproved,
         organizerApproved: a.organizerApproved,
+        feedback: a.feedback,
         counterpart: counterparts
           .filter((c) => c.planId === a.planId && c.person)
           .map((c) => ({ name: `${c.person!.firstName} ${c.person!.lastName}`, company: c.person!.company })),
@@ -429,7 +451,8 @@ export async function GET(req: NextRequest) {
         },
       },
       otherEvents,
-      program,
+      program: programWithCounts,
+      mySessionRegIds,
       speakers,
       sponsors,
       forms,

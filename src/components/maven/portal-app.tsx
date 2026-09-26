@@ -42,6 +42,7 @@ type ProgramItem = {
   id: string; title: string; description: string | null; type: string;
   startTime: string; endTime: string; room: string | null; track: string | null;
   cmeCredits: number | null;
+  capacity: number | null; accessRule: string | null; registeredCount: number;
   speakers: { personId: string; name: string; role: string; photoUrl: string | null }[];
 };
 type SpeakerItem = {
@@ -58,6 +59,7 @@ type B2bMeeting = {
   assignmentId: string; planId: string; subject: string; description: string | null;
   startsAt: string | null; endsAt: string | null; location: string | null; venue: string | null;
   status: string; myRole: string; personApproved: boolean; organizerApproved: boolean;
+  feedback: string | null;
   counterpart: { name: string; company: string | null }[];
 };
 type OtherEvent = { id: string; slug: string; name: string; editionLabel: string | null; startDate: string | null; endDate: string | null; city: string | null; logoUrl: string | null; headerImageUrl: string | null };
@@ -138,6 +140,7 @@ type PortalContent = {
   announcements?: Announcement[];
   blocks?: { id: string; type: string; title: string; payloadJson: string | null }[];
   b2b?: B2bMeeting[];
+  mySessionRegIds?: string[];
   myQuestions?: { id: string; body: string; status: string; answerBody?: string | null; answeredAt?: string | null; createdAt: string; programSessionId: string | null }[];
 };
 type MeData = {
@@ -154,7 +157,18 @@ const sessionKeyStorage = (slug: string) => `maven.portal.${slug}`;
 const firedStorage = (slug: string) => `maven.portal.fired.${slug}`;
 const remindersStorage = (slug: string) => `maven.portal.reminders.${slug}`;
 
-// portal POST yardımcısı — oturum başlığı taşır (apiSend header kabul etmediği için)
+// portal POST yardımcısı — oturum başlığı taşır (apiSend header kabul etmediği için).
+// Hata yanıtlarındaki makine-okur "code" alanı (örn. 409 SESSION_FULL / TIME_CONFLICT)
+// PortalApiError.code ile taşınır — arayüz dostu mesajı i18n'den seçer.
+class PortalApiError extends Error {
+  code: string | null;
+  conflictWith: string | null;
+  constructor(message: string, code: string | null, conflictWith: string | null) {
+    super(message);
+    this.code = code;
+    this.conflictWith = conflictWith;
+  }
+}
 async function portalSend(path: string, body: unknown, sessionKey: string | null): Promise<unknown> {
   const res = await fetch(path, {
     method: "POST",
@@ -162,7 +176,10 @@ async function portalSend(path: string, body: unknown, sessionKey: string | null
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? `İşlem başarısız (${res.status})`);
+  if (!res.ok) {
+    const d = data as { error?: string; code?: string; conflictWith?: string };
+    throw new PortalApiError(d.error ?? `İşlem başarısız (${res.status})`, d.code ?? null, d.conflictWith ?? null);
+  }
   return data;
 }
 
@@ -826,6 +843,16 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     window.scrollTo({ top: 0 });
   };
 
+  // oturumu bırak ve giriş ekranına dön — B2B/Program kapasite kaydı gibi AUTH-gated
+  // özelliklerin misafir kullanıcıya gösterdiği tek-tık CTA bunu kullanır
+  const gotoLogin = () => {
+    clearSession(editionSlug);
+    sessionRef.current = null;
+    setSessionKey(null);
+    setKind(null);
+    setPhase("LOGIN");
+  };
+
   // ─── render dalları ───
   if (phase === "LOADING") {
     return (
@@ -1106,7 +1133,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             onOpenForm={openForm}
           />
         )}
-        {screen === "program" && <ProgramScreen content={content} onBack={() => setScreen("home")} sessionKey={sessionKey} />}
+        {screen === "program" && <ProgramScreen content={content} onBack={() => setScreen("home")} sessionKey={sessionKey} onGotoLogin={gotoLogin} />}
         {screen === "speakers" && <SpeakersScreen content={content} onBack={() => setScreen("home")} />}
         {screen === "sponsors" && <SponsorsScreen content={content} />}
         {screen === "map" && <VenueMapScreen content={content} />}
@@ -1130,7 +1157,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             onNavigate={gotoScreen}
           />
         )}
-        {screen === "b2b" && <B2bScreen content={content} sessionKey={sessionKey} onChanged={() => { void bootstrap(); void fetchGame(); }} />}
+        {screen === "b2b" && <B2bScreen content={content} sessionKey={sessionKey} onChanged={() => { void bootstrap(); void fetchGame(); }} onGotoLogin={gotoLogin} />}
         {screen === "profile" && (
           <ProfileScreen
             content={content}
@@ -1146,13 +1173,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             }}
             onNavigate={gotoScreen}
             onOpenForm={openForm}
-            onGotoLogin={() => {
-              clearSession(editionSlug);
-              sessionRef.current = null;
-              setSessionKey(null);
-              setKind(null);
-              setPhase("LOGIN");
-            }}
+            onGotoLogin={gotoLogin}
             deferredPrompt={deferredPrompt}
             onInstall={() => void installApp()}
           />
@@ -1605,13 +1626,64 @@ function HomeScreen({
 }
 
 // ─── PROGRAM (§3.2 Genel Program) ───────────────────────────────────────────
-function ProgramScreen({ content, onBack, sessionKey }: { content: PortalContent; onBack: () => void; sessionKey: string | null }) {
+function ProgramScreen({ content, onBack, sessionKey, onGotoLogin }: { content: PortalContent; onBack: () => void; sessionKey: string | null; onGotoLogin: () => void }) {
   const { t } = useLang();
   const { toast } = useToast();
   const [open, setOpen] = useState<string | null>(null);
   const program = content.program ?? [];
   const slug = content.edition.slug;
   const reminders = loadReminders(slug);
+  const isAuth = content.session?.kind === "AUTH";
+  // kapasite kayıtlarım — sunucudan tohumlanır; aksiyonlarda yerel olarak güncellenir
+  const [regIds, setRegIds] = useState<Set<string>>(() => new Set(content.mySessionRegIds ?? []));
+  const [busyReg, setBusyReg] = useState<string | null>(null);
+  // doluluk çipleri yerel iyileştirme — aksiyon sonrası bootstrap beklemeden tutarlı görünüm
+  const [countDelta, setCountDelta] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setRegIds(new Set(content.mySessionRegIds ?? []));
+    setCountDelta({});
+  }, [content.mySessionRegIds]);
+
+  const toggleRegistration = async (s: ProgramItem) => {
+    if (!sessionKey || !isAuth) {
+      onGotoLogin();
+      return;
+    }
+    const registered = regIds.has(s.id);
+    setBusyReg(s.id);
+    try {
+      await portalSend(
+        "/api/portal/interact",
+        { action: registered ? "SESSION_UNREGISTER" : "SESSION_REGISTER", sessionId: s.id },
+        sessionKey,
+      );
+      setRegIds((prev) => {
+        const next = new Set(prev);
+        if (registered) next.delete(s.id);
+        else next.add(s.id);
+        return next;
+      });
+      setCountDelta((prev) => ({ ...prev, [s.id]: (prev[s.id] ?? 0) + (registered ? -1 : 1) }));
+      if (registered) {
+        toast({ title: t("portalApp.sessionReg.cancelled") });
+      } else {
+        toast({ title: t("portalApp.sessionReg.done") });
+      }
+    } catch (e) {
+      const err = e instanceof PortalApiError ? e : null;
+      if (err?.code === "SESSION_FULL") {
+        toast({ title: t("portalApp.sessionReg.fullTitle"), description: t("portalApp.sessionReg.fullDesc"), variant: "destructive" });
+      } else if (err?.code === "TIME_CONFLICT") {
+        toast({ title: t("portalApp.sessionReg.conflictTitle"), description: err.conflictWith ? t("portalApp.sessionReg.conflictDesc", { session: err.conflictWith }) : undefined, variant: "destructive" });
+      } else {
+        toast({ title: t("portalApp.sessionReg.fail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+      }
+    } finally {
+      setBusyReg(null);
+    }
+  };
+
+  const liveCount = (s: ProgramItem) => Math.max(0, s.registeredCount + (countDelta[s.id] ?? 0));
 
   const byDay = useMemo(() => {
     const map = new Map<string, ProgramItem[]>();
@@ -1681,6 +1753,26 @@ function ProgramScreen({ content, onBack, sessionKey }: { content: PortalContent
                           </span>
                           {s.room && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] text-muted-foreground">{s.room}</span>}
                           {s.track && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] text-muted-foreground">{s.track}</span>}
+                          {(() => {
+                            // kapasite doluluk çipi — çoğunlukla yeşil, ≥%80 amber, dolu kırmızı
+                            if (s.capacity === null) return null;
+                            const cnt = liveCount(s);
+                            const full = cnt >= s.capacity;
+                            const almost = !full && cnt >= Math.ceil(s.capacity * 0.8);
+                            return (
+                              <span className={cn(
+                                "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-medium tabular-nums",
+                                full
+                                  ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200"
+                                  : almost
+                                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                                    : "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+                              )}>
+                                <Icons.Users className="size-2.5" />
+                                {full ? t("portalApp.sessionReg.fullChip") : `${cnt}/${s.capacity}`}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
                       <Icons.ChevronDown className={cn("mt-1 size-4 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-180")} />
@@ -1702,6 +1794,39 @@ function ProgramScreen({ content, onBack, sessionKey }: { content: PortalContent
                           </div>
                         )}
                         {s.cmeCredits ? <p className="mt-2 text-[10px] text-teal-700 dark:text-teal-300">+{s.cmeCredits} CME</p> : null}
+                        {(() => {
+                          // kapasite kayıt alanı — kapasiteli veya kayıt-gerektirir oturumlarda gösterilir
+                          if (s.capacity === null && s.accessRule !== "REGISTRATION_REQUIRED") return null;
+                          const full = s.capacity !== null && liveCount(s) >= s.capacity;
+                          const registered = regIds.has(s.id);
+                          if (!isAuth) {
+                            return (
+                              <div className="mt-2">
+                                <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={onGotoLogin}>
+                                  <Icons.Lock className="size-3" /> {t("portalApp.sessionReg.guestCta")}
+                                </Button>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                              {registered ? (
+                                <>
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                    <Icons.CheckCircle2 className="size-3" /> {t("portalApp.sessionReg.registeredChip")}
+                                  </span>
+                                  <Button size="sm" variant="ghost" className="h-7 text-[11px] text-red-600 hover:text-red-700" disabled={busyReg === s.id} onClick={() => void toggleRegistration(s)}>
+                                    {busyReg === s.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.X className="size-3" />} {t("portalApp.sessionReg.cancelBtn")}
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button size="sm" className="h-7 text-[11px]" disabled={busyReg === s.id || full} onClick={() => void toggleRegistration(s)}>
+                                  {busyReg === s.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.UserPlus className="size-3" />} {full ? t("portalApp.sessionReg.fullChip") : t("portalApp.sessionReg.regBtn")}
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })()}
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           <Button
                             size="sm"
@@ -2142,7 +2267,7 @@ function FormsScreen({
 }
 
 // ─── B2B GÖRÜŞMELER (§4.1 — yalnız AUTH) ────────────────────────────────────
-function B2bScreen({ content, sessionKey, onChanged }: { content: PortalContent; sessionKey: string | null; onChanged: () => void }) {
+function B2bScreen({ content, sessionKey, onChanged, onGotoLogin }: { content: PortalContent; sessionKey: string | null; onChanged: () => void; onGotoLogin: () => void }) {
   const { t } = useLang();
   const { toast } = useToast();
   const meetings = content.b2b ?? [];
@@ -2157,6 +2282,9 @@ function B2bScreen({ content, sessionKey, onChanged }: { content: PortalContent;
           <Icons.Lock className="mx-auto size-5 text-amber-600" />
           <p className="mt-1.5 text-xs font-medium">{t("portalApp.b2b.authOnly")}</p>
           <p className="mt-1 text-[11px] text-muted-foreground">{t("portalApp.b2b.authOnlyDesc")}</p>
+          <Button size="sm" className="mt-3" onClick={onGotoLogin}>
+            <Icons.LogIn className="size-3.5" /> {t("portalApp.b2b.loginCta")}
+          </Button>
         </div>
       </ScreenShell>
     );
@@ -2197,8 +2325,9 @@ function B2bScreen({ content, sessionKey, onChanged }: { content: PortalContent;
                     {[m.startsAt ? fmtDateTime(m.startsAt) : null, m.location ? `${t("portalApp.b2b.table")}: ${m.location}` : null].filter(Boolean).join(" · ") || "—"}
                   </p>
                 </div>
-                <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[9px] font-medium",
+                <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-medium",
                   m.status === "ACCEPTED" || m.status === "COMPLETED" ? "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200" : m.status === "DECLINED" ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200")}>
+                  {m.status === "ACCEPTED" || m.status === "COMPLETED" ? <Icons.CheckCircle2 className="size-2.5" /> : m.status === "DECLINED" ? <Icons.XCircle className="size-2.5" /> : <Icons.Clock className="size-2.5" />}
                   {t(`portalApp.b2b.status.${m.status}`)}
                 </span>
               </div>
@@ -2209,6 +2338,11 @@ function B2bScreen({ content, sessionKey, onChanged }: { content: PortalContent;
                 </p>
               )}
               {m.venue && <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground"><Icons.MapPin className="size-3 shrink-0" /> {m.venue}</p>}
+              {m.feedback?.startsWith("Zaman talebi") && (
+                <p className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                  <Icons.Clock className="size-2.5" /> {t("portalApp.b2b.reschedPending")}
+                </p>
+              )}
               {m.status !== "DECLINED" && m.status !== "COMPLETED" && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {m.status !== "ACCEPTED" && (

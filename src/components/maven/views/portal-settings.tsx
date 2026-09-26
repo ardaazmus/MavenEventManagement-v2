@@ -666,6 +666,9 @@ export function PortalSettingsTab({ editionId, portalSlug }: { editionId: string
       <SectionCard title={t("portalSettings.design.title")} desc={t("portalSettings.design.desc")}>
         <DesignSectionContent
           draft={draft}
+          dirty={dirty}
+          onOpenPortal={() => portalSlug && draft.portalEnabled && window.open(`/?portal=${encodeURIComponent(portalSlug)}`, "_blank")}
+          canPreview={Boolean(portalSlug) && draft.portalEnabled}
           onField={(k, v) => {
             setDraft((d) => (d ? ({ ...d, [k]: v } as NonNullable<typeof draft>) : d));
             setDirty(true);
@@ -1278,20 +1281,40 @@ const NAV_ICONS: Record<string, typeof Icons.Home> = {
 
 function DesignSectionContent({
   draft,
+  dirty,
+  onOpenPortal,
+  canPreview,
   onField,
   pickImage,
   onTouch,
   t,
 }: {
   draft: DesignFields;
+  dirty: boolean;
+  onOpenPortal: () => void;
+  canPreview: boolean;
   onField: (k: keyof DesignFields, v: unknown) => void;
   pickImage: (file: File, maxBytes: number, apply: (url: string) => void) => Promise<void>;
   onTouch: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
+  const { toast } = useToast();
   const [sel, setSel] = useState<string>("home");
   const [picker, setPicker] = useState<{ kind: "nav" | "widget"; key: string } | null>(null);
   const dragKey = useRef<string | null>(null);
+
+  // CRON-5 canlı önizleme sadakati: Google font SADECE seçim değişince değil,
+  // sekme yeniden yüklendiğinde de yüklenmelidir — aksi halde örnek metin yedek
+  // fontta render olur (admin ne gördüyse portalda o çıkmaz).
+  useEffect(() => {
+    if (draft.fontFamily.startsWith("gf-")) loadGoogleFont(draft.fontFamily);
+  }, [draft.fontFamily]);
+
+  const fontMeta = draft.fontFamily.startsWith("gf-")
+    ? GOOGLE_FONTS.find((f) => f.key === draft.fontFamily) ?? null
+    : null;
+  const specimenFont = fontMeta ? `'${fontMeta.family}', system-ui, sans-serif` : fontCss(draft.fontFamily);
+  const specimenScale = draft.fontScale / 100;
 
   const ordered = ([...NAV_KEYS] as string[]).sort((a, b) => (draft.iconLayout[a] ?? 0) - (draft.iconLayout[b] ?? 0));
   const swap = (a: string, b: string) => {
@@ -1356,9 +1379,6 @@ function DesignSectionContent({
               ))}
             </SelectContent>
           </Select>
-          <p className="truncate rounded border bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground" style={{ fontFamily: fontCss(draft.fontFamily) }}>
-            {t("portalSettings.design.fontPreview")}
-          </p>
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">{t("portalSettings.design.fontScale")} — %{draft.fontScale}</Label>
@@ -1374,6 +1394,42 @@ function DesignSectionContent({
           />
           <div className="flex justify-between text-[10px] text-muted-foreground"><span>%90</span><span>%100</span><span>%120</span></div>
           <p className="text-[11px] text-muted-foreground">{t("portalSettings.design.fontScaleHint")}</p>
+        </div>
+      </div>
+
+      {/* ── CRON-5: Tipografi örnek kartı — portalda nasıl görüneceğini birebir göster ── */}
+      <div className="overflow-hidden rounded-lg border">
+        <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-3 py-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("portalSettings.design.specimenTitle")}</span>
+          <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+            fontMeta ? "bg-teal-50 text-teal-700 dark:bg-teal-900/40 dark:text-teal-200" : "bg-muted text-muted-foreground")}>
+            {fontMeta ? <><Icons.Sparkles className="size-2.5" /> {fontMeta.name} · {t("portalSettings.design.badgeGoogle")}</> : t("portalSettings.design.badgeSystem")}
+          </span>
+        </div>
+        <div className="space-y-2 px-3.5 py-3" style={{ fontFamily: specimenFont }}>
+          <p className="font-bold leading-tight" style={{ fontSize: `${Math.round(20 * specimenScale)}px` }}>
+            {t("portalSettings.design.specimenHeading")}
+          </p>
+          <p className="leading-snug text-foreground/90" style={{ fontSize: `${Math.round(13 * specimenScale)}px` }}>
+            {t("portalSettings.design.specimenBody")}
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary" style={{ fontSize: `${Math.round(10 * specimenScale)}px` }}>
+              {t("portalSettings.design.specimenCaption")}
+            </span>
+            <span className="rounded-md border px-2 py-0.5 text-muted-foreground" style={{ fontSize: `${Math.round(10 * specimenScale)}px` }}>
+              {t("portalSettings.design.fontScale")}: %{draft.fontScale}
+            </span>
+          </div>
+          <div className="flex items-end gap-3 border-t pt-2" aria-hidden>
+            {(fontMeta?.weights ?? [400, 500, 600, 700]).map((w) => (
+              <span key={w} className="text-center">
+                <span className="block text-lg leading-none" style={{ fontWeight: w }}>Aa</span>
+                <span className="mt-0.5 block text-[9px] tabular-nums text-muted-foreground">{w}</span>
+              </span>
+            ))}
+            <span className="ml-auto self-center text-[10px] text-muted-foreground">{t("portalSettings.design.specimenWeights")}</span>
+          </div>
         </div>
       </div>
 
@@ -1404,13 +1460,16 @@ function DesignSectionContent({
         <p className="mt-1 text-[11px] text-muted-foreground">{t("portalSettings.design.areaColorsHint")}</p>
       </div>
 
-      {/* ── Alan arka plan görselleri (SVG/PNG/JPEG) ── */}
+      {/* ── Alan arka plan görselleri (SVG/PNG/JPEG) — CRON-5: net limit + başarı geri bildirimi ── */}
       <div>
         <Label className="text-xs">{t("portalSettings.design.areaImages")}</Label>
         <div className="mt-2 grid gap-3 sm:grid-cols-3">
           {IMAGE_ROWS.map((row) => (
             <div key={row.key} className="space-y-1.5 rounded-lg border bg-muted/10 p-2.5">
-              <p className="text-xs font-medium">{row.label}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate text-xs font-medium">{row.label}</p>
+                <span className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[9px] font-medium text-muted-foreground">{t("portalSettings.design.imgLimitChip")}</span>
+              </div>
               <p className="text-[10px] leading-snug text-muted-foreground">{row.hint}</p>
               <div className="flex items-center gap-2">
                 <div className="relative grid h-11 w-16 shrink-0 place-items-center overflow-hidden rounded border bg-muted">
@@ -1420,17 +1479,25 @@ function DesignSectionContent({
                     <Icons.ImageIcon className="size-4 text-muted-foreground" />
                   )}
                 </div>
-                <Input
-                  type="file"
-                  accept=".svg,.png,.jpg,.jpeg,image/svg+xml,image/png,image/jpeg"
-                  className="h-9 text-xs"
-                  aria-label={row.label}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    void pickImage(f, 600_000, (url) => onField(row.key, url));
-                  }}
-                />
+                <label className="inline-flex h-9 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border bg-background px-2 text-xs hover:bg-muted/50">
+                  <Icons.Upload className="size-3.5" />
+                  {t("portalSettings.design.imgPick")}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    accept=".svg,.png,.jpg,.jpeg,image/svg+xml,image/png,image/jpeg"
+                    aria-label={row.label}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = ""; // aynı dosya tekrar seçilebilsin
+                      if (!f) return;
+                      void pickImage(f, 600_000, (url) => {
+                        onField(row.key, url);
+                        toast({ title: t("portalSettings.design.imgApplied", { name: f.name }), description: t("portalSettings.design.imgAppliedDesc") });
+                      });
+                    }}
+                  />
+                </label>
                 {draft[row.key] && (
                   <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => onField(row.key, "")} aria-label={t("portalSettings.brand.clear")}>
                     <Icons.Trash2 className="size-4 text-muted-foreground" />
@@ -1488,9 +1555,20 @@ function DesignSectionContent({
 
       {/* ── İkon Kanvası — grid konumlandırma + SVG logo desteği ── */}
       <div className="rounded-lg border border-dashed p-3">
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <Icons.LayoutGrid className="size-4 text-teal-600" />
           <p className="text-xs font-semibold">{t("portalSettings.design.canvasTitle")}</p>
+          {/* CRON-5: bağlamsal canlı önizleme — tasarım sekmesinden tek tıkla portala geç */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto h-7 gap-1 text-[11px]"
+            onClick={onOpenPortal}
+            disabled={!canPreview}
+            title={t("portalSettings.design.previewBtn")}
+          >
+            <Icons.ExternalLink className="size-3" /> {t("portalSettings.design.previewBtn")}
+          </Button>
         </div>
         <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.design.canvasDesc")}</p>
 
@@ -1548,9 +1626,9 @@ function DesignSectionContent({
                       )}
                     >
                       {o?.svg ? (
-                        <img src={o.svg} alt="" className="size-4.5 object-contain" style={{ width: 18, height: 18 }} />
+                        <img src={o.svg} alt="" className="object-contain" style={{ width: 20, height: 20 }} />
                       ) : (
-                        <I className="size-4" style={{ color: o?.color || undefined }} />
+                        <I className="size-5" style={{ color: o?.color || undefined }} />
                       )}
                       <span className="w-full truncate text-center">{t(`portalSettings.design.nav_${k}`)}</span>
                     </button>
@@ -1585,21 +1663,29 @@ function DesignSectionContent({
               accept=".svg,.png,image/svg+xml,image/png"
               onChange={(e) => {
                 const f = e.target.files?.[0];
+                e.target.value = "";
                 if (!f) return;
                 void pickImage(f, 300_000, (url) => {
                   setOverride(sel, { ...draft.iconOverrides[sel], svg: url });
                   onTouch();
+                  toast({ title: t("portalSettings.design.iconApplied", { name: f.name }), description: t("portalSettings.design.iconAppliedDesc") });
                 });
               }}
             />
           </label>
           {(draft.iconOverrides[sel]?.svg || draft.iconOverrides[sel]?.icon) && (
-            <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setOverride(sel, {}); onTouch(); }}>
+            <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setOverride(sel, {}); onTouch(); toast({ title: t("portalSettings.design.iconCleared") }); }}>
               <Icons.Eraser className="size-3.5" /> {t("portalSettings.design.clearSvg")}
             </Button>
           )}
         </div>
         <p className="mt-2 text-center text-[10px] text-muted-foreground">{t("portalSettings.design.canvasHint")}</p>
+        {/* CRON-5: kaydedilmemiş değişiklik uyarısı — kanvas bağlamında */}
+        {dirty && (
+          <p className="mt-1.5 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-amber-600" role="status">
+            <Icons.AlertCircle className="size-3.5" /> {t("portalSettings.design.unsavedHint")}
+          </p>
+        )}
 
         {/* ── Panel Widget İkonları — kütüphane/SVG (kütüphane tüm ikonlara uygulanır) ── */}
         <div className="mt-4 rounded-lg border bg-muted/10 p-3">
@@ -1628,7 +1714,7 @@ function DesignSectionContent({
                     <Icons.Palette className="size-3" /> {t("portalSettings.design.pickShort")}
                   </Button>
                   {o && (
-                    <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => { setOverride(wk, {}); onTouch(); }} aria-label={t("portalSettings.design.clearSvg")}>
+                    <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => { setOverride(wk, {}); onTouch(); toast({ title: t("portalSettings.design.iconCleared") }); }} aria-label={t("portalSettings.design.clearSvg")}>
                       <Icons.Eraser className="size-3.5 text-muted-foreground" />
                     </Button>
                   )}
@@ -1647,6 +1733,7 @@ function DesignSectionContent({
             onPick={(next) => {
               setOverride(picker.key, next);
               onTouch();
+              toast({ title: t("portalSettings.design.iconApplied", { name: t(`portalSettings.design.nav_${picker.key}`) }), description: t("portalSettings.design.iconAppliedDesc") });
               setPicker(null);
             }}
             pickImage={pickImage}

@@ -483,6 +483,50 @@ export const registry: Record<string, EntityConfig> = {
     auditType: ActivityType.CAMPAIGN_SAVED,
     auditMessage: (d) => `Kampanya güncellendi: ${d.name ?? ""}`,
   },
+  // ─── MÜŞTERİ DATASI — kiracı-çapraz iletişim havuzu (katılımcılardan üretim + manuel) ───
+  "customer-contacts": {
+    delegate: db.customerContact as unknown as AnyDelegate,
+    searchFields: ["displayName", "email", "phone", "company", "city"],
+    filterFields: ["tenantId", "kind", "source", "sourceEditionId", "commsOptIn"],
+    orderBy: { createdAt: "desc" },
+    auditType: ActivityType.CAMPAIGN_SAVED,
+    auditMessage: (d) => `Müşteri kontağı güncellendi: ${d.displayName ?? ""}`,
+    // yazım normalizasyonu: e-posta küçük-harf (güçlü eşleştirme işaretiyle uyum)
+    writeTransform: (data) => {
+      const out = { ...data };
+      if (typeof out.email === "string") out.email = out.email.trim().toLowerCase();
+      if (typeof out.phone === "string") out.phone = out.phone.trim();
+      if (typeof out.displayName === "string") out.displayName = out.displayName.trim();
+      return out;
+    },
+    // sunucu-doğrulama: ad zorunlu + e-posta VEYA telefon en az biri + biçim denetimi
+    validate: (data, isUpdate) => {
+      const email = typeof data.email === "string" ? data.email.trim() : "";
+      const phone = typeof data.phone === "string" ? data.phone.trim() : "";
+      if (!isUpdate && !(typeof data.displayName === "string" && data.displayName.trim())) return "displayName zorunludur";
+      if (!email && !phone) return "E-posta veya telefon en az biri zorunludur";
+      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return "E-posta biçimi geçersiz";
+      return null;
+    },
+    // mükerrer kontak koruması: aynı kiracıda aynı e-posta/telefon → 409
+    beforeWrite: async (data, isUpdate, existingId) => {
+      const tenantId = typeof data.tenantId === "string" ? data.tenantId : null;
+      if (!tenantId) return null;
+      const clauses: Record<string, string>[] = [];
+      if (typeof data.email === "string" && data.email.trim()) clauses.push({ email: data.email.trim().toLowerCase() });
+      if (typeof data.phone === "string" && data.phone.trim()) clauses.push({ phone: data.phone.trim() });
+      if (clauses.length === 0) return null;
+      const dup = await db.customerContact.findFirst({
+        where: {
+          tenantId,
+          OR: clauses,
+          ...(isUpdate && existingId ? { id: { not: existingId } } : {}),
+        },
+        select: { id: true, displayName: true },
+      });
+      return dup ? `Bu e-posta/telefon müşteri datasında zaten mevcut: ${dup.displayName}` : null;
+    },
+  },
   tasks: {
     delegate: db.task as unknown as AnyDelegate,
     include: { assignee: true, edition: { select: { name: true } } },
@@ -719,7 +763,7 @@ export function sanitizeForUpdate(entity: string, data: Record<string, unknown>)
 // tek kiracılı kurulumda ilk tenant ile doldurulur — aksi halde Prisma
 // "Argument `tenant` is missing" hatası yeni etkinlik/seri/kişi/kurum
 // oluşturmayı imkânsız kılar (bug: Yeni Etkinlik Oluşturulamadı).
-const TENANT_SCOPED = new Set(["event-series", "editions", "people", "organizations", "mail-providers"]);
+const TENANT_SCOPED = new Set(["event-series", "editions", "people", "organizations", "mail-providers", "customer-contacts"]);
 
 export async function withTenant(entity: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (!TENANT_SCOPED.has(entity)) return data;

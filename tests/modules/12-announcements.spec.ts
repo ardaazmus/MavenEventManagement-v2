@@ -37,7 +37,9 @@ test("FULL — kapatma kalıcılığı + Canlı Duyuru gönderimi portala düşe
   await page.getByPlaceholder(/örn\. Ana salonda|e\.g\./i).fill(TITLE);
   await page.getByPlaceholder(/Duyuru metni…|Announcement text/i).fill("E2E: Kahve molası 10 dakika sonra başlıyor.");
   await page.getByRole("button", { name: /Duyuruyu Gönder|Send announcement/i }).click();
-  await expect(page.getByText(/Duyuru gönderildi|Announcement sent/i)).toBeVisible({ timeout: 15_000 });
+  // DÜZELTME (strict-mode): paneldeki "Bugüne kadar N duyuru gönderildi" özet satırı da
+  // gevşek regex'e eşleşir — toast başlığı SABİTLENMİŞ regexle hedeflenir.
+  await expect(page.getByText(/^Duyuru gönderildi$|^Announcement sent$/)).toBeVisible({ timeout: 15_000 });
 
   // 4) portala anında düşer — yeni duyuru banner'ı görünür (kapatılmamış EN GÜNCEL duyuru)
   await page.goto("/?portal=no-dig-turkey-2026");

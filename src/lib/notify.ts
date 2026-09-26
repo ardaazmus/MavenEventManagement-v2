@@ -235,6 +235,9 @@ export async function dispatchChannelMessage(
   editionId: string,
   message: ChannelMessage,
   recipients: Recipient[],
+  // opts.ignoreRouting: admin kampanya/anlık-bildirim gönderimi olay-yönlendirme
+  // matrisini ATLAR (yönetici kanalı açıkça seçti) — ana anahtar yine denetlenir.
+  opts: { ignoreRouting?: boolean } = {},
 ): Promise<ChannelDispatchResult> {
   const empty: ChannelDispatchResult = {
     ok: false,
@@ -245,7 +248,7 @@ export async function dispatchChannelMessage(
   try {
     const cfg = await db.notificationChannelConfig.findUnique({ where: { editionId } });
     if (!cfg || !cfg.channelsEnabled) return { ...empty, wa: { ...empty.wa, error: "kanal kapalı" } };
-    const routing = eventRouting(cfg);
+    const routing = opts.ignoreRouting ? { announcement: true, b2b: true, reminder: true, magicLink: true } : eventRouting(cfg);
     if (!routing[message.kind]) return { ...empty, wa: { ...empty.wa, error: "olay yönlendirilmiyor" }, sms: { ...empty.sms, error: "olay yönlendirilmiyor" } };
 
     // telefonu çözülemeyen alıcılar atlanır (web-push/app-içi yine alır)

@@ -21,6 +21,7 @@ import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DatabaseMigrationCard } from "./db-migration-card";
 import { NotificationChannelsCard } from "./notification-channels-card";
+import { CustomerDataCard, InstantBroadcastDialog, parseSendReport, BROADCAST_CHANNEL_LIST, type SendReportLite } from "./comms-crm";
 
 // ─── SAHA ───────────────────────────────────────────────────────────────────
 
@@ -1110,6 +1111,8 @@ interface CampaignRow {
   phase: string; audienceMode: string; customRecipients: string | null;
   templateId: string | null; providerId: string | null; formId: string | null; subject?: string | null;
   sentAt?: string | null; sentCount: number; deliveredCount: number; openCount: number; clickCount: number; failCount: number;
+  // — çok kanallı gönderim + hiyerarşik kapsam (comms-broadcast) —
+  channel?: string | null; channels?: string | null; audienceJson?: string | null; lastSendReport?: string | null;
 }
 interface TemplateRow { id: string; name: string; category: string; phase: string; subject: string; htmlBody: string; usageCount: number; isActive: boolean }
 interface ProviderRow {
@@ -1118,6 +1121,7 @@ interface ProviderRow {
   isDefault: boolean; status: string; lastTestAt?: string | null; lastTestStatus?: string | null;
 }
 interface FormLite { id: string; name: string }
+interface CategoryLite { id: string; name: string; code: string | null }
 
 const AUDIENCE_MODE: Record<string, string> = { SEGMENT: "Segment (kural)", CUSTOM: "Özel Liste", BOTH: "Segment + Özel Liste" };
 const CAMPAIGN_STATUS: Record<string, string> = { DRAFT: "Taslak", TESTED: "Test edildi", SCHEDULED: "Zamanlandı", SENT: "Gönderildi", FAILED: "Başarısız" };
@@ -1155,6 +1159,13 @@ export function CommunicationsView() {
     () => (currentEditionId ? listEntity<FormLite>("forms", { editionId: currentEditionId, limit: 50 }) : Promise.resolve([])),
     [currentEditionId, refreshKey],
   );
+  // hedef kapsam filtreleri için kategori listesi (hiyerarşik kapsam)
+  const { data: categories } = useApi<CategoryLite[]>(
+    () => (currentEditionId ? listEntity<CategoryLite>("registration-categories", { editionId: currentEditionId, limit: 100 }) : Promise.resolve([])),
+    [currentEditionId, refreshKey],
+  );
+  // anlık yayın diyaloğu
+  const [instantOpen, setInstantOpen] = useState(false);
 
   const templateName = (id: string | null) => (templates ?? []).find((t) => t.id === id)?.name ?? null;
   const providerName = (id: string | null) => (providers ?? []).find((p) => p.id === id)?.name ?? null;
@@ -1163,7 +1174,11 @@ export function CommunicationsView() {
   const visibleCampaigns = (campaigns ?? []).filter((c) => phaseFilter === "ALL" || c.phase === phaseFilter);
 
   // ── kampanya formu ──
-  const emptyCampaign = { name: "", segmentRule: "", phase: "PRE_EVENT", audienceMode: "SEGMENT", customRecipients: "", templateId: "", providerId: "", formId: "", subject: "", isSegmentFixed: true };
+  const emptyCampaign = {
+    name: "", segmentRule: "", phase: "PRE_EVENT", audienceMode: "SEGMENT", customRecipients: "", templateId: "", providerId: "", formId: "", subject: "", isSegmentFixed: true,
+    channels: ["EMAIL"] as string[],
+    filters: { customerOnly: false, categories: [] as string[], requireEmail: false, requirePhone: false },
+  };
   const [campaignOpen, setCampaignOpen] = useState(false);
   const [campaignEdit, setCampaignEdit] = useState<CampaignRow | null>(null);
   const [campaignForm, setCampaignForm] = useState(emptyCampaign);
@@ -1181,10 +1196,24 @@ export function CommunicationsView() {
   };
   const openCampaignEdit = (c: CampaignRow) => {
     setCampaignEdit(c);
+    let filters = { customerOnly: false, categories: [] as string[], requireEmail: false, requirePhone: false };
+    if (c.audienceJson) {
+      try {
+        const p = JSON.parse(c.audienceJson) as Partial<typeof filters>;
+        filters = {
+          customerOnly: Boolean(p.customerOnly),
+          categories: Array.isArray(p.categories) ? p.categories.filter((x): x is string => typeof x === "string") : [],
+          requireEmail: Boolean(p.requireEmail),
+          requirePhone: Boolean(p.requirePhone),
+        };
+      } catch { /* bozuk json — varsayılan */ }
+    }
+    const channels = (c.channels ?? c.channel ?? "EMAIL").split(/[;,\s]+/).map((s) => s.trim().toUpperCase()).filter((s) => ["EMAIL", "SMS", "WHATSAPP"].includes(s));
     setCampaignForm({
       name: c.name, segmentRule: c.segmentRule, phase: c.phase ?? "PRE_EVENT", audienceMode: c.audienceMode ?? "SEGMENT",
       customRecipients: c.customRecipients ?? "", templateId: c.templateId ?? "", providerId: c.providerId ?? "",
       formId: c.formId ?? "", subject: c.subject ?? "", isSegmentFixed: c.isSegmentFixed,
+      channels: channels.length > 0 ? channels : ["EMAIL"], filters,
     });
     setCampaignOpen(true);
   };
@@ -1198,9 +1227,13 @@ export function CommunicationsView() {
     }
     setCampaignBusy(true);
     try {
+      const f = campaignForm.filters;
+      const filtersActive = f.customerOnly || f.categories.length > 0 || f.requireEmail || f.requirePhone;
       const payload = {
         editionId: currentEditionId, name: campaignForm.name.trim(), segmentRule: campaignForm.segmentRule.trim() || "özel liste",
         phase: campaignForm.phase, audienceMode: campaignForm.audienceMode, customRecipients: campaignForm.customRecipients,
+        channels: campaignForm.channels.join(","),
+        audienceJson: filtersActive ? JSON.stringify(f) : null,
         templateId: campaignForm.templateId || null, providerId: campaignForm.providerId || null, formId: campaignForm.formId || null,
         subject: campaignForm.subject || null, isSegmentFixed: campaignForm.isSegmentFixed,
       };
@@ -1214,24 +1247,51 @@ export function CommunicationsView() {
     } finally { setCampaignBusy(false); }
   };
 
-  // gönderim (simülasyon) — metrikleri doldurur, bağlı şablonun usageCount'unu PUT ile +1 yapar
+  // gönderim — GERÇEK çok kanallı dağıtım (e-posta: sağlayıcı/kota; SMS/WA: kanal çekirdeği)
+  const [sendBusyId, setSendBusyId] = useState<string | null>(null);
   const sendCampaign = async (c: CampaignRow) => {
-    const customCount = c.audienceMode !== "SEGMENT" && c.customRecipients
-      ? c.customRecipients.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean).length : 0;
-    const total = c.audienceCount + customCount;
+    setSendBusyId(c.id);
     try {
-      await apiSend(`/api/campaigns/${c.id}`, "PUT", {
-        status: "SENT", sentAt: new Date().toISOString(), sentCount: total, deliveredCount: total, failCount: 0,
+      const rep = await apiSend<SendReportLite>("/api/campaigns/send", "POST", { campaignId: c.id, mode: "LIVE" });
+      const detail = Object.entries(rep.channels ?? {})
+        .filter(([, v]) => (v?.attempted ?? 0) > 0)
+        .map(([k, v]) => `${t(`commsCrm.ch_${k}`)}: ${v?.sent}/${v?.attempted}`)
+        .join(" · ");
+      toast({
+        title: rep.totalSent ? t("commsCrm.camp.sentLiveTitle") : t("commsCrm.camp.sendFailed"),
+        description: detail || t("commsCrm.camp.sentNoChannel"),
+        variant: rep.totalSent ? "default" : "destructive",
       });
-      if (c.templateId) {
-        const t = (templates ?? []).find((x) => x.id === c.templateId);
-        if (t) await apiSend(`/api/email-templates/${t.id}`, "PUT", { usageCount: (t.usageCount ?? 0) + 1 });
-      }
-      toast({ title: t("communications.sentToast"), description: t("communications.sentDesc", { total, tpl: c.templateId ? t("communications.sentDescTpl") : "", provider: c.providerId ? t("communications.sentDescProvider", { name: providerName(c.providerId) ?? "" }) : "" }) });
-      reload(); reloadTemplates(); bump();
+      reload(); bump();
     } catch (e) {
-      toast({ title: t("communications.sendFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
-    }
+      toast({ title: t("commsCrm.camp.sendFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally { setSendBusyId(null); }
+  };
+
+  // test gönderimi — yalnız test alıcısına (tek e-posta / tek telefon)
+  const [testOpen, setTestOpen] = useState(false);
+  const [testCampaign, setTestCampaign] = useState<CampaignRow | null>(null);
+  const [testEmail, setTestEmail] = useState("");
+  const [testPhone, setTestPhone] = useState("");
+  const [testBusy, setTestBusy] = useState(false);
+  const sendTest = async () => {
+    if (!testCampaign) return;
+    setTestBusy(true);
+    try {
+      const rep = await apiSend<SendReportLite>("/api/campaigns/send", "POST", {
+        campaignId: testCampaign.id, mode: "TEST",
+        testEmail: testEmail.trim() || undefined, testPhone: testPhone.trim() || undefined,
+      });
+      toast({
+        title: rep.totalSent ? t("commsCrm.camp.testOkTitle") : t("commsCrm.camp.testFailTitle"),
+        description: Object.entries(rep.channels ?? {}).filter(([, v]) => (v?.attempted ?? 0) > 0).map(([k, v]) => `${t(`commsCrm.ch_${k}`)}: ${v?.sent}/${v?.attempted}`).join(" · ") || t("commsCrm.camp.sentNoChannel"),
+        variant: rep.totalSent ? "default" : "destructive",
+      });
+      setTestOpen(false);
+      reload(); bump();
+    } catch (e) {
+      toast({ title: t("commsCrm.camp.testFailTitle"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally { setTestBusy(false); }
   };
 
   // ── şablon formu ──
@@ -1352,6 +1412,9 @@ export function CommunicationsView() {
   return (
     <div className="space-y-5">
       <PageHeader title={t("communications.title")} desc={t("communications.desc")}>
+        <Button size="sm" variant="outline" className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:text-amber-900" onClick={() => setInstantOpen(true)} disabled={!currentEditionId} title={currentEditionId ? undefined : t("commsCrm.customer.needEdition")}>
+          <Icons.Zap className="size-3.5" /> {t("commsCrm.instant.btn")}
+        </Button>
         <Button size="sm" onClick={() => openCampaignNew()}>
           <Icons.Megaphone className="size-3.5" /> {t("communications.newCampaign")}
         </Button>
@@ -1372,6 +1435,34 @@ export function CommunicationsView() {
         <span className="ms-auto self-center px-3 text-xs text-muted-foreground">{t("communications.count", { count: visibleCampaigns.length })}</span>
       </div>
 
+      {/* 1b — aşama hiyerarşisi özeti: her aşamada kampanya/gönderim sayısı */}
+      <div className="grid gap-2 sm:grid-cols-3">
+        {["PRE_EVENT", "DURING_EVENT", "POST_EVENT"].map((ph) => {
+          const list = (campaigns ?? []).filter((c) => c.phase === ph);
+          const sent = list.filter((c) => c.status === "SENT").length;
+          return (
+            <button
+              key={ph}
+              type="button"
+              onClick={() => setPhaseFilter(ph)}
+              className={`flex items-center gap-2 rounded-xl border p-2.5 text-start transition ${phaseFilter === ph ? "border-teal-300 bg-teal-50/50" : "bg-card hover:bg-muted/40"}`}
+            >
+              <span className={cn("grid size-8 shrink-0 place-items-center rounded-lg", ph === "PRE_EVENT" ? "bg-teal-100 text-teal-700" : ph === "DURING_EVENT" ? "bg-amber-100 text-amber-700" : "bg-violet-100 text-violet-700")}>
+                {ph === "PRE_EVENT" ? <Icons.CalendarClock className="size-4" /> : ph === "DURING_EVENT" ? <Icons.RadioTower className="size-4" /> : <Icons.MailCheck className="size-4" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-semibold">{tLabel(CAMPAIGN_PHASE, ph)}</span>
+                <span className="block text-[10px] text-muted-foreground">{t("commsCrm.camp.phaseCount", { total: list.length, sent })}</span>
+              </span>
+              <Icons.ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 1c — MÜŞTERİ DATASI: katılımcılardan üretilen iletişim havuzu + tekil/toplu gönderim */}
+      <CustomerDataCard onContactsChanged={() => bump()} />
+
       {/* 2 — kampanya listesi */}
       {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : visibleCampaigns.length === 0 ? (
         <EmptyState
@@ -1389,13 +1480,30 @@ export function CommunicationsView() {
                 <StatusBadge map={campaignStatusMap} value={c.status} />
                 <Chip tone={PHASE_TONE[c.phase] ?? "neutral"}>{tLabel(CAMPAIGN_PHASE, c.phase)}</Chip>
                 <Chip>{tLabel(AUDIENCE_MODE, c.audienceMode)}</Chip>
+                {/* kanal çipleri — çok kanallı gönderim kapsamı */}
+                {((c.channels ?? c.channel ?? "EMAIL").split(/[;,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)).map((chKey) => {
+                  const meta = BROADCAST_CHANNEL_LIST.find((x) => x.key === chKey);
+                  if (!meta) return null;
+                  const IconCmp = meta.icon;
+                  return (
+                    <Chip key={chKey} tone="neutral">
+                      <span className="inline-flex items-center gap-1"><IconCmp className={cn("size-3", meta.tone)} aria-hidden /> {t(`commsCrm.ch_${chKey}`)}</span>
+                    </Chip>
+                  );
+                })}
+                {c.audienceJson && <Chip tone="teal">{t("commsCrm.camp.filteredAudience")}</Chip>}
                 <Chip tone={c.isSegmentFixed ? "teal" : "amber"}>{c.isSegmentFixed ? t("communications.fixedSegment") : t("communications.liveList")}</Chip>
                 <span className="ml-auto text-xs text-muted-foreground">{c.sentAt ? fmtDateTime(c.sentAt) : t("communications.notSent")}</span>
                 <div className="flex items-center gap-1">
                   {["DRAFT", "TESTED"].includes(c.status) && (
-                    <Button size="sm" variant="outline" className="h-7 gap-1 border-teal-300 bg-teal-50 px-2 text-xs text-teal-800 hover:bg-teal-100 hover:text-teal-900" onClick={() => sendCampaign(c)} title={t("communications.sendBtnTitle")}>
-                      <Icons.Send className="size-3" /> {t("communications.sendBtn")}
-                    </Button>
+                    <>
+                      <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" disabled={sendBusyId === c.id} onClick={() => { setTestCampaign(c); setTestEmail(""); setTestPhone(""); }} title={t("commsCrm.camp.testBtnTitle")}>
+                        {sendBusyId === c.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.FlaskConical className="size-3" />} {t("commsCrm.camp.testBtn")}
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-7 gap-1 border-teal-300 bg-teal-50 px-2 text-xs text-teal-800 hover:bg-teal-100 hover:text-teal-900" disabled={sendBusyId === c.id} onClick={() => void sendCampaign(c)} title={t("communications.sendBtnTitle")}>
+                        {sendBusyId === c.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Send className="size-3" />} {t("communications.sendBtn")}
+                      </Button>
+                    </>
                   )}
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => openCampaignEdit(c)}>
                     <Icons.Pencil className="size-3" /> {t("communications.edit")}
@@ -1418,6 +1526,19 @@ export function CommunicationsView() {
                   ))}
                 </div>
               )}
+              {(() => {
+                const rep = parseSendReport(c.lastSendReport);
+                if (!rep) return null;
+                return (
+                  <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <Icons.ReceiptText className="size-3" aria-hidden />
+                    <span>{t("commsCrm.camp.lastReport", { mode: rep.mode === "TEST" ? t("commsCrm.camp.testBtn") : t("commsCrm.camp.liveSend") })}</span>
+                    {Object.entries(rep.channels ?? {}).filter(([, v]) => (v?.attempted ?? 0) > 0).map(([k, v]) => (
+                      <span key={k} className="rounded-full bg-muted px-1.5 py-0.5 tabular-nums">{t(`commsCrm.ch_${k}`)}: {v?.sent}/{v?.attempted}{v?.error ? " ⚠" : ""}</span>
+                    ))}
+                  </p>
+                );
+                  })()}
               {c.status === "TESTED" && <p className="mt-2 text-xs text-amber-700">{t("communications.testedNote", { name: c.name.split(" ")[0] })}</p>}
             </div>
           ))}
@@ -1595,6 +1716,58 @@ export function CommunicationsView() {
                 <Input value={campaignForm.subject} onChange={(e) => setCampaignForm({ ...campaignForm, subject: e.target.value })} className="h-8 text-xs" placeholder="{{series}} davetiniz" />
               </div>
             </div>
+            <div className="space-y-1.5 rounded-lg border p-2.5">
+              <Label className="text-xs">{t("commsCrm.camp.channelsLabel")}</Label>
+              <p className="text-[10px] text-muted-foreground">{t("commsCrm.camp.channelsHint")}</p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {BROADCAST_CHANNEL_LIST.map((ch) => {
+                  const active = campaignForm.channels.includes(ch.key);
+                  return (
+                    <label key={ch.key} className={cn("flex cursor-pointer items-center gap-2 rounded-lg border p-2 text-xs font-medium transition", active ? "border-teal-400 bg-teal-50/60 dark:bg-teal-900/20" : "bg-muted/20 hover:bg-muted/40")}>
+                      <Checkbox checked={active} onCheckedChange={(v) => setCampaignForm((s) => ({ ...s, channels: v ? [...s.channels, ch.key] : s.channels.filter((x) => x !== ch.key) }))} aria-label={t(`commsCrm.ch_${ch.key}`)} />
+                      <ch.icon className={cn("size-3.5", ch.tone)} aria-hidden /> {t(`commsCrm.ch_${ch.key}`)}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="space-y-2 rounded-lg border p-2.5">
+              <p className="text-xs font-semibold">{t("commsCrm.camp.audFiltersTitle")}</p>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <Label className="text-xs">{t("commsCrm.camp.audCustomerOnly")}</Label>
+                  <p className="text-[10px] text-muted-foreground">{t("commsCrm.camp.audCustomerOnlyHint")}</p>
+                </div>
+                <Switch checked={campaignForm.filters.customerOnly} onCheckedChange={(v) => setCampaignForm((s) => ({ ...s, filters: { ...s.filters, customerOnly: v } }))} aria-label={t("commsCrm.camp.audCustomerOnly")} />
+              </div>
+              {(categories ?? []).length > 0 && (
+                <div className="space-y-1">
+                  <Label className="text-xs">{t("commsCrm.camp.audCategories")}</Label>
+                  <div className="grid max-h-28 gap-1 overflow-y-auto rounded-lg border p-2 sm:grid-cols-2 maven-scroll">
+                    {(categories ?? []).map((cat) => (
+                      <label key={cat.id} className="flex cursor-pointer items-center gap-2 text-xs">
+                        <Checkbox
+                          checked={campaignForm.filters.categories.includes(cat.id)}
+                          onCheckedChange={(v) => setCampaignForm((s) => ({ ...s, filters: { ...s.filters, categories: v ? [...s.filters.categories, cat.id] : s.filters.categories.filter((x) => x !== cat.id) } }))}
+                          aria-label={cat.name}
+                        />
+                        <span className="truncate">{cat.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 px-2.5 py-1.5">
+                  <Label className="text-xs">{t("commsCrm.camp.audRequireEmail")}</Label>
+                  <Switch checked={campaignForm.filters.requireEmail} onCheckedChange={(v) => setCampaignForm((s) => ({ ...s, filters: { ...s.filters, requireEmail: v } }))} aria-label={t("commsCrm.camp.audRequireEmail")} />
+                </div>
+                <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/20 px-2.5 py-1.5">
+                  <Label className="text-xs">{t("commsCrm.camp.audRequirePhone")}</Label>
+                  <Switch checked={campaignForm.filters.requirePhone} onCheckedChange={(v) => setCampaignForm((s) => ({ ...s, filters: { ...s.filters, requirePhone: v } }))} aria-label={t("commsCrm.camp.audRequirePhone")} />
+                </div>
+              </div>
+            </div>
             <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
               <span className="text-xs font-medium">{t("communications.fFixedSegment")}</span>
               <Switch checked={campaignForm.isSegmentFixed} onCheckedChange={(v) => setCampaignForm({ ...campaignForm, isSegmentFixed: v })} aria-label={t("communications.fFixedSegment")} />
@@ -1762,6 +1935,36 @@ export function CommunicationsView() {
             <Button variant="outline" onClick={() => setProviderOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={saveProvider} disabled={providerBusy}>
               {providerBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Save className="size-3.5" />} {t("common.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 9 — ANLIK YAYIN (program değişikliği vb. — tek/toplu, çok kanallı) */}
+      <InstantBroadcastDialog open={instantOpen} onOpenChange={setInstantOpen} onSent={() => { reload(); bump(); }} />
+
+      {/* 10 — KAMPANYA TEST GÖNDERİMİ (yalnız test alıcısı) */}
+      <Dialog open={testOpen} onOpenChange={setTestOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("commsCrm.camp.testTitle", { name: testCampaign?.name ?? "" })}</DialogTitle>
+            <DialogDescription>{t("commsCrm.camp.testDesc")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="camp-test-email">{t("commsCrm.camp.testEmail")}</Label>
+              <Input id="camp-test-email" type="email" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} className="h-8 text-xs" placeholder="test@firma.com" dir="ltr" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="camp-test-phone">{t("commsCrm.camp.testPhone")}</Label>
+              <Input id="camp-test-phone" value={testPhone} onChange={(e) => setTestPhone(e.target.value)} className="h-8 text-xs" placeholder="+90555…" dir="ltr" />
+              <p className="text-[10px] text-muted-foreground">{t("commsCrm.camp.testChannelHint")}</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTestOpen(false)}>{t("common.cancel")}</Button>
+            <Button onClick={() => void sendTest()} disabled={testBusy || (!testEmail.trim() && !testPhone.trim())} aria-disabled={testBusy || (!testEmail.trim() && !testPhone.trim())}>
+              {testBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.FlaskConical className="size-3.5" />} {testBusy ? t("commsCrm.camp.testing") : t("commsCrm.camp.testSend")}
             </Button>
           </DialogFooter>
         </DialogContent>

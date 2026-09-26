@@ -43,6 +43,7 @@ model Tenant {
   apiIntegrations     ApiIntegration[]
   mailProviders       MailProviderConfig[]
   mailSuppressions    MailSuppression[] // S3: istismar denetimi — bastırma listesi
+  customerContacts    CustomerContact[] // müşteri datası — katılımcılardan üretilen kiracı-çapraz havuz
   kvkkErasureRequests KvkkErasureRequest[] // K7: silme talepleri
   jurisdictionProfile JurisdictionProfile? // TASK-B 19: yargı çerçevesi profili (tek-etkin)
   documents           DocumentRecord[] // TASK-B 20: belge sicili
@@ -165,6 +166,7 @@ model Organization {
   invitations       Invitation[]
   delegationBilling Delegation[]
   portalTokens      PortalToken[]
+  customerContacts  CustomerContact[] @relation("CustomerOrganization")
 }
 
 model OrganizationContact {
@@ -230,6 +232,7 @@ model Person {
   b2bAssignments      B2bAssignment[]
   portalTokens        PortalToken[]
   portalSessions      PortalSession[] // PWA portal AUTH oturumları
+  customerContacts    CustomerContact[] @relation("CustomerPerson") // müşteri datası bağlantısı
 
   @@index([email])
   @@index([lastName])
@@ -337,6 +340,7 @@ model EventEdition {
   portalAnnouncements PortalAnnouncement[]
   portalQuestions     PortalQuestion[]
   portalGameProgress  PortalGameProgress[] // oyunlaştırma ilerlemesi (oturum başına tek)
+  customerContacts    CustomerContact[] @relation("CustomerSourceEdition") // müşteri datası kaynak künyesi
 
   @@index([status])
   @@index([startDate])
@@ -1425,6 +1429,10 @@ model Campaign {
   openCount        Int       @default(0)
   clickCount       Int       @default(0)
   failCount        Int       @default(0)
+  // — Çok kanallı gönderim + hiyerarşik hedef kapsamı (kullanıcı talebi: mailing hiyerarşisi) —
+  channels         String? // "EMAIL,SMS,WHATSAPP" — null → channel kolonu (tek kanal) kullanılır
+  audienceJson     String? // yapılandırılmış hedef: {"customerOnly":bool,"categories":[id],"requireEmail":bool,"requirePhone":bool}
+  lastSendReport   String? // son gerçek gönderim raporu JSON: {at,mode,email:{...},sms:{...},whatsapp:{...}}
 
   edition  EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
   template EmailTemplate?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
@@ -1432,6 +1440,45 @@ model Campaign {
   quizForm FormDefinition?     @relation(fields: [formId], references: [id], onDelete: SetNull)
 
   @@index([editionId])
+}
+
+// ─── MÜŞTERİ DATASI — katılımcılardan üretilen kiracı-çapraz iletişim havuzu ────
+// Üst firma, kendi organizasyonlarındaki kişi/kurum-kuruluş katılımcılarını müşteri
+// datasına dönüştürür; mailing/SMS/WhatsApp kampanyaları bu havuza gider.
+// Kiracı-kapsamlıdır (EDİSYON-ÇAPRAZ) — sourceEditionId yalnız KAYNAK künyesidir.
+model CustomerContact {
+  id              String    @id @default(cuid())
+  tenantId        String
+  sourceEditionId String? // hangi organizasyondan geldi (kaynak künyesi)
+  personId        String? // katılımcıdan üretildiyse canlı kişi bağlantısı
+  organizationId  String? // kurum/kuruluş bağlantısı
+  kind            String    @default("PERSON") // PERSON|ORGANIZATION
+  displayName     String // ad soyad veya kurum adı (denormalize — listede hızlı)
+  email           String?
+  phone           String?
+  company         String?
+  title           String?
+  city            String?
+  country         String?
+  category        String? // kaynak katılım kategori adı (snapshot)
+  source          String    @default("MANUAL") // PARTICIPANT_IMPORT|MANUAL|FORM|IMPORT
+  tags            String? // virgüllü serbest etiketler — segmentleme
+  notes           String?
+  commsOptIn      Boolean   @default(true) // iletişim onayı (KVKK asgari)
+  lastEmailAt     DateTime?
+  lastSmsAt       DateTime?
+  lastWhatsAppAt  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sourceEdition EventEdition? @relation("CustomerSourceEdition", fields: [sourceEditionId], references: [id], onDelete: SetNull)
+  person        Person?       @relation("CustomerPerson", fields: [personId], references: [id], onDelete: SetNull)
+  organization  Organization? @relation("CustomerOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([sourceEditionId])
+  @@index([personId])
 }
 
 // ─── OPERATIONS (§52) ──────────────────────────────────────────────────────

@@ -31,6 +31,7 @@ export const SCOPES: Record<string, Scope> = {
   // doğrudan tenantId kolonu
   people: { mode: "tenant" },
   organizations: { mode: "tenant" },
+  "customer-contacts": { mode: "tenant" }, // müşteri datası — kiracı-çapraz havuz
   "event-series": { mode: "tenant" },
   editions: { mode: "tenant" },
   "mail-providers": { mode: "tenant" },

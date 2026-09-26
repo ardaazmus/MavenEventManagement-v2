@@ -106,5 +106,29 @@ if (annCount === 0) {
   console.log("duyurular korundu (" + annCount + ")");
 }
 
+// 4) sıradaki oturum şeridi — CANLI DEMO: program her saatte canlı kalsın diye
+// kayan zamanlı bir yayınlanmış oturum upsert edilir (şimdi+45dk → +105dk).
+// Akşam koşumlarında "Sıradaki oturum" şeridinin kaybolmasını önler (01/02 spec).
+const ROLLING_TITLE = "Canlı Demo Oturumu";
+// eski başlık (spec regex'ine çarpıyordu) temizlenir
+await db.programSession.deleteMany({ where: { editionId: edition.id, title: "Sıradaki Oturum (Canlı Demo)" } });
+const roomMain = await db.programRoom.findFirst({ where: { editionId: edition.id }, orderBy: { id: "asc" }, select: { id: true } });
+const rollingStart = new Date(Date.now() + 45 * 60_000);
+const rollingEnd = new Date(Date.now() + 105 * 60_000);
+const rolling = await db.programSession.findFirst({ where: { editionId: edition.id, title: ROLLING_TITLE }, select: { id: true } });
+if (rolling) {
+  await db.programSession.update({ where: { id: rolling.id }, data: { startTime: rollingStart, endTime: rollingEnd } });
+  console.log("sıradaki oturum (canlı demo): kaydırıldı");
+} else {
+  await db.programSession.create({
+    data: {
+      editionId: edition.id, roomId: roomMain?.id ?? null, title: ROLLING_TITLE,
+      description: "Demo: bu oturum portal canlılığını korumak için zaman içinde kaydırılır.",
+      type: "TALK", startTime: rollingStart, endTime: rollingEnd, status: "PUBLISHED", isVisible: true, accessRule: "OPEN",
+    },
+  });
+  console.log("sıradaki oturum (canlı demo): eklendi");
+}
+
 console.log("portal demo hazır — /?portal=" + SLUG);
 process.exit(0);

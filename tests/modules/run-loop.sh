@@ -21,15 +21,27 @@ restart_server() {
   echo "[restart] FAILED — health never 200" >> "$OUT"; return 1
 }
 
-SPECS=(01-auth-login 02-dashboard 03-bottom-nav 04-program-ics 05-program-capacity-409 06-sponsors 07-floor-plan 08-profile 09-forms 10-gamification 11-qa 12-announcements 13-notification-center 14-channels-admin 15-admin-cards 16-pwa-offline 17-i18n 19-accommodation-manual)
+# Derleme-yarışı ısınma: sağlık 200 sonrası ağır yüzeyleri ÖNCEDEN derlet (iki vuruş —
+# ilk vuruş derlemeyi başlatır, ikincisi gerçek sonucu doğrular). Turbopack dev'de taze
+# restart sonrası ilk vuruşta nadiren HTML 404 gözlemlendi (suite 20 kanıtı).
+warmup() {
+  for u in "/" "/?portal=no-dig-turkey-2026"; do
+    curl -s -o /dev/null "http://localhost:3000$u" || true
+    sleep 1
+    curl -s -o /dev/null "http://localhost:3000$u" || true
+  done
+}
+
+SPECS=(01-auth-login 02-dashboard 03-bottom-nav 04-program-ics 05-program-capacity-409 06-sponsors 07-floor-plan 08-profile 09-forms 10-gamification 11-qa 12-announcements 13-notification-center 14-channels-admin 15-admin-cards 16-pwa-offline 17-i18n 19-accommodation-manual 20-comms-crm)
 
 TOTAL_PASS=0; TOTAL_FAIL=0; FAILED_SUITES=()
 for s in "${SPECS[@]}"; do
   echo "=== SUITE $s — $(date +%H:%M:%S) ===" >> "$OUT"
   restart_server || { FAILED_SUITES+=("$s:server"); continue; }
-  # suite öncesi demo taban çizgisi (portal config + duyuru + B2B demo) garanti
+  # suite öncesi demo taban çizgisi (portal config + duyuru + B2B demo + canlı oturum) garanti
   curl -s -o /dev/null -X POST http://localhost:3000/api/seed
   bun run scripts/portal-demo-setup.mjs >> "$OUT" 2>&1 || echo "[seed] portal-demo-setup uyarı" >> "$OUT"
+  warmup
   npx playwright test "tests/modules/${s}.spec.ts" --project=chromium >> "$OUT" 2>&1
   st=$?
   pass=$(grep -c "passed" "$OUT" || true)
@@ -43,5 +55,5 @@ for s in "${SPECS[@]}"; do
 done
 
 echo "=== ÖZET ===" >> "$OUT"
-if [ ${#FAILED_SUITES[@]} -eq 0 ]; then echo "ALL 17 SUITES GREEN" >> "$OUT"; else printf 'FAILED: %s\n' "${FAILED_SUITES[@]}" >> "$OUT"; fi
+if [ ${#FAILED_SUITES[@]} -eq 0 ]; then echo "ALL SUITES GREEN" >> "$OUT"; else printf 'FAILED: %s\n' "${FAILED_SUITES[@]}" >> "$OUT"; fi
 echo "done $(date +%H:%M:%S)" >> "$OUT"

@@ -20,7 +20,7 @@ export function StatusBadge({ map, value, className }: { map: Record<string, str
   );
 }
 
-export function Chip({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "teal" | "amber" | "rose" | "violet" | "emerald" }) {
+export function Chip({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "teal" | "amber" | "rose" | "violet" | "emerald" | "sky" }) {
   const tones: Record<string, string> = {
     neutral: "bg-muted text-muted-foreground border-border",
     teal: "bg-teal-50 text-teal-700 border-teal-200",
@@ -28,6 +28,7 @@ export function Chip({ children, tone = "neutral" }: { children: ReactNode; tone
     rose: "bg-rose-50 text-rose-700 border-rose-200",
     violet: "bg-violet-50 text-violet-700 border-violet-200",
     emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    sky: "bg-sky-50 text-sky-700 border-sky-200",
   };
   return <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${tones[tone]}`}>{children}</span>;
 }

@@ -95,6 +95,7 @@ export function CustomerDataCard({ onContactsChanged }: { onContactsChanged?: ()
 
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [fileImportOpen, setFileImportOpen] = useState(false);
   const [sendTarget, setSendTarget] = useState<CustomerRow | null>(null);
 
   const load = useCallback(async () => {
@@ -158,6 +159,9 @@ export function CustomerDataCard({ onContactsChanged }: { onContactsChanged?: ()
         <div className="flex flex-wrap items-center gap-1.5">
           <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} disabled={!currentEditionId} title={currentEditionId ? undefined : t("commsCrm.customer.needEdition")}>
             <Icons.UserPlus className="size-3.5" /> {t("commsCrm.customer.importBtn")}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setFileImportOpen(true)}>
+            <Icons.FileUp className="size-3.5" /> {t("ccImport.btn")}
           </Button>
           <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
             <Icons.UserRoundPlus className="size-3.5" /> {t("commsCrm.customer.add")}
@@ -228,6 +232,9 @@ export function CustomerDataCard({ onContactsChanged }: { onContactsChanged?: ()
 
       {/* katılımcılardan aktarım diyaloğu */}
       <ImportParticipantsDialog open={importOpen} onOpenChange={setImportOpen} onImported={reload} />
+
+      {/* dosyadan içe aktarma diyaloğu (xlsx/csv — firma listeleri) */}
+      <ImportContactsDialog open={fileImportOpen} onOpenChange={setFileImportOpen} onImported={reload} />
 
       {/* tekil gönderim diyaloğu */}
       <SingleSendDialog target={sendTarget} onOpenChange={(o) => { if (!o) setSendTarget(null); }} onSent={() => { reload(); bump(); }} />
@@ -424,6 +431,230 @@ function ImportParticipantsDialog({ open, onOpenChange, onImported }: { open: bo
           <Button onClick={() => void run()} disabled={busy}>
             {busy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.UserPlus className="size-3.5" />} {busy ? t("commsCrm.customer.importing") : t("commsCrm.customer.importRun")}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── DOSYADAN İÇE AKTAR (xlsx/csv — firma listeleri / e-posta listeleri) ────
+interface ContactImportPreview {
+  mode: "preview";
+  total: number; valid: number; toCreate: number; toMerge: number;
+  issues: { row: number; name: string; kind: string; reason: string }[];
+  mergePlan: { row: number; incoming: string; existing: string; fills: string[] }[];
+  mapping: Record<string, string>;
+  sample: { row: number; name: string; email: string | null; phone: string | null; company: string | null; action: "create" | "merge" }[];
+}
+interface ContactImportResult { mode: "commit"; created: number; merged: number; skippedFileDup: number; failed: number; total: number; }
+
+const CC_ISSUE_KIND_KEYS: Record<string, string> = { VALIDATION: "issueValidation", DUPLICATE_FILE: "issueDupFile" };
+
+function ImportContactsDialog({ open, onOpenChange, onImported }: { open: boolean; onOpenChange: (o: boolean) => void; onImported: () => void }) {
+  const { t } = useLang();
+  const { toast } = useToast();
+  const [phase, setPhase] = useState<"idle" | "parsing" | "previewing" | "preview" | "committing" | "done">("idle");
+  const [fileName, setFileName] = useState("");
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [preview, setPreview] = useState<ContactImportPreview | null>(null);
+  const [result, setResult] = useState<ContactImportResult | null>(null);
+  const [tag, setTag] = useState("");
+
+  const reset = () => { setPhase("idle"); setRows([]); setPreview(null); setResult(null); setFileName(""); };
+
+  const downloadTemplate = async () => {
+    const XLSX = await import("xlsx");
+    const headers = [t("ccImport.tplName"), t("ccImport.tplEmail"), t("ccImport.tplPhone"), t("ccImport.tplCompany"), t("ccImport.tplTitle"), t("ccImport.tplCity"), t("ccImport.tplCountry"), t("ccImport.tplType"), t("ccImport.tplCategory"), t("ccImport.tplTags"), t("ccImport.tplNotes")];
+    const sample = [
+      ["Ayşe Yılmaz", "ayse@ornek.com", "+905551112233", "Örnek A.Ş.", "Satış Direktörü", "İstanbul", "Türkiye", t("ccImport.kindPerson"), "", "", ""],
+      ["Örnek Holding", "info@ornekholding.com", "+902123334455", "", "", "Ankara", "Türkiye", t("ccImport.kindOrg"), "", "", ""],
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([headers, ...sample]), "Sablon");
+    XLSX.writeFile(wb, "musteri-datas-import-sablonu.xlsx");
+  };
+
+  const handleFile = async (file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: t("ccImport.failTitle"), description: t("ccImport.fileTooBig"), variant: "destructive" });
+      return;
+    }
+    setFileName(file.name); setPhase("parsing");
+    try {
+      const XLSX = await import("xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      if (!ws) throw new Error(t("ccImport.fileEmpty"));
+      const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "", raw: false });
+      if (parsed.length === 0) throw new Error(t("ccImport.fileNoRows"));
+      setRows(parsed);
+      setPhase("previewing");
+      const pv = await apiSend<ContactImportPreview>("/api/customer-contacts/import", "POST", {
+        rows: parsed, tag: tag.trim() || undefined,
+      });
+      setPreview(pv); setPhase("preview");
+    } catch (e) {
+      toast({ title: t("ccImport.failTitle"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+      setPhase("idle");
+    }
+  };
+
+  const commit = async () => {
+    if (rows.length === 0) return;
+    setPhase("committing");
+    try {
+      const res = await apiSend<ContactImportResult>("/api/customer-contacts/import", "POST", {
+        rows, commit: true, tag: tag.trim() || undefined,
+      });
+      setResult(res); setPhase("done");
+      toast({ title: t("ccImport.doneTitle"), description: t("ccImport.doneDesc", { created: res.created, merged: res.merged, skipped: res.skippedFileDup + res.failed }) });
+      onImported();
+    } catch (e) {
+      toast({ title: t("ccImport.failTitle"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+      setPhase("preview");
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o && phase !== "committing") { onOpenChange(false); reset(); } }}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{t("ccImport.title")}</DialogTitle>
+          <DialogDescription>{t("ccImport.desc")}</DialogDescription>
+        </DialogHeader>
+
+        {/* 1) toplu etiket + dosya seçimi + şablon */}
+        {phase === "idle" && (
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="cc-file-imp-tag">{t("ccImport.tag")}</Label>
+              <Input id="cc-file-imp-tag" value={tag} onChange={(e) => setTag(e.target.value)} className="h-8 text-xs" placeholder={t("ccImport.tagPh")} />
+              <p className="text-[10px] text-muted-foreground">{t("ccImport.tagHint")}</p>
+            </div>
+            <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed p-6 text-center transition-colors hover:bg-muted/40">
+              <Icons.FileSpreadsheet className="size-8 text-muted-foreground" aria-hidden />
+              <span className="text-sm font-medium">{t("ccImport.pickFile")}</span>
+              {fileName && <span className="text-xs text-muted-foreground">{fileName}</span>}
+              <input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
+            </label>
+            <div className="flex justify-center">
+              <Button variant="link" size="sm" className="gap-1.5 text-xs" onClick={() => void downloadTemplate()}>
+                <Icons.Download className="size-3.5" aria-hidden />{t("ccImport.template")}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {(phase === "parsing" || phase === "previewing") && (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground" role="status">
+            <Icons.Loader2 className="size-4 animate-spin" aria-hidden />
+            {phase === "parsing" ? t("ccImport.parsing") : t("ccImport.previewing")}
+          </div>
+        )}
+
+        {/* 2) önizleme — sayım çipleri + sorunlar + birleştirme planı + tablo */}
+        {phase === "preview" && preview && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Chip tone="neutral">{t("ccImport.rowsTotal", { n: preview.total })}</Chip>
+              <Chip tone="emerald">{t("ccImport.rowsValid", { n: preview.valid })}</Chip>
+              <Chip tone="teal">{t("ccImport.toCreate", { n: preview.toCreate })}</Chip>
+              <Chip tone="sky">{t("ccImport.toMerge", { n: preview.toMerge })}</Chip>
+              {preview.issues.length > 0 && <Chip tone="rose">{t("ccImport.rowsIssues", { n: preview.issues.length })}</Chip>}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {Object.keys(preview.mapping).length > 0
+                ? t("ccImport.mappedCols", { cols: Object.values(preview.mapping).join(", ") })
+                : t("ccImport.colNotMapped")}
+            </p>
+
+            {preview.issues.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">{t("ccImport.issuesTitle")}</p>
+                <ul className="maven-scroll max-h-40 space-y-1.5 overflow-y-auto rounded-lg border p-2.5">
+                  {preview.issues.slice(0, 100).map((x) => (
+                    <li key={`${x.row}-${x.kind}-${x.reason}`} className="flex items-start gap-2 text-xs">
+                      <Chip tone={x.kind === "DUPLICATE_FILE" ? "amber" : "rose"}>{t(`ccImport.${CC_ISSUE_KIND_KEYS[x.kind] ?? "issueValidation"}`)}</Chip>
+                      <span className="min-w-0 flex-1"><b>{x.name}</b> · {x.reason}</span>
+                      <span className="shrink-0 text-muted-foreground">#{x.row}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {preview.mergePlan.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-xs font-semibold text-sky-700 dark:text-sky-400">{t("ccImport.mergePlanTitle")}</p>
+                <ul className="maven-scroll max-h-32 space-y-1.5 overflow-y-auto rounded-lg border bg-sky-50/40 p-2.5 dark:bg-sky-900/10">
+                  {preview.mergePlan.slice(0, 30).map((m) => (
+                    <li key={`m-${m.row}`} className="text-xs">
+                      <span className="shrink-0 text-muted-foreground">#{m.row} </span>
+                      {t("ccImport.mergeLine", { incoming: m.incoming, existing: m.existing })}
+                      {m.fills.length > 0 && <span className="text-muted-foreground"> · {t("ccImport.mergeFills", { fills: m.fills.join(", ") })}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div>
+              <p className="mb-1.5 text-xs font-semibold text-muted-foreground">{t("ccImport.previewTitle", { n: Math.min(8, preview.total) })}</p>
+              <div className="maven-scroll max-h-52 overflow-y-auto rounded-lg border">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+                    <tr className="text-left text-muted-foreground">
+                      <th className="px-2.5 py-2 font-medium">#</th>
+                      <th className="px-2.5 py-2 font-medium">{t("ccImport.headerName")}</th>
+                      <th className="px-2.5 py-2 font-medium">{t("ccImport.headerEmail")}</th>
+                      <th className="px-2.5 py-2 font-medium">{t("ccImport.headerPhone")}</th>
+                      <th className="px-2.5 py-2 font-medium">{t("ccImport.headerCompany")}</th>
+                      <th className="px-2.5 py-2 font-medium">{t("ccImport.headerAction")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.sample.map((s) => (
+                      <tr key={s.row} className="border-t">
+                        <td className="px-2.5 py-1.5 text-muted-foreground">{s.row}</td>
+                        <td className="max-w-32 truncate px-2.5 py-1.5 font-medium">{s.name}</td>
+                        <td className="max-w-40 truncate px-2.5 py-1.5" dir="ltr">{s.email ?? "—"}</td>
+                        <td className="px-2.5 py-1.5" dir="ltr">{s.phone ?? "—"}</td>
+                        <td className="max-w-32 truncate px-2.5 py-1.5">{s.company ?? "—"}</td>
+                        <td className="px-2.5 py-1.5"><Chip tone={s.action === "merge" ? "sky" : "emerald"}>{s.action === "merge" ? t("ccImport.actionMerge") : t("ccImport.actionCreate")}</Chip></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 3) sonuç */}
+        {phase === "done" && result && (
+          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+            <div className="rounded-lg bg-emerald-50 p-3 dark:bg-emerald-900/20"><p className="text-lg font-semibold tabular-nums">{result.created}</p><p className="text-muted-foreground">{t("ccImport.resCreated")}</p></div>
+            <div className="rounded-lg bg-sky-50 p-3 dark:bg-sky-900/20"><p className="text-lg font-semibold tabular-nums">{result.merged}</p><p className="text-muted-foreground">{t("ccImport.resMerged")}</p></div>
+            <div className="rounded-lg bg-amber-50 p-2 dark:bg-amber-900/20"><p className="text-lg font-semibold tabular-nums">{result.skippedFileDup + result.failed}</p><p className="text-muted-foreground">{t("ccImport.resSkipped")}</p></div>
+          </div>
+        )}
+
+        <DialogFooter>
+          {phase === "preview" && (
+            <Button variant="outline" onClick={reset}>{t("common.cancel")}</Button>
+          )}
+          {phase !== "preview" && phase !== "done" && (
+            <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.close")}</Button>
+          )}
+          {phase === "preview" && (
+            <Button onClick={() => void commit()} disabled={preview?.valid === 0}>
+              <Icons.FileUp className="size-3.5" /> {t("ccImport.commitBtn", { n: preview?.valid ?? 0 })}
+            </Button>
+          )}
+          {phase === "done" && (
+            <Button onClick={() => { onOpenChange(false); reset(); }}>{t("common.close")}</Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

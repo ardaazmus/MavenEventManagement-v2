@@ -47,11 +47,16 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const registrations = await db.registration.findMany({
-      where: { editionId, participationId: participation?.id },
-      include: { category: { select: { name: true, code: true, basePrice: true, currency: true } } },
-      orderBy: { createdAt: "desc" },
-    });
+    // E2E bulgusu (CRON-E2E): participation?.id undefined olduğunda Prisma filtresi
+    // KALKAR ve edisyondaki TÜM kayıtlar bir participation-siz AUTH profiline sızar.
+    // Participation yoksa kayıt listesi boş olmalı (veri ifşası kapatıldı).
+    const registrations = participation
+      ? await db.registration.findMany({
+          where: { editionId, participationId: participation.id },
+          include: { category: { select: { name: true, code: true, basePrice: true, currency: true } } },
+          orderBy: { createdAt: "desc" },
+        })
+      : [];
 
     const registrationIds = registrations.map((r) => r.id);
     const orders = await db.order.findMany({

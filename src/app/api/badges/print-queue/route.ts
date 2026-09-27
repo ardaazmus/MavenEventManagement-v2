@@ -61,6 +61,8 @@ export async function GET(req: NextRequest) {
         category: reg?.category?.name ?? null,
         roles: b.participation.roleAssignments.map((r) => r.role).filter(Boolean),
         registrationStatus: reg?.status ?? null,
+        reprintCount: b.reprintCount ?? 0,
+        lastReprintReason: b.lastReprintReason ?? null,
       };
     });
 
@@ -96,9 +98,10 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { ids?: string[]; action?: string };
+    const body = (await req.json()) as { ids?: string[]; action?: string; reason?: string };
     const ids = (body.ids ?? []).filter(Boolean);
     const action = body.action ?? "PRINT";
+    const reason = body.reason || null;
     if (ids.length === 0) return NextResponse.json({ error: "Yaka kartı seçilmedi" }, { status: 422 });
     if (!["PRINT", "ISSUE", "REPRINT"].includes(action)) {
       return NextResponse.json({ error: "Geçersiz aksiyon (PRINT|ISSUE|REPRINT)" }, { status: 400 });
@@ -134,7 +137,7 @@ export async function POST(req: NextRequest) {
           ? { status: "PRINTED", printedAt: now }
           : action === "ISSUE"
             ? { status: "ISSUED", issuedAt: now }
-            : { status: "REPRINTED", printedAt: now };
+            : { status: "REPRINTED", printedAt: now, reprintCount: { increment: 1 }, lastReprintReason: reason };
       await db.badgeInstance.update({ where: { id: b.id }, data });
       results.push({ id: b.id, ok: true });
     }

@@ -1,87 +1,90 @@
-// ─── Maven Katılımcı Portalı — Service Worker (PWA shell) ────────────────────
-// Strateji: API her zaman ağ (canlı veri; hata → 503 JSON), statik varlıklar
-// cache-first + arka plan güncellemesi, gezinme istekleri çevrimdışında
-// offline.html'e düşer (PWA offline fallback). Kanca sürüm anahtarı CACHE
-// adında — güncelleme dağıtımında ad değişirse eski önbellek activate'te
-// temizlenir.
-//
-// Güncelleme akışı (CRON-8 — kullanıcı kontrollü): yeni SW "installed" durumunda
-// BEKLER (skipWaiting YOK); sayfa "Yeni sürüm hazır — Yenile" toast'u gösterir,
-// kullanıcı onaylayınca SKIP_WAITING mesajı gelir → activate + controllerchange
-// → sayfa yeniden yüklenir. İlk kurulumda activate'teki clients.claim() devreyi
-// sorunsuz alır (sayfa reload'u tetiklemez).
-const CACHE = "maven-portal-v3";
-const SHELL = ["/portal-icon-192.png", "/portal-icon-512.png", "/manifest.webmanifest", "/offline.html"];
+/**
+ * Maven Event Management Portal Service Worker
+ * Strategies: StaleWhileRevalidate for assets, NetworkFirst for portal data
+ */
 
+const CACHE_NAME = "maven-pwa-cache-v1";
+const STATIC_ASSETS = [
+  "/portal",
+  "/manifest.json",
+  "/favicon.ico"
+];
+
+// 1. Install & Precaching
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(STATIC_ASSETS);
+    }).then(() => self.skipWaiting())
+  );
 });
 
+// 2. Activate & Stale Cache Cleanup
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim()),
-  );
-});
-
-// sayfa onaylı güncelleme: "Yenile" toast'u SKIP_WAITING gönderir (CRON-8)
-self.addEventListener("message", (event) => {
-  if (event.data === "SKIP_WAITING") self.skipWaiting();
-});
-
-self.addEventListener("fetch", (event) => {
-  const req = event.request;
-  if (req.method !== "GET") return;
-  const url = new URL(req.url);
-  if (url.origin !== location.origin) return;
-
-  // API: canlı veri — her zaman ağ; çevrimdışında net 503 JSON
-  if (url.pathname.startsWith("/api/")) {
-    event.respondWith(
-      fetch(req).catch(
-        () =>
-          new Response(JSON.stringify({ error: "offline" }), {
-            status: 503,
-            headers: { "Content-Type": "application/json" },
-          }),
-      ),
-    );
-    return;
-  }
-
-  // gezinme (SPA kökü): önce ağ; çevrimdışı → offline fallback sayfası
-  if (req.mode === "navigate") {
-    event.respondWith(
-      fetch(req).catch(async () => (await caches.match("/offline.html")) || Response.error()),
-    );
-    return;
-  }
-
-  // statik: cache-first + arka plan yenileme
-  event.respondWith(
-    caches.match(req).then((hit) => {
-      const net = fetch(req)
-        .then((res) => {
-          if (res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone()));
-          return res;
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.map((key) => {
+          if (key !== CACHE_NAME) {
+            return caches.delete(key);
+          }
         })
-        .catch(() => hit);
-      return hit || net;
-    }),
+      );
+    }).then(() => self.clients.claim())
   );
 });
 
-// bildirim tıklaması → uygulamayı odakla/aç
-self.addEventListener("notificationclick", (event) => {
-  event.notification.close();
-  event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
-      for (const client of list) {
-        if ("focus" in client) return client.focus();
-      }
-      return self.clients.openWindow("/");
-    }),
+// 3. Fetch Routing Strategy
+self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+
+  // Skip non-GET requests (they pass directly to server or IndexedDB offline-queue)
+  if (event.request.method !== "GET") {
+    return;
+  }
+
+  // Next.js static assets -> StaleWhileRevalidate
+  if (url.pathname.startsWith("/_next/static/") || url.pathname.match(/\.(png|jpg|jpeg|svg|woff2|css|js)$/)) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) => {
+        return cache.match(event.request).then((cachedResponse) => {
+          const fetchPromise = fetch(event.request).then((networkResponse) => {
+            if (networkResponse.ok) {
+              cache.put(event.request, networkResponse.clone());
+            }
+            return networkResponse;
+          }).catch(() => cachedResponse);
+
+          return cachedResponse || fetchPromise;
+        });
+      })
+    );
+    return;
+  }
+
+  // HTML and dynamic API -> NetworkFirst with Cache Fallback
+  event.respondWith(
+    fetch(event.request)
+      .then((networkResponse) => {
+        if (networkResponse.ok) {
+          const cloned = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, cloned);
+          });
+        }
+        return networkResponse;
+      })
+      .catch(() => {
+        return caches.match(event.request).then((cached) => {
+          if (cached) return cached;
+          if (event.request.mode === "navigate") {
+            return caches.match("/portal");
+          }
+          return new Response(JSON.stringify({ error: "Offline mode active" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" }
+          });
+        });
+      })
   );
 });
-

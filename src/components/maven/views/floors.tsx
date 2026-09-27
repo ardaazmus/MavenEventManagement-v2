@@ -142,6 +142,37 @@ export function FloorsView() {
       .finally(() => setBusy(false));
   };
 
+  const holdWithTtl = (minutes = 15) => {
+    if (!selected) return;
+    setBusy(true);
+    const expiresAt = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+    apiSend(`/api/booth-units/${selected.id}`, "PUT", {
+      status: "HELD",
+      optionExpiresAt: expiresAt,
+    })
+      .then(() => {
+        toast({ title: "Stant Geçici Tutuldu", description: `${selected.code} için ${minutes} dakikalık TTL kilidi başlatıldı.` });
+        reload(); bump();
+      })
+      .catch((e) => toast({ title: "İşlem Başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" }))
+      .finally(() => setBusy(false));
+  };
+
+  const confirmSale = () => {
+    if (!selected) return;
+    setBusy(true);
+    apiSend(`/api/booth-units/${selected.id}`, "PUT", {
+      status: "CONTRACTED",
+      optionExpiresAt: null,
+    })
+      .then(() => {
+        toast({ title: "Stant Satışı Kesinleşti", description: `${selected.code} sözleşmeli olarak kaydedildi.` });
+        reload(); bump();
+      })
+      .catch((e) => toast({ title: "İşlem Başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" }))
+      .finally(() => setBusy(false));
+  };
+
   const autoArrange = () => {
     if (unplaced.length === 0) {
       toast({ title: t("floors.noUnplaced"), description: t("floors.allPlaced") });
@@ -364,14 +395,59 @@ export function FloorsView() {
                 </div>
 
                 {/* durum eylemleri */}
-                <div>
+                <div className="space-y-2">
                   <Label className="text-[11px] text-muted-foreground">{t("floors.changeStatus")}</Label>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1.5">
                     {["AVAILABLE", "HELD", "BLOCKED", "RELEASED"].map((s) => (
                       <Button key={s} size="sm" variant={selected.status === s ? "default" : "outline"} className="h-7 px-2.5 text-[11px]" disabled={busy || selected.status === s} onClick={() => setStatus(s)}>
                         {BOOTH_STATUS[s]}
                       </Button>
                     ))}
+                  </div>
+
+                  {/* 15 dk TTL ve Satış Butonları */}
+                  <div className="flex flex-wrap gap-2 pt-1 border-t">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                      onClick={() => holdWithTtl(15)}
+                      disabled={busy}
+                    >
+                      <Icons.Clock className="size-3.5 mr-1" /> 15 Dk TTL Tut
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-8 text-xs bg-emerald-600 text-white hover:bg-emerald-700"
+                      onClick={confirmSale}
+                      disabled={busy}
+                    >
+                      <Icons.CheckCircle2 className="size-3.5 mr-1" /> Satışı Kesinleştir
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Stant Altyapı ve Gereksinimler (kW, Su, Mobilya) */}
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-2 text-xs">
+                  <span className="font-semibold text-foreground flex items-center gap-1.5">
+                    <Icons.Zap className="size-3.5 text-amber-500" />
+                    Stant Altyapı & Teknik Gereksinimler
+                  </span>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="rounded border bg-background p-2">
+                      <span className="text-muted-foreground block text-[10px]">Elektrik Bağlantısı</span>
+                      <span className="font-medium text-foreground">{selected.sizeSqm > 20 ? "10 kW Trifaze" : "3 kW Monofaze"}</span>
+                    </div>
+                    <div className="rounded border bg-background p-2">
+                      <span className="text-muted-foreground block text-[10px]">Su & Gider</span>
+                      <span className="font-medium text-foreground">{selected.sizeSqm > 30 ? "Var (Hazır)" : "Talep Üzerine"}</span>
+                    </div>
+                    <div className="rounded border bg-background p-2 col-span-2">
+                      <span className="text-muted-foreground block text-[10px]">Dahil Donanım</span>
+                      <span className="font-medium text-foreground">
+                        {selected.type === "SHELL_SCHEME" ? "Masa, 2 Sandalye, Spot Aydınlatma, Alınlık Yazısı" : "Ham Alan (Özel Stand Konstrüksiyonu)"}
+                      </span>
+                    </div>
                   </div>
                 </div>
 

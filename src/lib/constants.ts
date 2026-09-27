@@ -1,6 +1,5 @@
 // Maven Event Management — Durum eksenleri ve modül sabitleri
 // Kaynak: Ortak Organizasyonel Mimari §10 (çok eksenli durum modeli), §6 (capabilities), §53 (menü)
-import { tStatus } from "@/lib/i18n"; // TASK-A F8: dil-duyarlı etiket köprüsü
 
 // ─── Durum eksenleri (§10) — birbirine karıştırılmayan eksenler ────────────
 
@@ -507,12 +506,10 @@ export function roleCanSee(mod: Pick<ModuleDef, "roles">, role: string | null | 
 
 // ─── Yardımcılar ────────────────────────────────────────────────────────────
 
-// TASK-A F8: label() dil-duyarlı — önce status.<key> sözlük girdisi (tQuiet, uyarısız),
-// yoksa mevcut TR etiket (davranış değişmez). Döngüsel içe aktarma yok: i18n yalnız JSON
-// sözlüklerini bilir; tQuiet saf fonksiyondur.
+// TASK-A F8: label() harita etiketini döner (saf fonksiyon, sunucu-güvenli)
 export function label(map: Record<string, string>, key?: string | null): string {
   if (!key) return "—";
-  return tStatus(map[key], key);
+  return map[key] ?? key;
 }
 
 // F6: fmtMoney MINOR unit (kuruş) alır — ₺1.234,56 biçiminde gösterir.

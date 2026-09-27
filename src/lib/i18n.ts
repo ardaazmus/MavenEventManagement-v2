@@ -1,3 +1,4 @@
+"use client";
 // ─── Tek-dosyalı dil çözümü (Faz E) ─────────────────────────────────────────────
 // next-intl KULLANILMAZ. Tek kaynak: src/i18n/tr.json (+ en.json).
 // t(key): nokta-yollu anahtar arar; eksik anahtar TR'ye düşer + konsol uyarısı

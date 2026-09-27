@@ -29,6 +29,8 @@ import { cn } from "@/lib/utils";
 import { fontStackFor, loadGoogleFont } from "@/lib/portal-fonts";
 import dynamic from "next/dynamic";
 import { resolvePortalIcon } from "@/components/maven/portal-icon-library";
+import { haptic } from "@/lib/haptic";
+import { useSwipeBack } from "@/hooks/useSwipeBack";
 // PublicFormPage artık STATİK import EDİLMEZ — aşağıda dynamic (CRON-10 lazy chunk)
 
 // CRON-10: form motoru ağır bir pakettir — portala STATİK değil, form açılınca
@@ -528,6 +530,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   const [content, setContent] = useState<PortalContent | null>(null);
   const [kind, setKind] = useState<"GUEST" | "AUTH" | null>(null);
   const [screen, setScreen] = useState("home");
+  useSwipeBack({ onSwipeBack: () => setScreen("home"), enabled: screen !== "home" });
   const [formRef, setFormRef] = useState<string | null>(null); // portal-İÇİ form ekranı (?form= yerine)
   const [fatal, setFatal] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState<string | null>(null);
@@ -912,6 +915,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   };
 
   const gotoScreen = (s: string) => {
+    haptic.selection();
     trackClick(s);
     setScreen(s);
     window.scrollTo({ top: 0 });
@@ -1290,7 +1294,10 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             return (
               <button
                 key={n.key}
-                onClick={() => setScreen(n.key)}
+                onClick={() => {
+                  haptic.selection();
+                  setScreen(n.key);
+                }}
                 className={cn(
                   "flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium transition-[color,background-color,transform] active:scale-95 min-h-[52px]",
                   active ? "text-primary" : "text-muted-foreground hover:text-foreground",

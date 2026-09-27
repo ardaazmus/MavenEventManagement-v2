@@ -24,6 +24,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useLang, t, tLabel } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
+import { InlineEditableCell, QuickAddRow, BulkPasteDialog, CustomFieldsRenderer } from "@/components/maven/data-tools";
+
 
 interface PersonRow {
   id: string; firstName: string; lastName: string; email?: string | null; phone?: string | null; company?: string | null; title?: string | null; city?: string | null; country?: string | null; status: string; mergedIntoId?: string | null;
@@ -928,10 +930,95 @@ export function PeopleView() {
     }
   };
 
+  const [viewMode, setViewMode] = useState<"list" | "grid">("grid");
+  const [bulkPasteOpen, setBulkPasteOpen] = useState(false);
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, any>>({});
+
+  const personColumnsForPaste = [
+    { key: "firstName", label: "Ad", synonyms: ["first name", "name", "isim", "ad"], required: true },
+    { key: "lastName", label: "Soyad", synonyms: ["last name", "surname", "soyad"], required: true },
+    { key: "email", label: "E-posta", synonyms: ["e-mail", "mail", "eposta", "email address"] },
+    { key: "phone", label: "Telefon", synonyms: ["tel", "gsm", "mobile", "phone"] },
+    { key: "company", label: "Kurum / Şirket", synonyms: ["company", "organization", "firma", "sirket", "kurum"] },
+    { key: "title", label: "Ünvan", synonyms: ["title", "unvan", "position", "gorev"] },
+    { key: "city", label: "Şehir", synonyms: ["city", "sehir", "il"] },
+    { key: "country", label: "Ülke", synonyms: ["country", "ulke"] },
+  ];
+
+  const handleInlineSave = async (personId: string, field: string, val: string): Promise<boolean> => {
+    try {
+      await apiSend(`/api/people/${personId}`, "PUT", { [field]: val || null });
+      toast({ title: t("people.person.updated"), description: `${field}: ${val}` });
+      reload();
+      return true;
+    } catch (e: any) {
+      toast({ title: t("common.error"), description: e.message || "Güncelleme başarısız", variant: "destructive" });
+      return false;
+    }
+  };
+
+  const handleQuickAdd = async (rowData: Record<string, string>): Promise<boolean> => {
+    if (!rowData.firstName?.trim() || !rowData.lastName?.trim()) {
+      toast({ title: t("common.error"), description: t("people.person.fieldRequired"), variant: "destructive" });
+      return false;
+    }
+    try {
+      await apiSend("/api/people", "POST", {
+        firstName: rowData.firstName.trim(),
+        lastName: rowData.lastName.trim(),
+        email: rowData.email?.trim() || null,
+        company: rowData.company?.trim() || null,
+        title: rowData.title?.trim() || null,
+        phone: rowData.phone?.trim() || null,
+        tenantId: tenant?.id,
+        status: "ACTIVE",
+      });
+      toast({ title: t("people.person.created"), description: `${rowData.firstName} ${rowData.lastName}` });
+      reload();
+      bump();
+      return true;
+    } catch (e: any) {
+      toast({ title: t("common.error"), description: e.message || "Eklenemedi", variant: "destructive" });
+      return false;
+    }
+  };
+
+  const handleBulkImport = async (parsedRows: Record<string, string>[]) => {
+    let successCount = 0;
+    for (const r of parsedRows) {
+      if (!r.firstName?.trim() && !r.lastName?.trim()) continue;
+      try {
+        await apiSend("/api/people", "POST", {
+          firstName: r.firstName?.trim() || "Katılımcı",
+          lastName: r.lastName?.trim() || "-",
+          email: r.email?.trim() || null,
+          phone: r.phone?.trim() || null,
+          company: r.company?.trim() || null,
+          title: r.title?.trim() || null,
+          city: r.city?.trim() || null,
+          country: r.country?.trim() || null,
+          tenantId: tenant?.id,
+          status: "ACTIVE",
+        });
+        successCount++;
+      } catch (err) {
+        console.error("Bulk import row error:", err);
+      }
+    }
+    toast({ title: "Toplu İçe Aktarım Tamamlandı", description: `${successCount} kişi başarıyla sisteme aktarıldı.` });
+    reload();
+    bump();
+  };
+
   const defaultForm = { firstName: "", lastName: "", email: "", phone: "", company: "", title: "", city: "", country: "", bio: "", linkedin: "", status: "ACTIVE", parentPersonId: "none", relationType: "SPOUSE" };
 
-  const openCreate = () => { setEditingPerson(null); setForm(defaultForm); setCreateOpen(true); };
-  const openEdit = (p: PersonRow) => {
+  const openCreate = () => {
+    setEditingPerson(null);
+    setForm(defaultForm);
+    setCustomFieldValues({});
+    setCreateOpen(true);
+  };
+  const openEdit = async (p: PersonRow) => {
     setEditingPerson(p);
     setForm({
       firstName: p.firstName, lastName: p.lastName, email: p.email ?? "", phone: p.phone ?? "",
@@ -939,6 +1026,12 @@ export function PeopleView() {
       bio: p.bio ?? "", linkedin: p.linkedin ?? "", status: p.status === "PASSIVE" ? "PASSIVE" : "ACTIVE",
       parentPersonId: p.parentPersonId ?? "none", relationType: p.relationType ?? "SPOUSE",
     });
+    try {
+      const res = await apiGet<{ values: Record<string, any> }>(`/api/custom-fields/batch?entityType=PERSON&entityId=${p.id}`);
+      setCustomFieldValues(res?.values || {});
+    } catch {
+      setCustomFieldValues({});
+    }
     setCreateOpen(true);
   };
 
@@ -953,16 +1046,32 @@ export function PeopleView() {
       relationType: form.parentPersonId === "none" ? null : form.relationType,
     };
     try {
+      let savedId = editingPerson?.id;
       if (editingPerson) {
         await apiSend(`/api/people/${editingPerson.id}`, "PUT", payload);
         toast({ title: t("people.person.updated"), description: `${form.firstName} ${form.lastName}` });
       } else {
-        await apiSend("/api/people", "POST", { ...payload, tenantId: tenant?.id });
+        const created = await apiSend<{ id: string }>("/api/people", "POST", { ...payload, tenantId: tenant?.id });
+        savedId = created?.id;
         toast({ title: t("people.person.created"), description: t("people.person.createdDesc", { name: `${form.firstName} ${form.lastName}` }) });
       }
+
+      if (savedId && Object.keys(customFieldValues).length > 0) {
+        try {
+          await fetch("/api/custom-fields/batch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entityType: "PERSON", entityId: savedId, values: customFieldValues }),
+          });
+        } catch (cfErr) {
+          console.error("Custom fields save error:", cfErr);
+        }
+      }
+
       setCreateOpen(false);
       setForm(defaultForm);
       setEditingPerson(null);
+      setCustomFieldValues({});
       reload(); bump();
       // 360 çekmecesi açıksa veriyi tazele (düzenleme buradan yapılmış olabilir)
       if (selected?.id) {
@@ -971,6 +1080,7 @@ export function PeopleView() {
     } catch (e) {
       toast({ title: t("common.error"), description: e instanceof Error ? e.message : t("people.person.saveFailed"), variant: "destructive" });
     }
+
   };
 
   // Birleştirme diyaloğunu aç — varsayılan hedef: daha eski kayıt (API'nin olderId önerisi)
@@ -1042,7 +1152,36 @@ export function PeopleView() {
             <span className="inline-flex items-center gap-1"><Icons.CheckCircle2 className="size-3" aria-hidden />{t("people.dup.none")}</span>
           </Chip>
         )}
+        <div className="flex items-center rounded-lg border bg-muted/30 p-0.5">
+          <Button
+            variant={viewMode === "grid" ? "default" : "ghost"}
+            size="sm"
+            className="h-8 px-2.5 text-xs gap-1.5"
+            onClick={() => setViewMode("grid")}
+            title="Excel / E-Tablo Tablo Görünümü"
+          >
+            <Icons.Table className="size-3.5" /> Tablo
+          </Button>
+          <Button
+            variant={viewMode === "list" ? "default" : "ghost"}
+            size="sm"
+            className="h-8 px-2.5 text-xs gap-1.5"
+            onClick={() => setViewMode("list")}
+            title="Kart / Liste Görünümü"
+          >
+            <Icons.LayoutList className="size-3.5" /> Liste
+          </Button>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setBulkPasteOpen(true)}
+          className="h-9 gap-1 text-xs"
+        >
+          <Icons.ClipboardPaste className="size-3.5" /> Toplu Yapıştır
+        </Button>
         <Input placeholder={t("people.searchPh")} value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />
+
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild><Button size="sm" onClick={openCreate}><Icons.UserPlus className="size-4" /> {t("people.person.add")}</Button></DialogTrigger>
           <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-md">
@@ -1136,10 +1275,29 @@ export function PeopleView() {
                 <p className="mt-1 text-[11px] text-muted-foreground">{t("people.person.relationHint")}</p>
               </div>
             </div>
-            <DialogFooter><Button onClick={savePerson} disabled={!form.firstName || !form.lastName}>{editingPerson ? t("people.save") : t("people.create")}</Button></DialogFooter>
+
+            {/* Dinamik Ek Alanlar (Custom Fields EAV) */}
+            <CustomFieldsRenderer
+              entityType="PERSON"
+              editionId={currentEditionId ?? undefined}
+              values={customFieldValues}
+              onChange={(k, v) => setCustomFieldValues((prev) => ({ ...prev, [k]: v }))}
+              allFormData={form}
+            />
+
+            <DialogFooter className="mt-3"><Button onClick={savePerson} disabled={!form.firstName || !form.lastName}>{editingPerson ? t("people.save") : t("people.create")}</Button></DialogFooter>
           </DialogContent>
         </Dialog>
       </PageHeader>
+
+      <BulkPasteDialog
+        open={bulkPasteOpen}
+        onOpenChange={setBulkPasteOpen}
+        targetEntityName="Kişiler (CRM)"
+        availableColumns={personColumnsForPaste}
+        onImport={handleBulkImport}
+      />
+
 
       <Tabs defaultValue="people">
         <TabsList className="h-auto">
@@ -1189,33 +1347,98 @@ export function PeopleView() {
           {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : data.length === 0 ? (
             <EmptyState title={t("people.emptyTitle")} desc={t("people.emptyDesc")} />
           ) : (
-            <div className="grid gap-2">
-              {data.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => open360(p)}
-                  onDoubleClick={() => openEdit(p)}
-                  title={t("people.person.dblClickTip")}
-                  className="flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border bg-card p-3 text-left transition hover:border-primary/40 hover:shadow-sm"
-                >
-                  {p.photoUrl ? (
-                    <img src={p.photoUrl} alt={t("people.photoAlt", { name: `${p.firstName} ${p.lastName}` })} className="size-9 shrink-0 rounded-full border object-cover" />
-                  ) : (
-                    <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
-                      {p.firstName[0]}{p.lastName[0]}
-                    </span>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {p.firstName} {p.lastName}
-                      {p.status === "MERGED" && <Chip tone="rose">{t("people.mergedChip")}</Chip>}
-                      {p.parentPersonId && <Chip tone="violet">{t("people.dependentChip")}</Chip>}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground">{p.title ? `${p.title} · ` : ""}{p.company ?? "—"} · {p.email ?? t("people.noEmail")}</p>
+            <div className="space-y-3">
+              {viewMode === "grid" ? (
+                <div className="rounded-xl border bg-card overflow-hidden shadow-xs">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-muted/60 border-b font-medium text-muted-foreground">
+                        <tr>
+                          <th className="p-2.5 w-10 text-center">#</th>
+                          <th className="p-2.5">Ad</th>
+                          <th className="p-2.5">Soyad</th>
+                          <th className="p-2.5">E-posta</th>
+                          <th className="p-2.5">Telefon</th>
+                          <th className="p-2.5">Kurum / Şirket</th>
+                          <th className="p-2.5">Ünvan</th>
+                          <th className="p-2.5 w-24 text-center">360° / İşlem</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {data.map((p, idx) => (
+                          <tr key={p.id} className="hover:bg-muted/20 transition-colors">
+                            <td className="p-2 text-center text-muted-foreground font-mono text-[11px]">{idx + 1}</td>
+                            <td className="p-2 font-medium">
+                              <InlineEditableCell value={p.firstName} onSave={(val) => handleInlineSave(p.id, "firstName", val)} />
+                            </td>
+                            <td className="p-2 font-medium">
+                              <InlineEditableCell value={p.lastName} onSave={(val) => handleInlineSave(p.id, "lastName", val)} />
+                            </td>
+                            <td className="p-2">
+                              <InlineEditableCell value={p.email} onSave={(val) => handleInlineSave(p.id, "email", val)} placeholder="E-posta" />
+                            </td>
+                            <td className="p-2">
+                              <InlineEditableCell value={p.phone} onSave={(val) => handleInlineSave(p.id, "phone", val)} placeholder="Telefon" />
+                            </td>
+                            <td className="p-2">
+                              <InlineEditableCell value={p.company} onSave={(val) => handleInlineSave(p.id, "company", val)} placeholder="Kurum" />
+                            </td>
+                            <td className="p-2">
+                              <InlineEditableCell value={p.title} onSave={(val) => handleInlineSave(p.id, "title", val)} placeholder="Ünvan" />
+                            </td>
+                            <td className="p-2 text-center">
+                              <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] gap-1" onClick={() => open360(p)}>
+                                <Icons.Eye className="size-3" /> 360°
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                  <Icons.ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                </button>
-              ))}
+                  <QuickAddRow
+                    columns={[
+                      { key: "firstName", placeholder: "Ad *" },
+                      { key: "lastName", placeholder: "Soyad *" },
+                      { key: "email", placeholder: "E-posta" },
+                      { key: "phone", placeholder: "Telefon" },
+                      { key: "company", placeholder: "Kurum / Şirket" },
+                      { key: "title", placeholder: "Ünvan" },
+                    ]}
+                    onAdd={handleQuickAdd}
+                    buttonLabel="Hızlı Kişi Ekle (Enter)"
+                  />
+                </div>
+              ) : (
+                <div className="grid gap-2">
+                  {data.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => open360(p)}
+                      onDoubleClick={() => openEdit(p)}
+                      title={t("people.person.dblClickTip")}
+                      className="flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border bg-card p-3 text-left transition hover:border-primary/40 hover:shadow-sm"
+                    >
+                      {p.photoUrl ? (
+                        <img src={p.photoUrl} alt={t("people.photoAlt", { name: `${p.firstName} ${p.lastName}` })} className="size-9 shrink-0 rounded-full border object-cover" />
+                      ) : (
+                        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                          {p.firstName[0]}{p.lastName[0]}
+                        </span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">
+                          {p.firstName} {p.lastName}
+                          {p.status === "MERGED" && <Chip tone="rose">{t("people.mergedChip")}</Chip>}
+                          {p.parentPersonId && <Chip tone="violet">{t("people.dependentChip")}</Chip>}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">{p.title ? `${p.title} · ` : ""}{p.company ?? "—"} · {p.email ?? t("people.noEmail")}</p>
+                      </div>
+                      <Icons.ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                    </button>
+                  ))}
+                </div>
+              )}
               {/* TASK-A F6: kesintisiz yükleme */}
               {peopleMore?.hasMore && (
                 <div className="flex items-center justify-center pt-1">
@@ -1226,6 +1449,7 @@ export function PeopleView() {
                 </div>
               )}
             </div>
+
           )}
 
           {/* ── Birleştirme onay diyaloğu — hedef seçimi + çakışma çözümü (R7) ── */}
@@ -1750,7 +1974,65 @@ export function OrganizationsView() {
   const [editingOrg, setEditingOrg] = useState<OrgRow | null>(null);
   const [form, setForm] = useState({ name: "", type: "COMPANY", city: "", website: "", generalEmail: "", address: "", description: "", locationNote: "" });
 
+  const [bulkPasteOpen, setBulkPasteOpen] = useState(false);
+
+  const orgColumnsForPaste = [
+    { key: "name", label: "Kurum Adı", synonyms: ["company", "organization", "firma", "kurum", "ad"], required: true },
+    { key: "type", label: "Tür", synonyms: ["type", "tur", "kategori"] },
+    { key: "city", label: "Şehir", synonyms: ["city", "sehir", "il"] },
+    { key: "generalEmail", label: "Genel E-posta", synonyms: ["email", "e-posta", "eposta", "mail"] },
+    { key: "website", label: "Web Sitesi", synonyms: ["website", "web", "url"] },
+  ];
+
+  const handleQuickAddOrg = async (rowData: Record<string, string>): Promise<boolean> => {
+    if (!rowData.name?.trim()) {
+      toast({ title: t("common.error"), description: "Kurum adı zorunludur", variant: "destructive" });
+      return false;
+    }
+    try {
+      await apiSend("/api/organizations", "POST", {
+        name: rowData.name.trim(),
+        type: rowData.type?.trim() || "COMPANY",
+        city: rowData.city?.trim() || null,
+        generalEmail: rowData.generalEmail?.trim() || null,
+        website: rowData.website?.trim() || null,
+        tenantId: tenant?.id,
+      });
+      toast({ title: t("people.org.created"), description: rowData.name });
+      reload();
+      bump();
+      return true;
+    } catch (e: any) {
+      toast({ title: t("common.error"), description: e.message || "Eklenemedi", variant: "destructive" });
+      return false;
+    }
+  };
+
+  const handleBulkImportOrg = async (parsedRows: Record<string, string>[]) => {
+    let successCount = 0;
+    for (const r of parsedRows) {
+      if (!r.name?.trim()) continue;
+      try {
+        await apiSend("/api/organizations", "POST", {
+          name: r.name.trim(),
+          type: r.type?.trim() || "COMPANY",
+          city: r.city?.trim() || null,
+          generalEmail: r.generalEmail?.trim() || null,
+          website: r.website?.trim() || null,
+          tenantId: tenant?.id,
+        });
+        successCount++;
+      } catch (err) {
+        console.error("Org import error:", err);
+      }
+    }
+    toast({ title: "Toplu İçe Aktarım Tamamlandı", description: `${successCount} kurum aktarıldı.` });
+    reload();
+    bump();
+  };
+
   const { data, error, reload, loading } = useApi<OrgRow[]>(() => listEntity<OrgRow>("organizations", { q }), [q, refreshKey]);
+
 
   // Faz E: teslim + sipariş durum map'leri (render başına bir kez)
   const deliverableStatusMap = Object.fromEntries(Object.entries(DELIVERABLE_MAP).map(([k]) => [k, tLabel(DELIVERABLE_MAP, k)]));
@@ -1812,8 +2094,17 @@ export function OrganizationsView() {
   return (
     <div>
       <PageHeader title={t("people.orgTitle")} desc={t("people.orgDesc")}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setBulkPasteOpen(true)}
+          className="h-9 gap-1 text-xs"
+        >
+          <Icons.ClipboardPaste className="size-3.5" /> Toplu Yapıştır
+        </Button>
         <Input placeholder={t("people.org.searchPh")} value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+
           <DialogTrigger asChild><Button size="sm" onClick={openCreate}><Icons.Building2 className="size-4" /> {t("people.org.add")}</Button></DialogTrigger>
           <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-lg">
             <DialogHeader>
@@ -1878,6 +2169,15 @@ export function OrganizationsView() {
         </Dialog>
       </PageHeader>
 
+      <BulkPasteDialog
+        open={bulkPasteOpen}
+        onOpenChange={setBulkPasteOpen}
+        targetEntityName="Kurumlar / Şirketler"
+        availableColumns={orgColumnsForPaste}
+        onImport={handleBulkImportOrg}
+      />
+
+
       {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
           {(data ?? []).map((o, i) => (
@@ -1906,8 +2206,22 @@ export function OrganizationsView() {
               </div>
             </button>
           ))}
+          <div className="col-span-full mt-2">
+            <QuickAddRow
+              columns={[
+                { key: "name", placeholder: "Kurum / Şirket Adı *" },
+                { key: "type", placeholder: "Tür (COMPANY, AGENCY, PCO...)" },
+                { key: "city", placeholder: "Şehir" },
+                { key: "generalEmail", placeholder: "Genel E-posta" },
+                { key: "website", placeholder: "Web Sitesi" },
+              ]}
+              onAdd={handleQuickAddOrg}
+              buttonLabel="Hızlı Kurum Ekle (Enter)"
+            />
+          </div>
         </div>
       )}
+
 
       {/* Kurum 360 (§55) */}
       <Sheet open={Boolean(selected)} onOpenChange={(o) => !o && setSelected(null)}>

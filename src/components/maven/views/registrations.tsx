@@ -16,6 +16,10 @@ import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLang } from "@/lib/i18n";
 
+import { InlineEditableCell, QuickAddRow, BulkPasteDialog, CustomFieldsRenderer } from "@/components/maven/data-tools";
+import { eventBus } from "@/lib/events";
+
+
 interface RegRow {
   id: string; confirmationNo: string; status: string; source: string; fundingSource: string; submittedAt?: string | null; decidedAt?: string | null; notes?: string | null;
   category?: { id: string; name: string; basePrice: number; currency: string } | null;
@@ -60,7 +64,8 @@ export function RegistrationsView() {
   const [decideTarget, setDecideTarget] = useState<{ reg: RegRow; decision: "CONFIRMED" | "REJECTED" | "CANCELLED" } | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"list" | "waitlist" | "lcv">("list");
+  const [tab, setTab] = useState<"list" | "agency" | "waitlist" | "lcv">("list");
+
 
   // ── Manuel kayıt + içe/dışa aktarma (form-dışı kayıt yüzeyleri) ──
   const [manualOpen, setManualOpen] = useState(false);
@@ -166,9 +171,11 @@ export function RegistrationsView() {
       <PageHeader title={t("registrations.title")} desc="Kategori → form → onay akışı; kayıt/ödeme/katılım üç ayrı eksen">
         <div className="flex rounded-lg border p-0.5">
           <button onClick={() => setTab("list")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Kayıtlar</button>
+          <button onClick={() => setTab("agency")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "agency" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Acente Konsolu</button>
           <button onClick={() => setTab("waitlist")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "waitlist" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Bekleme</button>
           <button onClick={() => setTab("lcv")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "lcv" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>LCV / Davetler</button>
         </div>
+
       </PageHeader>
 
       {tab === "list" ? (
@@ -304,7 +311,14 @@ export function RegistrationsView() {
             </div>
           )}
         </>
+      ) : tab === "agency" ? (
+        <AgencyGroupTab
+          editionId={currentEditionId}
+          categories={categories ?? []}
+          onSuccess={() => { bump(); reload(); setTab("list"); }}
+        />
       ) : tab === "waitlist" ? (
+
         <WaitlistTab editionId={currentEditionId} categories={categories ?? []} onChanged={() => { bump(); }} />
       ) : (
         <SectionCard title="LCV — Davet Listesi Yönetimi" desc="Davet bir kayıt yerine geçmez; 'gelecek' yanıtı kayıt yoluna yönlenir">
@@ -509,7 +523,384 @@ export function RegistrationsView() {
   );
 }
 
-// ── Bekleme Listesi sekmesi — otomatik teklif motoru (§12 kayıt politikası) ──
+// ── Acente Toplu Kayıt Konsolu (IAPCO Toplu Acente Faturası & Cvent Çoklu Eksen) ──
+
+interface AgencyGroupTabProps {
+  editionId: string | null;
+  categories: CategoryRow[];
+  onSuccess: () => void;
+}
+
+interface DelegateItem {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  company: string;
+  title: string;
+  categoryId: string;
+}
+
+function AgencyGroupTab({ editionId, categories, onSuccess }: AgencyGroupTabProps) {
+  const { toast } = useToast();
+  const [agencies, setAgencies] = useState<{ id: string; name: string }[]>([]);
+  const [selectedAgencyId, setSelectedAgencyId] = useState("");
+  const [newAgencyName, setNewAgencyName] = useState("");
+  const [primaryContactName, setPrimaryContactName] = useState("");
+  const [primaryContactEmail, setPrimaryContactEmail] = useState("");
+  const [primaryContactPhone, setPrimaryContactPhone] = useState("");
+  const [invoiceNo, setInvoiceNo] = useState("");
+  const [notes, setNotes] = useState("");
+  const [delegates, setDelegates] = useState<DelegateItem[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+
+  useEffect(() => {
+    listEntity<{ id: string; name: string; type: string }>("organizations", { limit: 200 })
+      .then((orgs) => {
+        setAgencies(orgs.map((o) => ({ id: o.id, name: o.name })));
+      })
+      .catch(console.error);
+  }, []);
+
+  const pasteColumns = [
+    { key: "firstName", label: "Ad", synonyms: ["first name", "name", "isim", "ad"], required: true },
+    { key: "lastName", label: "Soyad", synonyms: ["last name", "surname", "soyad"], required: true },
+    { key: "email", label: "E-posta", synonyms: ["e-mail", "mail", "eposta"] },
+    { key: "phone", label: "Telefon", synonyms: ["tel", "gsm", "phone"] },
+    { key: "company", label: "Kurum / Şirket", synonyms: ["company", "kurum", "firma"] },
+    { key: "title", label: "Ünvan", synonyms: ["title", "unvan"] },
+  ];
+
+  const handleBulkImport = (rows: Record<string, string>[]) => {
+    const defaultCatId = categories[0]?.id ?? "";
+    const items: DelegateItem[] = rows
+      .filter((r) => r.firstName?.trim() || r.lastName?.trim())
+      .map((r) => ({
+        id: crypto.randomUUID(),
+        firstName: r.firstName?.trim() || "Delege",
+        lastName: r.lastName?.trim() || "-",
+        email: r.email?.trim() || "",
+        phone: r.phone?.trim() || "",
+        company: r.company?.trim() || "",
+        title: r.title?.trim() || "",
+        categoryId: defaultCatId,
+      }));
+    setDelegates((prev) => [...prev, ...items]);
+    toast({ title: "Delegeler Eklendi", description: `${items.length} delege listeye aktarıldı.` });
+  };
+
+  const handleQuickAdd = async (row: Record<string, string>): Promise<boolean> => {
+    if (!row.firstName?.trim() || !row.lastName?.trim()) {
+      toast({ title: "Eksik Bilgi", description: "Ad ve Soyad zorunludur.", variant: "destructive" });
+      return false;
+    }
+    const defaultCatId = categories[0]?.id ?? "";
+    setDelegates((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        firstName: row.firstName.trim(),
+        lastName: row.lastName.trim(),
+        email: row.email?.trim() || "",
+        phone: row.phone?.trim() || "",
+        company: row.company?.trim() || "",
+        title: row.title?.trim() || "",
+        categoryId: defaultCatId,
+      },
+    ]);
+    return true;
+  };
+
+  const removeDelegate = (id: string) => {
+    setDelegates((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const updateDelegate = (id: string, field: keyof DelegateItem, val: string) => {
+    setDelegates((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, [field]: val } : d))
+    );
+  };
+
+  const handleSaveAndConfirm = async () => {
+    if (!editionId) return;
+    if (delegates.length === 0) {
+      toast({ title: "Delege Listesi Boş", description: "Lütfen en az 1 delege ekleyin.", variant: "destructive" });
+      return;
+    }
+
+    let targetAgencyOrgId = selectedAgencyId;
+    setBusy(true);
+
+    try {
+      if (!targetAgencyOrgId && newAgencyName.trim()) {
+        const createdOrg = await apiSend<{ id: string }>("/api/organizations", "POST", {
+          name: newAgencyName.trim(),
+          type: "AGENCY",
+          generalEmail: primaryContactEmail || null,
+        });
+        targetAgencyOrgId = createdOrg.id;
+      }
+
+      if (!targetAgencyOrgId) {
+        toast({ title: "Acente Seçilmedi", description: "Lütfen acente seçin veya yeni acente adı girin.", variant: "destructive" });
+        return;
+      }
+
+      // 1. AgencyGroup oluştur
+      const agencyGroup = await apiSend<{ id: string }>("/api/agency-groups", "POST", {
+        editionId,
+        agencyOrganizationId: targetAgencyOrgId,
+        primaryContactName: primaryContactName.trim() || "Acente Yetkilisi",
+        primaryContactEmail: primaryContactEmail.trim() || "acente@example.com",
+        primaryContactPhone: primaryContactPhone.trim() || null,
+        invoiceId: invoiceNo.trim() || null,
+        totalQuota: delegates.length,
+        notes: notes.trim() || null,
+      });
+
+      // 2. Delegeleri kaydet ve eventBus yayınla
+      let count = 0;
+      for (const d of delegates) {
+        const person = await apiSend<{ id: string }>("/api/people", "POST", {
+          firstName: d.firstName,
+          lastName: d.lastName,
+          email: d.email || null,
+          phone: d.phone || null,
+          company: d.company || null,
+          title: d.title || null,
+          status: "ACTIVE",
+        });
+
+        const reg = await apiSend<{ id: string; confirmationNo: string }>("/api/registrations", "POST", {
+          editionId,
+          personId: person.id,
+          categoryId: d.categoryId || categories[0]?.id,
+          source: "AGENCY_PORTAL",
+          fundingSource: "AGENCY",
+          status: "CONFIRMED",
+          notes: `Acente: ${agencyGroup.id} - Fatura: ${invoiceNo || "Konsolide"}`,
+        });
+
+        // EventBus yayınla: badge auto-queue ve side effect'ler tetiklenir
+        await eventBus.publish("registration.confirmed", {
+          registrationId: reg.id,
+          editionId,
+          personId: person.id,
+        });
+
+        count++;
+      }
+
+      toast({
+        title: "Acente Grubu Onaylandı",
+        description: `${count} delege başarıyla kaydedildi, faturaya bağlandı ve rozet kuyruğuna alındı.`,
+      });
+
+      onSuccess();
+    } catch (err: any) {
+      toast({ title: "Kayıt Hatası", description: err.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <SectionCard
+        title="Acente & Grup Bilgileri"
+        desc="IAPCO Standardı: Tek konsolide fatura altında çoklu delege yönetimi"
+      >
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+          <div>
+            <Label className="text-xs">Mevcut Acente Seçin</Label>
+            <Select value={selectedAgencyId} onValueChange={(v) => { setSelectedAgencyId(v); if (v !== "none") setNewAgencyName(""); }}>
+              <SelectTrigger className="mt-1 h-8 text-xs">
+                <SelectValue placeholder="Acente seçin..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Yeni Acente Oluştur...</SelectItem>
+                {agencies.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {(selectedAgencyId === "none" || !selectedAgencyId) && (
+            <div>
+              <Label className="text-xs">Yeni Acente Adı *</Label>
+              <Input
+                placeholder="Örn: Setur Turizm A.Ş."
+                value={newAgencyName}
+                onChange={(e) => setNewAgencyName(e.target.value)}
+                className="mt-1 h-8 text-xs"
+              />
+            </div>
+          )}
+
+          <div>
+            <Label className="text-xs">Toplu Fatura / Fiş No</Label>
+            <Input
+              placeholder="Örn: FAT-2026-0089"
+              value={invoiceNo}
+              onChange={(e) => setInvoiceNo(e.target.value)}
+              className="mt-1 h-8 text-xs"
+            />
+          </div>
+
+          <div>
+            <Label className="text-xs">Acente Yetkili Adı</Label>
+            <Input
+              placeholder="Yetkili Adı Soyadı"
+              value={primaryContactName}
+              onChange={(e) => setPrimaryContactName(e.target.value)}
+              className="mt-1 h-8 text-xs"
+            />
+          </div>
+
+          <div>
+            <Label className="text-xs">Acente Yetkili E-posta</Label>
+            <Input
+              type="email"
+              placeholder="acente@sirket.com"
+              value={primaryContactEmail}
+              onChange={(e) => setPrimaryContactEmail(e.target.value)}
+              className="mt-1 h-8 text-xs"
+            />
+          </div>
+
+          <div>
+            <Label className="text-xs">Acente Yetkili Telefon</Label>
+            <Input
+              placeholder="0532..."
+              value={primaryContactPhone}
+              onChange={(e) => setPrimaryContactPhone(e.target.value)}
+              className="mt-1 h-8 text-xs"
+            />
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title={`Grup Delegeleri (${delegates.length} Kişi)`}
+        desc="Excel'den toplu yapıştırın veya hızlı ekleme satırını kullanın"
+        action={
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setBulkOpen(true)}
+              className="h-8 gap-1.5 text-xs"
+            >
+              <Icons.ClipboardPaste className="size-3.5" />
+              Excel'den Yapıştır
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy || delegates.length === 0}
+              onClick={handleSaveAndConfirm}
+              className="h-8 gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              {busy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.CheckCheck className="size-3.5" />}
+              Grubu Kaydet & Onayla
+            </Button>
+          </div>
+        }
+      >
+        <div className="rounded-lg border overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead className="bg-muted/60 border-b font-medium text-muted-foreground">
+                <tr>
+                  <th className="p-2 w-8 text-center">#</th>
+                  <th className="p-2">Ad</th>
+                  <th className="p-2">Soyad</th>
+                  <th className="p-2">E-posta</th>
+                  <th className="p-2">Telefon</th>
+                  <th className="p-2">Kurum / Şirket</th>
+                  <th className="p-2">Kategori</th>
+                  <th className="p-2 w-10 text-center">Sil</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {delegates.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-6 text-center text-muted-foreground italic">
+                      Henüz delege eklenmedi. "Excel'den Yapıştır" butonunu kullanın veya aşağıdaki satırdan ekleyin.
+                    </td>
+                  </tr>
+                ) : (
+                  delegates.map((d, idx) => (
+                    <tr key={d.id} className="hover:bg-muted/20">
+                      <td className="p-2 text-center text-muted-foreground font-mono text-[11px]">{idx + 1}</td>
+                      <td className="p-2 font-medium">
+                        <InlineEditableCell value={d.firstName} onSave={async (v) => { updateDelegate(d.id, "firstName", v); return true; }} />
+                      </td>
+                      <td className="p-2 font-medium">
+                        <InlineEditableCell value={d.lastName} onSave={async (v) => { updateDelegate(d.id, "lastName", v); return true; }} />
+                      </td>
+                      <td className="p-2">
+                        <InlineEditableCell value={d.email} onSave={async (v) => { updateDelegate(d.id, "email", v); return true; }} placeholder="E-posta" />
+                      </td>
+                      <td className="p-2">
+                        <InlineEditableCell value={d.phone} onSave={async (v) => { updateDelegate(d.id, "phone", v); return true; }} placeholder="Telefon" />
+                      </td>
+                      <td className="p-2">
+                        <InlineEditableCell value={d.company} onSave={async (v) => { updateDelegate(d.id, "company", v); return true; }} placeholder="Kurum" />
+                      </td>
+                      <td className="p-2">
+                        <select
+                          className="h-7 rounded border bg-background px-1.5 text-xs text-foreground"
+                          value={d.categoryId}
+                          onChange={(e) => updateDelegate(d.id, "categoryId", e.target.value)}
+                        >
+                          {categories.map((c) => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="p-2 text-center">
+                        <button
+                          onClick={() => removeDelegate(d.id)}
+                          className="text-muted-foreground hover:text-rose-600 transition-colors p-1"
+                        >
+                          <Icons.Trash2 className="size-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <QuickAddRow
+            columns={[
+              { key: "firstName", placeholder: "Ad *" },
+              { key: "lastName", placeholder: "Soyad *" },
+              { key: "email", placeholder: "E-posta" },
+              { key: "phone", placeholder: "Telefon" },
+              { key: "company", placeholder: "Kurum / Firma" },
+            ]}
+            onAdd={handleQuickAdd}
+            buttonLabel="Hızlı Delege Ekle (Enter)"
+          />
+        </div>
+      </SectionCard>
+
+      <BulkPasteDialog
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        targetEntityName="Acente Delegeleri"
+        availableColumns={pasteColumns}
+        onImport={async (rows) => handleBulkImport(rows)}
+      />
+    </div>
+  );
+}
+
+
 function WaitlistTab({ editionId, categories, onChanged }: { editionId: string | null; categories: CategoryRow[]; onChanged: () => void }) {
   const { refreshKey } = useApp();
   const { toast } = useToast();

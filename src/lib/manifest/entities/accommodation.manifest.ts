@@ -1,0 +1,65 @@
+import type { DomainEntityManifest } from "../types";
+
+export const AccommodationManifest: DomainEntityManifest = {
+  id: "accommodation",
+  name: "Konaklama & Oda Dağıtımı",
+  tableName: "HotelReservation",
+  dependsOn: ["people", "editions", "hotels"],
+  impacts: ["accounting", "portal", "onsite"],
+  eventsEmitted: ["room.assigned", "room.released"],
+  eventsSubscribed: ["registration.cancelled"],
+  fields: {
+    personId: {
+      key: "personId",
+      label: "Misafir / Katılımcı",
+      type: "relation",
+      targetEntity: "Person",
+      required: true,
+      synonyms: ["guest", "misafir", "katilimci", "delege", "name"],
+    },
+    hotelId: {
+      key: "hotelId",
+      label: "Otel",
+      type: "relation",
+      targetEntity: "Hotel",
+      required: true,
+      synonyms: ["hotel", "otel", "tesis"],
+    },
+    checkIn: {
+      key: "checkIn",
+      label: "Giriş Tarihi",
+      type: "date",
+      required: true,
+      synonyms: ["check-in", "giris", "arrival", "varis"],
+    },
+    checkOut: {
+      key: "checkOut",
+      label: "Çıkış Tarihi",
+      type: "date",
+      required: true,
+      synonyms: ["check-out", "cikis", "departure", "ayrilis"],
+    },
+    roomType: {
+      key: "roomType",
+      label: "Oda Tipi",
+      type: "select",
+      options: ["SINGLE", "DOUBLE", "TWIN", "SUITE"],
+      required: true,
+      synonyms: ["room type", "oda tipi", "tip"],
+    },
+    roommatePersonId: {
+      key: "roommatePersonId",
+      label: "Oda Arkadaşı",
+      type: "relation",
+      targetEntity: "Person",
+      synonyms: ["roommate", "oda arkadasi", "eslesen kisi"],
+    },
+  },
+  ui: {
+    primaryView: "src/components/maven/views/accommodation.tsx",
+    supportsInlineGrid: true,
+    supportsBulkPaste: true,
+    supportsQuickAdd: true,
+    supportsRoomingMatrix: true,
+  },
+};

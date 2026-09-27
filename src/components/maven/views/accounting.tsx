@@ -19,6 +19,8 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { useLang, t, tLabel } from "@/lib/i18n";
 import * as Icons from "lucide-react";
+import { InlineEditableCell, QuickAddRow, BulkPasteDialog } from "@/components/maven/data-tools";
+
 
 // ─── Tipler ──────────────────────────────────────────────────────────────────
 
@@ -203,6 +205,8 @@ export function AccountingView() {
   const [quickOpen, setQuickOpen] = useState(false);
   const [form, setForm] = useState<ExpenseForm>(EMPTY_EXPENSE_FORM);
   const [quick, setQuick] = useState<QuickForm>(EMPTY_QUICK_FORM);
+  const [bulkExpenseOpen, setBulkExpenseOpen] = useState(false);
+  const [expenseViewMode, setExpenseViewMode] = useState<"table" | "cards">("table");
   // Faz B: manuel gelir state
   const [incOpen, setIncOpen] = useState(false);
   const [incQuickOpen, setIncQuickOpen] = useState(false);
@@ -339,7 +343,7 @@ export function AccountingView() {
 
   // ── aksiyonlar ──
 
-  const patchExpense = async (id: string, body: { status: string; approvedBy?: string }) => {
+  const patchExpense = async (id: string, body: Record<string, unknown>) => {
     setBusyId(id);
     try {
       await apiSend(`/api/expenses/${id}`, "PUT", body);
@@ -637,9 +641,18 @@ export function AccountingView() {
             title={t("accounting.expensesTitle")}
             desc={t("accounting.expensesDesc")}
             action={
-              <Button size="sm" variant="outline" onClick={openNew}>
-                <Icons.Plus className="size-3.5" /> {t("accounting.newExpense")}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setExpenseViewMode((m) => (m === "table" ? "cards" : "table"))}>
+                  {expenseViewMode === "table" ? <Icons.LayoutGrid className="size-3.5 mr-1" /> : <Icons.Table className="size-3.5 mr-1" />}
+                  {expenseViewMode === "table" ? "Kart Görünümü" : "Tablo Görünümü"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setBulkExpenseOpen(true)}>
+                  <Icons.ClipboardPaste className="size-3.5 mr-1" /> Toplu Yapıştır
+                </Button>
+                <Button size="sm" variant="outline" onClick={openNew}>
+                  <Icons.Plus className="size-3.5 mr-1" /> {t("accounting.newExpense")}
+                </Button>
+              </div>
             }
           >
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -663,9 +676,153 @@ export function AccountingView() {
               </div>
             </div>
 
+            {/* Hızlı Satır Ekleme (Enter tuşu ile anında kayıt) */}
+            <div className="mt-3">
+              <QuickAddRow
+                columns={[
+                  { key: "title", placeholder: "Gider Başlığı / Fatura Açıklaması", width: "w-64" },
+                  { key: "amount", placeholder: "Tutar (TL)", type: "number", width: "w-28" },
+                  { key: "vendor", placeholder: "Tedarikçi Firma", width: "w-40" },
+                  { key: "spentBy", placeholder: "Harcayan Kişi", width: "w-40" },
+                ]}
+                onAdd={async (values) => {
+                  if (!currentEditionId || !values.title || !values.amount) return false;
+                  try {
+                    await apiSend("/api/expenses", "POST", {
+                      editionId: currentEditionId,
+                      code: nextExpenseCode(expenses ?? []),
+                      category: values.category || "FIELD_EXPENSE",
+                      title: String(values.title).trim(),
+                      amount: toMinor(Number(values.amount) || 0),
+                      currency: "TRY",
+                      vendor: values.vendor ? String(values.vendor).trim() : undefined,
+                      spentBy: values.spentBy ? String(values.spentBy).trim() : undefined,
+                      paymentMethod: "COMPANY_CARD",
+                      incurredAt: new Date().toISOString(),
+                      status: "APPROVED",
+                    });
+                    toast({ title: "Gider Eklendi", description: `${values.title} — ${values.amount} TRY` });
+                    refreshAll();
+                    return true;
+                  } catch (e: any) {
+                    toast({ title: "Kayıt Başarısız", description: e.message, variant: "destructive" });
+                    return false;
+                  }
+                }}
+              />
+            </div>
+
             <div className="mt-3">
               {loadingExpenses ? <Loading rows={4} /> : expError ? <ErrorState message={expError} onRetry={reloadExpenses} /> : filteredExpenses.length === 0 ? (
                 <EmptyState title={t("accounting.expensesEmpty")} desc={t("accounting.expensesEmptyDesc")} />
+              ) : expenseViewMode === "table" ? (
+                <div className="overflow-x-auto rounded-lg border">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b bg-muted/50 text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Kod</th>
+                        <th className="px-3 py-2 font-medium">Başlık / Açıklama</th>
+                        <th className="px-3 py-2 font-medium">Tedarikçi</th>
+                        <th className="px-3 py-2 font-medium">Harcayan</th>
+                        <th className="px-3 py-2 font-medium">Kategori</th>
+                        <th className="px-3 py-2 font-medium">Fiş/Fatura No</th>
+                        <th className="px-3 py-2 font-medium">Durum</th>
+                        <th className="px-3 py-2 text-right font-medium">Tutar</th>
+                        <th className="px-3 py-2 text-center font-medium">İşlem</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {filteredExpenses.map((e) => (
+                        <tr key={e.id} className="transition hover:bg-muted/30">
+                          <td className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-muted-foreground">{e.code}</td>
+                          <td className="min-w-48 px-3 py-2 font-medium">
+                            <InlineEditableCell
+                              value={e.title}
+                              onSave={async (val) => {
+                                try {
+                                  await patchExpense(e.id, { title: val });
+                                  return true;
+                                } catch {
+                                  return false;
+                                }
+                              }}
+                            />
+                          </td>
+                          <td className="min-w-32 px-3 py-2 text-muted-foreground">
+                            <InlineEditableCell
+                              value={e.vendor ?? ""}
+                              placeholder="—"
+                              onSave={async (val) => {
+                                try {
+                                  await patchExpense(e.id, { vendor: val });
+                                  return true;
+                                } catch {
+                                  return false;
+                                }
+                              }}
+                            />
+                          </td>
+                          <td className="min-w-32 px-3 py-2 text-muted-foreground">
+                            <InlineEditableCell
+                              value={e.spentBy ?? ""}
+                              placeholder="—"
+                              onSave={async (val) => {
+                                try {
+                                  await patchExpense(e.id, { spentBy: val });
+                                  return true;
+                                } catch {
+                                  return false;
+                                }
+                              }}
+                            />
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2">
+                            <Chip tone={categoryTone(e.category)}>{expCategoryMap[e.category] ?? e.category}</Chip>
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2 font-mono text-[11px]">
+                            <InlineEditableCell
+                              value={e.receiptNo ?? ""}
+                              placeholder="—"
+                              onSave={async (val) => {
+                                try {
+                                  await patchExpense(e.id, { receiptNo: val });
+                                  return true;
+                                } catch {
+                                  return false;
+                                }
+                              }}
+                            />
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2">
+                            <StatusBadge map={expStatusMap} value={e.status} />
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-right font-bold tabular-nums text-rose-600">
+                            {fmtMoney(e.amount, e.currency)}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              {(e.status === "PLANNED" || e.status === "PENDING_RECEIPT") && (
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-emerald-600 hover:bg-emerald-50" onClick={() => patchExpense(e.id, { status: "APPROVED", approvedBy: "Muhasebe" })}>
+                                  <Icons.Check className="size-3.5" />
+                                </Button>
+                              )}
+                              {(e.status === "PLANNED" || e.status === "PENDING_RECEIPT" || e.status === "APPROVED") && (
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-blue-600 hover:bg-blue-50" onClick={() => patchExpense(e.id, { status: "PAID" })}>
+                                  <Icons.Banknote className="size-3.5" />
+                                </Button>
+                              )}
+                              {e.status === "PAID" && e.paymentMethod === "PERSONAL_REIMBURSE" && (
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-amber-600 hover:bg-amber-50" onClick={() => patchExpense(e.id, { status: "REIMBURSED" })}>
+                                  <Icons.HandCoins className="size-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <div className="maven-scroll max-h-96 space-y-3 overflow-y-auto pr-1">
                   {filteredExpenses.map((e) => (
@@ -1382,6 +1539,49 @@ export function AccountingView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* Toplu Gider Yapıştırma Modalı */}
+      <BulkPasteDialog
+        open={bulkExpenseOpen}
+        onOpenChange={setBulkExpenseOpen}
+        targetEntityName="Gider Kalemleri"
+        availableColumns={[
+          { key: "title", label: "Gider Başlığı / Açıklama", synonyms: ["title", "başlık", "açıklama", "gider", "tanım", "harcama"], required: true },
+          { key: "amount", label: "Tutar (TL)", synonyms: ["amount", "tutar", "bedel", "fiyat", "ücret"], required: true },
+          { key: "vendor", label: "Tedarikçi", synonyms: ["vendor", "tedarikçi", "firma", "satıcı", "kurum"] },
+          { key: "spentBy", label: "Harcayan Kişi", synonyms: ["spentby", "harcayan", "personel", "ödeyen"] },
+          { key: "category", label: "Kategori", synonyms: ["category", "kategori", "tür", "tip"] },
+          { key: "receiptNo", label: "Fiş/Fatura No", synonyms: ["receiptno", "fiş", "fatura", "belge no", "makbuz"] },
+        ]}
+        onImport={async (parsedRows) => {
+          if (!currentEditionId) return;
+          let count = 0;
+          for (const row of parsedRows) {
+            if (!row.title || !row.amount) continue;
+            try {
+              await apiSend("/api/expenses", "POST", {
+                editionId: currentEditionId,
+                code: nextExpenseCode(expenses ?? []),
+                category: row.category || "OTHER",
+                title: String(row.title).trim(),
+                amount: toMinor(Number(row.amount) || 0),
+                currency: "TRY",
+                vendor: row.vendor ? String(row.vendor).trim() : undefined,
+                spentBy: row.spentBy ? String(row.spentBy).trim() : undefined,
+                receiptNo: row.receiptNo ? String(row.receiptNo).trim() : undefined,
+                paymentMethod: "COMPANY_CARD",
+                incurredAt: new Date().toISOString(),
+                status: "APPROVED",
+              });
+              count++;
+            } catch (err) {
+              console.error("Toplu gider ekleme hatası:", err);
+            }
+          }
+          toast({ title: "Toplu Aktarım Başarılı", description: `${count} adet gider kalemi deftere işlendi.` });
+          refreshAll();
+          return { imported: count };
+        }}
+      />
     </div>
   );
 }

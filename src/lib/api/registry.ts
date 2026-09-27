@@ -714,7 +714,29 @@ export const registry: Record<string, EntityConfig> = {
     filterFields: ["planId", "personId", "status", "role"],
     orderBy: { createdAt: "asc" },
   },
+  "agency-groups": {
+    delegate: db.agencyGroup as unknown as AnyDelegate,
+    searchFields: ["primaryContactName", "primaryContactEmail"],
+    filterFields: ["editionId", "agencyOrganizationId", "tenantId"],
+    orderBy: { createdAt: "desc" },
+  },
+  "custom-field-definitions": {
+    delegate: db.customFieldDefinition as unknown as AnyDelegate,
+    searchFields: ["key", "label"],
+    filterFields: ["entityType", "editionId", "tenantId"],
+    orderBy: { displayOrder: "asc" },
+  },
+  "custom-field-values": {
+    delegate: db.customFieldValue as unknown as AnyDelegate,
+    include: { definition: true },
+    filterFields: ["definitionId", "entityId"],
+  },
+  "event-person-roles": {
+    delegate: db.eventPersonRole as unknown as AnyDelegate,
+    filterFields: ["editionId", "personId", "roleCategory", "roleName"],
+  },
 };
+
 
 // ─── Yardımcı: hangi alanlar güncellenebilir (id/createdAt hariç) ──────────
 const FORBIDDEN = new Set(["id", "createdAt"]);

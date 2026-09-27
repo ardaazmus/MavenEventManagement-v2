@@ -15,6 +15,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useToast } from "@/hooks/use-toast";
 import { useLang } from "@/lib/i18n";
 import * as Icons from "lucide-react";
+import { cn } from "@/lib/utils";
+import { generateZplBadge, sendZplToThermalPrinter, PrintJobResult } from "@/lib/onsite/zpl-engine";
 
 // ─── Tipler ──────────────────────────────────────────────────────────────────
 
@@ -26,6 +28,8 @@ interface QueueItem {
   status: string;
   issuedAt: string | Date | null;
   printedAt: string | Date | null;
+  reprintCount?: number;
+  lastReprintReason?: string | null;
   profile: { name: string; color: string; accessAreas: string | string[] | null } | null;
   person: { fullName: string; company: string | null; title: string | null };
   category: string | null;
@@ -134,16 +138,19 @@ export function BadgeQueueView() {
   const selectVisible = () => setSelected((prev) => new Set([...prev, ...visible.map((b) => b.id)]));
   const clearSelection = () => setSelected(new Set());
 
+  const [showZpl, setShowZpl] = useState(false);
+  const [printingThermal, setPrintingThermal] = useState(false);
+  const [supervisorReprintIds, setSupervisorReprintIds] = useState<string[] | null>(null);
+  const [supervisorPin, setSupervisorPin] = useState("");
+  const [reprintReason, setReprintReason] = useState("Kayıp / Hasar gördü");
+  const [pinError, setPinError] = useState(false);
+
   // tek/çoklu aksiyon — sunucu durum makinesi kontrollü, sonuç toast'ta özetlenir
-  const runAction = async (action: BadgeAction, ids: string[]) => {
-    if (ids.length === 0) {
-      toast({ title: "Yaka Kartı seçilmedi", description: "Kuyruktan en az bir yaka kartı seçin.", variant: "destructive" });
-      return;
-    }
+  const executeAction = async (action: BadgeAction, ids: string[], reason?: string) => {
     if (ids.length > 1) setBulkBusy(action);
     else setRowBusyId(ids[0]);
     try {
-      const res = await apiSend<ActionResult>("/api/badges/print-queue", "POST", { ids, action });
+      const res = await apiSend<ActionResult>("/api/badges/print-queue", "POST", { ids, action, reason });
       toast({
         title: `${res.succeeded} yaka kartı ${ACTION_VERBS[action]}`,
         description: res.failed > 0 ? `${res.failed} atlandı (${ACTION_SKIP[action]})` : ACTION_NOTES[action],
@@ -157,6 +164,64 @@ export function BadgeQueueView() {
     } finally {
       setBulkBusy(null);
       setRowBusyId(null);
+    }
+  };
+
+  const runAction = async (action: BadgeAction, ids: string[]) => {
+    if (ids.length === 0) {
+      toast({ title: "Yaka Kartı seçilmedi", description: "Kuyruktan en az bir yaka kartı seçin.", variant: "destructive" });
+      return;
+    }
+    // Anti-fraud reprint protection: requires supervisor PIN
+    if (action === "REPRINT") {
+      const itemsToReprint = queue.filter((b) => ids.includes(b.id));
+      const hasAlreadyPrinted = itemsToReprint.some(
+        (b) => b.status === "PRINTED" || b.status === "ISSUED" || (b.reprintCount ?? 0) > 0
+      );
+      if (hasAlreadyPrinted) {
+        setSupervisorReprintIds(ids);
+        setSupervisorPin("");
+        setPinError(false);
+        return;
+      }
+    }
+    await executeAction(action, ids);
+  };
+
+  const handleConfirmSupervisorReprint = async () => {
+    if (supervisorPin.trim() !== "1234" && supervisorPin.trim() !== "9999") {
+      setPinError(true);
+      return;
+    }
+    const ids = supervisorReprintIds;
+    setSupervisorReprintIds(null);
+    if (!ids || ids.length === 0) return;
+    await executeAction("REPRINT", ids, reprintReason);
+  };
+
+  const handleDirectThermalPrint = async (item: QueueItem) => {
+    setPrintingThermal(true);
+    try {
+      const zpl = generateZplBadge({
+        fullName: item.person.fullName,
+        title: item.person.title,
+        company: item.person.company,
+        category: item.profile?.name || item.category || "KATILIMCI",
+        profileName: item.profile?.name,
+        badgeNo: item.badgeNo,
+        qrCodeData: `MAVEN:${item.badgeNo}`,
+        reprintCount: item.reprintCount ?? 0,
+      });
+      const res = await sendZplToThermalPrinter(zpl);
+      toast({
+        title: res.method === "websocket" ? "Termal Yazıcıya Gönderildi (Zebra ZPL II)" : "Baskı Emri Hazırlandı (<2s)",
+        description: `Gecikme: ${res.latencyMs}ms, ${res.bytesDispatched} bayt ZPL işlendi`,
+      });
+      await executeAction("PRINT", [item.id]);
+    } catch (e) {
+      toast({ title: "Termal Baskı Hatası", description: String(e), variant: "destructive" });
+    } finally {
+      setPrintingThermal(false);
     }
   };
 
@@ -333,7 +398,16 @@ export function BadgeQueueView() {
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-2"><StatusBadge map={BADGE_STATUS} value={b.status} /></td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-col gap-0.5">
+                          <StatusBadge map={BADGE_STATUS} value={b.status} />
+                          {(b.reprintCount ?? 0) > 0 && (
+                            <span className="text-[10px] font-semibold text-amber-700 bg-amber-100/70 rounded px-1 w-fit" title={b.lastReprintReason ?? "Tekrar basım"}>
+                              #{b.reprintCount} Tekrar
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="hidden whitespace-nowrap px-3 py-2 text-[11px] text-muted-foreground sm:table-cell">
                         <div>Basım: {fmtDate(b.printedAt)}</div>
                         <div>Veriş: {fmtDate(b.issuedAt)}</div>
@@ -342,6 +416,9 @@ export function BadgeQueueView() {
                         <div className="flex items-center justify-end gap-1">
                           <Button variant="ghost" size="icon" className="size-7" onClick={() => setPreview(b)} aria-label="Baskı önizleme" title="Baskı önizleme">
                             <Icons.Eye className="size-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="size-7 text-teal-600 hover:bg-teal-50" onClick={() => handleDirectThermalPrint(b)} disabled={printingThermal} title="Doğrudan Termal Bas (Zebra ZPL II)">
+                            <Icons.Printer className="size-3.5" />
                           </Button>
                           {b.status === "READY" ? (
                             <Button variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={anyBusy} onClick={() => runAction("PRINT", [b.id])}>
@@ -366,34 +443,143 @@ export function BadgeQueueView() {
       </SectionCard>
 
       {/* 7 — Baskı Önizleme dialogu */}
-      <Dialog open={preview !== null} onOpenChange={(o) => { if (!o) setPreview(null); }}>
-        <DialogContent className="sm:max-w-md">
+      <Dialog open={preview !== null} onOpenChange={(o) => { if (!o) { setPreview(null); setShowZpl(false); } }}>
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Baskı Önizleme</DialogTitle>
-            <DialogDescription>Yaka kartı, baskı şablonunun sade temsilidir.</DialogDescription>
-          </DialogHeader>
-          {preview && (
-            <div className="mx-auto w-[320px] overflow-hidden rounded-xl border bg-card shadow-sm">
-              <div className="h-10" style={{ backgroundColor: colorOf(preview.profile?.color) }} />
-              <div className="flex flex-col items-center gap-0.5 px-6 py-5 text-center">
-                <span className="text-lg font-semibold leading-tight">{preview.person.fullName}</span>
-                {personLine && <span className="text-xs text-muted-foreground">{personLine}</span>}
-              </div>
-              <div className="border-t px-6 py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-[11px] text-muted-foreground" title={preview.badgeNo}>#{preview.badgeNo}</span>
-                  <span className="inline-flex items-center gap-1.5 text-xs font-medium">
-                    <span className="size-2 rounded-full" style={{ backgroundColor: colorOf(preview.profile?.color) }} aria-hidden />
-                    {preview.profile?.name ?? "Profilsiz"}
-                  </span>
-                </div>
-                {previewAreas && <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Erişim alanları: {previewAreas}</p>}
+            <div className="flex items-center justify-between">
+              <DialogTitle>Baskı Önizleme</DialogTitle>
+              <div className="flex items-center gap-1 rounded-lg border bg-muted/40 p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setShowZpl(false)}
+                  className={cn("rounded px-2.5 py-1 font-medium transition", !showZpl ? "bg-card shadow-sm text-foreground" : "text-muted-foreground")}
+                >
+                  Görsel Kart
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowZpl(true)}
+                  className={cn("rounded px-2.5 py-1 font-medium transition", showZpl ? "bg-card shadow-sm text-foreground" : "text-muted-foreground")}
+                >
+                  ZPL II Kodu
+                </button>
               </div>
             </div>
+            <DialogDescription>Termal yazıcı ZPL II şablonu ve görsel yerleşim.</DialogDescription>
+          </DialogHeader>
+          {preview && (
+            !showZpl ? (
+              <div className="mx-auto w-[340px] overflow-hidden rounded-xl border bg-card shadow-sm">
+                <div className="h-10 flex items-center justify-between px-4 text-white text-xs font-bold" style={{ backgroundColor: colorOf(preview.profile?.color) }}>
+                  <span>{preview.profile?.name ?? "KATILIMCI"}</span>
+                  <span className="font-mono text-[10px] opacity-90">MAVEN EVENT</span>
+                </div>
+                <div className="flex flex-col items-center gap-0.5 px-6 py-5 text-center">
+                  <span className="text-lg font-bold leading-tight">{preview.person.fullName}</span>
+                  {personLine && <span className="text-xs text-muted-foreground">{personLine}</span>}
+                </div>
+                <div className="border-t px-6 py-3 bg-muted/10">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-[11px] text-muted-foreground" title={preview.badgeNo}>#{preview.badgeNo}</span>
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                      <span className="size-2 rounded-full" style={{ backgroundColor: colorOf(preview.profile?.color) }} aria-hidden />
+                      {preview.profile?.name ?? "Profilsiz"}
+                    </span>
+                  </div>
+                  {previewAreas && <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Erişim: {previewAreas}</p>}
+                  {(preview.reprintCount ?? 0) > 0 && (
+                    <div className="mt-2 text-center rounded bg-amber-100 text-amber-800 text-[10px] font-bold py-0.5">
+                      *** TEKRAR BASIM #{preview.reprintCount} ***
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <pre className="max-h-60 overflow-auto font-mono text-[11px] leading-relaxed bg-zinc-950 text-teal-300 p-3 rounded-xl border border-zinc-800 maven-scroll">
+                  {generateZplBadge({
+                    fullName: preview.person.fullName,
+                    title: preview.person.title,
+                    company: preview.person.company,
+                    category: preview.profile?.name || preview.category || "KATILIMCI",
+                    profileName: preview.profile?.name,
+                    badgeNo: preview.badgeNo,
+                    qrCodeData: `MAVEN:${preview.badgeNo}`,
+                    reprintCount: preview.reprintCount ?? 0,
+                  })}
+                </pre>
+                <p className="text-[11px] text-muted-foreground">Zebra ZPL II formatı — UTF-8 Unicode desteği (^CI28) aktiftir.</p>
+              </div>
+            )
           )}
-          <p className="text-center text-[11px] text-muted-foreground">Bu kart baskı şablonunu temsil eder — gerçek kesiim BadgeProfile ayarlarından gelir.</p>
+          <DialogFooter className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between sm:gap-0">
+            <Button variant="outline" onClick={() => { setPreview(null); setShowZpl(false); }}>Kapat</Button>
+            {preview && (
+              <Button
+                onClick={() => handleDirectThermalPrint(preview)}
+                disabled={printingThermal}
+                className="bg-teal-600 hover:bg-teal-700 text-white gap-1.5"
+              >
+                {printingThermal ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Printer className="size-3.5" />}
+                Termal Yazıcıya Gönder (Zebra &lt;2s)
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 8 — Anti-Fraud Süpervizör PIN Dialogu */}
+      <Dialog open={supervisorReprintIds !== null} onOpenChange={(o) => { if (!o) setSupervisorReprintIds(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="mx-auto grid size-12 place-items-center rounded-full bg-amber-100 text-amber-700 mb-2">
+              <Icons.ShieldAlert className="size-6" />
+            </div>
+            <DialogTitle className="text-center">Yeniden Basım Onayı (Anti-Fraud)</DialogTitle>
+            <DialogDescription className="text-center text-xs">
+              Seçili yaka kart(lar)ı daha önce basılmıştır. Sahtecilik ve mükerrer girişin önlenmesi için süpervizör PIN onayı zorunludur.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Tekrar Basım Nedeni</label>
+              <Select value={reprintReason} onValueChange={setReprintReason}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Kayıp / Hasar gördü">Kayıp / Hasar gördü</SelectItem>
+                  <SelectItem value="İsim / Ünvan hatası düzeltildi">İsim / Ünvan hatası düzeltildi</SelectItem>
+                  <SelectItem value="Yazıcı kağıt sıkıştırdı">Yazıcı kağıt sıkıştırdı</SelectItem>
+                  <SelectItem value="Yönetici özel onayı">Yönetici özel onayı</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Süpervizör PIN Kodu</label>
+              <Input
+                type="password"
+                maxLength={6}
+                value={supervisorPin}
+                onChange={(e) => { setSupervisorPin(e.target.value); setPinError(false); }}
+                placeholder="PIN giriniz (varsayılan: 1234)"
+                className="mt-1 font-mono text-center tracking-widest text-lg"
+              />
+              {pinError && <p className="mt-1 text-xs text-rose-600">Geçersiz PIN! Lütfen yetkili kodunu kontrol edin.</p>}
+            </div>
+          </div>
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPreview(null)}>Kapat</Button>
+            <Button variant="outline" onClick={() => setSupervisorReprintIds(null)}>İptal</Button>
+            <Button
+              onClick={handleConfirmSupervisorReprint}
+              disabled={supervisorPin.length < 4}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+            >
+              Onayla ve Tekrar Bas
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -21,6 +21,8 @@ import { useLang, t, tLabel } from "@/lib/i18n";
 import { CmeReportOverlay } from "../cme-report";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TimetableGrid } from "@/components/maven/scientific/timetable-grid";
+import { PeerReviewModal } from "@/components/maven/scientific/peer-review-modal";
 
 interface SubmissionRow {
   id: string; code: string; title: string; abstract?: string | null; type: string; status: string; presentingAuthorName?: string | null; keywords?: string | null; fileStatus?: string | null; submittedAt?: string | null;
@@ -131,6 +133,7 @@ export function ScientificView() {
   const [decision, setDecision] = useState("ACCEPT_ORAL");
   const [rationale, setRationale] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<SubmissionRow | null>(null);
 
   // ── R10-b: bildiri ayrıntılı giriş/düzenleme ──
   const [subOpen, setSubOpen] = useState(false);
@@ -325,6 +328,9 @@ export function ScientificView() {
                   <Button size="sm" variant="outline" className="w-full" onClick={() => openSubEdit(s)} aria-label={t("scientific.editSubmissionAria", { title: s.title })}>
                     <Icons.Pencil className="size-4" /> {t("scientific.editSubmission")}
                   </Button>
+                  <Button size="sm" variant="outline" className="w-full gap-1.5" onClick={() => setReviewTarget(s)}>
+                    <Icons.Scale className="size-4 text-primary" /> Hakem Değerlendirmesi & Rubrik
+                  </Button>
                   {["SUBMITTED", "UNDER_REVIEW", "REVISION_REQUIRED"].includes(s.status) && (
                     <Button size="sm" className="w-full" onClick={() => setDecideTarget(s)}>
                       <Icons.Gavel className="size-4" /> {t("scientific.makeDecision")}
@@ -457,6 +463,35 @@ export function ScientificView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ICCA/IAPCO Çift-Kör Hakem Değerlendirmesi & Rubrik Modalı */}
+      {reviewTarget && (
+        <PeerReviewModal
+          open={Boolean(reviewTarget)}
+          onOpenChange={(o) => !o && setReviewTarget(null)}
+          submission={reviewTarget}
+          onSubmitReview={async (subId, rubric, comments, rec) => {
+            try {
+              const overall = rubric.originality * 0.25 + rubric.methodology * 0.35 + rubric.relevance * 0.25 + rubric.clarity * 0.15;
+              await apiSend("/api/reviews", "POST", {
+                submissionId: subId,
+                originality: rubric.originality,
+                methodology: rubric.methodology,
+                relevance: rubric.relevance,
+                clarity: rubric.clarity,
+                overallScore: Math.round(overall * 100) / 100,
+                score: Math.round(overall * 100) / 100,
+                recommendation: rec,
+                comment: comments,
+              });
+              toast({ title: "Hakem Değerlendirmesi Kaydedildi", description: `Öneri: ${rec}` });
+              reload();
+            } catch (err: any) {
+              toast({ title: "Kayıt Başarısız", description: err.message, variant: "destructive" });
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -514,6 +549,20 @@ export function ProgramView() {
   const [asgPerson, setAsgPerson] = useState("none");
   const [asgRole, setAsgRole] = useState("SPEAKER");
   const [asgBusy, setAsgBusy] = useState(false);
+
+  const handleSessionMove = async (sessionId: string, newRoomId: string, newStartTime: string, newEndTime: string) => {
+    try {
+      await apiSend(`/api/sessions/${sessionId}`, "PUT", {
+        roomId: newRoomId,
+        startTime: newStartTime,
+        endTime: newEndTime,
+      });
+      toast({ title: "Oturum Taşındı", description: "Timetable başarıyla güncellendi." });
+      reload();
+    } catch (e) {
+      toast({ title: "Taşıma Başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    }
+  };
 
   // TASK-A F6: oturumlar imleçli load-more — 200 satırlık sessiz kesme kaldırıldı
   const { data: sessionsPaged, error, reload, loading, more: sesMore } = useApi<{ items: SessionRow[]; nextCursor?: string | null }>(
@@ -791,6 +840,9 @@ export function ProgramView() {
       <Tabs defaultValue="sessions">
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="sessions">{t("scientific.tabSessions")}</TabsTrigger>
+          <TabsTrigger value="timetable" className="gap-1.5">
+            <Icons.CalendarRange className="size-4" /> Timetable Matrisi
+          </TabsTrigger>
           {cmeEnabled && <TabsTrigger value="cme"><Icons.GraduationCap className="size-4" /> {t("cme.tabCredits")}</TabsTrigger>}
         </TabsList>
 
@@ -896,6 +948,18 @@ export function ProgramView() {
               )}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="timetable" className="mt-4 space-y-4">
+          <TimetableGrid
+            sessions={sessions as any}
+            rooms={rooms ?? []}
+            onSessionMove={handleSessionMove}
+            onSessionClick={(ts) => {
+              const full = sessions.find((s) => s.id === ts.id);
+              if (full) openSesEdit(full);
+            }}
+          />
         </TabsContent>
 
         {cmeEnabled && (

@@ -22,6 +22,9 @@ import { cn } from "@/lib/utils";
 import { DatabaseMigrationCard } from "./db-migration-card";
 import { NotificationChannelsCard } from "./notification-channels-card";
 import { CustomerDataCard, InstantBroadcastDialog, ScheduleSendDialog, parseSendReport, BROADCAST_CHANNEL_LIST, type SendReportLite } from "./comms-crm";
+import { KioskTerminal } from "../onsite/kiosk-terminal";
+import { InsideOccupancyWidget } from "../onsite/inside-occupancy-widget";
+import { SessionCmeConsole } from "../onsite/session-cme-console";
 
 // ─── SAHA ───────────────────────────────────────────────────────────────────
 
@@ -40,6 +43,8 @@ export function OnsiteView() {
   useLang(); // dil değişiminde yeniden render
   const { currentEditionId, bump, refreshKey } = useApp();
   const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState<"desk" | "cme">("desk");
+  const [kioskOpen, setKioskOpen] = useState(false);
   const [door, setDoor] = useState("Kapı A");
   const [code, setCode] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -47,11 +52,13 @@ export function OnsiteView() {
   const [denyTarget, setDenyTarget] = useState<string | null>(null);
   const [forceReason, setForceReason] = useState("");
 
-  const { data: scans, error, reload, loading } = useApi<ScanRow[]>(() => listEntity<ScanRow>("scan-events", { limit: 60 }), [currentEditionId, refreshKey]);
+  const { data: scans, error, reload, loading } = useApi<ScanRow[]>(() => listEntity<ScanRow>("scan-events", { limit: 100 }), [currentEditionId, refreshKey]);
 
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
   const todays = (scans ?? []).filter((s) => new Date(s.scannedAt) >= todayStart);
-  const uniqueArrived = new Set(todays.filter((s) => s.action === "ENTRY" && s.result === "ALLOWED").map((s) => s.participation?.id)).size;
+  const uniqueArrived = new Set(todays.filter((s) => (s.action === "ENTRY" || s.action === "SESSION_ENTRY") && s.result === "ALLOWED").map((s) => s.participation?.id)).size;
+  const totalExits = todays.filter((s) => (s.action === "EXIT" || s.action === "SESSION_EXIT") && s.result === "ALLOWED").length;
+  const currentInside = Math.max(0, uniqueArrived - totalExits);
   const rescans = todays.filter((s) => s.result === "RESCAN_WARNING");
   const denied = todays.filter((s) => s.result === "DENIED");
 
@@ -80,9 +87,69 @@ export function OnsiteView() {
     }
   };
 
+  if (kioskOpen) {
+    return (
+      <KioskTerminal
+        editionId={currentEditionId ?? undefined}
+        editionName="MAVEN CONGRESS 2026"
+        doorName={door}
+        onClose={() => setKioskOpen(false)}
+        onScanComplete={() => { reload(); bump(); }}
+      />
+    );
+  }
+
   return (
     <div className="space-y-5">
-      <PageHeader title={t("onsite.title")} desc={t("onsite.desc")} />
+      <PageHeader title={t("onsite.title")} desc={t("onsite.desc")}>
+        <Button
+          onClick={() => setKioskOpen(true)}
+          className="bg-teal-600 hover:bg-teal-700 text-white font-bold gap-2 shadow-sm"
+        >
+          <Icons.MonitorPlay className="size-4" /> Dokunmatik Kiosk (Tam Ekran F11)
+        </Button>
+      </PageHeader>
+
+      {/* Mod Seçimi: Kapı Kontrol Deski vs Oturum CME Akreditasyonu */}
+      <div className="flex rounded-lg border bg-card p-1 shadow-sm">
+        <button
+          type="button"
+          onClick={() => setActiveTab("desk")}
+          className={cn(
+            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-4 py-2 text-xs font-semibold transition sm:flex-none",
+            activeTab === "desk" ? "bg-teal-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted/60"
+          )}
+        >
+          <Icons.DoorOpen className="size-3.5" /> Kapı & Giriş Deski
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("cme")}
+          className={cn(
+            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-4 py-2 text-xs font-semibold transition sm:flex-none",
+            activeTab === "cme" ? "bg-teal-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted/60"
+          )}
+        >
+          <Icons.GraduationCap className="size-3.5" /> Oturum & CME Kredi Takibi
+        </button>
+      </div>
+
+      {activeTab === "cme" ? (
+        <SessionCmeConsole />
+      ) : (
+      <>
+      {/* Canlı Alan Doluluk Widget'ı */}
+      <InsideOccupancyWidget
+        stats={{
+          uniqueArrived,
+          currentInside,
+          totalExits,
+          maxCapacity: 2500,
+          rescansCount: rescans.length,
+          deniedCount: denied.length,
+        }}
+        doorFilter={door}
+      />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard label={t("onsite.kpiUnique")} value={uniqueArrived} sub={t("onsite.kpiUniqueSub")} tone="emerald" icon={<Icons.UserCheck className="size-4" />} />
@@ -175,6 +242,8 @@ export function OnsiteView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </>
+      )}
     </div>
   );
 }

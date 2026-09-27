@@ -1105,6 +1105,8 @@ model Submission {
   fileUrl              String?
   posterNo             String?
   fileStatus           String? // SunumKontrol: MISSING|FORMAT_ISSUE|AV_PENDING|APPROVED
+  anonymizedBody       String? // Çift-kör hakem değerlendirmesi için anonimleştirilmiş özet
+  reviewStatus         String?   @default("UNASSIGNED") // UNASSIGNED|IN_REVIEW|REVISE|ACCEPTED|REJECTED
   submittedAt          DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
@@ -1153,12 +1155,19 @@ model ReviewAssignment {
 }
 
 model Review {
-  id             String   @id @default(cuid())
-  assignmentId   String
-  score          Float?
-  recommendation String? // ACCEPT_ORAL|ACCEPT_POSTER|REJECT|REVISION
-  comment        String?
-  submittedAt    DateTime @default(now())
+  id               String   @id @default(cuid())
+  assignmentId     String
+  score            Float?   // Bileşik / genel puan (1-10)
+  originality      Float?   // Özgünlük & Yenilik (Ağırlık: %25)
+  methodology      Float?   // Metodolojik Kesinlik (Ağırlık: %35)
+  relevance        Float?   // Pratik / Klinik İlgi (Ağırlık: %25)
+  clarity          Float?   // Anlatım Netliği (Ağırlık: %15)
+  overallScore     Float?   // Ağırlıklı genel puan
+  normalizedZScore Float?   // Hakem arası Z-skor normalizasyonu
+  coiDeclared      Boolean? @default(false) // Çıkar çatışması beyanı
+  recommendation   String?  // ACCEPT_ORAL|ACCEPT_POSTER|REJECT|REVISION
+  comment          String?
+  submittedAt      DateTime @default(now())
 
   assignment ReviewAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 }
@@ -1259,6 +1268,8 @@ model BadgeInstance {
   issuedAt        DateTime?
   printedAt       DateTime?
   voidReason      String?
+  reprintCount    Int       @default(0)
+  lastReprintReason String?
 
   participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
   profile       BadgeProfile?      @relation(fields: [profileId], references: [id], onDelete: SetNull)
@@ -2269,3 +2280,94 @@ model PortalSessionRegistration {
   @@index([editionId, personId])
   @@index([sessionId])
 }
+
+// ─── MASTER YOL HARİTASI 2026: DİNAMİK ALANLAR, EVENT BUS & SEKTÖREL MODELLER ──
+
+model CustomFieldDefinition {
+  id                  String   @id @default(cuid())
+  entityType          String   // "PERSON" | "REGISTRATION" | "ACCOMMODATION" | "SESSION" | "SPONSOR"
+  key                 String   // "tc_kimlik_no", "dietary", "specialty"
+  label               String   // "T.C. Kimlik No", "Diyet Tercihi"
+  fieldType           String   @default("TEXT") // TEXT|NUMBER|DATE|BOOLEAN|SELECT|MULTI_SELECT|TEXTAREA|URL
+  optionsJson         String?  // SELECT için JSON: ["Normal", "Vejetaryen"]
+  defaultValue        String?
+  isRequired          Boolean  @default(false)
+  isPublic            Boolean  @default(false)
+  displayOrder        Int      @default(0)
+  groupName           String?  // Form görsel grubu
+  visibilityRulesJson String?  // JSON: [{"field": "ticket_type", "operator": "equals", "value": "vip"}]
+  tenantId            String?
+  editionId           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  values              CustomFieldValue[]
+
+  @@unique([entityType, key, editionId])
+  @@index([entityType, editionId])
+}
+
+model CustomFieldValue {
+  id           String   @id @default(cuid())
+  definitionId String
+  entityId     String   // Person.id, Registration.id vb.
+  textValue    String?
+  numValue     Float?
+  boolValue    Boolean?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  definition   CustomFieldDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  @@unique([definitionId, entityId])
+  @@index([entityId])
+}
+
+model OutboxEvent {
+  id            String    @id @default(cuid())
+  aggregateType String    // "REGISTRATION", "PAYMENT", "SESSION"
+  aggregateId   String
+  eventType     String    // "registration.confirmed", "payment.received"
+  payload       String    // JSON
+  status        String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
+  error         String?
+  retryCount    Int       @default(0)
+  createdAt     DateTime  @default(now())
+  processedAt   DateTime?
+
+  @@index([status, createdAt])
+}
+
+model AgencyGroup {
+  id                   String   @id @default(cuid())
+  tenantId             String
+  editionId            String
+  agencyOrganizationId String
+  primaryContactName   String
+  primaryContactEmail  String
+  primaryContactPhone  String?
+  invoiceId            String?
+  totalQuota           Int      @default(0)
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([editionId])
+  @@index([agencyOrganizationId])
+}
+
+model EventPersonRole {
+  id           String   @id @default(cuid())
+  tenantId     String
+  editionId    String
+  personId     String
+  roleCategory String   // SCIENTIFIC | GOVERNANCE | COMMERCIAL | OPERATIONAL
+  roleName     String   // "SPEAKER" | "REVIEWER" | "CHAIR" | "EXHIBITOR" | "DELEGATE" | "VIP"
+  detailsJson  String?  // Ek rol parametreleri
+  createdAt    DateTime @default(now())
+
+  @@unique([editionId, personId, roleName])
+  @@index([editionId, personId])
+  @@index([roleName])
+}
+

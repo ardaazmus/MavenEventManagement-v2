@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLang } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SponsorshipKanban } from "@/components/maven/sponsorship/sponsorship-kanban";
 
 interface Agreement {
   id: string; amount: number; currency: string; status: string; signedAt?: string | null;
@@ -164,9 +165,42 @@ export function SponsorshipView() {
   const sponsorEnts = (entitlements ?? []).filter((e) => e.ownerOrganization && (!pendingOnly || e.approvalStatus === "PROPOSED"));
   const orgOptions = Array.from(new Map((agreements ?? []).map((a) => [a.organization.id, a.organization])).values());
 
+  const handleMoveKanbanStage = async (agreementId: string, targetStage: string) => {
+    try {
+      await apiSend(`/api/sponsor-agreements/${agreementId}`, "PUT", { status: targetStage });
+      toast({ title: "Aşama Güncellendi", description: `Anlaşma ${targetStage} aşamasına taşındı.` });
+      reload();
+    } catch (e: any) {
+      toast({ title: "Güncelleme Başarısız", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const handleNewDeal = async (deal: { orgName: string; amount: number; stage: string; tierName: string }) => {
+    if (!currentEditionId) return;
+    try {
+      await apiSend("/api/sponsor-agreements", "POST", {
+        editionId: currentEditionId,
+        amount: deal.amount,
+        currency: "TRY",
+        status: deal.stage,
+      });
+      toast({ title: "Sponsorluk Anlaşması Eklendi", description: `${deal.orgName} — ₺${deal.amount.toLocaleString()}` });
+      reload();
+    } catch (e: any) {
+      toast({ title: "Kayıt Başarısız", description: e.message, variant: "destructive" });
+    }
+  };
+
   return (
     <div className="space-y-5">
       <PageHeader title="Sponsor & Fuar" desc="Tier hard-code değildir — her etkinlik kendi tier'ını tanımlar; hak tüketimi finansal işlem değildir" />
+
+      {/* Sponsorluk Kanban Boru Hattı */}
+      <SponsorshipKanban
+        agreements={(agreements ?? []) as any}
+        onMoveStage={handleMoveKanbanStage}
+        onNewDeal={handleNewDeal}
+      />
 
       {/* Hak havuzları */}
       <SectionCard

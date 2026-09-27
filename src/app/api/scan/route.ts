@@ -165,7 +165,7 @@ export async function POST(req: NextRequest) {
         title: person.title,
       },
       registration: reg ? { status: reg.status, category: reg.category?.name, funding: reg.fundingSource } : null,
-      badge: badge ? { status: badge.status, profile: badge.profile?.name } : null,
+      badge: badge ? { id: badge.id, badgeNo: badge.badgeNo, status: badge.status, profile: badge.profile?.name, reprintCount: badge.reprintCount ?? 0 } : null,
       attendance: !isSessionScan && !isRescan && action === "ENTRY" ? "CHECKED_IN" : undefined,
     });
   } catch (e) {

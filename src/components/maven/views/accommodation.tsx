@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLang, t } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
+import { RoomingMatrixConsole } from "@/components/maven/accommodation/rooming-matrix-console";
 
 interface HotelRow {
   id: string; name: string; city?: string | null; district?: string | null; contactName?: string | null; contactPhone?: string | null;
@@ -552,6 +553,42 @@ export function AccommodationView() {
     );
   };
 
+  const handleBulkImportRooming = async (parsedRows: Record<string, string>[]) => {
+    if (!currentEditionId) return;
+    let saved = 0;
+    for (const row of parsedRows) {
+      if (!row.guestName) continue;
+      try {
+        await apiSend("/api/reservations", "POST", {
+          editionId: currentEditionId,
+          guestName: row.guestName.trim(),
+          checkIn: row.checkIn ? new Date(row.checkIn).toISOString() : new Date().toISOString(),
+          checkOut: row.checkOut ? new Date(row.checkOut).toISOString() : new Date(Date.now() + 86400000 * 3).toISOString(),
+          occupancyType: row.occupancyType ? (row.occupancyType.toUpperCase().includes("DBL") ? "DOUBLE" : "SINGLE") : "SINGLE",
+          payerType: row.payerType ? (row.payerType.toUpperCase().includes("MASTER") ? "MASTER" : "SELF") : "SELF",
+          status: "REQUESTED",
+        });
+        saved++;
+      } catch (e) {
+        console.error("Rooming aktarım hatası:", e);
+      }
+    }
+    toast({ title: "Rooming Listesi Aktarıldı", description: `${saved} adet rezervasyon kaydedildi.` });
+    reloadRes();
+  };
+
+  const handlePairRoommates = async (resId: string, roommate: string) => {
+    try {
+      await apiSend(`/api/reservations/${resId}`, "PUT", {
+        notes: `Oda Arkadaşı: ${roommate}`,
+      });
+      toast({ title: "Oda Arkadaşı Eşleştirildi", description: `${roommate} odaya atandı.` });
+      reloadRes();
+    } catch (e) {
+      toast({ title: "Eşleştirme Başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    }
+  };
+
   return (
     <div className="space-y-5">
       <PageHeader title="Konaklama & Seyahat" desc="Oda stoğu gün bazlıdır — 1 oda × 3 gece = 3 oda-gece; bir gece eksikse teyit engellenir" />
@@ -578,6 +615,14 @@ export function AccommodationView() {
         ))}
         <span className="ml-auto text-[11px] text-muted-foreground">no-show ve iptaller dağılıma katılmaz</span>
       </div>
+
+      {/* Cvent Standartı: Rooming Listesi, Attrition & Eşleştirme Konsolu */}
+      <RoomingMatrixConsole
+        hotels={(hotels ?? []) as any}
+        reservations={(reservations ?? []) as any}
+        onImportRoomingList={handleBulkImportRooming}
+        onPairRoommates={handlePairRoommates}
+      />
 
       <SectionCard
         title="Oteller"

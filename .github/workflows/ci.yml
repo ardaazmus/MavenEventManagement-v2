@@ -70,6 +70,9 @@ jobs:
 
       - name: 10. Playwright E2E Health Smoke Test
         run: npx playwright test tests/smoke.spec.ts
+        env:
+          # N-09: prod-boot secret ister — CI-only dummy (webServer `npm run start` NODE_ENV=production ile kalkar)
+          MAVEN_SECRET_KEY: "ci-smoke-test-dummy-secret-not-for-production-use"
 
       - name: 11. Upload Verification Evidence
         if: always()

@@ -1,0 +1,57 @@
+{
+  "phase": "P04.1",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T01:35:00.000Z",
+  "finishedAt": "2026-09-28T01:46:00.000Z",
+  "commands": [
+    {
+      "command": "node --test tests-mini/permissions-dictionary.test.mjs",
+      "exitCode": 0,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 41,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 26962
+    }
+  ],
+  "tests": {
+    "passed": 41,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "src/lib/api/permissions.ts",
+      "sha256": "125bf50ff7428a6db00facb864d013c76fb1b2fcc1a9a05c212bdf1623ac368d"
+    },
+    {
+      "path": "tests-mini/permissions-dictionary.test.mjs",
+      "sha256": "bca584bbe7941a6dbf82aa5f4f618922c7718d5579c016c2e2d9d3ff21ac6f5d"
+    },
+    {
+      "path": "package.json",
+      "sha256": "c71ca5756279a3ff46d14628760ac821590fc68d92ea37a8206733e7c60b9e10"
+    }
+  ],
+  "permissionsSummary": {
+    "actions": ["VIEW", "CREATE", "UPDATE", "DELETE", "EXPORT", "APPROVE", "MANAGE"],
+    "totalModules": 26,
+    "totalEntitiesMapped": 82,
+    "unmappedEntities": 0,
+    "orphanEntities": 0,
+    "denyByDefault": true
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

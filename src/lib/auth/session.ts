@@ -50,6 +50,7 @@ export interface SessionPayload {
   iat: number; // issuance epoch sn — ABSOLUTE tavan bundan sayılır
   exp: number; // epoch sn
   mfaPending?: boolean; // dar kapsamlı onboarding belirteci — oturum DEĞİL
+  sv?: number; // P06.4: oturum sürümü — User.sessionVersion ile eşleşmeli (yoksa 0 sayılır)
 }
 
 function sign(data: string): string {

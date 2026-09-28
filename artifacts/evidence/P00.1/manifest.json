@@ -1,0 +1,49 @@
+{
+  "phase": "P00.1",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T00:45:00.000Z",
+  "finishedAt": "2026-09-28T00:47:30.000Z",
+  "commands": [
+    {
+      "command": "node --test tests-mini/inventory-determinism.test.mjs",
+      "exitCode": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 7005
+    },
+    {
+      "command": "node scripts/inventory.mjs --write-baseline",
+      "exitCode": 0
+    }
+  ],
+  "tests": {
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "docs/evidence/baseline.md",
+      "sha256": "1e3ac00e12d42f9772f5e6e1e7341409b3db7ff08486c1625e2f99cdf5dff354"
+    },
+    {
+      "path": "scripts/inventory.mjs",
+      "sha256": "57fc2878ce582c6e623f8f3942bd74fc2bb34c18cee81faa48f41527e0ae1c3e"
+    },
+    {
+      "path": "tests-mini/inventory-determinism.test.mjs",
+      "sha256": "f94bfaf7c361ed4504e6fa0d8b33458bc50ae3bc881cee32490821271161a03d"
+    }
+  ],
+  "inventorySummary": {
+    "prismaModels": 103,
+    "apiRoutes": 106,
+    "modules": 26,
+    "testSpecs": 36,
+    "playwrightTests": 204
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

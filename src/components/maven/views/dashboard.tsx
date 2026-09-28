@@ -151,7 +151,7 @@ export function DashboardView() {
         desc={`Hazırlık ${checks?.score ?? 0}/8 — karta basınca ilgili ayar açılır`}
         action={
           <div className="w-28">
-            <Progress value={checks?.pct ?? 0} className="h-2" />
+            <Progress value={checks?.pct ?? 0} className="h-2" aria-label={`Kurulum hazırlığı yüzde ${checks?.pct ?? 0}`} />
             <p className="mt-1 text-right text-[11px] text-muted-foreground">%{checks?.pct ?? 0}</p>
           </div>
         }
@@ -203,11 +203,11 @@ export function DashboardView() {
               <span className="text-3xl font-semibold tabular-nums">{num("consumed")}/{num("granted")}</span>
               <span className="text-sm text-muted-foreground">kullanılan hak</span>
             </div>
-            <Progress value={num("granted") ? (num("consumed") / num("granted")) * 100 : 0} className="h-2.5" />
+            <Progress value={num("granted") ? (num("consumed") / num("granted")) * 100 : 0} className="h-2.5" aria-label={`Kontenjan kullanımı yüzde ${num("granted") ? Math.round((num("consumed") / num("granted")) * 100) : 0}`} />
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
               <div className="rounded-lg bg-muted p-2"><p className="text-lg font-semibold tabular-nums">{num("granted")}</p><p className="text-muted-foreground">tanınan</p></div>
-              <div className="rounded-lg bg-amber-50 p-2"><p className="text-lg font-semibold tabular-nums text-amber-700">{num("reserved")}</p><p className="text-amber-600/80">ayrılmış</p></div>
-              <div className="rounded-lg bg-emerald-50 p-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{Math.max(0, num("granted") - num("consumed") - num("reserved"))}</p><p className="text-emerald-600/80">kalan</p></div>
+              <div className="rounded-lg bg-amber-50 p-2"><p className="text-lg font-semibold tabular-nums text-amber-700">{num("reserved")}</p><p className="text-amber-800">ayrılmış</p></div>
+              <div className="rounded-lg bg-emerald-50 p-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{Math.max(0, num("granted") - num("consumed") - num("reserved"))}</p><p className="text-emerald-800">kalan</p></div>
             </div>
             <p className="text-xs text-muted-foreground">Sponsorluk değeri: <span className="font-medium text-foreground">{fmtMoney(num("sponsorshipValue"))}</span> · bekleyen teslim: {num("deliverablePending")}</p>
             <Button size="sm" variant="outline" className="w-full" onClick={() => setModule("sponsorship")}>Sponsorluk modülü →</Button>
@@ -230,6 +230,8 @@ export function DashboardView() {
         </SectionCard>
 
         <SectionCard title="Kaynak Dağılımı" desc="kayıt kaynakları">
+          {/* Pasta grafik AT/odaktan çıkarılmıştır (inert) — veri alttaki metin lejantta aynen sunulur. */}
+          <div inert>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
               <Pie data={Object.entries(data.bySource ?? {}).map(([k, v]) => ({ name: k, value: v }))} dataKey="value" nameKey="name" innerRadius={48} outerRadius={80} paddingAngle={2}>
@@ -238,6 +240,7 @@ export function DashboardView() {
               <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
             </PieChart>
           </ResponsiveContainer>
+          </div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {Object.entries(data.bySource ?? {}).map(([k, v], i) => (
               <span key={k} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">

@@ -68,7 +68,11 @@
     "capLockedEmpty": "Kapalı yeteneğin menüsü baştan gizlenir.",
     "noAccess": "Erişim yok",
     "freeMode": "Serbest Mod",
-    "freeModeHint": "Kimlik doğrulama kapalı — tüm modüller açık. Üretimde oturum rolü menüyü süzer."
+    "freeModeHint": "Kimlik doğrulama kapalı — tüm modüller açık. Üretimde oturum rolü menüyü süzer.",
+    "themeLabel": "Tema",
+    "themeLight": "Açık",
+    "themeSystem": "Sistem",
+    "themeDark": "Koyu"
   },
   "common": {
     "save": "Kaydet",
@@ -2512,7 +2516,22 @@
     "saveError": "Kaydedilemedi",
     "deleted": "Entegrasyon silindi",
     "deletedDesc": "Log geçmişi de temizlendi (cascade).",
-    "deleteError": "Silinemedi"
+    "deleteError": "Silinemedi",
+    "outboxTitle": "Giden Kutusu (Outbox)",
+    "outboxDesc": "Entegrasyonlara dağıtılmayı bekleyen olaylar — başarısız ve ölü kayıtlar buradan iade edilir.",
+    "outboxEmpty": "Kuyrukta kayıt yok.",
+    "outboxRetry": "Yeniden dene",
+    "outboxRetrying": "İade ediliyor…",
+    "outboxRetried": "Kuyruğa iade edildi",
+    "outboxRetryError": "İade başarısız",
+    "outboxDrain": "Şimdi tara",
+    "outboxDraining": "Taranıyor…",
+    "outboxDrained": "Tarama tamamlandı",
+    "outboxDrainError": "Tarama başarısız",
+    "outboxPayload": "Yük (maskeli)",
+    "outboxNextRun": "Sonraki deneme",
+    "outboxDeadReason": "Ölüm nedeni",
+    "outboxFilter": "Durum filtresi"
   },
   "compliance": {
     "title": "Uyumluluk",

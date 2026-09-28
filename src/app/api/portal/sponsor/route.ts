@@ -9,6 +9,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolvePublicEdition } from "@/lib/api/public-guard";
 import { extractToken, validatePortalToken, touchToken } from "@/lib/api/portal-tokens";
+import { checkSponsorScope, agreementFilter } from "@/lib/portal/sponsor-scope";
+import { sanitizeProfilePatch } from "@/lib/portal/sponsor-profile";
+import { STAFF_ROLE } from "@/lib/portal/sponsor-staff";
+import { ActivityType } from "@/lib/api/activity";
 
 export async function GET(req: NextRequest) {
   try {
@@ -32,11 +36,13 @@ export async function GET(req: NextRequest) {
       );
     }
     const token = check.token;
-    // kapsam + sahiplik: SPONSOR belirteci yalnız kendi kurumu + kendi edisyonu için geçerli
-    if (token.scope !== "SPONSOR" || token.organizationId !== organizationId || token.editionId !== editionId) {
+    // P20.1: kapsam + sahiplik — anlaşma-kapsamlı jeton yalnız o anlaşmaya işler
+    // (liste yoksa daraltma filtrede; RED yalnız kapsam ihlalinde, varlık ifşa etmez)
+    if (!checkSponsorScope(token, { editionId, organizationId }).ok) {
       return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
     }
     touchToken(token.id);
+    const scopeFilter = agreementFilter(token);
 
     // Faz A public allowlist: editionId → kiracı çözümlenemiyorsa 404
     const publicEdition = await resolvePublicEdition(editionId);
@@ -48,7 +54,7 @@ export async function GET(req: NextRequest) {
     if (!organization) return NextResponse.json({ error: "Kurum bulunamadı" }, { status: 404 });
 
     const agreements = await db.sponsorAgreement.findMany({
-      where: { editionId, organizationId },
+      where: { editionId, organizationId, ...scopeFilter },
       include: {
         tier: true,
         package: { include: { tier: true } },
@@ -73,13 +79,15 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: "desc" },
     });
 
-    // portalda görünecek katılımcılar — bu kurumdan gelenler (firma eşleşmesiyle)
+    // portalda görünecek katılımcılar — bu kurumdan gelenler (firma eşleşmesi +
+    // P20.1: EXHIBITOR_STAFF rolü şart — rolü silinen personel listeden düşer)
     const staffParticipations = await db.eventParticipation.findMany({
-      where: { editionId, person: { company: organization.name } },
+      where: { editionId, person: { company: organization.name }, roleAssignments: { some: { role: STAFF_ROLE } } },
       include: {
         person: true,
         registrations: { include: { category: true } },
         badgeInstances: true,
+        roleAssignments: { where: { role: STAFF_ROLE }, select: { status: true } },
       },
       orderBy: { createdAt: "asc" },
       take: 50,
@@ -163,13 +171,78 @@ export async function GET(req: NextRequest) {
       staff: staffParticipations.map((p) => ({
         participationId: p.id, source: p.source,
         personName: `${p.person.firstName} ${p.person.lastName}`, personTitle: p.person.title,
+        staffRoleStatus: p.roleAssignments[0]?.status ?? null,
         registrationStatus: p.registrations[0]?.status ?? null,
         categoryCode: p.registrations[0]?.category?.code ?? null,
         badgeStatus: p.badgeInstances[0]?.status ?? null,
       })),
+      // P20.1: jetonun erişim kapsamı (anlaşma-kapsamlı ise id; kurum geneli ise null)
+      grant: { agreementId: token.agreementId ?? null },
     });
   } catch (err) {
     console.error("portal/sponsor error:", err);
     return NextResponse.json({ error: "Sponsor portal verisi alınamadı" }, { status: 500 });
+  }
+}
+
+// P20.1: Sponsor kurum kartı düzenlemesi — jeton sahibi yalnız KENDİ kurumunun
+// izinli alanlarını yamar (ad/vergi-no/kiracı dokunulmaz).
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = (await req.json()) as Record<string, unknown>;
+    const editionId = body.editionId;
+    const organizationId = body.organizationId;
+    if (typeof editionId !== "string" || typeof organizationId !== "string" || !editionId || !organizationId) {
+      return NextResponse.json({ error: "editionId ve organizationId zorunlu" }, { status: 400 });
+    }
+    const raw = extractToken(req) ?? (typeof body.token === "string" ? body.token : null);
+    if (!raw) {
+      return NextResponse.json({ error: "Portal erişim anahtarı gerekli" }, { status: 410 });
+    }
+    const check = await validatePortalToken(raw);
+    if (!check.ok) {
+      return NextResponse.json(
+        { error: check.reason === "UNKNOWN" ? "Etkinlik bulunamadı" : "Erişim anahtarınız geçersiz veya süresi dolmuş" },
+        { status: check.reason === "UNKNOWN" ? 404 : 410 },
+      );
+    }
+    const token = check.token;
+    if (!checkSponsorScope(token, { editionId, organizationId }).ok) {
+      return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
+    }
+    touchToken(token.id);
+
+    const publicEdition = await resolvePublicEdition(editionId);
+    if (!publicEdition) return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
+    const organization = await db.organization.findFirst({
+      where: { id: organizationId, tenantId: publicEdition.tenantId },
+      select: { id: true, name: true },
+    });
+    if (!organization) return NextResponse.json({ error: "Kurum bulunamadı" }, { status: 404 });
+
+    const patch = sanitizeProfilePatch(body.profile ?? body);
+    if (!patch.ok) return NextResponse.json({ error: patch.error }, { status: 400 });
+    const updated = await db.organization.update({ where: { id: organization.id }, data: patch.data });
+    await db.activityLog.create({
+      data: {
+        type: ActivityType.ORG_SAVED,
+        editionId,
+        message: `Portal: kurum kartı güncellendi — ${organization.name} (${Object.keys(patch.data).join(", ")})`,
+        entityType: "Organization",
+        entityId: organization.id,
+        actorName: `Sponsor Portalı — ${organization.name}`,
+      },
+    });
+    return NextResponse.json({
+      ok: true,
+      organization: {
+        id: updated.id, name: updated.name, website: updated.website, city: updated.city,
+        country: updated.country, logoUrl: updated.logoUrl, generalEmail: updated.generalEmail,
+        description: updated.description, address: updated.address,
+      },
+    });
+  } catch (err) {
+    console.error("portal/sponsor PATCH error:", err);
+    return NextResponse.json({ error: "Kurum kartı güncellenemedi" }, { status: 500 });
   }
 }

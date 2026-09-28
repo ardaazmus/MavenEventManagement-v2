@@ -33,6 +33,7 @@ interface ScanRow {
   participation?: { id: string; person: { firstName: string; lastName: string } } | null;
 }
 interface ScanResult {
+  masked?: boolean;
   result: string; tone?: string; reason?: string | null;
   person?: { id: string; name: string; company?: string | null; title?: string | null };
   registration?: { status: string; category?: string | null; funding: string } | null;
@@ -186,6 +187,9 @@ export function OnsiteView() {
                 <div className="mt-2 space-y-0.5 text-xs">
                   <p className="font-semibold">{last.person.name} <span className="font-normal text-muted-foreground">{last.person.title ? `· ${last.person.title}` : ""}</span></p>
                   <p className="text-muted-foreground">{last.person.company ?? "—"}</p>
+                  {last.masked && (
+                    <p className="text-[10px] text-amber-700">Maskeli görünüm — tam kimlik için kadro girişi gerekli.</p>
+                  )}
                 </div>
               )}
               {last.registration && (
@@ -741,7 +745,7 @@ export function CertificatesView() {
                   }
                 >
                   <div className="grid grid-cols-4 gap-1.5 text-center text-[11px]">
-                    <div className="rounded-md bg-emerald-50 p-1.5"><p className="text-base font-bold text-emerald-700 tabular-nums">{cnt("GENERATED") + cnt("DELIVERED")}</p><p className="text-emerald-600/80">{t("certificates.cntEligible")}</p></div>
+                    <div className="rounded-md bg-emerald-50 p-1.5"><p className="text-base font-bold text-emerald-700 tabular-nums">{cnt("GENERATED") + cnt("DELIVERED")}</p><p className="text-emerald-800">{t("certificates.cntEligible")}</p></div>
                     <div className="rounded-md bg-sky-50 p-1.5"><p className="text-base font-bold text-sky-700 tabular-nums">{cnt("GENERATED")}</p><p className="text-sky-600/80">{t("certificates.cntGenerated")}</p></div>
                     <div className="rounded-md bg-teal-50 p-1.5"><p className="text-base font-bold text-teal-700 tabular-nums">{cnt("DELIVERED")}</p><p className="text-teal-600/80">{t("certificates.cntDelivered")}</p></div>
                     <div className="rounded-md bg-rose-50 p-1.5"><p className="text-base font-bold text-rose-700 tabular-nums">{cnt("NOT_ELIGIBLE") + cnt("REVOKED")}</p><p className="text-rose-600/80">{t("certificates.cntMissing")}</p></div>

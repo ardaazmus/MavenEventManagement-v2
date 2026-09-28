@@ -30,6 +30,7 @@ export async function issuePortalToken(opts: {
   editionId: string;
   personId?: string | null;
   organizationId?: string | null;
+  agreementId?: string | null;
   ttlMs?: number;
   issuedBy?: string;
 }): Promise<{ token: string; expiresAt: Date }> {
@@ -42,6 +43,7 @@ export async function issuePortalToken(opts: {
       editionId: opts.editionId,
       personId: opts.personId ?? null,
       organizationId: opts.organizationId ?? null,
+      agreementId: opts.agreementId ?? null,
       expiresAt,
       issuedBy: opts.issuedBy ?? "ADMIN",
     },
@@ -56,6 +58,7 @@ export type PortalTokenRow = {
   editionId: string;
   personId: string | null;
   organizationId: string | null;
+  agreementId: string | null;
   expiresAt: Date;
   revokedAt: Date | null;
 };

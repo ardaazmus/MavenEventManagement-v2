@@ -4,6 +4,8 @@
 
 import { db } from "@/lib/db";
 import { encryptSecret } from "@/lib/secrets";
+import { AgreementScopeError, assertAgreementScope, validateAgreementInput, type AgreementScopePrisma } from "@/lib/sponsorship/agreements";
+import { guardPackageDelete, guardTierDelete, validatePackageInput, validateTierInput, type DeleteGuardPrisma } from "@/lib/sponsorship/capacity";
 import { ActivityType } from "./activity";
 
 type AnyDelegate = {
@@ -36,6 +38,8 @@ export interface EntityConfig {
   // async çakışma denetimi — hata mesajı dönerse 409 ile reddedilir. Inside the
   // hook: withLock(anahtar) + çakışan-aralık sorgusu (check-then-write serileştirme).
   beforeWrite?: (data: Record<string, unknown>, isUpdate: boolean, existingId?: string) => Promise<string | null>;
+  // P10: silme-öncesi koruma — mesaj dönerse 409 ile reddedilir (kullanımda kayıt).
+  beforeDelete?: (id: string) => Promise<string | null>;
 }
 
 export const registry: Record<string, EntityConfig> = {
@@ -275,6 +279,8 @@ export const registry: Record<string, EntityConfig> = {
   "sponsor-tiers": {
     delegate: db.sponsorTierDefinition as unknown as AnyDelegate,
     include: { agreements: true },
+    validate: (data, isUpdate) => validateTierInput(data, isUpdate),
+    beforeDelete: (id) => guardTierDelete(db as unknown as DeleteGuardPrisma, id),
     filterFields: ["editionId"],
     orderBy: { displayOrder: "asc" },
   },
@@ -282,6 +288,21 @@ export const registry: Record<string, EntityConfig> = {
     delegate: db.sponsorPackage as unknown as AnyDelegate,
     include: { tier: true, agreements: true },
     filterFields: ["editionId", "tierId"],
+    validate: (data, isUpdate) => validatePackageInput(data, isUpdate),
+    beforeWrite: async (data, isUpdate, existingId) => {
+      const tierId = data.tierId;
+      if (typeof tierId !== "string") return null;
+      let editionId = data.editionId;
+      if (isUpdate && typeof editionId !== "string") {
+        const existing = await db.sponsorPackage.findUnique({ where: { id: existingId ?? "" }, select: { editionId: true } });
+        editionId = existing?.editionId;
+      }
+      if (typeof editionId !== "string") return null;
+      const tier = await db.sponsorTierDefinition.findUnique({ where: { id: tierId }, select: { editionId: true } });
+      if (!tier || tier.editionId !== editionId) return "Seviye bu etkinliğe ait değil (cross-edition)";
+      return null;
+    },
+    beforeDelete: (id) => guardPackageDelete(db as unknown as DeleteGuardPrisma, id),
   },
   "sponsor-agreements": {
     delegate: db.sponsorAgreement as unknown as AnyDelegate,
@@ -294,6 +315,39 @@ export const registry: Record<string, EntityConfig> = {
     },
     filterFields: ["editionId", "organizationId", "status", "packageId", "tierId"],
     orderBy: { createdAt: "desc" },
+    validate: (data, isUpdate) => validateAgreementInput(data, isUpdate),
+    beforeWrite: async (data, isUpdate, existingId) => {
+      try {
+        let editionId = data.editionId;
+        let organizationId = data.organizationId;
+        if (isUpdate) {
+          const existing = await db.sponsorAgreement.findUnique({
+            where: { id: existingId ?? "" },
+            select: { id: true, editionId: true, organizationId: true },
+          });
+          if (!existing) return null;
+          editionId = editionId ?? existing.editionId;
+          organizationId = organizationId ?? existing.organizationId;
+        }
+        if (typeof editionId !== "string" || typeof organizationId !== "string") return null;
+        const edition = await db.eventEdition.findUnique({
+          where: { id: editionId },
+          select: { id: true, tenantId: true },
+        });
+        if (!edition) return null;
+        await assertAgreementScope(db as unknown as AgreementScopePrisma, {
+          tenantId: edition.tenantId,
+          editionId,
+          organizationId,
+          packageId: typeof data.packageId === "string" ? data.packageId : null,
+          tierId: typeof data.tierId === "string" ? data.tierId : null,
+        });
+        return null;
+      } catch (e) {
+        if (e instanceof AgreementScopeError) return e.message;
+        throw e;
+      }
+    },
     auditType: ActivityType.SPONSOR_AGREEMENT,
     auditMessage: (d) => `Sponsor sözleşmesi güncellendi: ${d.status ?? ""}`,
   },

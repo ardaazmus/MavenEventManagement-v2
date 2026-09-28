@@ -1,0 +1,74 @@
+{
+  "phase": "P02.2",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T01:13:00.000Z",
+  "finishedAt": "2026-09-28T01:16:30.000Z",
+  "commands": [
+    {
+      "command": "node --test tests-mini/playwright-webserver.test.mjs",
+      "exitCode": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npx playwright test tests/smoke.spec.ts",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 28,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 25140
+    }
+  ],
+  "tests": {
+    "passed": 28,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "playwright.config.ts",
+      "sha256": "3b9008fe683aeac4564233c6002975fdeb1083d06e7a50a2366c8b607dde0cf2"
+    },
+    {
+      "path": "tests/smoke.spec.ts",
+      "sha256": "36c6f0035cfdaad8052d9cc1138e9aef0c1213c77b9085ea2a36d07be4d50bee"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "59eb4ebec8e094975372293ee3fcc4862bda7fdd9436d582c6b4df4234b6ffe2"
+    },
+    {
+      "path": "package.json",
+      "sha256": "f7f93d43f35210890ffdecd0b851ca02ba95405f0f52b70c7d3256e42c8c3f13"
+    },
+    {
+      "path": "tests-mini/playwright-webserver.test.mjs",
+      "sha256": "baacc9bba02838f19a37eccfa940a07ca585c02ac258f94054df6c8f7f44d170"
+    },
+    {
+      "path": "tests-mini/inventory-determinism.test.mjs",
+      "sha256": "11797dd3511b6b595b5feda0f0058777b4c168c1c91f78313549dd99dfe5c307"
+    }
+  ],
+  "webServerSummary": {
+    "playwrightWebServerConfigured": true,
+    "command": "process.env.CI ? 'npm run start' : 'npm run dev'",
+    "url": "http://localhost:3000/api/health",
+    "reuseExistingServer": "!process.env.CI",
+    "timeout": 120000,
+    "ciPlaywrightChromiumInstalled": true,
+    "ciSmokeTestAdded": true,
+    "smokeSpecFile": "tests/smoke.spec.ts"
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

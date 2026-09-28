@@ -68,7 +68,11 @@
     "capLockedEmpty": "Disabled capabilities are hidden from the menu.",
     "noAccess": "No access",
     "freeMode": "Free Mode",
-    "freeModeHint": "Authentication is off — all modules are open. In production the session role filters the menu."
+    "freeModeHint": "Authentication is off — all modules are open. In production the session role filters the menu.",
+    "themeLabel": "Theme",
+    "themeLight": "Light",
+    "themeSystem": "System",
+    "themeDark": "Dark"
   },
   "common": {
     "save": "Save",
@@ -2512,7 +2516,22 @@
     "saveError": "Could not save",
     "deleted": "Integration deleted",
     "deletedDesc": "Log history also cleared (cascade).",
-    "deleteError": "Could not delete"
+    "deleteError": "Could not delete",
+    "outboxTitle": "Outbox",
+    "outboxDesc": "Events awaiting delivery to integrations — failed and dead records are requeued here.",
+    "outboxEmpty": "Queue is empty.",
+    "outboxRetry": "Retry",
+    "outboxRetrying": "Requeueing…",
+    "outboxRetried": "Requeued",
+    "outboxRetryError": "Requeue failed",
+    "outboxDrain": "Drain now",
+    "outboxDraining": "Draining…",
+    "outboxDrained": "Drain complete",
+    "outboxDrainError": "Drain failed",
+    "outboxPayload": "Payload (masked)",
+    "outboxNextRun": "Next run",
+    "outboxDeadReason": "Dead reason",
+    "outboxFilter": "Status filter"
   },
   "compliance": {
     "title": "Compliance",

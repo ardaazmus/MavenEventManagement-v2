@@ -33,6 +33,9 @@ model Tenant {
   contactPhone String? // yetkili telefon (tel: linki)
   contactEmail String? // yetkili e-posta (mailto: linki)
   website      String? // firma web sitesi
+  // — P15: tema ve marka (kullanıcı tercihi çerezde; kiracı varsayılanı burada) —
+  themeDefault String? @default("system") // system|light|dark
+  brandPrimary String? // #rrggbb — kontrast eşiği API'de doğrulanır
 
   users               User[]
   organizations       Organization[]
@@ -48,6 +51,18 @@ model Tenant {
   jurisdictionProfile JurisdictionProfile? // TASK-B 19: yargı çerçevesi profili (tek-etkin)
   documents           DocumentRecord[] // TASK-B 20: belge sicili
   subscription        TenantSubscription? // TASK-B 22: abonelik (manuel ilk aşama)
+  roleDefinitions     RoleDefinition[] // P05.1: Kalıcı rol tanımları
+  invites             UserInvite[] // P06.2: Kullanıcı davetleri
+  exportJobs          ExportJob[] // P14.3: Denetimli dışa aktarım işleri
+  mediaExportJobs   MediaExportJob[] // P14.3: Medya asenkron iş kuyruğu
+  tenantMailTemplates TenantMailTemplate[] // P17.1: şirket şablon kütüphanesi
+  contactConsents     ContactConsent[] // P17.2: amaç-bazlı rıza
+  sendDecisions       SendDecision[] // P17.2: gönderim kararı denetimi (değişmez)
+  iysOutbox           IysOutbox[] // P17.3: İYS ileti kuyruğu
+  editionArchives     EditionArchive[] // P18.2: edisyon arşiv anlık görüntüleri
+  brandAssets         BrandAsset[] // P19.1: kurumsal varlık kütüphanesi
+  utmTerms            UtmTerm[] // P19.4: UTM sözlüğü
+  promoUsages         PromoUsage[] // P19.4: kullanım analitiği
 }
 
 model User {
@@ -63,6 +78,7 @@ model User {
   mfaEnabled        Boolean   @default(false)
   recoveryCodes     String? // JSON: [{ hash, usedAt|null }] — kurtarma faktörü (tek kullanımlık, hash'li)
   failedLoginCount  Int       @default(0)
+  sessionVersion    Int       @default(0) // P06.4: disable/enable oturum iptali — çerezdeki sv ile eşleşmeli
   lockedUntil       DateTime?
   lastLoginAt       DateTime?
   // — A4: asgari rıza (KVKK) —
@@ -70,9 +86,10 @@ model User {
   consentAcceptedAt DateTime?
   createdAt         DateTime  @default(now())
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  passkeys      Passkey[]
-  oauthAccounts OAuthAccount[]
+  tenant              Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  passkeys            Passkey[]
+  oauthAccounts       OAuthAccount[]
+  roleAssignments     UserRoleAssignment[] // P05.1: Kalıcı rol atamaları
 }
 
 // A4: WebAuthn passkey — opaque userId (cuid) dışa ifşa edilmez; challenge tek kullanımlık;
@@ -166,6 +183,7 @@ model Organization {
   invitations       Invitation[]
   delegationBilling Delegation[]
   portalTokens      PortalToken[]
+  sponsorFavorites  SponsorFavorite[] // P20.4: katilimci favorileri
   customerContacts  CustomerContact[] @relation("CustomerOrganization")
 }
 
@@ -231,6 +249,10 @@ model Person {
   socialAnnouncements SocialPlanAnnouncement[]
   b2bAssignments      B2bAssignment[]
   portalTokens        PortalToken[]
+  sponsorLeads        LeadCapture[] @relation("LeadSubject")
+  leadsCaptured       LeadCapture[] @relation("LeadCapturedBy")
+  sponsorMeetings     MeetingRequest[]
+  sponsorFavorites    SponsorFavorite[]
   portalSessions      PortalSession[] // PWA portal AUTH oturumları
   customerContacts    CustomerContact[] @relation("CustomerPerson") // müşteri datası bağlantısı
 
@@ -318,6 +340,10 @@ model EventEdition {
   delegations         Delegation[]
   expenses            Expense[]
   portalTokens        PortalToken[]
+  leadCaptures        LeadCapture[] // P20.2
+  meetingRequests     MeetingRequest[] // P20.3
+  sponsorFavorites    SponsorFavorite[] // P20.4
+  sponsorAvailability SponsorAvailability[] // P20.3
   formSubmissions     FormSubmission[]
   waitlistEntries     WaitlistEntry[]
   customRoles         CustomRole[]
@@ -919,6 +945,10 @@ model SponsorAgreement {
   tier             SponsorTierDefinition? @relation(fields: [tierId], references: [id], onDelete: SetNull)
   deliverables     Deliverable[]
   boothAllocations BoothAllocation[]
+  portalTokens     PortalToken[] // P20.1
+  leadCaptures     LeadCapture[] // P20.2
+  meetingRequests  MeetingRequest[] // P20.3
+  availability     SponsorAvailability[] // P20.3
 
   @@index([editionId])
   @@index([status])
@@ -934,9 +964,98 @@ model Deliverable {
   responsible String?
   notes       String?
 
+  proofUrl    String? // P13: kanıt dosya/kayıt URL'si (SUBMITTED için notes ile birlikte kanıt sayılır)
+
   agreement SponsorAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
 
   @@index([agreementId])
+}
+
+// --- P20.2: Lead yakalama (rozet tarama / manuel / ice aktarim) ---
+model LeadCapture {
+  id                 String   @id @default(cuid())
+  editionId          String
+  agreementId        String
+  personId           String
+  capturedByPersonId String?
+  channel            String   @default("BADGE_SCAN") // BADGE_SCAN|MANUAL|IMPORT
+  note               String?
+  rating             String? // HOT|WARM|COLD
+  capturedAt         DateTime @default(now())
+  clientKey          String? // P20.2: cevrimdisi kuyruk idempotency anahtari (istemci uretir)
+  consentPurpose     String   @default("SPONSOR_FOLLOWUP") // SPONSOR_FOLLOWUP|EVENT_NETWORKING
+  consentAtCapture   String? // yakalama anindaki kisi consentVersion anlik goruntusu
+  expiresAt          DateTime? // PII saklama sonu; dolan lead liste/export/ROI disi
+
+  edition    EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  agreement  SponsorAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  person     Person           @relation("LeadSubject", fields: [personId], references: [id], onDelete: Cascade)
+  capturedBy Person?          @relation("LeadCapturedBy", fields: [capturedByPersonId], references: [id], onDelete: SetNull)
+
+  @@unique([agreementId, personId])
+  @@unique([agreementId, clientKey])
+  @@index([editionId, agreementId])
+  @@index([capturedAt])
+  @@index([expiresAt])
+}
+
+// --- P20.3: Sponsor gorusme talepleri ---
+model MeetingRequest {
+  id                String    @id @default(cuid())
+  editionId         String
+  agreementId       String
+  requesterPersonId String
+  title             String?
+  slotStart         DateTime
+  slotEnd           DateTime
+  location          String?
+  note              String?
+  status            String    @default("REQUESTED") // REQUESTED|CONFIRMED|DECLINED|CANCELLED|COMPLETED
+  timezone          String    @default("Europe/Istanbul") // slotun goruntulendigi IANA dilimi (cikis gercek an'dir)
+  decidedAt         DateTime?
+  decidedBy         String?
+  createdAt         DateTime  @default(now())
+
+  edition   EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  agreement SponsorAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  requester Person           @relation(fields: [requesterPersonId], references: [id], onDelete: Cascade)
+
+  @@index([agreementId, slotStart])
+  @@index([editionId, status])
+}
+
+// --- P20.3: Sponsor gorusme uygunluk pencereleri (gercek an araligi) ---
+model SponsorAvailability {
+  id          String   @id @default(cuid())
+  editionId   String
+  agreementId String
+  slotStart   DateTime
+  slotEnd     DateTime
+  timezone    String   @default("Europe/Istanbul")
+  label       String?
+  createdAt   DateTime @default(now())
+
+  edition   EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  agreement SponsorAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+
+  @@index([agreementId, slotStart])
+  @@index([editionId])
+}
+
+// --- P20.4: Katilimci sponsor favorileri (AUTH kisiye bagli durum) ---
+model SponsorFavorite {
+  id             String   @id @default(cuid())
+  editionId      String
+  organizationId String
+  personId       String
+  createdAt      DateTime @default(now())
+
+  edition      EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  person       Person       @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([editionId, organizationId, personId])
+  @@index([editionId, organizationId])
 }
 
 // ─── FAZ 11: ACCOMMODATION (§31-35) — Gecelik stok ─────────────────────────
@@ -1426,7 +1545,15 @@ model Campaign {
   phase            String    @default("PRE_EVENT") // PRE_EVENT|DURING_EVENT|POST_EVENT — 3 aşamalı süreç
   audienceMode     String    @default("SEGMENT") // SEGMENT|CUSTOM|BOTH
   customRecipients String? // özel e-posta listesi (satır/virgül bazlı)
-  templateId       String? // HTML mailing şablonu
+  templateId       String? // HTML mailing şablonu (edisyon)
+  libraryTemplateId String? // P17.1: şirket kütüphane şablonu (edisyon şablonu yoksa)
+  purpose          String    @default("COMMERCIAL") // P17.2: TRANSACTIONAL|COMMERCIAL
+  // P19.3: kampanya onay akışı — ticari LIVE gönderim APPROVED ister
+  approvalStatus   String    @default("NONE") // NONE|PENDING|APPROVED|REJECTED
+  approvedBy       String?
+  approvedAt       DateTime?
+  approvalNote     String?
+  approvalRequestedBy String? // dört-göz: isteyen ile onaylayan farklı kişi olmalı
   providerId       String? // gönderim sağlayıcısı (SMTP/Mailjet...)
   formId           String? // etkileşimli quiz formu
   isSegmentFixed   Boolean   @default(true) // sabit mi gönderim anında güncel mi
@@ -1447,6 +1574,7 @@ model Campaign {
 
   edition  EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
   template EmailTemplate?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  libraryTemplate TenantMailTemplate? @relation(fields: [libraryTemplateId], references: [id], onDelete: SetNull)
   provider MailProviderConfig? @relation(fields: [providerId], references: [id], onDelete: SetNull)
   quizForm FormDefinition?     @relation(fields: [formId], references: [id], onDelete: SetNull)
 
@@ -1807,6 +1935,7 @@ model ApiIntegration {
   status       String    @default("DRAFT") // DRAFT|ACTIVE|PAUSED|ERROR
   lastRunAt    DateTime?
   lastStatus   String? // OK|FAILED
+  webhookDeliveries WebhookDelivery[] // P22.3
   successCount Int       @default(0)
   failCount    Int       @default(0)
   notes        String?
@@ -2085,6 +2214,7 @@ model PortalToken {
   editionId      String
   personId       String? // scope=PARTICIPANT
   organizationId String? // scope=SPONSOR
+  agreementId    String? // P20.1: anlasma-kapsamli sponsor erisimi (NULL = kurum geneli)
   issuedAt       DateTime  @default(now())
   issuedBy       String? // çıkarım kanalı: REGISTRATION_APPROVAL | ADMIN | PREVIEW
   expiresAt      DateTime
@@ -2094,10 +2224,12 @@ model PortalToken {
   person       Person?       @relation(fields: [personId], references: [id], onDelete: Cascade)
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   edition      EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  agreement    SponsorAgreement? @relation(fields: [agreementId], references: [id], onDelete: SetNull)
 
   @@index([personId])
   @@index([organizationId])
   @@index([editionId])
+  @@index([agreementId])
 }
 
 // ═══ PWA / MOBILE-FIRST KATILIMCI DIŞ PORTALI — modüler ek tablolar ═════════
@@ -2212,7 +2344,7 @@ model PortalAnalyticsLog {
   id        String   @id @default(cuid())
   editionId String
   sessionId String?
-  kind      String // VISIT|WIDGET_CLICK|PWA_INSTALL|FORM_OPEN|B2B_ACTION|QA_SUBMIT|REMINDER_SET
+  kind      String // VISIT|WIDGET_CLICK|PWA_INSTALL|FORM_OPEN|B2B_ACTION|QA_SUBMIT|REMINDER_SET|FORM_SUBMIT|SPONSOR_VIEW
   widgetKey String? // agenda|forms|qa|map|b2b|speakers|sponsors|profile|program
   meta      String? // kısa yapılandırılmış özet (PII yok)
   createdAt DateTime @default(now())
@@ -2325,17 +2457,43 @@ model CustomFieldValue {
 
 model OutboxEvent {
   id            String    @id @default(cuid())
+  tenantId      String? // P22: kiracÄ± kapsamÄ± (eski satÄ±rlar null)
+  editionId     String?
   aggregateType String    // "REGISTRATION", "PAYMENT", "SESSION"
   aggregateId   String
   eventType     String    // "registration.confirmed", "payment.received"
   payload       String    // JSON
-  status        String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
+  status        String    @default("PENDING") // PENDING|PROCESSING|COMPLETED|FAILED|DEAD
   error         String?
   retryCount    Int       @default(0)
+  maxAttempts   Int       @default(5) // P22: aÅŸÄ±mda DEAD
+  idempotencyKey String?  @unique // P22: Ã¼retici tekrar anahtarÄ±
+  lockedAt      DateTime? // P22: lease baÅŸlangÄ±cÄ±
+  lockedBy      String? // P22: worker kimliÄŸi
+  nextRunAt     DateTime  @default(now()) // P22: backoff sonrasÄ±
+  deadAt        DateTime? // P22: dead-letter zamanÄ±
+  deadReason    String? // P22: Ã¶lÃ¼ gerekÃ§esi
   createdAt     DateTime  @default(now())
   processedAt   DateTime?
 
   @@index([status, createdAt])
+  @@index([status, nextRunAt]) // P22: vade sorgusu
+  @@index([tenantId, status])
+}
+
+// --- P22.3: Gelen webhook teslim kaydÄ± (tekrar-teslim tekilleme) ---
+model WebhookDelivery {
+  id            String   @id @default(cuid())
+  integrationId String
+  deliveryKey   String // Idempotency-Key baÅŸlÄ±ÄŸÄ± ya da gÃ¶vde eventId
+  status        String   @default("RECEIVED") // RECEIVED|PROCESSED|REJECTED
+  statusCode    Int?
+  createdAt     DateTime @default(now())
+
+  integration ApiIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, deliveryKey])
+  @@index([createdAt])
 }
 
 model AgencyGroup {
@@ -2371,3 +2529,327 @@ model EventPersonRole {
   @@index([roleName])
 }
 
+// ─── P05.1: Kalıcı Rol ve Kapsam Modeli (IAM RBAC) ───────────────────────────
+
+model RoleDefinition {
+  id          String   @id @default(cuid())
+  tenantId    String?  // null ise sistem genelindeki şablon rolü, dolu ise o kiracıya özel rol
+  key         String   // "ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "FINANCE_MANAGER", "VIEWER" vb.
+  name        String   // "Kurum Sahibi", "Finans Yöneticisi", "İzleyici" vb.
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions RolePermission[]
+  assignments UserRoleAssignment[]
+  tenant      Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
+  @@index([key])
+}
+
+model RolePermission {
+  id            String   @id @default(cuid())
+  roleId        String
+  module        String   // 26 modül kimliği (dashboard, people, finance, sponsorship vb.)
+  action        String   // 7 eylem (VIEW, CREATE, UPDATE, DELETE, EXPORT, APPROVE, MANAGE)
+  scopeType     String   @default("EDITION") // TENANT | EDITION | GLOBAL
+  conditionJson String?  // Ek filtreler (ör. { "ownerOnly": true })
+  createdAt     DateTime @default(now())
+
+  role RoleDefinition @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, module, action])
+  @@index([roleId])
+  @@index([module, action])
+}
+
+model UserRoleAssignment {
+  id        String   @id @default(cuid())
+  userId    String
+  roleId    String
+  scopeKey  String   // "TENANT" (kiracı çapında) veya edition id (etkinlik edisyonu çapında). ASLA NULL OLMAZ.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role RoleDefinition @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, scopeKey])
+  @@index([userId])
+  @@index([roleId])
+  @@index([scopeKey])
+}
+
+
+
+model UserInvite {
+  id        String    @id @default(cuid())
+  tenantId  String
+  email     String
+  role      String    @default("VIEWER")
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  revokedAt DateTime?
+  createdBy String?
+  createdAt DateTime  @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, email])
+  @@index([expiresAt])
+}
+
+model ExportJob {
+  id             String    @id @default(cuid())
+  tenantId       String
+  editionId      String?
+  type           String    // REGISTRATIONS (P14.3 kapsamı; diğer tipler P14.2 doğrudan akışta)
+  status         String    @default("READY") // READY|NEEDS_APPROVAL|REJECTED|EXPIRED
+  paramsJson     String    @default("{}")
+  rowCount       Int?
+  fileTokenHash  String?   @unique // sha256(download token); ham jeton yalnız yanıtta bir kez
+  tokenExpiresAt DateTime?
+  createdBy      String?
+  decidedBy      String?
+  createdAt      DateTime  @default(now())
+  decidedAt      DateTime?
+
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  downloads ExportDownload[]
+
+  @@index([tenantId, status])
+}
+
+model ExportDownload {
+  id           String   @id @default(cuid())
+  jobId        String
+  actorName    String?
+  downloadedAt DateTime @default(now())
+
+  job ExportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+// P14.3: Medya asenkron iş kuyruğu — talep 202 + job id; worker indir/tara/sakla;
+// retry + dead-letter; kiralama (lease) ile crash-resume; kiracı kotası.
+// P14.4: SUCCEEDED işler imzalı jetonla indirilir; EXPIRED sonrası artefakt silinir.
+model MediaExportJob {
+  id             String    @id @default(cuid())
+  tenantId       String
+  editionId      String
+  status         String    @default("QUEUED") // QUEUED|RUNNING|SUCCEEDED|FAILED|DEAD|CANCELLED|EXPIRED
+  idempotencyKey String?
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(3)
+  leaseUntil     DateTime?
+  progressJson   String    @default("{}")
+  resultJson     String?
+  error          String?
+  artifactDir    String?
+  fileTokenHash  String?   @unique // sha256(indirme jetonu); ham jeton yalnız yanıtta bir kez
+  tokenExpiresAt DateTime?
+  expiresAt      DateTime?
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant    Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  downloads MediaExportDownload[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status])
+  @@index([status, leaseUntil])
+}
+
+model MediaExportDownload {
+  id           String   @id @default(cuid())
+  jobId        String
+  actorName    String?
+  downloadedAt DateTime @default(now())
+
+  job MediaExportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+// P17.1: Şirket şablon kütüphanesi — edisyon-çapraz, sürümlü; kampanya önce
+// edisyon şablonuna, yoksa kütüphaneye düşer.
+model TenantMailTemplate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  channel   String   @default("EMAIL") // EMAIL|SMS|WHATSAPP
+  subject   String?
+  htmlBody  String
+  version   Int      @default(1)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@index([tenantId, channel])
+}
+
+// P17.2: Amaç-bazlı rıza — işlemsel/ticari ayrımı; kaynak, zaman, kanıt,
+// geri çekme. Ticari rıza hareketleri İYS kuyruğuna düşer (P17.3).
+model ContactConsent {
+  id        String    @id @default(cuid())
+  tenantId  String
+  channel   String    // EMAIL|SMS|WHATSAPP
+  address   String    // e-posta normalize (küçük) ya da telefon hane
+  purpose   String    // TRANSACTIONAL|COMMERCIAL
+  status    String    @default("GRANTED") // GRANTED|WITHDRAWN
+  source    String    @default("MANUAL") // FORM|IMPORT|API|IYS|IYS_RECONCILE|MANUAL
+  proof     String?   // kanıt referansı (form yanıtı, kayıt no, İYS makbuzu…)
+  grantedAt DateTime?
+  withdrawnAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, channel, address, purpose])
+  @@index([tenantId, channel, address])
+}
+
+// P17.2: Gönderim kararı denetimi — DEĞİŞMEZ (güncelleme/silme API'si yok).
+model SendDecision {
+  id        String   @id @default(cuid())
+  tenantId  String
+  campaignId String?
+  channel   String   // EMAIL|SMS|WHATSAPP
+  recipient String   // normalize adres
+  purpose   String   // TRANSACTIONAL|COMMERCIAL
+  decision  String   // ALLOW|BLOCK
+  reasons   String   @default("[]") // JSON: ["SUPPRESSED","NO_CONSENT",…]
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, campaignId])
+  @@index([tenantId, channel, recipient])
+}
+
+// P17.3: İYS ileti kuyruğu — ticari rıza hareketleri sağlayıcıya buradan
+// iletilir (retry/backoff); mutabakat ters yönü doğrular.
+model IysOutbox {
+  id         String    @id @default(cuid())
+  tenantId   String
+  channel    String    // EMAIL|SMS (İYS sesli mesaj kapsamaz)
+  address    String
+  purpose    String    @default("COMMERCIAL")
+  action     String    // GRANT|WITHDRAW
+  payload    String    @default("{}")
+  status     String    @default("PENDING") // PENDING|SENT|FAILED
+  attempts   Int       @default(0)
+  maxAttempts Int      @default(5)
+  nextRetryAt DateTime?
+  lastError  String?
+  externalId String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextRetryAt])
+  @@index([tenantId, channel, address])
+}
+
+// P18.2: Edisyon arşivi — salt-okunur anlık görüntü (ölçüler + durum + zaman).
+// Açık finans/iş varken arşivlenemez (engeller 409); ARCHIVED yaşam-döngüsü
+// terminalidir, geri sarılmaz.
+model EditionArchive {
+  id          String   @id @default(cuid())
+  tenantId    String
+  editionId   String   @unique
+  snapshotJson String  // {edition, counts, archivedAt, archivedBy}
+  createdBy   String?
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+// P19.1: Kurumsal varlık kütüphanesi — sürüm + bütünlük hash'i + lisans.
+model BrandAsset {
+  id         String   @id @default(cuid())
+  tenantId   String
+  name       String
+  kind       String   @default("LOGO") // LOGO|BANNER|DOC|GUIDELINE|OTHER
+  mimeType   String?
+  sizeKb     Int?
+  dataUrl    String? // küçük dosyalar (≤400KB) satır-içi
+  externalUrl String? // büyük dosyalar harici referans
+  sha256     String? // içerik bütünlüğü (dosya varsa zorunlu)
+  version    Int      @default(1)
+  license    String? // kullanım lisansı / hak notu
+  usageNotes String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  refs   EditionBrandRef[]
+
+  @@index([tenantId, kind])
+}
+
+// P19.2: Edisyona kopya değil referans + override.
+model EditionBrandRef {
+  id                String   @id @default(cuid())
+  editionId         String
+  brandAssetId      String
+  overrideName      String?
+  overrideDataUrl   String?
+  overrideExternalUrl String?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  asset BrandAsset @relation(fields: [brandAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([editionId, brandAssetId])
+  @@index([editionId])
+}
+
+// P19.4: UTM sözlüğü — kontrollü terimler (kaynak/ortam/kampanya).
+model UtmTerm {
+  id        String   @id @default(cuid())
+  tenantId  String
+  kind      String   // SOURCE|MEDIUM|CAMPAIGN
+  value     String   // normalize slug
+  label     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, kind, value])
+  @@index([tenantId, kind])
+}
+
+// P19.4: Kullanım analitiği — hangi varlık/şablon nerede kullanıldı.
+model PromoUsage {
+  id        String   @id @default(cuid())
+  tenantId  String
+  kind      String   // ASSET_ATTACH|REF_OVERRIDE|TEMPLATE_SEND|UTM_BUILD|CAMPAIGN_SEND
+  assetId   String?
+  campaignId String?
+  editionId String?
+  channel   String?
+  detail    String?
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, kind])
+  @@index([tenantId, assetId])
+  @@index([tenantId, campaignId])
+}

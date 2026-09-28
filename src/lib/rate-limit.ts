@@ -8,7 +8,7 @@
 //  * MAVEN_TRUST_PROXY=on (VARSAYILAN — bu kurulum: tek Caddy gateway, aynı host) →
 //    X-FORWARDED-FOR'un EN SAĞ değerleri kullanılır. Gateway istemci IP'sini listeye
 //    SONA EKLER; istemcinin sahte ilk değeri solda kalır → kimlik seçilemez.
-//    (Eski hata: EN SOL değer alınüyordu — sahte XFF ile kova kaçınılmaya açıktı.)
+//    (Eski hata: EN SOL değer alınıyordu — sahte XFF ile kova kaçınılmaya açıktı.)
 //  * Tek-örnek tavanı: kovalar süreç-içi Map'tedir — çoklu örnek/çoklu makine
 //    kurulumunda paylaşılan depoya (Redis vb.) taşınmalıdır; bu dağıtım tek örnek
 //    olduğundan yeterlidir. Yeniden başlatmada kovalar SIFIRLANIR (pencere reseti —
@@ -17,27 +17,19 @@
 //    erişim vermez, yalnız reset bir pencere boyu gevşeme demektir.
 // Kullanım: const denied = enforceRateLimit(req, { key, limit, windowMs });
 //           if (denied) return denied;  // 429 + Retry-After
+//
+// P06.2: pencere kararı saf çekirdeğe (rate-limit-core.ts) taşındı — algoritma,
+// mesaj metni ve başlıklar BİREBİR aynı; yalnız bellek tavanı sweep yerine
+// maxKeys ile uygulanır (eşdeğer koruma) ve çekirdek birim testlidir.
 import { NextRequest, NextResponse } from "next/server";
+import { createSlidingWindowLimiter } from "./rate-limit-core";
 
-type Bucket = { hits: number[]; };
-
-const buckets = new Map<string, Bucket>();
-let lastSweep = Date.now();
+const sharedLimiter = createSlidingWindowLimiter();
 
 // Güvenilir-proxy anahtarı: edge middleware'den bağımsız, süreç başına sabitlenir.
 // Açıkça kapatılmadıkça (MAVEN_TRUST_PROXY=off) bu dağıtımın kendi reverse-proxy'si
 // (tek Caddy, aynı host) güvenilir kabul edilir — gerekçe yukarıda, dosya başında.
 const TRUST_PROXY = process.env.MAVEN_TRUST_PROXY !== "off";
-
-// 5 dakikada bir boş kovalar süpürülür (bellek sızıntısı önleme)
-function sweep() {
-  const now = Date.now();
-  if (now - lastSweep < 300_000) return;
-  lastSweep = now;
-  for (const [k, b] of buckets) {
-    if (b.hits.length === 0 || now - b.hits[b.hits.length - 1] > 3_600_000) buckets.delete(k);
-  }
-}
 
 // İstemci kimliği — SADECE dahili kullanım değil: spam-guard ve public-register
 // submitIp de AYNI güven modelinden geçmek zorunda (çift hesap: dışa aktarıldı).
@@ -56,21 +48,14 @@ export function enforceRateLimit(
   req: NextRequest,
   opts: { key: string; limit: number; windowMs: number },
 ): NextResponse | null {
-  sweep();
-  const now = Date.now();
   const id = `${opts.key}:${clientIp(req)}`;
-  const bucket = buckets.get(id) ?? { hits: [] };
-  bucket.hits = bucket.hits.filter((t) => now - t < opts.windowMs);
-  if (bucket.hits.length >= opts.limit) {
-    const retryAfterSec = Math.max(1, Math.ceil((opts.windowMs - (now - bucket.hits[0])) / 1000));
-    buckets.set(id, bucket);
+  const res = sharedLimiter.check(id, { windowMs: opts.windowMs, max: opts.limit });
+  if (!res.allowed) {
     return NextResponse.json(
-      { error: `Çok fazla istek — ${retryAfterSec} sn sonra yeniden deneyin` },
-      { status: 429, headers: { "Retry-After": String(retryAfterSec) } },
+      { error: `Çok fazla istek — ${res.retryAfterSec} sn sonra yeniden deneyin` },
+      { status: 429, headers: { "Retry-After": String(res.retryAfterSec) } },
     );
   }
-  bucket.hits.push(now);
-  buckets.set(id, bucket);
   return null;
 }
 

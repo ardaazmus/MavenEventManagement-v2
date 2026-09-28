@@ -83,6 +83,110 @@ function maskAuthConfig(configJson?: string | null): { key: string; masked: stri
   }
 }
 
+interface OutboxRow {
+  id: string; aggregateType: string; aggregateId: string; eventType: string;
+  payload: unknown; status: string; error?: string | null; retryCount: number;
+  maxAttempts: number; nextRunAt: string; deadReason?: string | null; createdAt: string;
+}
+
+// P22.5: outbox operasyon paneli — kuyruk + iade + tarama (yük sunucuda maskeli)
+function OutboxOpsPanel() {
+  const { toast } = useToast();
+  const [status, setStatus] = useState("__all__");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [draining, setDraining] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const { data, reload, loading } = useApi<{ counts: Record<string, number>; items: OutboxRow[] }>(
+    async () => {
+      const q = status === "__all__" ? "" : `?status=${status}`;
+      const res = await fetch(`/api/admin/outbox${q}`);
+      if (!res.ok) throw new Error(`Kuyruk alınamadı (${res.status})`);
+      return (await res.json()) as { counts: Record<string, number>; items: OutboxRow[] };
+    },
+    [status],
+  );
+  const retry = async (id: string) => {
+    setBusyId(id);
+    try {
+      await apiSend("/api/admin/outbox", "POST", { action: "retry", id });
+      toast({ title: t("integrations.outboxRetried") });
+      reload();
+    } catch (e) {
+      toast({ title: t("integrations.outboxRetryError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally { setBusyId(null); }
+  };
+  const drain = async () => {
+    setDraining(true);
+    try {
+      const r = await apiSend<{ completed: number; failed: number; dead: number }>("/api/admin/outbox/drain", "POST", {});
+      toast({ title: t("integrations.outboxDrained"), description: `${r.completed} ok · ${r.failed} hata · ${r.dead} ölü` });
+      reload();
+    } catch (e) {
+      toast({ title: t("integrations.outboxDrainError"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally { setDraining(false); }
+  };
+  const counts = data?.counts ?? {};
+  return (
+    <SectionCard
+      title={t("integrations.outboxTitle")}
+      desc={t("integrations.outboxDesc")}
+      action={
+        <div className="flex items-center gap-2">
+          <Select value={status} onValueChange={setStatus}>
+            <SelectTrigger aria-label={t("integrations.outboxFilter")} className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">—</SelectItem>
+              {["PENDING", "PROCESSING", "COMPLETED", "FAILED", "DEAD"].map((s) => (
+                <SelectItem key={s} value={s}>{s}{counts[s] ? ` (${counts[s]})` : ""}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={drain} disabled={draining}>
+            <Icons.Play className="size-3" /> {draining ? t("integrations.outboxDraining") : t("integrations.outboxDrain")}
+          </Button>
+        </div>
+      }
+    >
+      {loading ? <Loading /> : (data?.items?.length ?? 0) === 0 ? (
+        <EmptyState title={t("integrations.outboxEmpty")} />
+      ) : (
+        <div className="space-y-2">
+          {(data?.items ?? []).map((o) => (
+            <div key={o.id} className="rounded-lg border bg-card p-2.5 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <Chip tone={o.status === "COMPLETED" ? "teal" : o.status === "DEAD" || o.status === "FAILED" ? "rose" : "amber"}>{o.status}</Chip>
+                <code className="font-mono font-semibold">{o.eventType}</code>
+                <span className="text-muted-foreground">{o.aggregateType} · {o.retryCount}/{o.maxAttempts}</span>
+                <span className="ml-auto text-muted-foreground">{relTime(o.createdAt)}</span>
+                {(o.status === "FAILED" || o.status === "DEAD") && (
+                  <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busyId === o.id} onClick={() => retry(o.id)}>
+                    <Icons.RotateCcw className="size-3" /> {busyId === o.id ? t("integrations.outboxRetrying") : t("integrations.outboxRetry")}
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => setOpenId(openId === o.id ? null : o.id)}>
+                  {t("integrations.outboxPayload")}
+                </Button>
+              </div>
+              {o.error && <p className="mt-1 text-rose-700">{o.error}</p>}
+              {o.status === "DEAD" && o.deadReason && (
+                <p className="mt-1 text-muted-foreground">{t("integrations.outboxDeadReason")}: {o.deadReason}</p>
+              )}
+              {o.status === "FAILED" && (
+                <p className="mt-1 text-muted-foreground">{t("integrations.outboxNextRun")}: {fmtDate(o.nextRunAt, true)}</p>
+              )}
+              {openId === o.id && (
+                <pre className="maven-scroll mt-1.5 max-h-40 overflow-auto rounded-md border bg-muted/40 p-2 font-mono text-[10.5px] text-muted-foreground">
+                  {JSON.stringify(o.payload, null, 2)}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 export function ApiGatewayView() {
   const { currentEditionId, editions, tenant, bump, refreshKey } = useApp();
   const { toast } = useToast();
@@ -489,6 +593,8 @@ export function ApiGatewayView() {
         )}
       </SectionCard>
 
+      <OutboxOpsPanel />
+
       {/* Detay diyaloğu — uç nokta + maskeli kimlik */}
       <Dialog open={Boolean(detail)} onOpenChange={(o) => !o && setDetail(null)}>
         <DialogContent className="maven-scroll max-h-[85vh] overflow-y-auto sm:max-w-md">
@@ -501,7 +607,7 @@ export function ApiGatewayView() {
           {detail && (
             <div className="space-y-3">
               <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-lg bg-emerald-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{detail.successCount}</p><p className="text-[10px] text-emerald-600/80">{t("integrations.statOk")}</p></div>
+                <div className="rounded-lg bg-emerald-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{detail.successCount}</p><p className="text-[10px] text-emerald-800">{t("integrations.statOk")}</p></div>
                 <div className="rounded-lg bg-rose-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-rose-700">{detail.failCount}</p><p className="text-[10px] text-rose-600/80">{t("integrations.statFail")}</p></div>
                 <div className="rounded-lg bg-muted p-2"><p className="text-sm font-semibold tabular-nums">{fmtDate(detail.lastRunAt, true)}</p><p className="text-[10px] text-muted-foreground">{t("integrations.lastRunLabel", { status: detail.lastStatus ?? "—" })}</p></div>
               </div>

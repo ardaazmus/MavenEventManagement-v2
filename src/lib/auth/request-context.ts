@@ -3,8 +3,14 @@
 // başlıklarını enjekte eder; istemci-supplied kopyalar HER API yolunda silinir
 // (sahtecilik kapalı). Bayrak kapalıyken (demo) kapılar null döner — mevcut davranış
 // korunur; auth-on üretim duruşunda yönetim yüzeyleri oturum+rol zorunlu tutulur.
+//
+// P06.4b: HMAC geçerliliği TEK BAŞINA yeterli değildir — requestActor kullanıcı
+// satırını da doğrular (mevcut + ACTIVE + sv eşleşmesi + kiracı bağı). disable
+// sonrası aynı çerez 401 alır; maliyet istek başına 1 PK okumasıdır (SQLite).
 import { headers } from "next/headers";
 import { AUTH_ENABLED } from "@/lib/auth-flag";
+import { isSessionLive } from "@/lib/auth/session-gate";
+import { db } from "@/lib/db";
 
 export interface RequestActor {
   uid: string;
@@ -34,6 +40,14 @@ export async function requestActor(): Promise<RequestActor | null> {
   const role = h.get("x-maven-session-role");
   const tenantId = h.get("x-maven-session-tenant");
   if (!uid || !role || !tenantId) return null; // public yüzey / oturumsuz
+  // P06.4b: canlılık kapısı — legacy çerezlerde sv başlığı yoktur (undefined → sürüm 0).
+  const svRaw = h.get("x-maven-session-sv");
+  const sessionSv = svRaw === null || svRaw === "" ? undefined : Number(svRaw);
+  const user = await db.user.findUnique({
+    where: { id: uid },
+    select: { status: true, sessionVersion: true, tenantId: true },
+  });
+  if (!isSessionLive({ sessionSv, user, headerTenantId: tenantId })) return null;
   return { uid, role, tenantId };
 }
 

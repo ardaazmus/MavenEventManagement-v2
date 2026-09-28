@@ -32,8 +32,11 @@ const PUBLIC_RULES: PublicRule[] = [
   { prefix: "/api/public/" },
   { prefix: "/api/public-forms/" }, // F-EXP: dış sayfa form verisi + oylama sonuçları (kendi kapılarıyla korunur),
   { exact: "/api/health" },
+  { prefix: "/api/health/" },
   { prefix: "/api/portal/" },
   { exact: "/api/scan" },
+  { exact: "/api/users/invites/accept" }, // P06.2: davet kabulü — token kapılı public akış (rate-limit route içinde)
+  { prefix: "/api/exports/" }, // P14.3b: dosya ucu jeton-kapılı; POST/PATCH kendi kadro/yönetici kapılarıyla korunur
   { exact: "/api/kvkk/erasure" },
   { exact: "/api/seed" },
   { exact: "/api/saas/provision" },
@@ -74,6 +77,7 @@ export async function middleware(req: NextRequest) {
       headers.set("x-maven-session-tenant", session.tenantId);
       headers.set("x-maven-session-role", session.role);
       headers.set("x-maven-session-uid", session.uid);
+      if (session.sv !== undefined) headers.set("x-maven-session-sv", String(session.sv));
     }
     return NextResponse.next({ request: { headers } });
   }
@@ -89,6 +93,7 @@ export async function middleware(req: NextRequest) {
   headers.set("x-maven-session-tenant", session.tenantId);
   headers.set("x-maven-session-role", session.role);
   headers.set("x-maven-session-uid", session.uid);
+  if (session.sv !== undefined) headers.set("x-maven-session-sv", String(session.sv));
   const res = NextResponse.next({ request: { headers } });
 
   // SLIDING: kalan ömür < TTL/2 → aynı iat ile tazele (ABSOLUTE tavan korunur)

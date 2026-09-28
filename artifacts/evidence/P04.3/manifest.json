@@ -1,0 +1,62 @@
+{
+  "phase": "P04.3",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T02:21:00.000Z",
+  "finishedAt": "2026-09-28T02:22:30.000Z",
+  "commands": [
+    {
+      "command": "node --test tests-mini/generic-item-protection.test.mjs",
+      "exitCode": 0,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 55,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 26347
+    }
+  ],
+  "tests": {
+    "passed": 55,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "src/app/api/[entity]/[id]/route.ts",
+      "sha256": "b2194278d8869b6a8f402f28926d477e894b5f5bc8989bf7c71ed8793b964134"
+    },
+    {
+      "path": "tests-mini/generic-item-protection.test.mjs",
+      "sha256": "6ebeabe703ae62b9299ff3dfedee7e487dca670c27463d3c48cfc2d7db0a0e99"
+    },
+    {
+      "path": "package.json",
+      "sha256": "18a68c426d5a5e59bd63bdcb42b5e9120866c2636a59e4b41342e57df05d4ab2"
+    }
+  ],
+  "itemProtectionSummary": {
+    "methodsEnforced": {
+      "GET": "VIEW",
+      "PUT": "UPDATE",
+      "DELETE": "DELETE"
+    },
+    "ownerAccess": "ALLOW_ALL",
+    "viewerAccess": "VIEW_ONLY (PUT/DELETE_FORBIDDEN_403)",
+    "participantAccess": "DENIED_ALL_403",
+    "staffManagers": "SCOPED_BY_MODULE_TAXONOMY",
+    "idorProtection": "ensureInScope verified across all methods with leak-free 404",
+    "denyByDefault": true
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

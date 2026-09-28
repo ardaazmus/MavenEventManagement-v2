@@ -14,12 +14,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { dispatchMail, maskEmail, EMAIL_RE } from "@/lib/mail-dispatch";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
-import { resolveContext } from "@/lib/api/tenant-guard";
+import { GuardError, resolveContext } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
+import { decideSend } from "@/lib/comms/consent";
 
 export async function POST(req: NextRequest) {
   // 1) oran sınırı
   const denied = enforceRateLimit(req, { key: "mail-send", limit: 30, windowMs: 60_000 });
   if (denied) return denied;
+  // P17.1: tekil gönderim ucu kadro kapılı (politika bildirimiyle uyum).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
 
   try {
     const body = (await req.json()) as {
@@ -57,6 +62,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 429 });
     }
 
+    // P17.2: işlemsel gönderim kararları değişmez denetime yazılır.
+    try {
+      const tenantId = await resolveContext(null);
+      for (const to of result.accepted) {
+        await decideSend(db as never, { tenantId, channel: "EMAIL", recipient: to, purpose: "TRANSACTIONAL" });
+      }
+    } catch (e) {
+      if (e instanceof GuardError) throw e;
+      console.error("mail/send karar denetimi", e);
+    }
+
     return NextResponse.json({
       ok: true,
       accepted: result.accepted.map(maskEmail),
@@ -73,12 +89,15 @@ export async function POST(req: NextRequest) {
 
 // Bastırma listesi yönetimi — GET: liste; PUT: ekle/güncelle (unsubscribe/bounce/şikayet/manuel)
 export async function GET(req: NextRequest) {
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
-    await resolveContext(null);
+    const tenantId = await resolveContext(null);
     const sp = req.nextUrl.searchParams;
     const q = sp.get("q")?.trim().toLowerCase();
+    // P17.1: bastırma listesi kiracı-kapsamlı okunur (çapraz sızıntı kapatıldı).
     const rows = await db.mailSuppression.findMany({
-      where: q ? { email: { contains: q } } : {},
+      where: q ? { tenantId, email: { contains: q } } : { tenantId },
       orderBy: { createdAt: "desc" },
       take: 500,
       select: { id: true, email: true, reason: true, note: true, createdAt: true },
@@ -92,6 +111,8 @@ export async function GET(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   const denied = enforceRateLimit(req, { key: "mail-suppress", limit: 60, windowMs: 60_000 });
   if (denied) return denied;
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const ctx = await resolveContext(null);
     const body = (await req.json()) as { email?: string; reason?: string; note?: string };

@@ -1,0 +1,61 @@
+{
+  "phase": "P00.2",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T00:48:30.000Z",
+  "finishedAt": "2026-09-28T00:50:20.000Z",
+  "commands": [
+    {
+      "command": "git rm --cached .env db/custom.db db/custom.db-shm db/custom.db-wal",
+      "exitCode": 0
+    },
+    {
+      "command": "node --test tests-mini/hygiene.test.mjs",
+      "exitCode": 0,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 733
+    },
+    {
+      "command": "node --test tests-mini/inventory-determinism.test.mjs",
+      "exitCode": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 7659
+    }
+  ],
+  "tests": {
+    "passed": 4,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": ".gitignore",
+      "sha256": "bfa8057de7f155f82f2592b5a540a1626fae67d8e1a8b469ad3a38414b418b48"
+    },
+    {
+      "path": ".env.example",
+      "sha256": "850d33fbe8461454dca43745b7859c13223717e3d93c046169822da94804938d"
+    },
+    {
+      "path": "tests-mini/hygiene.test.mjs",
+      "sha256": "0980109b8029e7ef9c00effcbc6f7da6b9b9cab0d07c097197948e2df02e55b2"
+    }
+  ],
+  "untrackedFiles": [
+    ".env",
+    "db/custom.db",
+    "db/custom.db-shm",
+    "db/custom.db-wal"
+  ],
+  "safetyVerification": {
+    "zeroDataLossConfirmed": true,
+    "physicalDbExists": true,
+    "physicalEnvExists": true
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

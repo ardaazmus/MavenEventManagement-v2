@@ -4,8 +4,11 @@
 // P2: cursor pagination — opak base64 [...sortValues, id]; tüm orderBys benzersiz-olmayan
 // olduğundan composite keyset zorunlu (id son halka). Yanıt yalnız devam varsa nextCursor ekler.
 import { NextRequest, NextResponse } from "next/server";
+import { actionForMethod, authorizeDualRead } from "@/lib/api/permissions";
+import { hasOverridePermission, type OverridePrisma } from "@/lib/sponsorship/wizard";
 import { registry, sanitize, withTenant } from "@/lib/api/registry";
 import { applyListGuard, applyWriteGuard, GuardError, resolveContext, tenantIdOf, tenantSelectFor } from "@/lib/api/tenant-guard";
+import { AUTH_ENABLED } from "@/lib/auth-flag";
 import { requestActor } from "@/lib/auth/request-context";
 import { db } from "@/lib/db";
 
@@ -37,6 +40,22 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const { entity } = await ctx.params;
   const config = registry[entity];
   if (!config) return notFound();
+
+  // ── P04.2 / P05.3: Generic collection route koruması (GET -> VIEW, Dual-Read) ──
+  const actor = await requestActor();
+  if (AUTH_ENABLED && !actor) {
+    return NextResponse.json({ error: "Oturum gerekli" }, { status: 401 });
+  }
+  const authResult = await authorizeDualRead({
+    actor,
+    entity,
+    action: actionForMethod("GET"),
+    scopeKey: req.nextUrl.searchParams.get("editionId") || "TENANT",
+    prisma: db,
+  });
+  if (!authResult.authorized) {
+    return NextResponse.json({ error: "Bu işlem için yetkiniz yok" }, { status: 403 });
+  }
 
   const sp = req.nextUrl.searchParams;
   const where: Record<string, unknown> = { ...(config.defaultWhere ?? {}) };
@@ -126,6 +145,22 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   const config = registry[entity];
   if (!config) return notFound();
 
+  // ── P04.2 / P05.3: Generic collection route koruması (POST -> CREATE, Dual-Read) ──
+  const actor = await requestActor();
+  if (AUTH_ENABLED && !actor) {
+    return NextResponse.json({ error: "Oturum gerekli" }, { status: 401 });
+  }
+  const authResult = await authorizeDualRead({
+    actor,
+    entity,
+    action: actionForMethod("POST"),
+    scopeKey: req.nextUrl.searchParams.get("editionId") || "TENANT",
+    prisma: db,
+  });
+  if (!authResult.authorized) {
+    return NextResponse.json({ error: "Bu işlem için yetkiniz yok" }, { status: 403 });
+  }
+
   try {
     const body = await req.json();
     let data = await withTenant(entity, sanitize(body));
@@ -148,6 +183,18 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     if (config.beforeWrite) {
       const conflict = await config.beforeWrite(data, false);
       if (conflict) return NextResponse.json({ error: conflict }, { status: 409 });
+    }
+    // P11.2: paket fiyatından sapma (override) yalnız fiyat rolüyle (403).
+    if (entity === "sponsor-agreements" && typeof data.packageId === "string" && typeof data.amount === "number") {
+      const pack = await db.sponsorPackage.findUnique({ where: { id: data.packageId }, select: { price: true } });
+      if (pack && data.amount !== pack.price) {
+        const allowed = actor
+          ? await hasOverridePermission(db as unknown as OverridePrisma, { userId: actor.uid, legacyRole: actor.role })
+          : true; // auth-off demo geçişi
+        if (!allowed) {
+          return NextResponse.json({ error: "Paket fiyatını değiştirme yetkisi gerekli (fiyat rolü)" }, { status: 403 });
+        }
+      }
     }
     const created = await config.delegate.create({ data, include: config.include });
     // S3: sır içeren yanıt maskelenir

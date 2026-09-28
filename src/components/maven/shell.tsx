@@ -12,9 +12,53 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useTheme } from "next-themes";
 import { NotificationBell } from "./notification-bell";
 import { useLang, t } from "@/lib/i18n";
+
+type ThemeOption = "light" | "system" | "dark";
+
+// Üst şerit tema seçici: açık/sistem/koyu. Seçim next-themes'e + SSR çerezine
+// yazılır (PATCH /api/account/theme) — yenilemede tercih korunur. Kayıtlı
+// tercih yoksa kök yerleşim AÇIK temayı varsayar.
+function ThemeSwitcher() {
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  const pick = (value: ThemeOption) => {
+    setTheme(value);
+    fetch("/api/account/theme", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ theme: value }),
+    }).catch(() => { /* çevrimdışı: yalnız oturum tercihi yaşar */ });
+  };
+  const current: ThemeOption = mounted && (theme === "dark" || theme === "system" || theme === "light") ? theme : "light";
+  const options: Array<{ value: ThemeOption; label: string; Icon: Icons.LucideIcon }> = [
+    { value: "light", label: t("shell.themeLight"), Icon: Icons.Sun },
+    { value: "system", label: t("shell.themeSystem"), Icon: Icons.Monitor },
+    { value: "dark", label: t("shell.themeDark"), Icon: Icons.Moon },
+  ];
+  return (
+    <div role="group" aria-label={t("shell.themeLabel")} className="flex items-center rounded-md border p-0.5">
+      {options.map(({ value, label, Icon }) => (
+        <Button
+          key={value}
+          variant="ghost"
+          size="icon"
+          className={cn("size-8", current === value && "bg-muted text-foreground shadow-none")}
+          aria-label={label}
+          aria-pressed={current === value}
+          title={label}
+          onClick={() => pick(value)}
+        >
+          <Icon className="size-4" />
+        </Button>
+      ))}
+    </div>
+  );
+}
 
 function ModuleIcon({ name, className }: { name: string; className?: string }) {
   const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[name] ?? Icons.Circle;
@@ -56,7 +100,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         const GroupIcon = (Icons as unknown as Record<string, Icons.LucideIcon>)[g.icon] ?? Icons.Circle;
         return (
           <div key={g.id} className="mt-3">
-            <p className="flex items-center gap-1.5 px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
+            <p className="flex items-center gap-1.5 px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/70">
               <GroupIcon className="size-3" aria-hidden /> {t(g.labelKey)}
             </p>
             {items.map((m) => (
@@ -151,6 +195,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="ml-auto flex items-center gap-2">
+              <ThemeSwitcher />
               {/* Faz E: mini dil butonu — TR/EN tek tıkla değişir */}
               <Button
                 variant="outline"

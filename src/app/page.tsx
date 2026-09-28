@@ -13,6 +13,7 @@ import { useApp, hasCapability } from "@/lib/store";
 import { MODULES, roleCanSee } from "@/lib/constants";
 import { MODULE_COMPONENTS } from "@/lib/module-components";
 import { Shell } from "@/components/maven/shell";
+import { PortalThemeGuard } from "@/components/theme-provider";
 import { EmptyState } from "@/components/maven/bits";
 import { Lock } from "lucide-react";
 import { t } from "@/lib/i18n";
@@ -63,8 +64,13 @@ function HomeClient() {
   }, []);
 
   // PWA Katılımcı Dış Portalı — yönetici Shell'i olmadan bağımsız yüzey
+  // P15.4: portal teması yönetici temasından ayrıdır (daima açık).
   if (portalSlug) {
-    return <PortalAppPage editionSlug={portalSlug} magicToken={portalToken} />;
+    return (
+      <PortalThemeGuard>
+        <PortalAppPage editionSlug={portalSlug} magicToken={portalToken} />
+      </PortalThemeGuard>
+    );
   }
 
   if (publicFormRef) {

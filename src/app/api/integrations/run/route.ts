@@ -5,19 +5,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ActivityType } from "@/lib/api/activity";
+import { requireAdmin } from "@/lib/auth/request-context";
+import { resolveContext } from "@/lib/api/tenant-guard";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { redactPayload } from "@/lib/integrations/webhooks";
 
 export async function POST(req: NextRequest) {
+  // DÜZELTME (politika ihlali): rota ADMIN sınıflıydı ama kapısızdı —
+  // kimliksiz outbound fetch tetiklenebiliyordu. requireAdmin + kiracı kapsamı.
+  const gate = await requireAdmin();
+  if (gate) return gate;
+  const denied = enforceRateLimit(req, { key: "integrations-run", limit: 20, windowMs: 60_000 });
+  if (denied) return denied;
   try {
     const body = (await req.json()) as { id?: string; payload?: Record<string, unknown>; dryRun?: boolean };
     if (!body.id) return NextResponse.json({ error: "Entegrasyon id zorunlu" }, { status: 400 });
 
-    const integration = await db.apiIntegration.findUnique({ where: { id: body.id } });
+    const tenantId = await resolveContext(null);
+    const integration = await db.apiIntegration.findFirst({ where: { id: body.id, tenantId } });
     if (!integration) return NextResponse.json({ error: "Entegrasyon bulunamadı" }, { status: 404 });
     if (integration.status === "PAUSED") return NextResponse.json({ error: "Entegrasyon duraklatılmış" }, { status: 409 });
 
     const startedAt = Date.now();
     let ok = false, statusCode: number | null = null, summary = "", errorText: string | null = null;
-    const payloadStr = body.payload ? JSON.stringify(body.payload).slice(0, 500) : null;
+    const payloadStr = body.payload ? JSON.stringify(redactPayload(body.payload)).slice(0, 500) : null;
 
     if (integration.direction === "OUTBOUND") {
       if (!integration.baseUrl) {

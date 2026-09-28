@@ -9,8 +9,9 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
-import { requireStaff } from "@/lib/auth/request-context";
+import { requireStaff, requestActor } from "@/lib/auth/request-context";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { logExport, personConsentWhere } from "@/lib/privacy/export-guard";
 
 // SUNUCU-GÜVENLİ etiket haritaları — @/lib/constants İSTEMCİ modülüdür (i18n
 // useSyncExternalStore bağı var; route'a giremez). Değerler constants.ts ile
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest) {
 
     const edition = await db.eventEdition.findUnique({
       where: { id: editionId },
-      select: { name: true, editionLabel: true, startDate: true, endDate: true, venueName: true, city: true },
+      select: { name: true, editionLabel: true, startDate: true, endDate: true, venueName: true, city: true, tenantId: true },
     });
     if (!edition) return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
 
@@ -67,6 +68,11 @@ export async function GET(req: NextRequest) {
       where.block = { hotelId };
     }
     if (status && status !== "ALL") where.status = status;
+    // P14.2: kişi bağlantılı satırlarda rızasız misafir dışta (isimsiz operasyonel
+    // satırlar — bağlantısız guestName — sözleşme gereği kalır, denetimde izlenir).
+    where.AND = [
+      { OR: [{ primaryGuest: { is: null } }, { primaryGuest: { is: { person: { is: personConsentWhere() } } } }] },
+    ];
 
     const reservations = await db.reservation.findMany({
       where,
@@ -147,6 +153,9 @@ export async function GET(req: NextRequest) {
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
     const stamp = generatedAt.toISOString().slice(0, 10);
     const filename = `oda-listesi-${stamp}.xlsx`;
+
+    const actor = await requestActor();
+    await logExport(db, { tenantId: edition.tenantId ?? null, editionId, type: "RESERVATIONS", count: rows.length, actorName: actor?.uid ?? null });
 
     return new NextResponse(new Uint8Array(buf), {
       status: 200,

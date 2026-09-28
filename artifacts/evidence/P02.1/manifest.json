@@ -1,0 +1,60 @@
+{
+  "phase": "P02.1",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T01:10:00.000Z",
+  "finishedAt": "2026-09-28T01:12:00.000Z",
+  "commands": [
+    {
+      "command": "node --test tests-mini/test-db-isolation.test.mjs",
+      "exitCode": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 25,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 24162
+    }
+  ],
+  "tests": {
+    "passed": 25,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "tests/support/test-db.mjs",
+      "sha256": "d2f846ce37955d0161651e7e586970df28447bd9aff4bc988a7db87dfcaa2473"
+    },
+    {
+      "path": "tests/support/global-setup.ts",
+      "sha256": "355c97991ba0c319895aa40b7eb7b896d1474650d4656315e5b6212c3318725a"
+    },
+    {
+      "path": "playwright.config.ts",
+      "sha256": "e7ea7e94e485db73e95c14c9c6cde05d2cd304d6547ebf61b23c2673d2ed8c9a"
+    },
+    {
+      "path": "package.json",
+      "sha256": "daaaa45c1470b00c5c54a944396ea6b7d1220cdcd137ac8ff756e2b61f723ebd"
+    },
+    {
+      "path": "tests-mini/test-db-isolation.test.mjs",
+      "sha256": "1fa48510d2815fda02e56c06dccaa16627a31e3dc4cd61f0e4e0105963a1a6b4"
+    }
+  ],
+  "dbIsolationSummary": {
+    "helper": "tests/support/test-db.mjs",
+    "globalSetup": "tests/support/global-setup.ts",
+    "playwrightRegistered": true,
+    "repoDbUntouched": true,
+    "isolationMechanism": "temporary sqlite file per worker using prisma migrate deploy"
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

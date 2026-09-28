@@ -13,6 +13,8 @@
 import { db } from "@/lib/db";
 import { dispatchMail } from "@/lib/mail-dispatch";
 import { dispatchChannelMessage, type Recipient } from "@/lib/notify";
+import { decideSend, normalizeConsentAddress } from "@/lib/comms/consent";
+import { assertSendable, ApprovalError } from "@/lib/promo/campaign-approval";
 
 // ─── tipler ─────────────────────────────────────────────────────────────────
 export const BROADCAST_CHANNELS = ["EMAIL", "SMS", "WHATSAPP"] as const;
@@ -170,6 +172,16 @@ export async function sendCampaignNow(opts: {
   });
   if (!edition) throw new BroadcastError("EDITION_NOT_FOUND", "Etkinlik bulunamadı", 404);
 
+  // P19.3: ticari LIVE gönderim onaylı kampanya ister (TEST + işlemsel muaf).
+  if (opts.mode === "LIVE") {
+    try {
+      assertSendable(campaign);
+    } catch (e) {
+      if (e instanceof ApprovalError) throw new BroadcastError("APPROVAL_REQUIRED", e.message, 409);
+      throw e;
+    }
+  }
+
   // gönderim-anı güncel hedef (isSegmentFixed=false → canlı liste zaten bu yol)
   const filters = parseAudienceFilters(campaign.audienceJson);
   const audience = opts.mode === "TEST"
@@ -183,12 +195,50 @@ export async function sendCampaignNow(opts: {
       });
   if (audience.length === 0) throw new BroadcastError("EMPTY_AUDIENCE", "Hedef kümesi boş — alıcı yok", 400);
 
+  // P17.2: LIVE gönderimde amaç-bazlı rıza kapısı. Her alıcı-kanal çifti için
+  // karar verilir ve SendDecision denetimine yazılır; engellenen adres o
+  // kanaldan çıkarılır. TEST modu personel doğrulamasıdır — kapsam dışı.
+  const purpose = campaign.purpose === "TRANSACTIONAL" ? "TRANSACTIONAL" : "COMMERCIAL";
+  const emailAllowed = new Map<string, boolean>();
+  const phoneAllowed = new Map<string, { SMS: boolean; WHATSAPP: boolean }>();
+  const consentBlocked: Record<BroadcastChannel, number> = { EMAIL: 0, SMS: 0, WHATSAPP: 0 };
+  if (opts.mode === "LIVE") {
+    for (const r of audience) {
+      if (r.email) {
+        const v = await decideSend(db as never, {
+          tenantId: edition.tenantId, channel: "EMAIL", recipient: r.email, purpose, campaignId: campaign.id,
+        });
+        emailAllowed.set(r.email.trim().toLowerCase(), v.decision === "ALLOW");
+        if (v.decision === "BLOCK") consentBlocked.EMAIL++;
+      }
+      const phoneNorm = normalizeConsentAddress("SMS", r.phone);
+      if (r.phone && phoneNorm) {
+        const sms = await decideSend(db as never, {
+          tenantId: edition.tenantId, channel: "SMS", recipient: phoneNorm, purpose, campaignId: campaign.id,
+        });
+        const wa = await decideSend(db as never, {
+          tenantId: edition.tenantId, channel: "WHATSAPP", recipient: phoneNorm, purpose, campaignId: campaign.id,
+        });
+        phoneAllowed.set(phoneNorm, { SMS: sms.decision === "ALLOW", WHATSAPP: wa.decision === "ALLOW" });
+        if (sms.decision === "BLOCK") consentBlocked.SMS++;
+        if (wa.decision === "BLOCK") consentBlocked.WHATSAPP++;
+      }
+    }
+  }
+
   const channels = parseChannels(campaign.channels, campaign.channel);
   const template = campaign.templateId
     ? await db.emailTemplate.findUnique({ where: { id: campaign.templateId } })
     : null;
-  const subject = campaign.subject || template?.subject || campaign.name;
-  const htmlBody = template?.htmlBody ?? null;
+  // P17.1: edisyon şablonu yoksa şirket kütüphanesine düş (kiracı eşleşmesi şart).
+  const libraryTemplate = !template && campaign.libraryTemplateId
+    ? await db.tenantMailTemplate.findUnique({ where: { id: campaign.libraryTemplateId } })
+    : null;
+  if (libraryTemplate && libraryTemplate.tenantId !== edition.tenantId) {
+    throw new BroadcastError("VALIDATION", "Kütüphane şablonu bu kiracıya ait değil", 400);
+  }
+  const subject = campaign.subject || template?.subject || libraryTemplate?.subject || campaign.name;
+  const htmlBody = template?.htmlBody ?? libraryTemplate?.htmlBody ?? null;
   const textBody = campaign.body ?? "";
 
   const report: SendReport = {
@@ -201,7 +251,11 @@ export async function sendCampaignNow(opts: {
 
   // ── E-POSTA ──
   if (channels.includes("EMAIL")) {
-    const emails = audience.map((r) => r.email).filter((v): v is string => Boolean(v)).slice(0, MAX_SEND_RECIPIENTS);
+    const emails = audience
+      .map((r) => r.email)
+      .filter((v): v is string => Boolean(v))
+      .filter((v) => opts.mode !== "LIVE" || emailAllowed.get(v.trim().toLowerCase()) !== false)
+      .slice(0, MAX_SEND_RECIPIENTS);
     if (emails.length > 0) {
       const out = await dispatchMail({
         recipients: emails,
@@ -213,24 +267,31 @@ export async function sendCampaignNow(opts: {
       report.channels.EMAIL = {
         attempted: emails.length,
         sent: out.accepted.length,
-        skipped: out.skipped.length + out.suppressedCount,
+        skipped: out.skipped.length + out.suppressedCount + consentBlocked.EMAIL,
         error: out.ok ? undefined : out.error,
       };
       report.totalSent += out.accepted.length;
     } else {
-      report.channels.EMAIL = { attempted: 0, sent: 0, skipped: 0, error: "e-postalı alıcı yok" };
+      report.channels.EMAIL = { attempted: 0, sent: 0, skipped: consentBlocked.EMAIL, error: "e-postalı alıcı yok" };
     }
   }
 
   // ── SMS / WHATSAPP ──
-  const phoneRecipients: Recipient[] = audience
-    .filter((r) => Boolean(r.phone))
-    .map((r) => ({ name: r.name, phone: r.phone as string }));
+  const phoneRecipientsFor = (ch: "SMS" | "WHATSAPP"): Recipient[] =>
+    audience
+      .filter((r) => Boolean(r.phone))
+      .filter((r) => {
+        if (opts.mode !== "LIVE") return true;
+        const norm = normalizeConsentAddress("SMS", r.phone);
+        return !norm || phoneAllowed.get(norm)?.[ch] !== false;
+      })
+      .map((r) => ({ name: r.name, phone: r.phone as string }));
   const message = { kind: "announcement" as const, title: subject, body: textBody || subject };
   for (const ch of ["SMS", "WHATSAPP"] as const) {
     if (!channels.includes(ch)) continue;
+    const phoneRecipients = phoneRecipientsFor(ch);
     if (phoneRecipients.length === 0) {
-      report.channels[ch] = { attempted: 0, sent: 0, skipped: 0, error: "telefonlu alıcı yok" };
+      report.channels[ch] = { attempted: 0, sent: 0, skipped: consentBlocked[ch], error: "telefonlu alıcı yok" };
       continue;
     }
     const out = await dispatchChannelMessage(edition.id, message, phoneRecipients, { ignoreRouting: true });
@@ -238,7 +299,7 @@ export async function sendCampaignNow(opts: {
     report.channels[ch] = {
       attempted: r.attempted,
       sent: r.sent,
-      skipped: Math.max(0, phoneRecipients.length - r.sent) + out.skippedNoPhone,
+      skipped: Math.max(0, phoneRecipients.length - r.sent) + out.skippedNoPhone + consentBlocked[ch],
       error: r.error,
     };
     report.totalSent += r.sent;
@@ -279,6 +340,23 @@ export async function sendCampaignNow(opts: {
       actorName: opts.actorName,
     },
   });
+
+  // P19.4: gönderim kullanımı işlenir (şablon + kanal kırılımı).
+  if (opts.mode === "LIVE") {
+    const usedChannels = Object.entries(report.channels)
+      .filter(([, r]) => (r?.sent ?? 0) > 0)
+      .map(([k]) => k);
+    await db.promoUsage.create({
+      data: {
+        tenantId: edition.tenantId,
+        kind: "CAMPAIGN_SEND",
+        campaignId: campaign.id,
+        editionId: edition.id,
+        channel: usedChannels.join(",") || null,
+        detail: JSON.stringify({ template: template?.id ?? null, libraryTemplate: libraryTemplate?.id ?? null, sent: report.totalSent }),
+      },
+    }).catch(() => undefined);
+  }
 
   return report;
 }
@@ -365,6 +443,41 @@ export async function instantBroadcast(opts: {
   }
   if (audience.length === 0) throw new BroadcastError("EMPTY_AUDIENCE", "Hedef kümesi boş — alıcı yok", 400);
 
+  // P17.2: anlık duyurular işlemsel amaçla denetime yazılır (rıza muafiyeti;
+  // bastırma dispatchMail içinde uygulanmaya devam eder). Arşiv kaydı ÖNCE
+  // açılır ki kararlar kampanyaya bağlansın.
+  const kindLabel = "Anlık Bildirim";
+  const archive = await db.campaign.create({
+    data: {
+      editionId: edition.id,
+      name: `${kindLabel} — ${opts.title.slice(0, 80)}`,
+      segmentRule: `anlık yayın · ${opts.audienceMode}`,
+      purpose: "TRANSACTIONAL",
+      approvalStatus: "APPROVED",
+      phase: opts.phase,
+      audienceMode: opts.audienceMode === "CUSTOM" ? "CUSTOM" : "SEGMENT",
+      channels: opts.channels.join(","),
+      status: "SENDING",
+      subject: opts.title.slice(0, 200),
+      body: opts.body,
+    },
+    select: { id: true },
+  });
+  for (const r of audience) {
+    if (r.email && opts.channels.includes("EMAIL")) {
+      await decideSend(db as never, { tenantId: edition.tenantId, channel: "EMAIL", recipient: r.email, purpose: "TRANSACTIONAL", campaignId: archive.id });
+    }
+    const phoneNorm = normalizeConsentAddress("SMS", r.phone);
+    if (r.phone && phoneNorm) {
+      if (opts.channels.includes("SMS")) {
+        await decideSend(db as never, { tenantId: edition.tenantId, channel: "SMS", recipient: phoneNorm, purpose: "TRANSACTIONAL", campaignId: archive.id });
+      }
+      if (opts.channels.includes("WHATSAPP")) {
+        await decideSend(db as never, { tenantId: edition.tenantId, channel: "WHATSAPP", recipient: phoneNorm, purpose: "TRANSACTIONAL", campaignId: archive.id });
+      }
+    }
+  }
+
   const report: SendReport = { at: new Date().toISOString(), mode: "LIVE", audienceSize: audience.length, channels: {}, totalSent: 0 };
 
   // ── E-POSTA ──
@@ -410,26 +523,17 @@ export async function instantBroadcast(opts: {
     if (r && r.sent > 0) await stampContacts(audience, ch, r.sent);
   }
 
-  // arşiv: aşama hiyerarşisinde kampanya olarak görünür
-  const kindLabel = "Anlık Bildirim";
-  const archive = await db.campaign.create({
+  // arşiv: aşama hiyerarşisinde kampanya olarak görünür (gönderim sonrası kapatılır)
+  await db.campaign.update({
+    where: { id: archive.id },
     data: {
-      editionId: edition.id,
-      name: `${kindLabel} — ${opts.title.slice(0, 80)}`,
-      segmentRule: `anlık yayın · ${opts.audienceMode}`,
-      phase: opts.phase,
-      audienceMode: opts.audienceMode === "CUSTOM" ? "CUSTOM" : "SEGMENT",
-      channels: opts.channels.join(","),
       status: report.totalSent > 0 ? "SENT" : "FAILED",
-      subject: opts.title.slice(0, 200),
-      body: opts.body,
       sentAt: new Date(),
       sentCount: report.totalSent,
       deliveredCount: report.totalSent,
       failCount: Object.values(report.channels).reduce((a, r) => a + (r?.attempted ?? 0) - (r?.sent ?? 0), 0),
       lastSendReport: JSON.stringify(report),
     },
-    select: { id: true },
   });
 
   // seçilirse portal duyurusu (katılımcı uygulaması ana sayfa bildirimi)

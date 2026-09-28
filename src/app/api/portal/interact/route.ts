@@ -107,6 +107,8 @@ export async function POST(req: NextRequest) {
       response?: string; // ACCEPTED | DECLINED | RESCHEDULE
       note?: string;
       formId?: string; // FORM_SUBMIT puanı için
+      organizationId?: string; // SPONSOR_VIEW / SPONSOR_FAVORITE hedefi
+      on?: boolean; // SPONSOR_FAVORITE aç/kapat
     };
     const action = (body.action ?? "").toUpperCase();
 
@@ -131,6 +133,54 @@ export async function POST(req: NextRequest) {
         },
       });
       return NextResponse.json({ ok: true });
+    }
+
+    // ── P20.4: sponsor profil görüntüleme (oturum+kurum+gün tekili) ──
+    if (action === "SPONSOR_VIEW") {
+      const organizationId = (body.organizationId ?? "").trim();
+      if (!organizationId) return NextResponse.json({ error: "organizationId zorunlu" }, { status: 400 });
+      const hasAgreement = await db.sponsorAgreement.findFirst({
+        where: { editionId, organizationId },
+        select: { id: true },
+      });
+      if (!hasAgreement) return NextResponse.json({ error: "Sponsor bulunamadı" }, { status: 404 });
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const existing = await db.portalAnalyticsLog.findFirst({
+        where: { sessionId: session.id, kind: "SPONSOR_VIEW", meta: organizationId, createdAt: { gte: dayStart } },
+        select: { id: true },
+      });
+      if (existing) return NextResponse.json({ ok: true, deduped: true });
+      await db.portalAnalyticsLog.create({
+        data: { editionId, sessionId: session.id, kind: "SPONSOR_VIEW", meta: organizationId },
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── P20.4: sponsor favorisi (yalnız AUTH — kişiye bağlı durum) ──
+    if (action === "SPONSOR_FAVORITE") {
+      if (session.kind !== "AUTH" || !session.personId) {
+        return NextResponse.json({ error: "Favori yalnız kayıtlı katılımcılara açıktır" }, { status: 403 });
+      }
+      const organizationId = (body.organizationId ?? "").trim();
+      if (!organizationId) return NextResponse.json({ error: "organizationId zorunlu" }, { status: 400 });
+      const hasAgreement = await db.sponsorAgreement.findFirst({
+        where: { editionId, organizationId },
+        select: { id: true },
+      });
+      if (!hasAgreement) return NextResponse.json({ error: "Sponsor bulunamadı" }, { status: 404 });
+      if (body.on === false) {
+        await db.sponsorFavorite.deleteMany({
+          where: { editionId, organizationId, personId: session.personId },
+        });
+        return NextResponse.json({ ok: true, favorite: false });
+      }
+      await db.sponsorFavorite.upsert({
+        where: { editionId_organizationId_personId: { editionId, organizationId, personId: session.personId } },
+        update: {},
+        create: { editionId, organizationId, personId: session.personId },
+      });
+      return NextResponse.json({ ok: true, favorite: true });
     }
 
     // ── Q&A soru gönderimi (§3.2) ──

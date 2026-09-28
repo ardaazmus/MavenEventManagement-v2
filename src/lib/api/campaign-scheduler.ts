@@ -41,11 +41,15 @@ export async function scheduleCampaign(opts: {
 }): Promise<{ id: string; status: string; scheduledAt: Date }> {
   const campaign = await db.campaign.findUnique({
     where: { id: opts.campaignId },
-    select: { id: true, name: true, status: true, editionId: true },
+    select: { id: true, name: true, status: true, editionId: true, purpose: true, approvalStatus: true },
   });
   if (!campaign) throw new ScheduleError("CAMPAIGN_NOT_FOUND", "Kampanya bulunamadı");
   if (!["DRAFT", "TESTED", "SCHEDULED"].includes(campaign.status)) {
     throw new ScheduleError("INVALID_STATUS", "Gönderilmiş veya başarısız kampanya yeniden zamanlanamaz");
+  }
+  // P19.3: ticari kampanya onaysız zamanlanamaz (tick anında 409 yerine erken ret).
+  if (campaign.purpose !== "TRANSACTIONAL" && campaign.approvalStatus !== "APPROVED") {
+    throw new ScheduleError("INVALID_STATUS", `Ticari kampanya onaysız zamanlanamaz (durum: ${campaign.approvalStatus ?? "NONE"})`);
   }
   if (Number.isNaN(opts.scheduledAt.getTime())) {
     throw new ScheduleError("VALIDATION", "Geçersiz tarih/saat");

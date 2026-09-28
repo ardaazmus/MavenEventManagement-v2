@@ -1,0 +1,70 @@
+{
+  "phase": "P02.3",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T01:16:30.000Z",
+  "finishedAt": "2026-09-28T01:18:35.000Z",
+  "commands": [
+    {
+      "command": "node --test tests-mini/auth-matrix.test.mjs",
+      "exitCode": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npx playwright test tests/auth-matrix.spec.ts",
+      "exitCode": 0,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 31,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 25818
+    }
+  ],
+  "tests": {
+    "passed": 31,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "playwright.config.ts",
+      "sha256": "8376e7c3662373ded39211e2aa5499ab15169da49942615ecf5fe44bb3d57662"
+    },
+    {
+      "path": "tests/support/auth-matrix.mjs",
+      "sha256": "705f741ef4618e420ef4a3b95c43e5a8b416e1fee2b4ae2ca3e8f2906711baf0"
+    },
+    {
+      "path": "tests/auth-matrix.spec.ts",
+      "sha256": "f0ecc5c9e789fff7bad990e143c8a541c192262b9ee5167dc222cd8a41347c14"
+    },
+    {
+      "path": "tests-mini/auth-matrix.test.mjs",
+      "sha256": "f80788e4bf68ccf07dab8b86dda071d47c3291fe0aa65bff3584d8c7db95cd60"
+    },
+    {
+      "path": "package.json",
+      "sha256": "c14b62d9613993059dd1bde91b4ba8326153680acd9c33e3b1b3e4415362934e"
+    }
+  ],
+  "authMatrixSummary": {
+    "projects": [
+      { "name": "demo-auth-off", "authMode": "off", "role": "none" },
+      { "name": "staff-auth-on", "authMode": "on", "role": "staff" },
+      { "name": "participant-auth-on", "authMode": "on", "role": "participant" }
+    ],
+    "failClosedVerified": true,
+    "unauthenticated401Verified": true,
+    "demoPassThroughVerified": true
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

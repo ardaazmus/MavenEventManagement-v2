@@ -1,0 +1,80 @@
+{
+  "phase": "P05.1",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T02:34:00.000Z",
+  "finishedAt": "2026-09-28T02:38:15.000Z",
+  "commands": [
+    {
+      "command": "npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --script",
+      "exitCode": 0
+    },
+    {
+      "command": "npx prisma generate",
+      "exitCode": 0
+    },
+    {
+      "command": "npx prisma migrate deploy",
+      "exitCode": 0
+    },
+    {
+      "command": "node --test tests-mini/role-scope-model.test.mjs",
+      "exitCode": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 64,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 22473
+    }
+  ],
+  "tests": {
+    "passed": 64,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "prisma/schema.prisma",
+      "sha256": "1694adf56e0509fda8893f04985435251f74e41ffa36a9c8baee9d4770a12e3c"
+    },
+    {
+      "path": "prisma/migrations/20260928023500_p05_role_scope_model/migration.sql",
+      "sha256": "4952c8e45c095cb932a127a08d5f57024149e7dc31e9d6ab55b64e164c0d200e"
+    },
+    {
+      "path": "tests-mini/role-scope-model.test.mjs",
+      "sha256": "9e8329de6e8ca94fd3842088f24cbed3423c689ad18e59444dbf0c75acf8c0e1"
+    },
+    {
+      "path": "package.json",
+      "sha256": "5729c2fc8c2fcb4c3be768f090f41b15e7e19d0a85c240c686341a507b6ff909"
+    }
+  ],
+  "schemaVerification": {
+    "additiveOnly": true,
+    "droppedColumnsOrTables": 0,
+    "newModels": [
+      "RoleDefinition",
+      "RolePermission",
+      "UserRoleAssignment"
+    ],
+    "compositeUniqueConstraints": [
+      "RoleDefinition(tenantId, key)",
+      "RolePermission(roleId, module, action)",
+      "UserRoleAssignment(userId, roleId, scopeKey)"
+    ],
+    "scopeKeyNonNullEnforced": true
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

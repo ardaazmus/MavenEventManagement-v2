@@ -1,0 +1,46 @@
+{
+  "phase": "P00.3",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T00:52:00.000Z",
+  "finishedAt": "2026-09-28T00:55:40.000Z",
+  "commands": [
+    {
+      "command": "node scripts/quality-report.mjs",
+      "exitCode": 1,
+      "unmaskedGateFailure": true,
+      "summary": "typecheck: PASS (0), lint: FAIL (1), i18n: FAIL (1), tests:mini: PASS (0)"
+    },
+    {
+      "command": "node --test tests-mini/inventory-determinism.test.mjs tests-mini/hygiene.test.mjs tests-mini/quality-report.test.mjs",
+      "exitCode": 0,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 31910
+    }
+  ],
+  "tests": {
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "scripts/quality-report.mjs",
+      "sha256": "d52f70e5316e884b19b533cc00f013777e34c4898f258627bff531262d37dd1f"
+    },
+    {
+      "path": "tests-mini/quality-report.test.mjs",
+      "sha256": "8a63de1feb1e89068c8c8f749daa60a573454c0037f902cb45498bccc6622418"
+    }
+  ],
+  "gatesReport": {
+    "typecheck": { "exitCode": 0, "status": "PASS" },
+    "lint": { "exitCode": 1, "status": "FAIL" },
+    "i18n": { "exitCode": 1, "status": "FAIL" },
+    "tests:mini": { "exitCode": 0, "status": "PASS" }
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

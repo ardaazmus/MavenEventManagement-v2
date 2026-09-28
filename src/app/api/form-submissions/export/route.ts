@@ -7,6 +7,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff, requestActor } from "@/lib/auth/request-context";
+import { logExport } from "@/lib/privacy/export-guard";
 
 const MAX_ROWS = 5000;
 
@@ -34,6 +36,9 @@ const STATUS_TR: Record<string, string> = {
 };
 
 export async function GET(req: NextRequest) {
+  // P14.2: form yanıtları PII taşır — kadro kapısı zorunlu (eksikti).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const url = new URL(req.url);
     const formId = url.searchParams.get("formId") ?? "";
@@ -107,6 +112,8 @@ export async function GET(req: NextRequest) {
     // BOM: Excel UTF-8 karakterleri (ş/ğ/İ) bozuk görmez; CRLF: satır sonu standardı
     const body = "\uFEFF" + lines.join("\r\n") + "\r\n";
     const name = form.slug || form.id;
+    const actor = await requestActor();
+    await logExport(db, { tenantId: ctx, editionId: form.editionId ?? null, type: "FORM_SUBMISSIONS", count: form.submissions.length, actorName: actor?.uid ?? null });
     return new NextResponse(body, {
       status: 200,
       headers: {

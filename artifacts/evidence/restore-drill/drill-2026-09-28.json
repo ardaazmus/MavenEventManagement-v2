@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "sourceDb": "D:\\project\\MavenEventManagment_v2\\db\\custom.db",
+  "sourceBytes": 8773632,
+  "backupAgeSec": 331,
+  "rtoMs": 28,
+  "integrity": "ok",
+  "tables": 12,
+  "rows": {
+    "tenant": 1,
+    "person": 28,
+    "eventEdition": 3,
+    "eventParticipation": 31,
+    "registration": 28,
+    "order": 7,
+    "campaign": 4,
+    "mediaAsset": 51,
+    "contactConsent": 0,
+    "sendDecision": 0,
+    "activityLog": 13,
+    "kvkkErasureRequest": 0
+  },
+  "withinBudget": true
+}

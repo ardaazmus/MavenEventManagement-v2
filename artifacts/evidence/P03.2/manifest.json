@@ -1,0 +1,94 @@
+{
+  "phase": "P03.2",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T01:21:50.000Z",
+  "finishedAt": "2026-09-28T01:30:40.000Z",
+  "commands": [
+    {
+      "command": "node --test tests-mini/health-readiness.test.mjs",
+      "exitCode": 0,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npx playwright test tests/smoke.spec.ts",
+      "exitCode": 0,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 37,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 30227
+    }
+  ],
+  "tests": {
+    "passed": 37,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "src/app/api/health/liveness/route.ts",
+      "sha256": "e6377714954a1c873124f6f28cd380d28f7569a05c74f6daa44e2304312bb912"
+    },
+    {
+      "path": "src/app/api/health/readiness/route.ts",
+      "sha256": "3c606a94d87663a542aff758d663b9999a342341e3a4e421534e7061a4dce657"
+    },
+    {
+      "path": "src/app/api/health/route.ts",
+      "sha256": "2c6b5eb00742739fb1d35298cfe2153329c0894ed0c6ad2e583c417c8b65fd9e"
+    },
+    {
+      "path": "src/lib/readiness.ts",
+      "sha256": "b5ff8f51ee63e23836d0f390fdbde6d5b1487e180d1e95b8074864337be324e9"
+    },
+    {
+      "path": "src/middleware.ts",
+      "sha256": "932232ae93b13764c44b939475aeb891f8b39ab67165b5aaabed4e8066a52210"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "8e0d7f20b645619421fa219faf0019cbdf0f1ff48ba1d952901a6be0b53e8f3d"
+    },
+    {
+      "path": "tests/smoke.spec.ts",
+      "sha256": "c36c79f5dc963e3cdfd93f12aa6f7bc0361a02ee52095b9f1f46cfc0f7af04a0"
+    },
+    {
+      "path": "tests-mini/health-readiness.test.mjs",
+      "sha256": "6a5e680ac3befe941251ef1299b25eb8bd0f5c6a6e4aaf47bfce17e0ae416aec"
+    },
+    {
+      "path": "tests-mini/inventory-determinism.test.mjs",
+      "sha256": "73f234f981d49371890e155c3a0dc6e84f883572797be90cacefbe1526a965ac"
+    },
+    {
+      "path": "package.json",
+      "sha256": "93975f328b132ece0b57da3fc96691df352684cc4c1c4f178a618272bd8f59ff"
+    }
+  ],
+  "healthReadinessSummary": {
+    "livenessEndpoint": "/api/health/liveness",
+    "livenessProcessOnly": true,
+    "livenessDbQuery": false,
+    "readinessEndpoint": "/api/health/readiness",
+    "readinessVerifies": ["database", "migrations", "config"],
+    "readinessUnmigratedDbStatus": 503,
+    "readinessMigratedDbStatus": 200,
+    "zeroSecretOrPiiLeak": true
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

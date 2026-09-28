@@ -13,6 +13,7 @@ import { ActivityType } from "@/lib/api/activity";
 import { autoOfferForCategory } from "@/lib/api/waitlist-engine";
 import { editionReadiness } from "@/lib/api/readiness";
 import { toMinor } from "@/lib/money";
+import { allocateBooth, type BoothPrisma } from "@/lib/sponsorship/booth-allocation";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { withLock } from "@/lib/tx-lock";
 import { issuePortalToken } from "@/lib/api/portal-tokens";
@@ -345,6 +346,7 @@ export async function POST(req: NextRequest) {
       }
 
       // ── Stand tahsisi (SponsorAgreement → Entitlement → Allocation → A24) ──
+      // P12: açık anlaşma seçimi + edition/statü/kurum eşleşmesi + tekil aktif tahsis.
       case "booth.allocate": {
         const { boothUnitId, agreementId, organizationId } = body as { boothUnitId: string; agreementId?: string; organizationId?: string };
         const booth = await db.boothUnit.findUnique({ where: { id: boothUnitId } });
@@ -354,17 +356,17 @@ export async function POST(req: NextRequest) {
           if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
           throw e;
         }
-        if (!["AVAILABLE", "HELD", "OPTION", "RELEASED"].includes(booth.status)) {
-          return NextResponse.json({ error: `Stant ${booth.status} durumunda — tahsis edilemez` }, { status: 409 });
-        }
-        const alloc = await db.boothAllocation.upsert({
+        const decided = await allocateBooth(db as unknown as BoothPrisma, {
+          boothUnitId,
+          agreementId: agreementId ?? "",
+          organizationId: organizationId ?? null,
+        });
+        if (!decided.ok) return NextResponse.json({ error: decided.error }, { status: decided.status });
+        const alloc = await db.boothAllocation.findUnique({
           where: { boothUnitId },
-          create: { boothUnitId, agreementId, organizationId, status: "RESERVED" },
-          update: { agreementId, organizationId, status: "RESERVED" },
           include: { boothUnit: true, organization: true, agreement: true },
         });
-        await db.boothUnit.update({ where: { id: boothUnitId }, data: { status: "RESERVED" } });
-        await db.activityLog.create({ data: { type: ActivityType.BOOTH_ALLOCATED, editionId: booth.editionId, message: `Stand tahsis edildi: ${booth.code} (${booth.sizeSqm} m²)`, entityType: "BoothAllocation", entityId: alloc.id, actorName: "Sponsorluk Yöneticisi" } });
+        await db.activityLog.create({ data: { type: ActivityType.BOOTH_ALLOCATED, editionId: booth.editionId, message: `Stand tahsis edildi: ${booth.code} (${booth.sizeSqm} m²)`, entityType: "BoothAllocation", entityId: decided.allocation.id, actorName: "Sponsorluk Yöneticisi" } });
         return NextResponse.json(alloc, { status: 201 });
       }
 

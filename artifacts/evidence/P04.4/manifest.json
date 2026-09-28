@@ -1,0 +1,69 @@
+{
+  "phase": "P04.4",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T02:29:30.000Z",
+  "finishedAt": "2026-09-28T02:32:00.000Z",
+  "commands": [
+    {
+      "command": "node scripts/route-policy.mjs",
+      "exitCode": 0
+    },
+    {
+      "command": "node --test tests-mini/route-policy-inventory.test.mjs",
+      "exitCode": 0,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 61,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 25936
+    }
+  ],
+  "tests": {
+    "passed": 61,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "scripts/route-policy.mjs",
+      "sha256": "535788eec102837ae502043b06b3cc32f8c08ff06d673e819fcb818e848f3c86"
+    },
+    {
+      "path": "tests-mini/route-policy-inventory.test.mjs",
+      "sha256": "a7df9013365b28d27fcde6ebca62037a2bb49393bb4b1b9aac37018875fb2d1a"
+    },
+    {
+      "path": "artifacts/route-policy-report.json",
+      "sha256": "6da1b3bf8da13ca17f8c8f7a8c98625564dd0fbb2741821addbd8aa18543bef0"
+    },
+    {
+      "path": "package.json",
+      "sha256": "4aa1b994c5d3bd22db5c0951085f1d6adc2fc1b0f5038c1161e41bb6186876dc"
+    }
+  ],
+  "routePolicySummary": {
+    "totalDiscoveredRoutes": 108,
+    "totalClassifiedRoutes": 108,
+    "unclassifiedCount": 0,
+    "categoryCounts": {
+      "PUBLIC": 38,
+      "STAFF": 46,
+      "ADMIN": 20,
+      "DOMAIN_POLICY": 4
+    },
+    "ciFailureOnUnclassified": true
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

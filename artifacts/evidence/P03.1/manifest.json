@@ -1,0 +1,67 @@
+{
+  "phase": "P03.1",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T01:19:35.000Z",
+  "finishedAt": "2026-09-28T01:20:55.000Z",
+  "commands": [
+    {
+      "command": "node --test tests-mini/config-schema.test.mjs",
+      "exitCode": 0,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 33,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 24818
+    }
+  ],
+  "tests": {
+    "passed": 33,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "src/lib/config.ts",
+      "sha256": "0dcda4f8145360ee03f99917ff1fc5153e56d30552f83e9d2cd3fc5a1f6cd92b"
+    },
+    {
+      "path": "tests-mini/config-schema.test.mjs",
+      "sha256": "cbe85513865cebad51aeaf2bf6f02a59ffb6c6396fc19b706c3fc6aba722761e"
+    },
+    {
+      "path": "package.json",
+      "sha256": "26a9be43656d8904a06f54917c132cb1e5839ececfdee087776ac86cf688ca16"
+    }
+  ],
+  "configValidationSummary": {
+    "file": "src/lib/config.ts",
+    "productionAuthOffBlocked": true,
+    "demoModeAllowedExplicitly": true,
+    "secretKeyEntropyEnforced": true,
+    "minSecretLength": 32,
+    "devTestErgonomicsPreserved": true,
+    "tableTestCoverage": [
+      "prod-auth-off-no-demo",
+      "prod-auth-off-demo-on",
+      "prod-weak-secret",
+      "prod-short-secret",
+      "prod-strong-secret",
+      "dev-fallback-secret",
+      "test-fallback-secret",
+      "missing-database-url"
+    ]
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

@@ -60,7 +60,13 @@ async function postJSONWarm(request: APIRequestContext, path: string, body: unkn
 test.describe.serial("M20 — müşteri datası + çok kanallı yayın", () => {
   test.afterAll(async () => {
     await db.portalAnnouncement.deleteMany({ where: { id: { in: createdAnnouncementIds } } });
+    // P17.2/P19: karar denetimi + kullanım izleri kampanyaya bağlı temizlenir
+    await db.sendDecision.deleteMany({ where: { campaignId: { in: createdCampaignIds } } });
+    await db.promoUsage.deleteMany({ where: { campaignId: { in: createdCampaignIds } } });
     await db.campaign.deleteMany({ where: { id: { in: createdCampaignIds } } });
+    await db.contactConsent.deleteMany({
+      where: { tenantId: editionTenantId, OR: [{ address: { contains: SUFFIX } }, { address: { in: ["905321110001", "905321110003", "905321110009"] } }] },
+    });
     await db.customerContact.deleteMany({ where: { id: { in: createdContactIds } } });
     await db.person.deleteMany({ where: { id: { in: createdPersonIds } } });
     if (createdProviderId) await db.mailProviderConfig.deleteMany({ where: { id: createdProviderId } });
@@ -230,6 +236,25 @@ test.describe.serial("M20 — müşteri datası + çok kanallı yayın", () => {
 
   test("kampanya LIVE gönderim — müşteri havuzuna çok kanallı", async ({ request }) => {
     const id = createdCampaignIds[0];
+    // P17.2/P19.3 sözleşmesi: ticari LIVE — onay + kanal rızaları gerekir.
+    await db.campaign.update({ where: { id }, data: { approvalStatus: "APPROVED", approvedBy: "m20-spec", approvedAt: new Date() } });
+    const seedEmails = [`m20-elif-${SUFFIX}@test.crm`, `m20-baris-${SUFFIX}@test.crm`, `m20-ali-${SUFFIX}@test.crm`];
+    const seedPhones = ["905321110001", "905321110003", "905321110009"];
+    const wanted = [
+      ...seedEmails.map((address) => ({ channel: "EMAIL", address })),
+      ...seedPhones.flatMap((address) => (["SMS", "WHATSAPP"] as const).map((channel) => ({ channel, address }))),
+    ];
+    const have = await db.contactConsent.findMany({
+      where: { tenantId: editionTenantId, purpose: "COMMERCIAL", OR: wanted },
+      select: { channel: true, address: true },
+    });
+    const haveKeys = new Set(have.map((h) => `${h.channel}:${h.address}`));
+    const missing = wanted.filter((w) => !haveKeys.has(`${w.channel}:${w.address}`));
+    if (missing.length > 0) {
+      await db.contactConsent.createMany({
+        data: missing.map((w) => ({ tenantId: editionTenantId, channel: w.channel, address: w.address, purpose: "COMMERCIAL", status: "GRANTED", source: "MANUAL" })),
+      });
+    }
     const res = await postJSON(request, "/api/campaigns/send", { campaignId: id, mode: "LIVE" });
     expect(res.status()).toBe(200);
     const rep = (await res.json()) as { mode: string; totalSent: number; audienceSize: number; channels: Record<string, { attempted: number; sent: number; skipped: number }> };

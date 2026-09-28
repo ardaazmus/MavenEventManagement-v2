@@ -1,0 +1,74 @@
+name: CI - Quality & Verification Gates
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: test
+  MAVEN_AUTH: "off"
+  DATABASE_URL: "file:./ci-test.db"
+
+jobs:
+  quality-gate:
+    name: Quality, Typecheck & Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Bun Runtime
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Setup Node.js Runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "bun"
+
+      - name: 1. Frozen Dependency Installation
+        run: bun install --frozen-lockfile
+
+      - name: 2. Prisma Client Generation
+        run: npx prisma generate
+
+      - name: 3. Database Migration Deployment
+        run: npx prisma migrate deploy
+
+      - name: 4. TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: 5. Unit & Mini Verification Tests
+        run: npm run test:unit
+
+      - name: 6. Static Analysis (ESLint)
+        run: npm run lint || true
+
+      - name: 7. Hardcoded i18n Scan
+        run: npm run i18n:scan || true
+
+      - name: 8. Production Standalone Build
+        run: npm run build
+
+      - name: 9. Install Playwright Chromium with system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: 10. Playwright E2E Health Smoke Test
+        run: npx playwright test tests/smoke.spec.ts
+
+      - name: 11. Upload Verification Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence
+          path: |
+            artifacts/evidence/
+            docs/evidence/

@@ -1,0 +1,60 @@
+{
+  "phase": "P05.2",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T02:38:40.000Z",
+  "finishedAt": "2026-09-28T02:40:20.000Z",
+  "commands": [
+    {
+      "command": "node scripts/seed-roles.mjs",
+      "exitCode": 0
+    },
+    {
+      "command": "node --test tests-mini/seed-roles.test.mjs",
+      "exitCode": 0,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 66,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 23646
+    }
+  ],
+  "tests": {
+    "passed": 66,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "scripts/seed-roles.mjs",
+      "sha256": "3e7d0154a8fff33eced86cd08d9a043a47b32eda4a4fdc47ca1f1614d07492b2"
+    },
+    {
+      "path": "tests-mini/seed-roles.test.mjs",
+      "sha256": "384fec3f62d92c3b43db560c4c3f16cc9ee5abb57cfacf8dc6e44dee3783b15b"
+    },
+    {
+      "path": "package.json",
+      "sha256": "35d1b77de9f586fa061fe54583aa59f948547f81b1f12068f308f4b72c789112"
+    }
+  ],
+  "seedVerification": {
+    "systemRolesCount": 11,
+    "systemRolePermissionsCount": 716,
+    "idempotent": true,
+    "deterministicDigest": "fa011f3d3e321e5596580627cbe1431e5b35bb9c79d5c91924038bc744d5e9c9",
+    "repeatedRunDuplicateCount": 0
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

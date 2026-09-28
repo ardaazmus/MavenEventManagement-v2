@@ -10,8 +10,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ActivityType } from "@/lib/api/activity";
-import { requireStaff } from "@/lib/auth/request-context";
+import { requireStaff, requestActor, STAFF_ROLES } from "@/lib/auth/request-context";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { maskScanPerson } from "@/lib/privacy/masking";
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,6 +35,10 @@ export async function POST(req: NextRequest) {
 
     if (!code) return NextResponse.json({ error: "Tarama kodu gerekli" }, { status: 400 });
 
+    // P14.1: tam kimlik yalnız doğrulanmış kadroya; cihaz/anonim bağlam maskeli alır.
+    const actor = await requestActor();
+    const staffVerified = !!actor && STAFF_ROLES.has(actor.role);
+
     // credential code veya participation id ile çözümle
     const credential = await db.credential.findUnique({
       where: { code },
@@ -51,6 +56,10 @@ export async function POST(req: NextRequest) {
     }
 
     const person = participation.person;
+    const maskedPerson = maskScanPerson(
+      { id: person.id, firstName: person.firstName, lastName: person.lastName, company: person.company, title: person.title },
+      { staffVerified },
+    );
     // P4: geçerli kayıt deterministik — CONFIRMED öncelikli, yoksa en-yeni submittedAt
     const regs = [...(participation.registrations ?? [])].sort((a, b) => (b.submittedAt?.getTime() ?? 0) - (a.submittedAt?.getTime() ?? 0));
     const reg = regs.find((r) => r.status === "CONFIRMED") ?? regs[0];
@@ -83,7 +92,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         result: "DENIED", scanId: scan.id, tone: "red",
         reason: blockers.join(" · "),
-        person: { id: person.id, name: `${person.firstName} ${person.lastName}`, company: person.company },
+        person: maskedPerson,
+        masked: !staffVerified,
         hint: "Manuel istisna için gerekçe girin.",
       });
     }
@@ -158,12 +168,8 @@ export async function POST(req: NextRequest) {
       scanId: scan.id,
       tone: isRescan ? "yellow" : "green",
       reason: isRescan ? `İlk geçerli giriş: ${previousValid?.scannedAt.toLocaleTimeString?.("tr-TR") ?? "—"} — tekrar tarama geçmişe eklenir` : null,
-      person: {
-        id: person.id,
-        name: `${person.firstName} ${person.lastName}`,
-        company: person.company,
-        title: person.title,
-      },
+      person: maskedPerson,
+      masked: !staffVerified,
       registration: reg ? { status: reg.status, category: reg.category?.name, funding: reg.fundingSource } : null,
       badge: badge ? { id: badge.id, badgeNo: badge.badgeNo, status: badge.status, profile: badge.profile?.name, reprintCount: badge.reprintCount ?? 0 } : null,
       attendance: !isSessionScan && !isRescan && action === "ENTRY" ? "CHECKED_IN" : undefined,

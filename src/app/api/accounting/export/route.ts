@@ -8,8 +8,10 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff, requestActor } from "@/lib/auth/request-context";
 import { fromMinor } from "@/lib/money";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { logExport } from "@/lib/privacy/export-guard";
 
 const INCOME_EXPENSE_STATUSES = ["APPROVED", "PAID", "REIMBURSED"];
 
@@ -33,6 +35,9 @@ export async function GET(req: NextRequest) {
   // S3: finansal çıktı indirme istismarı kapısı — 10 indirme/dk/IP
   const denied = enforceRateLimit(req, { key: "accounting-export", limit: 10, windowMs: 60_000 });
   if (denied) return denied;
+  // P14.2: finansal çıktı payerName PII taşır — kadro kapısı zorunlu (eksikti).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
 
     const sp = req.nextUrl.searchParams;
     const editionId = sp.get("editionId");
@@ -50,7 +55,7 @@ export async function GET(req: NextRequest) {
 
     const edition = await db.eventEdition.findUnique({
       where: { id: editionId },
-      select: { name: true, slug: true },
+      select: { name: true, slug: true, tenantId: true },
     });
     if (!edition) return NextResponse.json({ error: "Etkinlik bulunamadı" }, { status: 404 });
 
@@ -122,6 +127,8 @@ export async function GET(req: NextRequest) {
         }).join(";"));
       }
       const bom = "\uFEFF";
+      const actorCsv = await requestActor();
+      await logExport(db, { tenantId: edition.tenantId ?? null, editionId, type: "ACCOUNTING", count: rows.length, actorName: actorCsv?.uid ?? null });
       return new NextResponse(bom + lines.join("\r\n"), {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
@@ -160,6 +167,8 @@ export async function GET(req: NextRequest) {
     }
 
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    const actor = await requestActor();
+    await logExport(db, { tenantId: edition.tenantId ?? null, editionId, type: "ACCOUNTING", count: ledgerRows.length + incomeRows.length + expenseRows.length, actorName: actor?.uid ?? null });
     return new NextResponse(new Uint8Array(buf), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

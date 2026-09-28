@@ -9,6 +9,7 @@ export interface EdgeSessionPayload {
   iat?: number;
   exp: number;
   mfaPending?: boolean;
+  sv?: number; // P06.4: oturum sürümü (edge doğrulamaz, yalnız taşır)
 }
 
 const SESSION_TTL_SECONDS = 12 * 3600;

@@ -29,6 +29,8 @@ export const ActivityType = {
   REFUND_SAVED: "REFUND_SAVED",
   // sponsorluk
   SPONSOR_AGREEMENT: "SPONSOR_AGREEMENT",
+  LEAD_CAPTURED: "LEAD_CAPTURED",
+  MEETING_SAVED: "MEETING_SAVED",
   DELIVERABLE_SAVED: "DELIVERABLE_SAVED",
   BOOTH_ALLOCATED: "BOOTH_ALLOCATED",
   BOOTHS_SAVED: "BOOTHS_SAVED",
@@ -52,6 +54,12 @@ export const ActivityType = {
   // iletişim & operasyon
   CAMPAIGN_SAVED: "CAMPAIGN_SAVED",
   TASK_SAVED: "TASK_SAVED",
+  // P14.2/P14.3: denetimli dışa aktarım yaşam döngüsü
+  EXPORT_REQUESTED: "EXPORT_REQUESTED",
+  EXPORT_READY: "EXPORT_READY",
+  EXPORT_APPROVED: "EXPORT_APPROVED",
+  EXPORT_REJECTED: "EXPORT_REJECTED",
+  EXPORT_DOWNLOADED: "EXPORT_DOWNLOADED",
 } as const;
 
 export type ActivityTypeValue = (typeof ActivityType)[keyof typeof ActivityType];

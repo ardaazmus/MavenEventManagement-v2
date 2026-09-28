@@ -61,16 +61,37 @@ async function createCampaign(name: string, customRecipients: string) {
       subject: name,
       body: "Zamanlanmış gönderim test mesajıdır.",
       status: "DRAFT",
+      // P17.2/P19.3 sözleşmesi: ticari zamanlama/gönderim onay + rıza ister.
+      approvalStatus: "APPROVED",
+      approvedBy: "m21-spec",
+      approvedAt: new Date(),
     },
     select: { id: true },
   });
   createdCampaignIds.push(c.id);
+  const emails = customRecipients.split(/[\s,;]+/).map((s) => s.trim().toLowerCase()).filter((s) => s.includes("@"));
+  if (emails.length > 0) {
+    const have = await db.contactConsent.findMany({
+      where: { tenantId: editionTenantId, channel: "EMAIL", purpose: "COMMERCIAL", address: { in: emails } },
+      select: { address: true },
+    });
+    const haveSet = new Set(have.map((h) => h.address));
+    const missing = emails.filter((e) => !haveSet.has(e));
+    if (missing.length > 0) {
+      await db.contactConsent.createMany({
+        data: missing.map((address) => ({ tenantId: editionTenantId, channel: "EMAIL", address, purpose: "COMMERCIAL", status: "GRANTED", source: "MANUAL" })),
+      });
+    }
+  }
   return c.id;
 }
 
 test.describe.serial("M21 — zamanlanmış kampanya gönderimi", () => {
   test.afterAll(async () => {
+    await db.sendDecision.deleteMany({ where: { campaignId: { in: createdCampaignIds } } });
+    await db.promoUsage.deleteMany({ where: { campaignId: { in: createdCampaignIds } } });
     await db.campaign.deleteMany({ where: { id: { in: createdCampaignIds } } });
+    await db.contactConsent.deleteMany({ where: { tenantId: editionTenantId, address: { contains: SUFFIX } } });
     if (createdProviderId) await db.mailProviderConfig.deleteMany({ where: { id: createdProviderId } });
     await db.$disconnect();
   });

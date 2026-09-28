@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
 
     const cookie = sessionCookieHeader({
       uid: passkey.userId, role: passkey.user.role, tenantId: passkey.user.tenantId,
-      iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+      iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS, sv: passkey.user.sessionVersion,
     });
     return new NextResponse(
       JSON.stringify({ ok: true, user: { name: passkey.user.name, role: passkey.user.role } }),

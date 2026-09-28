@@ -881,10 +881,14 @@ export function PeopleView() {
   const { tenant, bump, currentEditionId, refreshKey } = useApp();
   const { toast } = useToast();
   const [q, setQ] = useState("");
+  // P16.1/P16.2: kapsam sekmesi — şirket rehberi (kiracı master) ya da bu etkinlik (ilişkili kişiler).
+  const [peopleScope, setPeopleScope] = useState<"directory" | "event">("directory");
   const [selected, setSelected] = useState<PersonRow | null>(null);
   const [detail, setDetail] = useState<Person360 | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  // P16.3: hızlı ekleme adayları — otomatik yazma yok, karar kullanıcıda.
+  const [quickDupes, setQuickDupes] = useState<Array<{ person: PersonRow; reason: string }> | null>(null);
   const [editingPerson, setEditingPerson] = useState<PersonRow | null>(null);
   // R10-a: tüm Person skaler alanları — adı/kurumu/şehri yanlışsa tek ekranda düzelt
   const [form, setForm] = useState({ firstName: "", lastName: "", email: "", phone: "", company: "", title: "", city: "", country: "", bio: "", linkedin: "", status: "ACTIVE", parentPersonId: "none", relationType: "SPOUSE" });
@@ -897,8 +901,13 @@ export function PeopleView() {
 
   // TASK-A F6: kişiler imleçli load-more + sunucu-taraflı q arama — 300 satırlık sessiz kesme kaldırıldı
   const { data: peoplePaged, error, reload, loading, more: peopleMore } = useApi<{ items: PersonRow[]; nextCursor?: string | null }>(
-    (cursor?: string) => listEntityPaged<PersonRow>("people", { q: q.trim() || undefined, limit: 200 }, cursor),
-    [q],
+    (cursor?: string) =>
+      peopleScope === "event" && currentEditionId
+        ? apiGet<{ items: Array<{ participation: { id: string }; person: PersonRow }>; nextCursor?: string | null }>(
+            `/api/people/event?editionId=${currentEditionId}&limit=200${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ""}${cursor ? `&cursor=${cursor}` : ""}`,
+          ).then((r) => ({ items: r.items.map((i) => i.person), nextCursor: r.nextCursor }))
+        : listEntityPaged<PersonRow>("people", { q: q.trim() || undefined, limit: 200 }, cursor),
+    [q, peopleScope, currentEditionId],
     { append: true },
   );
   const data = useMemo(() => peoplePaged?.items ?? [], [peoplePaged]);
@@ -1014,6 +1023,7 @@ export function PeopleView() {
 
   const openCreate = () => {
     setEditingPerson(null);
+    setQuickDupes(null);
     setForm(defaultForm);
     setCustomFieldValues({});
     setCreateOpen(true);
@@ -1035,6 +1045,17 @@ export function PeopleView() {
     setCreateOpen(true);
   };
 
+  const toggleEventLink = async (personId: string, attach: boolean) => {
+    if (!currentEditionId) return;
+    try {
+      if (attach) await apiSend("/api/people/attach", "POST", { editionId: currentEditionId, personId });
+      else await apiSend(`/api/people/attach?editionId=${currentEditionId}&personId=${personId}`, "DELETE");
+      toast({ title: attach ? "Etkinliğe eklendi" : "Etkinlikten çıkarıldı", description: attach ? "Mevcut kayıt ilişkilendirildi (kopya yok)" : "Master kayıt korundu" });
+      if (selected) await open360(selected);
+      reload(); bump();
+    } catch (e) { toast({ title: t("common.error"), description: e instanceof Error ? e.message : "", variant: "destructive" }); }
+  };
+
   const savePerson = async () => {
     // Yalnız skaler alanlar — registry sanitize "" → null; asla iç içe nesne gönderilmez
     const payload = {
@@ -1051,8 +1072,17 @@ export function PeopleView() {
         await apiSend(`/api/people/${editingPerson.id}`, "PUT", payload);
         toast({ title: t("people.person.updated"), description: `${form.firstName} ${form.lastName}` });
       } else {
-        const created = await apiSend<{ id: string }>("/api/people", "POST", { ...payload, tenantId: tenant?.id });
-        savedId = created?.id;
+        // P16.3: normalize/dedupe'li hızlı ekleme — aday varsa iletişim bekler.
+        const qa = await apiSend<{ outcome: string; person?: PersonRow; candidates?: Array<{ person: PersonRow; reason: string }> }>("/api/people/quick-add", "POST", {
+          ...payload, tenantId: tenant?.id, editionId: peopleScope === "event" ? currentEditionId : undefined,
+        });
+        if (qa.outcome === "duplicate") {
+          setQuickDupes(qa.candidates ?? []);
+          toast({ title: "Olası mükerrer", description: `${qa.candidates?.length ?? 0} aday bulundu — otomatik oluşturulmadı`, variant: "destructive" });
+          return;
+        }
+        savedId = qa.person?.id;
+        setQuickDupes(null);
         toast({ title: t("people.person.created"), description: t("people.person.createdDesc", { name: `${form.firstName} ${form.lastName}` }) });
       }
 
@@ -1180,6 +1210,10 @@ export function PeopleView() {
         >
           <Icons.ClipboardPaste className="size-3.5" /> Toplu Yapıştır
         </Button>
+        <div className="flex items-center gap-1 rounded-lg border bg-muted/40 p-1" role="tablist" aria-label="Kişi kapsamı">
+          <Button variant={peopleScope === "directory" ? "default" : "ghost"} size="sm" className="h-7 text-xs" onClick={() => setPeopleScope("directory")} role="tab" aria-selected={peopleScope === "directory"}><Icons.Building2 className="size-3.5" /> Şirket rehberi</Button>
+          <Button variant={peopleScope === "event" ? "default" : "ghost"} size="sm" className="h-7 text-xs" onClick={() => setPeopleScope("event")} disabled={!currentEditionId} role="tab" aria-selected={peopleScope === "event"} title={!currentEditionId ? "Önce etkinlik seçin" : undefined}><Icons.CalendarCheck className="size-3.5" /> Bu etkinlik</Button>
+        </div>
         <Input placeholder={t("people.searchPh")} value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" />
 
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -1285,6 +1319,24 @@ export function PeopleView() {
               allFormData={form}
             />
 
+            {!editingPerson && quickDupes && quickDupes.length > 0 && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3" role="alert">
+                <p className="text-xs font-semibold">Olası mükerrer kayıtlar ({quickDupes.length}) — yeni kayıt açılmadı</p>
+                <div className="mt-2 space-y-1.5">
+                  {quickDupes.map((c) => (
+                    <div key={c.person.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span>{c.person.firstName} {c.person.lastName} · {c.person.email ?? "e-postasız"} <Chip tone="neutral">{c.reason}</Chip></span>
+                      <span className="flex gap-1.5">
+                        <Button size="sm" variant="outline" onClick={() => { setCreateOpen(false); open360(c.person); }}>İncele</Button>
+                        {peopleScope === "event" && currentEditionId && (
+                          <Button size="sm" onClick={() => { toggleEventLink(c.person.id, true); setCreateOpen(false); setQuickDupes(null); }}>Etkinliğe ekle</Button>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <DialogFooter className="mt-3"><Button onClick={savePerson} disabled={!form.firstName || !form.lastName}>{editingPerson ? t("people.save") : t("people.create")}</Button></DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1616,9 +1668,14 @@ export function PeopleView() {
                   <SectionCard
                     title={t("people.p360.identity")}
                     action={
-                      <Button size="sm" variant="outline" onClick={() => openEdit(detail.person)}>
-                        <Icons.Pencil className="size-3.5" /> {t("people.edit")}
-                      </Button>
+                      <div className="flex flex-wrap gap-1.5">
+                        <Button size="sm" variant="outline" onClick={() => openEdit(detail.person)}>
+                          <Icons.Pencil className="size-3.5" /> {t("people.edit")}
+                        </Button>
+                        {currentEditionId && (detail.participations.some((x) => x.editionId === currentEditionId)
+                          ? <Button size="sm" variant="outline" onClick={() => toggleEventLink(detail.person.id, false)}><Icons.UserMinus className="size-3.5" /> Etkinlikten çıkar</Button>
+                          : <Button size="sm" onClick={() => toggleEventLink(detail.person.id, true)}><Icons.UserPlus className="size-3.5" /> Bu etkinliğe ekle</Button>)}
+                      </div>
                     }
                   >
                     {/* R10-a: kişi fotoğrafı — 360 panelinde de yüklenebilir */}

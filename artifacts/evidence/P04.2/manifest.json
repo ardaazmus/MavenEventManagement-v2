@@ -1,0 +1,65 @@
+{
+  "phase": "P04.2",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T02:16:00.000Z",
+  "finishedAt": "2026-09-28T02:20:00.000Z",
+  "commands": [
+    {
+      "command": "node --test tests-mini/generic-collection-protection.test.mjs",
+      "exitCode": 0,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 49,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 22360
+    }
+  ],
+  "tests": {
+    "passed": 49,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "src/lib/api/permissions.ts",
+      "sha256": "66058d6ce9564b2c75eb5c04d7b83709fbc2c1caf9fc94fa2aafbb52d0cd34c1"
+    },
+    {
+      "path": "src/app/api/[entity]/route.ts",
+      "sha256": "52c2fc5f2b1d653803aecbc06432ed283c41721bd6fa672a53620da0c4610ee8"
+    },
+    {
+      "path": "tests-mini/generic-collection-protection.test.mjs",
+      "sha256": "7024ca8696999f2b516aa9701e4654e3a94c80b451a6aa48148cbd8dbb212313"
+    },
+    {
+      "path": "package.json",
+      "sha256": "ffe7895d3b9148c029ea0fc29344058cd7ca17b3c730f0b7db73bd2bed7a1c18"
+    }
+  ],
+  "protectionSummary": {
+    "methodsEnforced": {
+      "GET": "VIEW",
+      "POST": "CREATE"
+    },
+    "ownerAccess": "ALLOW_ALL",
+    "viewerAccess": "VIEW_ONLY (MUTATIONS_FORBIDDEN_403)",
+    "participantAccess": "DENIED_ALL_403",
+    "staffManagers": "SCOPED_BY_MODULE_TAXONOMY",
+    "tenantIsolation": "ENFORCED_AFTER_AUTHZ (LEAK_FREE_404_400)",
+    "denyByDefault": true
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

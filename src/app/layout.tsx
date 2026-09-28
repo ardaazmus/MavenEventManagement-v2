@@ -1,7 +1,10 @@
 import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { AppThemeProvider } from "@/components/theme-provider";
+import { THEME_COOKIE, sanitizeThemeChoice } from "@/lib/theme/preferences";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -38,18 +41,24 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // P15.1: çerezdeki kullanıcı tercihi SSR'e taşınır — hydration uyuşmazlığı yok.
+  // Kayıtlı tercih yoksa AÇIK tema varsayılır (koyu kilitlenmesi şikayeti).
+  const store = await cookies();
+  const defaultTheme = sanitizeThemeChoice(store.get(THEME_COOKIE)?.value) ?? "light";
   return (
     <html lang="tr" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
-        {children}
-        <Toaster />
+        <AppThemeProvider defaultTheme={defaultTheme}>
+          {children}
+          <Toaster />
+        </AppThemeProvider>
       </body>
     </html>
   );

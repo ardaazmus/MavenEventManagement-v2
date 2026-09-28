@@ -1,0 +1,48 @@
+{
+  "phase": "P01.3",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T01:02:50.000Z",
+  "finishedAt": "2026-09-28T01:05:00.000Z",
+  "commands": [
+    {
+      "command": "npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 25787
+    }
+  ],
+  "tests": {
+    "passed": 20,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "prisma/migrations/20260928000000_init/migration.sql",
+      "sha256": "8271ef56ec991fd7c40f317c9e3cae197cb612b4eecf5c9a1a611ec4f0cdf639"
+    },
+    {
+      "path": "package.json",
+      "sha256": "849a174f41495a80e9a180e4290ed5a445fe77fc07dec5ae8374fcdbaaabb1d3"
+    },
+    {
+      "path": "tests-mini/migration-baseline.test.mjs",
+      "sha256": "34b397a58a6afdba227e735554deb326c5ee37711d741cbfaba350a6f28e9819"
+    }
+  ],
+  "migrationValidation": {
+    "baselineMigrationCreated": "prisma/migrations/20260928000000_init/migration.sql",
+    "migrationByteSize": 87603,
+    "emptyDbDeploySuccess": true,
+    "schemaDiffAgainstDatamodel": "No difference detected."
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

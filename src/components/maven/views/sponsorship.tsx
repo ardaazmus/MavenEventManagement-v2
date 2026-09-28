@@ -23,7 +23,7 @@ interface Agreement {
   organization: { id: string; name: string };
   package?: { id: string; name: string; rightsSpec?: string | null } | null;
   tier?: { id: string; name: string } | null;
-  deliverables: { id: string; name: string; type: string; status: string; dueDate?: string | null; responsible?: string | null }[];
+  deliverables: { id: string; name: string; type: string; status: string; dueDate?: string | null; responsible?: string | null; notes?: string | null; proofUrl?: string | null }[];
   boothAllocations: { id: string; status: string; boothUnit: { code: string; sizeSqm: number; status: string } }[];
 }
 interface Entitlement {
@@ -69,10 +69,17 @@ export function SponsorshipView() {
   const [busyApprovalId, setBusyApprovalId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState({ label: "", type: "COMPLIMENTARY_REGISTRATION", orgId: "__none__", quantityGranted: 1, restrictions: "", approvalStatus: "APPROVED" });
+  // P10.1: seviye/paket tanımları — kompakt yönetici formu
+  const [tierForm, setTierForm] = useState({ name: "", priceMajor: "", capacity: "" });
+  const [packForm, setPackForm] = useState({ name: "", priceMajor: "", tierId: "__none__", rightsSpec: "" });
+  const [defsError, setDefsError] = useState<string | null>(null);
 
   const { data: agreements, error, reload, loading } = useApi<Agreement[]>(() => listEntity<Agreement>("sponsor-agreements", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
   const { data: entitlements, reload: reloadEnts } = useApi<Entitlement[]>(() => listEntity<Entitlement>("entitlements", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
   const { data: booths } = useApi<BoothUnit[]>(() => listEntity<BoothUnit>("booth-units", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+  const { data: orgDirectory, reload: reloadOrgs } = useApi<{ id: string; name: string }[]>(() => listEntity<{ id: string; name: string }>("organizations"), [refreshKey]);
+  const { data: tierDirectory } = useApi<{ id: string; name: string; price: number; currency: string; capacity: number | null }[]>(() => listEntity<{ id: string; name: string; price: number; currency: string; capacity: number | null }>("sponsor-tiers", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+  const { data: packageDirectory } = useApi<{ id: string; name: string; price: number; currency: string; tierId: string | null; rightsSpec: string | null }[]>(() => listEntity<{ id: string; name: string; price: number; currency: string; tierId: string | null; rightsSpec: string | null }>("sponsor-packages", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
 
   const addGuest = async () => {
     if (!guestTarget) return;
@@ -92,14 +99,17 @@ export function SponsorshipView() {
     }
   };
 
+  const [allocAgreementId, setAllocAgreementId] = useState("");
+  const allocCandidates = (agreements ?? []).filter((a) => ["CONTRACTED", "ACTIVE"].includes(a.status));
+
   const allocateBooth = async () => {
-    if (!allocTarget) return;
+    if (!allocTarget || !allocAgreementId) return;
     setBusy(true);
     try {
-      const orgId = boothsAllocTargetOrg(allocTarget, agreements ?? []);
-      await apiSend("/api/flows", "POST", { action: "booth.allocate", boothUnitId: allocTarget.id, agreementId: orgId.agreementId, organizationId: orgId.organizationId });
+      const selected = allocCandidates.find((a) => a.id === allocAgreementId);
+      await apiSend("/api/flows", "POST", { action: "booth.allocate", boothUnitId: allocTarget.id, agreementId: allocAgreementId, organizationId: selected?.organization.id });
       toast({ title: "Stand tahsis edildi", description: `${allocTarget.code} ticari kayıt Maven'da; Floor Studio geometrisi ayrıdır.` });
-      setAllocTarget(null); reload(); bump();
+      setAllocTarget(null); setAllocAgreementId(""); reload(); bump();
     } catch (e) {
       toast({ title: "Tahsis edilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
     } finally {
@@ -165,31 +175,48 @@ export function SponsorshipView() {
   const sponsorEnts = (entitlements ?? []).filter((e) => e.ownerOrganization && (!pendingOnly || e.approvalStatus === "PROPOSED"));
   const orgOptions = Array.from(new Map((agreements ?? []).map((a) => [a.organization.id, a.organization])).values());
 
-  const handleMoveKanbanStage = async (agreementId: string, targetStage: string) => {
+  const handleMoveKanbanStage = async (agreementId: string, targetStage: string, opts?: { transitionReason?: string; signedAt?: string }) => {
+    await apiSend(`/api/sponsor-agreements/${agreementId}`, "PUT", {
+      status: targetStage,
+      ...(opts?.transitionReason ? { transitionReason: opts.transitionReason } : {}),
+      ...(opts?.signedAt ? { signedAt: opts.signedAt } : {}),
+    });
+    toast({ title: "Aşama Güncellendi", description: `Anlaşma ${targetStage} aşamasına taşındı.` });
+    reload();
+  };
+
+  const handleNewDeal = async (deal: { organizationId: string; amountMinor: number; stage: string; tierId?: string | null; packageId?: string | null; notes?: string | null }) => {
+    if (!currentEditionId) throw new Error("Etkinlik seçili değil");
     try {
-      await apiSend(`/api/sponsor-agreements/${agreementId}`, "PUT", { status: targetStage });
-      toast({ title: "Aşama Güncellendi", description: `Anlaşma ${targetStage} aşamasına taşındı.` });
+      const created = await apiSend<{ id: string; amount: number; organization?: { name?: string } | null }>("/api/sponsor-agreements", "POST", {
+        editionId: currentEditionId,
+        organizationId: deal.organizationId,
+        amountMinor: deal.amountMinor,
+        currency: "TRY",
+        status: deal.stage,
+        ...(deal.tierId ? { tierId: deal.tierId } : {}),
+        ...(deal.packageId ? { packageId: deal.packageId } : {}),
+        ...(deal.notes ? { notes: deal.notes } : {}),
+      });
+      const orgName = created.organization?.name ?? (orgDirectory ?? []).find((o) => o.id === deal.organizationId)?.name ?? "Anlaşma";
+      toast({ title: "Sponsorluk Anlaşması Eklendi", description: `${orgName} — ${fmtMoney(created.amount)}` });
       reload();
-    } catch (e: any) {
-      toast({ title: "Güncelleme Başarısız", description: e.message, variant: "destructive" });
+      return { id: created.id };
+    } catch (e) {
+      // P10.3: kapasite çakışması (409) sonrası listeyi tazele, hatayı forma ilet.
+      if (e instanceof Error && /kapasite|doldu|409/i.test(e.message)) reload();
+      throw e;
     }
   };
 
-  const handleNewDeal = async (deal: { orgName: string; amount: number; stage: string; tierName: string }) => {
-    if (!currentEditionId) return;
-    try {
-      await apiSend("/api/sponsor-agreements", "POST", {
-        editionId: currentEditionId,
-        amount: deal.amount,
-        currency: "TRY",
-        status: deal.stage,
-      });
-      toast({ title: "Sponsorluk Anlaşması Eklendi", description: `${deal.orgName} — ₺${deal.amount.toLocaleString()}` });
-      reload();
-    } catch (e: any) {
-      toast({ title: "Kayıt Başarısız", description: e.message, variant: "destructive" });
+  // P10.3: tier doluluk haritası (CONTRACTED/ACTIVE sayımı) — UI ön-kontrolü, son söz API'de.
+  const tierUsage: Record<string, { used: number; capacity: number | null }> = {};
+  for (const t of tierDirectory ?? []) tierUsage[t.id] = { used: 0, capacity: t.capacity ?? null };
+  for (const a of agreements ?? []) {
+    if ((a.status === "CONTRACTED" || a.status === "ACTIVE") && a.tier && tierUsage[a.tier.id]) {
+      tierUsage[a.tier.id].used += 1;
     }
-  };
+  }
 
   return (
     <div className="space-y-5">
@@ -198,9 +225,147 @@ export function SponsorshipView() {
       {/* Sponsorluk Kanban Boru Hattı */}
       <SponsorshipKanban
         agreements={(agreements ?? []) as any}
+        organizations={(orgDirectory ?? []).map((o) => ({ id: o.id, name: o.name }))}
+        tiers={(tierDirectory ?? []).map((t) => ({ id: t.id, name: t.name, price: t.price, currency: t.currency }))}
+        packages={(packageDirectory ?? []).map((p) => ({ id: p.id, name: p.name, price: p.price, currency: p.currency, tierId: p.tierId, rightsSpec: p.rightsSpec }))}
+        tierUsage={tierUsage}
         onMoveStage={handleMoveKanbanStage}
         onNewDeal={handleNewDeal}
+        onOrganizationsChanged={reloadOrgs}
       />
+
+      {/* P10.1: Seviye & Paket Tanımları */}
+      <SectionCard
+        title="Seviye & Paket Tanımları"
+        desc="Kullanımda olan seviye/paket silinemez (409). Fiyatlar TL girilir, kuruş saklanır."
+        action={defsError ? <span className="text-[11px] text-destructive">{defsError}</span> : undefined}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <h4 className="text-xs font-semibold">Seviyeler ({(tierDirectory ?? []).length})</h4>
+            {(tierDirectory ?? []).length === 0 && <EmptyState title="Tanımlı seviye yok" />}
+            {(tierDirectory ?? []).map((t) => {
+              const usage = tierUsage[t.id];
+              return (
+                <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border p-2 text-xs">
+                  <span className="font-medium line-clamp-1">{t.name}</span>
+                  <span className="text-[11px] text-muted-foreground tabular-nums">
+                    {fmtMoney(t.price, t.currency)}{usage ? (usage.capacity == null ? ` — ${usage.used} dolu` : ` — ${usage.used}/${usage.capacity} dolu`) : ""}
+                  </span>
+                  <Button
+                    size="sm" variant="ghost" className="h-6 text-[10px] text-destructive"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true); setDefsError(null);
+                      try {
+                        await apiSend(`/api/sponsor-tiers/${t.id}`, "DELETE");
+                        bump();
+                      } catch (e) {
+                        setDefsError(e instanceof Error ? e.message : "Silinemedi");
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Sil
+                  </Button>
+                </div>
+              );
+            })}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              <Input className="h-7 text-[11px] flex-1 min-w-28" placeholder="Seviye adı" value={tierForm.name} onChange={(e) => setTierForm({ ...tierForm, name: e.target.value })} />
+              <Input className="h-7 text-[11px] w-24" type="number" min="0" step="0.01" placeholder="Fiyat TL" value={tierForm.priceMajor} onChange={(e) => setTierForm({ ...tierForm, priceMajor: e.target.value })} />
+              <Input className="h-7 text-[11px] w-20" type="number" min="0" step="1" placeholder="Kapasite" value={tierForm.capacity} onChange={(e) => setTierForm({ ...tierForm, capacity: e.target.value })} />
+              <Button
+                size="sm" className="h-7 text-[11px]" disabled={busy || !tierForm.name.trim() || !currentEditionId}
+                onClick={async () => {
+                  setBusy(true); setDefsError(null);
+                  try {
+                    await apiSend("/api/sponsor-tiers", "POST", {
+                      editionId: currentEditionId,
+                      name: tierForm.name.trim(),
+                      price: Math.round((Number(tierForm.priceMajor) || 0) * 100),
+                      capacity: tierForm.capacity === "" ? null : Math.max(0, Math.round(Number(tierForm.capacity))),
+                    });
+                    setTierForm({ name: "", priceMajor: "", capacity: "" });
+                    bump();
+                  } catch (e) {
+                    setDefsError(e instanceof Error ? e.message : "Eklenemedi");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Ekle
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <h4 className="text-xs font-semibold">Paketler ({(packageDirectory ?? []).length})</h4>
+            {(packageDirectory ?? []).length === 0 && <EmptyState title="Tanımlı paket yok" />}
+            {(packageDirectory ?? []).map((p) => (
+              <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg border p-2 text-xs">
+                <span className="font-medium line-clamp-1">{p.name}</span>
+                <span className="text-[11px] text-muted-foreground tabular-nums">{fmtMoney(p.price, p.currency)}</span>
+                <Button
+                  size="sm" variant="ghost" className="h-6 text-[10px] text-destructive"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true); setDefsError(null);
+                    try {
+                      await apiSend(`/api/sponsor-packages/${p.id}`, "DELETE");
+                      bump();
+                    } catch (e) {
+                      setDefsError(e instanceof Error ? e.message : "Silinemedi");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Sil
+                </Button>
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              <Input className="h-7 text-[11px] flex-1 min-w-28" placeholder="Paket adı" value={packForm.name} onChange={(e) => setPackForm({ ...packForm, name: e.target.value })} />
+              <Input className="h-7 text-[11px] w-24" type="number" min="0" step="0.01" placeholder="Fiyat TL" value={packForm.priceMajor} onChange={(e) => setPackForm({ ...packForm, priceMajor: e.target.value })} />
+              <Select value={packForm.tierId} onValueChange={(v) => setPackForm({ ...packForm, tierId: v })}>
+                <SelectTrigger className="h-7 w-28 text-[11px]"><SelectValue placeholder="Seviye" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Seviyesiz</SelectItem>
+                  {(tierDirectory ?? []).map((t) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input className="h-7 text-[11px] flex-1 min-w-28" placeholder="Hak özeti (örn: 2 stand)" value={packForm.rightsSpec} onChange={(e) => setPackForm({ ...packForm, rightsSpec: e.target.value })} />
+              <Button
+                size="sm" className="h-7 text-[11px]" disabled={busy || !packForm.name.trim() || !currentEditionId}
+                onClick={async () => {
+                  setBusy(true); setDefsError(null);
+                  try {
+                    await apiSend("/api/sponsor-packages", "POST", {
+                      editionId: currentEditionId,
+                      name: packForm.name.trim(),
+                      price: Math.round((Number(packForm.priceMajor) || 0) * 100),
+                      tierId: packForm.tierId === "__none__" ? null : packForm.tierId,
+                      rightsSpec: packForm.rightsSpec.trim() || null,
+                    });
+                    setPackForm({ name: "", priceMajor: "", tierId: "__none__", rightsSpec: "" });
+                    bump();
+                  } catch (e) {
+                    setDefsError(e instanceof Error ? e.message : "Eklenemedi");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Ekle
+              </Button>
+            </div>
+          </div>
+        </div>
+      </SectionCard>
 
       {/* Hak havuzları */}
       <SectionCard
@@ -263,8 +428,8 @@ export function SponsorshipView() {
                   <div className="mt-3 grid grid-cols-4 gap-2 text-center">
                     <div className="rounded-lg bg-muted p-2"><p className="text-lg font-semibold tabular-nums">{ent.quantityGranted}</p><p className="text-[11px] text-muted-foreground">tanınan</p></div>
                     <div className="rounded-lg bg-teal-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-teal-700">{ent.quantityConsumed}</p><p className="text-[11px] text-teal-600/80">kullanılan</p></div>
-                    <div className="rounded-lg bg-amber-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-amber-700">{ent.quantityReserved}</p><p className="text-[11px] text-amber-600/80">ayrılmış</p></div>
-                    <div className="rounded-lg bg-emerald-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{remaining}</p><p className="text-[11px] text-emerald-600/80">kalan</p></div>
+                    <div className="rounded-lg bg-amber-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-amber-700">{ent.quantityReserved}</p><p className="text-[11px] text-amber-800">ayrılmış</p></div>
+                    <div className="rounded-lg bg-emerald-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{remaining}</p><p className="text-[11px] text-emerald-800">kalan</p></div>
                   </div>
                   <Progress value={pct} className="mt-3 h-2" />
                   <p className="mt-1 text-[11px] text-muted-foreground">%{pct} tüketildi · {ent.restrictions ?? "kısıt yok"}</p>
@@ -325,13 +490,22 @@ export function SponsorshipView() {
                     {ag.package.rightsSpec.split("·").map((r, i) => <Chip key={i} tone="violet">{r.trim()}</Chip>)}
                   </div>
                 )}
-                {/* teslim takvimi */}
+                {/* P13.2: yayın hazır olma göstergesi (imza + teslimler + ödeme-manuel) */}
+                <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+                  <span className={cn("rounded-full border px-2 py-0.5", ag.signedAt ? "border-emerald-300 text-emerald-700" : "border-amber-300 text-amber-700")}>
+                    İmza: {ag.signedAt ? "Hazır" : "Eksik"}
+                  </span>
+                  <span className={cn("rounded-full border px-2 py-0.5", ag.deliverables.length > 0 && ag.deliverables.every((d) => d.status === "APPROVED" || d.status === "COMPLETED") ? "border-emerald-300 text-emerald-700" : ag.deliverables.some((d) => d.status === "REJECTED") ? "border-rose-300 text-rose-700" : "border-amber-300 text-amber-700")}>
+                    Teslimler: {ag.deliverables.filter((d) => d.status === "APPROVED" || d.status === "COMPLETED").length}/{ag.deliverables.length} onaylı
+                  </span>
+                  <span className="rounded-full border border-slate-300 px-2 py-0.5 text-muted-foreground">
+                    Ödeme: manuel muhasebe onayı
+                  </span>
+                </div>
+                {/* teslim takvimi — P13.1: durum + kanıt */}
                 <div className="mt-3 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                   {ag.deliverables.map((d) => (
-                    <div key={d.id} className="flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs">
-                      <span className="truncate">{d.name}{d.dueDate ? <span className="text-muted-foreground"> · {fmtDate(d.dueDate)}</span> : ""}</span>
-                      <StatusBadge map={DELIVERABLE_STATUS} value={d.status} />
-                    </div>
+                    <DeliverableRow key={d.id} deliverable={d} onChanged={bump} />
                   ))}
                 </div>
                 {ag.boothAllocations.length > 0 && (
@@ -395,7 +569,7 @@ export function SponsorshipView() {
       </Dialog>
 
       {/* Stand tahsisi dialogu */}
-      <Dialog open={Boolean(allocTarget)} onOpenChange={(o) => !o && setAllocTarget(null)}>
+      <Dialog open={Boolean(allocTarget)} onOpenChange={(o) => { if (!o) { setAllocTarget(null); setAllocAgreementId(""); } }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{allocTarget?.code} — Tahsis</DialogTitle>
@@ -404,9 +578,23 @@ export function SponsorshipView() {
           <p className="text-xs text-muted-foreground">
             Uygunluk: yalnız AVAILABLE/HELD/OPTION/RELEASED stantlar tahsis edilebilir. Anlaşmadan hak, haktan tahsis üretilir (SponsorAgreement → Entitlement → Allocation → {allocTarget?.code}).
           </p>
+          <div className="space-y-1.5">
+            <Label>Anlaşma (zorunlu)</Label>
+            <Select value={allocAgreementId} onValueChange={setAllocAgreementId}>
+              <SelectTrigger><SelectValue placeholder="Sözleşmeli/aktif anlaşma seçin" /></SelectTrigger>
+              <SelectContent>
+                {allocCandidates.length === 0 && (
+                  <div className="px-2 py-1.5 text-[11px] text-muted-foreground">Uygun anlaşma yok — önce bir anlaşmayı sözleşmeye alın</div>
+                )}
+                {allocCandidates.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>{a.organization.name} — {a.status} — {fmtMoney(a.amount, a.currency)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAllocTarget(null)}>Vazgeç</Button>
-            <Button onClick={allocateBooth} disabled={busy || !["AVAILABLE", "HELD", "OPTION", "RELEASED"].includes(allocTarget?.status ?? "")}>
+            <Button variant="outline" onClick={() => { setAllocTarget(null); setAllocAgreementId(""); }}>Vazgeç</Button>
+            <Button onClick={allocateBooth} disabled={busy || !allocAgreementId || !["AVAILABLE", "HELD", "OPTION", "RELEASED"].includes(allocTarget?.status ?? "")}>
               {busy ? "Tahsis ediliyor…" : "Tahsis Et"}
             </Button>
           </DialogFooter>
@@ -480,9 +668,97 @@ export function SponsorshipView() {
   );
 }
 
-// tahsis hedefi için uygun anlaşma/kurum önerisi (ilk CONTRACTED/ACTIVE anlaşma)
-function boothsAllocTargetOrg(booth: BoothUnit, agreements: Agreement[]): { agreementId?: string; organizationId?: string } {
-  if (booth.allocation?.agreement) return { agreementId: booth.allocation.agreement.id };
-  const ag = agreements.find((a) => ["CONTRACTED", "ACTIVE"].includes(a.status));
-  return ag ? { agreementId: ag.id, organizationId: ag.organization.id } : {};
+// P12.1: otomatik ilk-eşleşme KALDIRILDI — tahsis dialogu anlaşmayı açıkça seçtirir.
+
+// P13.1: teslim satırı — durum geçişi + kanıt (proofUrl/notes). Sunucu makine
+// karar verir; istemci yalnız formu sunar, hata satır içinde gösterilir.
+const DELIVERABLE_NEXT = ["NOT_STARTED", "WAITING_SPONSOR", "SUBMITTED", "UNDER_REVIEW", "APPROVED", "REJECTED", "COMPLETED"];
+
+function DeliverableRow({
+  deliverable,
+  onChanged,
+}: {
+  deliverable: { id: string; name: string; status: string; dueDate?: string | null; notes?: string | null; proofUrl?: string | null };
+  onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [status, setStatus] = useState(deliverable.status);
+  const [proofUrl, setProofUrl] = useState(deliverable.proofUrl ?? "");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <div className="rounded-lg border px-2.5 py-1.5 text-xs space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate">{deliverable.name}{deliverable.dueDate ? <span className="text-muted-foreground"> · {fmtDate(deliverable.dueDate)}</span> : ""}</span>
+        <StatusBadge map={DELIVERABLE_STATUS} value={deliverable.status} />
+      </div>
+      {deliverable.proofUrl && (
+        <a className="block truncate text-[10px] text-primary underline" href={deliverable.proofUrl} target="_blank" rel="noreferrer">
+          Kanıtı aç
+        </a>
+      )}
+      {!editing ? (
+        <button type="button" className="text-[10px] text-primary underline underline-offset-2" onClick={() => setEditing(true)}>
+          Durumu güncelle
+        </button>
+      ) : (
+        <div className="space-y-1.5">
+          <Select value={status} onValueChange={setStatus}>
+            <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {DELIVERABLE_NEXT.map((s) => (
+                <SelectItem key={s} value={s}>{(DELIVERABLE_STATUS as Record<string, string>)[s] ?? s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {(status === "SUBMITTED" || status === "REJECTED") && (
+            <>
+              <Input
+                className="h-7 text-[11px]"
+                placeholder="Kanıt URL (dosya/kayıt bağlantısı)"
+                value={proofUrl}
+                onChange={(e) => setProofUrl(e.target.value)}
+              />
+              <Input
+                className="h-7 text-[11px]"
+                placeholder={status === "REJECTED" ? "Red gerekçesi (zorunlu)" : "Not/kanıt açıklaması"}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </>
+          )}
+          {error && <p className="text-[10px] text-destructive">{error}</p>}
+          <div className="flex justify-end gap-1.5">
+            <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => { setEditing(false); setError(null); }}>Vazgeç</Button>
+            <Button
+              size="sm"
+              className="h-6 text-[10px]"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setError(null);
+                try {
+                  await apiSend(`/api/deliverables/${deliverable.id}`, "PUT", {
+                    status,
+                    ...(proofUrl.trim() ? { proofUrl: proofUrl.trim() } : {}),
+                    ...(notes.trim() ? { notes: notes.trim() } : {}),
+                  });
+                  setEditing(false);
+                  onChanged();
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : "Güncellenemedi");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Kaydet
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

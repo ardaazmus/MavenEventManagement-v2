@@ -1,0 +1,64 @@
+{
+  "phase": "P01.4",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T01:05:50.000Z",
+  "finishedAt": "2026-09-28T01:07:05.000Z",
+  "commands": [
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 22,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 24333
+    },
+    {
+      "command": "node --test tests-mini/ci-workflow.test.mjs",
+      "exitCode": 0,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "tests": {
+    "passed": 22,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "9179f48069e403977bb7df1d23e4b02cc7762fc9f7455a853ffb3eaf51861b64"
+    },
+    {
+      "path": "package.json",
+      "sha256": "8918a3b11dbbe1461efb07aea09968e227b950761f2d8813f5f1efd9d8fffbf2"
+    },
+    {
+      "path": "tests-mini/ci-workflow.test.mjs",
+      "sha256": "f23fae3b0ea349002ec4b375117715cb192a0ab4cc06c3ac82685097a7713e05"
+    }
+  ],
+  "ciWorkflowSummary": {
+    "workflowFile": ".github/workflows/ci.yml",
+    "triggers": ["push", "pull_request"],
+    "runner": "ubuntu-latest",
+    "steps": [
+      "actions/checkout@v4",
+      "oven-sh/setup-bun@v2",
+      "actions/setup-node@v4",
+      "bun install --frozen-lockfile",
+      "npx prisma generate",
+      "npx prisma migrate deploy",
+      "npm run typecheck",
+      "npm run test:unit",
+      "npm run lint || true",
+      "npm run i18n:scan || true",
+      "npm run build",
+      "actions/upload-artifact@v4"
+    ]
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

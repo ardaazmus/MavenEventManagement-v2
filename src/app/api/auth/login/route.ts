@@ -33,6 +33,10 @@ export async function POST(req: NextRequest) {
     if (user.lockedUntil && user.lockedUntil > new Date()) {
       return NextResponse.json({ error: `Hesap kilitli — ${user.lockedUntil.toLocaleTimeString("tr-TR")} kadar` }, { status: 423 });
     }
+    // P06.4b: devre dışı hesap giriş yapamaz (kilit kontrolüyle aynı konumda, 403).
+    if (user.status !== "ACTIVE") {
+      return NextResponse.json({ error: "Hesap devre dışı bırakıldı" }, { status: 403 });
+    }
 
     const ok = user.passwordHash ? await verifyPassword(user.passwordHash, body.password) : false;
     if (!ok) {
@@ -90,7 +94,7 @@ export async function POST(req: NextRequest) {
     });
 
     const nowSec = Math.floor(Date.now() / 1000);
-    const cookie = sessionCookieHeader({ uid: user.id, role: user.role, tenantId: user.tenantId, iat: nowSec, exp: nowSec + SESSION_TTL_SECONDS });
+    const cookie = sessionCookieHeader({ uid: user.id, role: user.role, tenantId: user.tenantId, iat: nowSec, exp: nowSec + SESSION_TTL_SECONDS, sv: user.sessionVersion });
     const mfaEnforcedForRole = MFA_ENFORCED_ROLES.includes(user.role) && !user.mfaEnabled;
     return new NextResponse(
       JSON.stringify({

@@ -1,0 +1,85 @@
+{
+  "phase": "P05.3",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T02:40:40.000Z",
+  "finishedAt": "2026-09-28T02:46:35.000Z",
+  "commands": [
+    {
+      "command": "node --test tests-mini/dual-read-transition.test.mjs",
+      "exitCode": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "node --test tests-mini/generic-collection-protection.test.mjs",
+      "exitCode": 0,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "node --test tests-mini/generic-item-protection.test.mjs",
+      "exitCode": 0,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 69,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 23948
+    }
+  ],
+  "tests": {
+    "passed": 69,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "src/lib/api/permissions.ts",
+      "sha256": "d7d167b5381aa02b64cccfde86078f225d24a7ab0d6901f6c6cfaf618037beaf"
+    },
+    {
+      "path": "src/app/api/[entity]/route.ts",
+      "sha256": "cbcd8309a943298b66d559c5de0d3821c3c1209aa4abf26f1ec914238ed9cc52"
+    },
+    {
+      "path": "src/app/api/[entity]/[id]/route.ts",
+      "sha256": "9602e527edc286a2ae6a9e399f1a3c27437d351252d83df42b53ea66cd8ec874"
+    },
+    {
+      "path": "tests-mini/generic-collection-protection.test.mjs",
+      "sha256": "6efe47e2848662a36667ead0fe86475c32daf8a1f3294d91a1e7dd32c3060444"
+    },
+    {
+      "path": "tests-mini/generic-item-protection.test.mjs",
+      "sha256": "510089cfeae63a950c00383273468b62f29f0fad01d244efa46f1efa70891723"
+    },
+    {
+      "path": "tests-mini/dual-read-transition.test.mjs",
+      "sha256": "ac7d20b5f8ad855a2af675a13ae965e32960448475b4cdf2059b28020c80fe19"
+    },
+    {
+      "path": "package.json",
+      "sha256": "68a47ecbe6a690e98b24b418f3af3f0e391c4622accfb729b37f32f428934bc3"
+    }
+  ],
+  "dualReadVerification": {
+    "primaryDbRbacOperational": true,
+    "fallbackActiveForUnassignedUsers": true,
+    "telemetryTrackingActive": true,
+    "gateEnforced": "Legacy role column cannot be dropped until fallback counter reaches zero in production telemetry"
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

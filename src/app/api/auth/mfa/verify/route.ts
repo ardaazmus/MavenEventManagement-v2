@@ -21,6 +21,8 @@ export async function POST(req: NextRequest) {
     const { code } = (await req.json()) as { code?: string };
     const user = await db.user.findUnique({ where: { id: session.uid } });
     if (!user?.mfaSecretCipher) return NextResponse.json({ error: "Kurulum bulunamadı — önce setup çağırın" }, { status: 404 });
+    // P06.4c: devre dışı hesaba MFA ile oturum verilmez (pending çerez disable öncesinden kalmış olabilir).
+    if (user.status !== "ACTIVE") return NextResponse.json({ error: "Hesap devre dışı bırakıldı" }, { status: 403 });
     const secret = decryptSecret(user.mfaSecretCipher);
     if (!secret || !verifyTotp(secret, code ?? "")) {
       return NextResponse.json({ error: "Kod doğrulanamadı" }, { status: 401 });
@@ -33,7 +35,7 @@ export async function POST(req: NextRequest) {
     // TASK-B 12: onboarding tamamlandı — tam oturum ver + pending çerezini temizle
     const nowSec = Math.floor(Date.now() / 1000);
     const sessionCookie = sessionCookieHeader({
-      uid: session.uid, role: session.role, tenantId: session.tenantId, iat: nowSec, exp: nowSec + SESSION_TTL_SECONDS,
+      uid: session.uid, role: session.role, tenantId: session.tenantId, iat: nowSec, exp: nowSec + SESSION_TTL_SECONDS, sv: user.sessionVersion,
     });
     const clearPending = `${MFA_PENDING_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
     return new NextResponse(

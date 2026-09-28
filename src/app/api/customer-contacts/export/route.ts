@@ -5,8 +5,9 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
-import { requireStaff } from "@/lib/auth/request-context";
+import { requireStaff, requestActor } from "@/lib/auth/request-context";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { logExport } from "@/lib/privacy/export-guard";
 
 const MAX_EXPORT = 5000;
 
@@ -95,6 +96,9 @@ export async function GET(req: NextRequest) {
 
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
     const stamp = new Date().toISOString().slice(0, 10);
+    const actor = await requestActor();
+    await logExport(db, { tenantId, editionId: editionId ?? null, type: "CUSTOMER_CONTACTS", count: rows.length, actorName: actor?.uid ?? null });
+
     return new NextResponse(new Uint8Array(buf), {
       status: 200,
       headers: {

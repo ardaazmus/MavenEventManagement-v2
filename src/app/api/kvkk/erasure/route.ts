@@ -2,7 +2,8 @@
 // POST  (PUBLIC giriş): { email, note? } → PENDING talep + 30 gün SLA (dueAt);
 //        kişisel veri döndürmez, oran sınırı 5/saat/IP.
 // GET   (iç): talep listesi + SLA durumu + ≤6 ay sweep (eski açık talepler otomatik tamamlanır).
-// PATCH (iç): { id, action: "verify"|"complete"|"reject", rejectReason?, handledBy? }
+// PATCH (iç): { id, action: "verify"|"preview"|"complete"|"reject", rejectReason?, handledBy? }
+// P18.4: preview kuru-çalıştırır; complete bekletme tarar (bekletme → 409 + holds).
 //        verify    → kayıt e-posta eşleşmesi (kişi bulunursa personId bağlanır)
 //        complete  → ANONİMLEŞTİRME (tombstone): kimlik alanları silinir, katılım/finans
 //                    geçmişi yasal saklama için kalır (KVKK m.5 veri azaltma ile uyumlu)
@@ -13,6 +14,7 @@ import { db } from "@/lib/db";
 import { resolveContext } from "@/lib/api/tenant-guard";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { requireStaff } from "@/lib/auth/request-context";
+import { detectLegalHolds, executeErasure, previewErasure, ErasureJobError } from "@/lib/compliance/erasure-job";
 
 const SLA_DAYS = 30;
 const SWEEP_MONTHS = 6;
@@ -61,7 +63,13 @@ async function sweepStale(tenantId: string): Promise<number> {
     select: { id: true, email: true, personId: true },
   });
   for (const r of stale) {
+    // P18.4: sweep de bekletmeye saygı duyar — bekletmeli talep açık kalır.
     if (r.personId) {
+      const holds = await detectLegalHolds(db as never, { tenantId, personId: r.personId }).catch(() => []);
+      if (holds.length > 0) {
+        await log(tenantId, null, `KVKK sweep atlandı (yasal bekletme): ${holds.map((h) => h.detail).join(", ")}`);
+        continue;
+      }
       await db.person.update({ where: { id: r.personId }, data: ANON }).catch(() => undefined);
     }
     await db.kvkkErasureRequest.update({
@@ -128,17 +136,30 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json(updated);
     }
 
+    if (body.action === "preview") {
+      // P18.4: kuru-çalıştırma — yazmaz, etkilenim + bekletme raporlar.
+      if (!row.personId) return NextResponse.json({ error: "Kişi eşleşmesi yok — önce verify" }, { status: 409 });
+      try {
+        const preview = await previewErasure(db as never, { tenantId: ctx, personId: row.personId });
+        return NextResponse.json({ requestId: row.id, ...preview });
+      } catch (e) {
+        if (e instanceof ErasureJobError) return NextResponse.json({ error: e.message }, { status: e.status });
+        throw e;
+      }
+    }
+
     if (body.action === "complete") {
-      if (row.status !== "VERIFIED") return NextResponse.json({ error: "Önce doğrulama (verify) gerekli" }, { status: 409 });
-      if (!row.personId) return NextResponse.json({ error: "Kişi eşleşmesi yok — manuel inceleme gerekli" }, { status: 409 });
-      // ANONİMLEŞTİRME (tombstone): katılım/finans geçmişi korunur, kimlik gerçekleri silinir
-      await db.person.update({ where: { id: row.personId }, data: ANON });
-      const updated = await db.kvkkErasureRequest.update({
-        where: { id: row.id },
-        data: { status: "COMPLETED", completedAt: new Date(), handledBy: by },
-      });
-      await log(ctx, null, "KVKK silme TAMAMLANDI: kişi kimlik alanları anonimleştirildi (geçmiş yasal saklamada korundu)");
-      return NextResponse.json(updated);
+      // P18.4: bekletme taramalı yürütme (tombstone + rıza geri çekme + denetim).
+      try {
+        const { personId, preview } = await executeErasure(db as never, { tenantId: ctx, requestId: row.id, handledBy: by });
+        const updated = await db.kvkkErasureRequest.findUnique({ where: { id: row.id } });
+        return NextResponse.json({ ...updated, personId, preservedCounts: preview.preservedCounts });
+      } catch (e) {
+        if (e instanceof ErasureJobError) {
+          return NextResponse.json({ error: e.message, holds: e.holds }, { status: e.status });
+        }
+        throw e;
+      }
     }
 
     if (body.action === "reject") {
@@ -154,7 +175,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json(updated);
     }
 
-    return NextResponse.json({ error: "Bilinmeyen aksiyon (verify|complete|reject)" }, { status: 400 });
+    return NextResponse.json({ error: "Bilinmeyen aksiyon (verify|preview|complete|reject)" }, { status: 400 });
   } catch (e) {
     console.error("PATCH /api/kvkk/erasure", e);
     return NextResponse.json({ error: e instanceof Error ? e.message : "İşlem başarısız" }, { status: 500 });

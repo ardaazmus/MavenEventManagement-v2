@@ -1,0 +1,60 @@
+{
+  "phase": "P01.2",
+  "baseSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "headSha": "28acc8c907c95b6c89ef09be27346811f4bca3b2",
+  "startedAt": "2026-09-28T00:59:10.000Z",
+  "finishedAt": "2026-09-28T01:02:15.000Z",
+  "commands": [
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run test:unit",
+      "exitCode": 0,
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 25171
+    },
+    {
+      "command": "node --test tests-mini/quality-scripts.test.mjs",
+      "exitCode": 0,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "tests": {
+    "passed": 17,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "path": "package.json",
+      "sha256": "547aa65cec8e3b478f6976d699ac358dccd812e1f0c6b2cac6de1934dc853a2a"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "6c49d080ed051cb62725838d35ffe11c49420c51ad68e6b431e9ba345afa1d9d"
+    },
+    {
+      "path": "tests-mini/quality-scripts.test.mjs",
+      "sha256": "01c8299d1816c01083fbe6069dcf4816b19747810ce8a5b48cef5e7017391e0a"
+    },
+    {
+      "path": "tests-mini/inventory-determinism.test.mjs",
+      "sha256": "97f60103bb4f94a3c64b965f721ad149f593e78f2ab3312f218cf213c2d14025"
+    }
+  ],
+  "addedScripts": {
+    "typecheck": "tsc --noEmit",
+    "quality": "node scripts/quality-report.mjs",
+    "test:unit": "node --test tests-mini/inventory-determinism.test.mjs tests-mini/hygiene.test.mjs tests-mini/quality-report.test.mjs tests-mini/runtime-lock.test.mjs tests-mini/quality-scripts.test.mjs",
+    "test:api": "playwright test tests/phase1-auth-boundaries.spec.ts tests/phase2-money.spec.ts tests/phase3-workflow.spec.ts tests/phase4-boundaries.spec.ts",
+    "test:e2e:ui": "playwright test tests/ui-corrections.spec.ts"
+  },
+  "status": "PASS",
+  "nextPhaseAllowed": true
+}

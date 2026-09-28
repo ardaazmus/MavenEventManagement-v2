@@ -11,7 +11,7 @@ test("SMOKE — manifest + sw.js servis edilir + offline.html 200", async ({ pag
   const sw = await page.request.get("/sw.js");
   expect(sw.status()).toBe(200);
   const text = await sw.text();
-  expect(text).toContain("maven-portal-v3");
+  expect(text).toContain("maven-pwa-app-v2"); // SW önbellek sözleşmesi — bump edilirse bu satır aynı commit'te güncellenir
   const offline = await page.request.get("/offline.html");
   expect(offline.status()).toBe(200);
 });

@@ -1,7 +1,7 @@
 "use client";
 // Yaka Kartı Baskı Merkezi — baskı kuyruğu, toplu baskı/teslim akışı ve baskı önizleme
 // (§40: yaka kartı ≠ katılım — yaka kartı durumu bağımsız yönetilir; §41: baskı şablonu BadgeProfile'dan)
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { apiGet, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { BadgeDesigner } from "../badge-designer";
@@ -103,11 +103,14 @@ export function BadgeQueueView() {
     return apiGet<BadgeQueueData>("/api/badges/print-queue?editionId=" + currentEditionId);
   }, [currentEditionId, refreshKey]);
 
-  // edisyon değişince seçim ve önizleme geçersiz olur
-  useEffect(() => {
-    setSelected(new Set());
+  // edisyon değişince seçim ve önizleme geçersiz olur (N-06: render-fazında sıfırla —
+  // resmî "önceki render" deseni, effect içi senkron setState yok).
+  const [selFor, setSelFor] = useState(currentEditionId);
+  if (selFor !== currentEditionId) {
+    setSelFor(currentEditionId);
+    setSelected(new Set<string>());
     setPreview(null);
-  }, [currentEditionId]);
+  }
 
   const queue = data?.queue ?? [];
   const stats = data?.stats ?? { ready: 0, printed: 0, issued: 0, reprinted: 0, notEligible: 0, void: 0, total: 0 };

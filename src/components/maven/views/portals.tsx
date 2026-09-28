@@ -392,8 +392,13 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
   // önizleme yetenek belirteci çıkarılır (yanıtta bir kez döner, yalnız bellekte yaşar);
   // GET x-portal-token başlığıyla yapılır (URL'e yazılmaz)
   const [previewToken, setPreviewToken] = useState<string | null>(null);
-  useEffect(() => {
+  // N-06: belirteç sıfırlama render-fazında (resmî "önceki render" deseni); çıkarma effect'te kalır.
+  const [tokenFor, setTokenFor] = useState({ e: editionId, s: selectedId });
+  if (tokenFor.e !== editionId || tokenFor.s !== selectedId) {
+    setTokenFor({ e: editionId, s: selectedId });
     setPreviewToken(null);
+  }
+  useEffect(() => {
     if (!selectedId) return;
     let alive = true;
     void apiSend<{ token: string }>("/api/portal/preview-token", "POST", { editionId, personId: selectedId })
@@ -403,14 +408,19 @@ function ParticipantPortal({ editionId, headerDesign }: { editionId: string; hea
   }, [editionId, selectedId]);
 
   // varsayılan seçim: yönetim ekranından "portalda gör" deep-link'i, yoksa ilk katılımcı
-  useEffect(() => {
-    if (!people.data || selectedId) return;
-    let deep: string | null = null;
-    try { deep = sessionStorage.getItem("maven.portal.person"); sessionStorage.removeItem("maven.portal.person"); } catch { /* yoksay */ }
-    const exists = deep && people.data.some((p) => p.person.id === deep);
-    const first = exists ? people.data.find((p) => p.person.id === deep) : people.data[0];
+  // N-06: tek-seferlik deep-link tüketimi tembel başlatılır; seçim render-fazında.
+  const [deepLink] = useState<string | null>(() => {
+    try {
+      const v = sessionStorage.getItem("maven.portal.person");
+      sessionStorage.removeItem("maven.portal.person");
+      return v;
+    } catch { return null; }
+  });
+  if (people.data && !selectedId) {
+    const exists = deepLink && people.data.some((p) => p.person.id === deepLink);
+    const first = exists ? people.data.find((p) => p.person.id === deepLink) : people.data[0];
     if (first) setSelectedId(first.person.id);
-  }, [people.data, selectedId]);
+  }
 
   const filtered = useMemo(() => {
     const items = people.data ?? [];
@@ -762,15 +772,20 @@ function SponsorPortal({ editionId, headerDesign }: { editionId: string; headerD
     return Array.from(map.values());
   }, [agreements.data]);
 
-  useEffect(() => {
-    if (!orgs.length || orgId) return;
+  // N-06: varsayılan kurum seçimi render-fazında (koşul set sonrası false olur).
+  if (orgs.length > 0 && !orgId) {
     setOrgId(orgs[0].id);
-  }, [orgs, orgId]);
+  }
 
   // TASK-A F1: kısa ömürlü önizleme belirteci — kurum seçimine göre çıkarılır, bellekte yaşar
   const [previewToken, setPreviewToken] = useState<string | null>(null);
-  useEffect(() => {
+  // N-06: belirteç sıfırlama render-fazında (resmî "önceki render" deseni).
+  const [tokenFor, setTokenFor] = useState({ e: editionId, o: orgId });
+  if (tokenFor.e !== editionId || tokenFor.o !== orgId) {
+    setTokenFor({ e: editionId, o: orgId });
     setPreviewToken(null);
+  }
+  useEffect(() => {
     if (!orgId) return;
     let alive = true;
     void apiSend<{ token: string }>("/api/portal/preview-token", "POST", { editionId, organizationId: orgId })

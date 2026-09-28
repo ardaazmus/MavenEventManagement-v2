@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 import { BADGE_FONTS } from "@/lib/constants";
 import QRCode from "qrcode";
 
@@ -29,6 +30,9 @@ function parseDesign(json: string | null | undefined): DesignElement[] {
 const mm = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n * 100) / 100 : 0);
 
 export async function POST(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const body = (await req.json()) as { editionId?: string; definitionId?: string; participationIds?: string[] };
     if (!body.editionId || !body.definitionId || !body.participationIds?.length) {

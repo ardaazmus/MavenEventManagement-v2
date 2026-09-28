@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 import { ActivityType } from "@/lib/api/activity";
 import { autoOfferForCategory, expireStaleOffers, seatStatsForCategory, convertOfferToRegistration } from "@/lib/api/waitlist-engine";
 
@@ -14,6 +15,9 @@ async function guard(e: unknown): Promise<NextResponse | null> {
 }
 
 export async function GET(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const editionId = req.nextUrl.searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
@@ -77,6 +81,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const body = (await req.json()) as Record<string, unknown> & { action?: string };
     const action = body.action;

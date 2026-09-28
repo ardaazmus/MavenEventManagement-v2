@@ -105,10 +105,16 @@ export function NotificationBell() {
     }
   }, [toast]);
 
-  // ilk yükleme + edisyon değişimi
-  useEffect(() => {
+  // N-06: edisyon değişiminde render-fazında sıfırla (resmî "önceki render" deseni) —
+  // effect içi senkron setState yok; veri yükü effect'te kalır.
+  const [seenFor, setSeenFor] = useState(currentEditionId);
+  if (seenFor !== currentEditionId) {
+    setSeenFor(currentEditionId);
     setSeenTs(readSeen());
-    void load();
+  }
+  // ilk yükleme + edisyon değişimi (N-06: tetikleme microtask'te — effect gövdesinde senkron setState yok).
+  useEffect(() => {
+    queueMicrotask(() => void load());
   }, [load]);
 
   // canlı veri yolu — socket bağlantısı (live-bus, XTransformPort=3003)

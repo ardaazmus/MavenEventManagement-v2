@@ -4,8 +4,8 @@
   "unclassifiedCount": 0,
   "categoryCounts": {
     "PUBLIC": 46,
-    "STAFF": 75,
-    "ADMIN": 36,
+    "STAFF": 76,
+    "ADMIN": 35,
     "DOMAIN_POLICY": 4
   },
   "unclassifiedRoutes": [],
@@ -530,9 +530,9 @@
     },
     {
       "path": "src/app/api/internal/bus-authorize/route.ts",
-      "category": "ADMIN",
+      "category": "STAFF",
       "authRequired": true,
-      "enforcement": "İç servis tokenı / requireAdmin()",
+      "enforcement": "session (middleware 401) + resolveContext tenant + edition ownership (PII yanıtsız)",
       "description": "Canlı haberleşme bus yetkilendirmesi"
     },
     {

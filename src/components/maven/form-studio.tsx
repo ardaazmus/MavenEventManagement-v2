@@ -4,7 +4,7 @@
 //  FieldPropertiesPanel  → sağ panel: seçili alanın tüm özellikleri + MANTIK KAPILARI editörü
 //  SharePanel            → paylaşım: kısa bağlantı, iframe gömme kodu, QR, captcha/sonuç anahtarları
 // Bu bileşenler SAF UI'dır — yazma işini form-center (PUT/DELETE) yürütür.
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { FORM_FIELD_TYPES } from "@/lib/constants";
 import { tLabel, t } from "@/lib/i18n";
 import { LOGIC_OPS, parseLogicRules, type LogicRule } from "@/lib/form-logic";
@@ -441,16 +441,13 @@ export function SharePanel({
 }) {
   const [qrData, setQrData] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const [canNativeShare, setCanNativeShare] = useState(false); // FORM-EXP3: Web Share API (yalnız istemci)
+  // N-06: istemci yeteneği tembel başlatılır — effect + senkron setState kaldırıldı.
+  const [canNativeShare] = useState(() => typeof navigator !== "undefined" && typeof navigator.share === "function"); // FORM-EXP3: Web Share API (yalnız istemci)
   const origin = useMemo(() => (typeof window !== "undefined" ? window.location.origin : ""), []);
   const publicRef = slug.trim() || form.id;
   const link = `${origin}/?form=${encodeURIComponent(publicRef)}`;
   const shareText = `${form.name} — ${link}`;
   const embed = `<iframe src="${link}&embed=1" width="100%" height="720" frameborder="0" style="border:0;border-radius:12px" title="${form.name}"></iframe>`;
-
-  useEffect(() => {
-    setCanNativeShare(typeof navigator !== "undefined" && typeof navigator.share === "function");
-  }, []);
 
   const copy = async (text: string, key: string) => {
     try {

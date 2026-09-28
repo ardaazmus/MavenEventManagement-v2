@@ -3,7 +3,7 @@
 // Maven ticari kaydı (tahsis, sözleşme) tutar; geometri Floor Studio uygulamalarıyla
 // ORTAK KİMLİK (boothUnitId) üzerinden paylaşılır. Bu ekran: plan görselleştirme,
 // otomatik yerleşim, konum/durum düzenleme ve senkron uçları (/api/floor-studio/*).
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { apiGet, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, KpiCard } from "../bits";
@@ -53,26 +53,24 @@ export function FloorsView() {
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [draft, setDraft] = useState({ x: 0, y: 0, width: 4, height: 3 });
   const [busy, setBusy] = useState(false);
-  const [lastPush, setLastPush] = useState<string | null>(null);
-  const [lastPull, setLastPull] = useState<string | null>(null);
+  // N-06: depo değerleri tembel başlatılır (SSR güvenli) — mount effect'i kaldırıldı.
+  const [lastPush, setLastPush] = useState<string | null>(() => (typeof window === "undefined" ? null : window.localStorage.getItem("maven.floor.push")));
+  const [lastPull, setLastPull] = useState<string | null>(() => (typeof window === "undefined" ? null : window.localStorage.getItem("maven.floor.pull")));
 
   const { data, error, reload, loading } = useApi<PlanData>(
     () => apiGet<PlanData>(`/api/floor-studio/plan?editionId=${currentEditionId}`),
     [currentEditionId, refreshKey],
   );
 
-  useEffect(() => {
-    setLastPush(localStorage.getItem("maven.floor.push"));
-    setLastPull(localStorage.getItem("maven.floor.pull"));
-  }, []);
-
   const booths = data?.booths ?? [];
   const summary = data?.summary;
   const selected = booths.find((b) => b.id === selectedId) ?? null;
 
   // seçim değişince konum taslağını hazırla (yerleşmemişse ilk boş satır tahmini)
-  useEffect(() => {
-    if (!selected) return;
+  // N-06: render-fazında türet (resmî "önceki render" deseni) — effect içi senkron setState yok.
+  const [draftSel, setDraftSel] = useState(selected);
+  if (selected && draftSel !== selected) {
+    setDraftSel(selected);
     const d = dimsFor(selected.sizeSqm);
     if (selected.floorObject) {
       setDraft({ x: selected.floorObject.x, y: selected.floorObject.y, width: selected.floorObject.width, height: selected.floorObject.height });
@@ -80,7 +78,7 @@ export function FloorsView() {
       const maxY = booths.reduce((m, b) => (b.floorObject ? Math.max(m, b.floorObject.y + b.floorObject.height) : m), 0);
       setDraft({ x: MARGIN, y: maxY ? Math.min(maxY + 2, PLAN_H - d.h) : MARGIN, width: d.w, height: d.h });
     }
-  }, [selectedId, data]);
+  }
 
   const matches = (b: PlanBooth) => {
     if (statusFilter && b.status !== statusFilter) return false;

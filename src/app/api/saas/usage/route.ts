@@ -7,11 +7,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireAdmin } from "@/lib/auth/request-context";
 
 const WINDOW_DAYS = 30;
 const KB = 1024; // sizeKb → bayt
 
 export async function GET(_req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
     const since = new Date(Date.now() - WINDOW_DAYS * 86_400_000);

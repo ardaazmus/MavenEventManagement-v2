@@ -226,7 +226,9 @@ export function PublicFormPage({ idOrSlug, embed = false, onSubmitted }: { idOrS
     }
   };
   useEffect(() => {
-    load();
+    // N-06: yükleme commit-sonrası microtask'te başlar (boya öncesi, aynı UX) —
+    // effect gövdesinde senkron setState yok.
+    queueMicrotask(() => void load());
   }, [idOrSlug]);
 
   const labelIndex = useMemo(

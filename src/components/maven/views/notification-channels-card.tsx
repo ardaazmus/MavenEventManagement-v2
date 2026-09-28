@@ -80,7 +80,8 @@ export function NotificationChannelsCard({ editionId }: { editionId: string }) {
   }, [editionId, t, toast]);
 
   useEffect(() => {
-    void load();
+    // N-06: yükleme commit-sonrası microtask'te başlar — effect gövdesinde senkron setState yok.
+    queueMicrotask(() => void load());
   }, [load]);
 
   if (!cfg) return <Loading rows={3} />;
@@ -358,7 +359,8 @@ function ChannelReportsSection({ editionId }: { editionId: string }) {
   }, [editionId]);
 
   useEffect(() => {
-    void load();
+    // N-06: yükleme commit-sonrası microtask'te başlar — effect gövdesinde senkron setState yok.
+    queueMicrotask(() => void load());
   }, [load]);
 
   return (

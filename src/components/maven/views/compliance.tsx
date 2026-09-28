@@ -2,7 +2,7 @@
 // Uyumluluk (TASK-B 18-19-20) — KVKK silme talepleri, yargı profili, belge sicili, rapor.
 // Rapor yüzeyi KİŞİSEL VERİ İÇERMEZ (yalnız agregat sayımlar); silme talebi listesi iç operasyondur.
 // Desen: bits.useApi + client.apiGet/apiSend + yerel apiPatch (apiSend PATCH kapsamaz — form-center deseni).
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { apiGet, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, Chip, KpiCard } from "../bits";
@@ -397,8 +397,10 @@ function JurisdictionSection({ refreshKey }: { refreshKey: number }) {
   );
 
   // sunucu profili → form (yükleme + hazır ayar sonrası senkron)
-  useEffect(() => {
-    if (!profile) return;
+  // N-06: render-fazında sıfırla (resmî "önceki render" deseni) — effect içi senkron setState yok.
+  const [formFor, setFormFor] = useState(profile);
+  if (profile && formFor !== profile) {
+    setFormFor(profile);
     setForm({
       jurisdiction: profile.jurisdiction,
       dsrSlaDays: String(profile.dsrSlaDays),
@@ -410,7 +412,7 @@ function JurisdictionSection({ refreshKey }: { refreshKey: number }) {
       consentVersion: profile.consentVersion ?? "",
       retentionNotes: profile.retentionNotes ?? "",
     });
-  }, [profile]);
+  }
 
   const set = <K extends keyof ProfileForm>(k: K, v: ProfileForm[K]) => setForm((f) => ({ ...f, [k]: v }));
 

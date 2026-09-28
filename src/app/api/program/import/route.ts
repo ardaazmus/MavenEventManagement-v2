@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveContext, verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 import { ActivityType } from "@/lib/api/activity";
 
 // basit CSV/TSV ayrıştırıcı — tırnaklı alanları destekler
@@ -71,6 +72,9 @@ function normName(s: string) {
 }
 
 export async function POST(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const body = (await req.json()) as {
       editionId?: string; kind?: string; csvText?: string;

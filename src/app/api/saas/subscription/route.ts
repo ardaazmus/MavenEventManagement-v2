@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireAdmin } from "@/lib/auth/request-context";
 import { SAAS_PLANS } from "@/lib/api/provision-core";
 import { fmtMoney } from "@/lib/money";
 
@@ -27,6 +28,9 @@ async function loadSubscription(tenantId: string) {
 }
 
 export async function GET() {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
     const subscription = await loadSubscription(tenantId);
@@ -51,6 +55,9 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
     let body: Record<string, unknown>;
@@ -119,6 +126,9 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
     let body: Record<string, unknown>;

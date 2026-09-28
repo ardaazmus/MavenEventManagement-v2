@@ -23,6 +23,7 @@ import sharp from "sharp";
 import { db } from "@/lib/db";
 import { ensureSystemFolders, resolveSystemFolderKey, uniqueAssetName, parseDataUrl } from "@/lib/media-system";
 import { resolveContext } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 
 export const runtime = "nodejs";
 
@@ -53,6 +54,9 @@ function detectMagic(buf: Buffer): { mime: string; ext: string } | null {
 }
 
 export async function POST(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const body = await req.json();
     const editionId = String(body.editionId ?? "");

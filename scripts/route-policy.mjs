@@ -360,9 +360,9 @@ export const ROUTE_POLICY_DEFINITIONS = {
     description: "API entegrasyon işini tetikleme",
   },
   "src/app/api/internal/bus-authorize/route.ts": {
-    category: "ADMIN",
+    category: "STAFF",
     authRequired: true,
-    enforcement: "İç servis tokenı / requireAdmin()",
+    enforcement: "session (middleware 401) + resolveContext tenant + edition ownership (PII yanıtsız)",
     description: "Canlı haberleşme bus yetkilendirmesi",
   },
   "src/app/api/notifications/channels/route.ts": {

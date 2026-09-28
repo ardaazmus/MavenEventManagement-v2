@@ -12,6 +12,7 @@ import { ensureSystemFolders } from "@/lib/media-system";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { encryptSecret } from "@/lib/secrets";
 import { toMinor } from "@/lib/money";
+import { requireAdmin } from "@/lib/auth/request-context";
 
 const D = (offsetDays: number, h = 9, m = 0) => {
   const d = new Date();
@@ -40,6 +41,9 @@ export async function POST(req: NextRequest) {
   if (process.env.NODE_ENV === "production") {
     return NextResponse.json({ error: "Sayfa bulunamadı" }, { status: 404 });
   }
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     await wipe();
 

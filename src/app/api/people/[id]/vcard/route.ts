@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import QRCode from "qrcode";
 import { db } from "@/lib/db";
 import { ensureInScope } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 
 function buildVCard(p: {
   firstName: string; lastName: string; title?: string | null; company?: string | null;
@@ -35,6 +36,9 @@ function buildVCard(p: {
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const { id } = await params;
     const format = new URL(req.url).searchParams.get("format") ?? "json";

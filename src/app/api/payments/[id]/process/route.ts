@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ensureInScope } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 import { ActivityType } from "@/lib/api/activity";
 
 type Params = { params: Promise<{ id: string }> };
@@ -16,6 +17,9 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (process.env.NODE_ENV === "production") {
     return NextResponse.json({ error: "Kart simülasyonu yalnız test ortamındadır" }, { status: 503 });
   }
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const { id } = await params;
     const body = (await req.json()) as {

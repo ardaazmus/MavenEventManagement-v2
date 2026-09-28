@@ -5,11 +5,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { createRegistrationFromSubmission, cancelRegistrationOfSubmission, ChainCapacityError, type ChainResult } from "@/lib/api/registration-chain";
 import { ensureInScope } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 import { ActivityType } from "@/lib/api/activity";
 
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Params) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   const { id } = await params;
   // G0-a: gönderi yanıtları kişisel veri taşır — kapsam dışı 404
   const scoped = await ensureInScope("form-submissions", id);
@@ -27,6 +31,9 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const { id } = await params;
     const { action, notes } = (await req.json()) as { action?: string; notes?: string };
@@ -115,6 +122,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   const { id } = await params;
   const scoped = await ensureInScope("form-submissions", id);
   if (!scoped.ok) return NextResponse.json({ error: scoped.error }, { status: scoped.status });

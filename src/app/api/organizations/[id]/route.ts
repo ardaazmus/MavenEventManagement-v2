@@ -3,8 +3,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ensureInScope } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const { id } = await ctx.params;
     const scoped = await ensureInScope("organizations", id);

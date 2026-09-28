@@ -7,9 +7,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { sanitize } from "@/lib/api/registry";
 import { ensureInScope } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 import { ActivityType } from "@/lib/api/activity";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const { id } = await ctx.params;
     const scoped = await ensureInScope("people", id);
@@ -44,6 +48,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 // R10-a: kişi güncelleme — generic registry PUT ile birebir aynı sözleşme
 // (yalnız skaler alanlar; sanitize "" → null; MERGED koruması liste where'indedir).
 export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   const { id } = await ctx.params;
   try {
     const scoped = await ensureInScope("people", id);

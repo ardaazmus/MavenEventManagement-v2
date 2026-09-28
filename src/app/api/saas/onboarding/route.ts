@@ -5,11 +5,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireAdmin } from "@/lib/auth/request-context";
 import { TRIAL_QUOTA_BYTES } from "@/lib/api/provision-core";
 
 const KB = 1024;
 
 export async function GET(_req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
 

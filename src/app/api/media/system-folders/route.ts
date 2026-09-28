@@ -7,10 +7,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ensureSystemFolders, SYSTEM_MEDIA_FOLDERS } from "@/lib/media-system";
+import { requireStaff } from "@/lib/auth/request-context";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const editionId = req.nextUrl.searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 422 });

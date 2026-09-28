@@ -1,7 +1,7 @@
 "use client";
 // Bilimsel — çağrı, bildiri, hakem, karar (kabul ≠ otomatik program slotu, Kimlik kuralı 6)
 // Program — oturum, salon, görevler, yayın durumu + CME kredi defteri (§08, CME_CREDITS yeteneği)
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp, hasCapability } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -595,12 +595,14 @@ export function ProgramView() {
   }, [currentEditionId, refreshKey]);
 
   // dış veri reload'unda satır kredi girişlerini sunucu değeriyle senkronize et
-  useEffect(() => {
-    if (!cme) return;
+  // N-06: render-fazında sıfırla (resmî "önceki render" deseni) — effect içi senkron setState yok.
+  const [creditsFor, setCreditsFor] = useState(cme);
+  if (cme && creditsFor !== cme) {
+    setCreditsFor(cme);
     const next: Record<string, string> = {};
     for (const s of cme.sessions) next[s.id] = s.cmeCredits != null ? String(s.cmeCredits) : "";
     setCreditInputs(next);
-  }, [cme]);
+  }
 
   const days = Array.from(new Set(sessions.map((s) => s.startTime.slice(0, 10)))).sort();
   const filtered = sessions.filter((s) => dayFilter === "ALL" || s.startTime.slice(0, 10) === dayFilter);

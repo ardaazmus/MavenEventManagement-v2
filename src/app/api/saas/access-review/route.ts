@@ -7,14 +7,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireAdmin } from "@/lib/auth/request-context";
 
 const STALE_DAYS = 90;
 
-export async function GET(req: NextRequest) {
-  const { hasSession } = await import("@/lib/auth-flag");
-  if (!(await hasSession(req))) {
-    return NextResponse.json({ error: "Oturum gerekli" }, { status: 401 });
-  }
+export async function GET(_req: NextRequest) {
+  // N-08 rol kapısı — hasSession→requireAdmin (e-posta/rol listeler, admin denetim yüzeyi).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
     const staleBefore = new Date(Date.now() - STALE_DAYS * 86_400_000);

@@ -1293,9 +1293,15 @@ function ManualRegistrationDialog({ open, onOpenChange, editionId, categories, o
   const [emailHit, setEmailHit] = useState<PersonLite | null>(null);
 
   // canlı e-posta eşleşmesi — mevcut kişiye kayıt açılacağını önceden bildir
+  // N-06: geçersiz e-postada temizleme render-fazında; arama effect'te kalır.
+  {
+    const emailCheck = form.email.trim().toLowerCase();
+    const emailValid = emailCheck !== "" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailCheck);
+    if (!emailValid && emailHit !== null) setEmailHit(null);
+  }
   useEffect(() => {
     const email = form.email.trim().toLowerCase();
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setEmailHit(null); return; }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
     let alive = true;
     const timer = setTimeout(async () => {
       try {
@@ -1713,7 +1719,13 @@ function ExportRegistrationsDialog({ open, onOpenChange, editionId, statusFilter
     if (q.trim()) sp.set("q", q.trim());
     if (company.trim()) sp.set("company", company.trim());
     if (official) sp.set("official", "1");
-    window.location.href = `/api/registrations/export?${sp.toString()}`;
+    // N-06: indirme geçici bağlantıyla tetiklenir (sayfa gezinmesi yok).
+    const a = document.createElement("a");
+    a.href = `/api/registrations/export?${sp.toString()}`;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
     toast({ title: t("regIo.export.startedTitle"), description: t("regIo.export.startedDesc") });
     onOpenChange(false);
   };
@@ -1804,9 +1816,10 @@ function ApprovalMailDialog({ open, onOpenChange, editionId }: { open: boolean; 
     }
   };
 
-  // açılışta önizleme yükle
+  // açılışta önizleme yükle (N-06: tetikleme microtask'te — effect gövdesinde senkron setState yok).
   useEffect(() => {
-    if (open && editionId) void loadPreview();
+    if (!(open && editionId)) return;
+    queueMicrotask(() => void loadPreview());
   }, [open, editionId]);
 
   const toggle = (id: string) => {

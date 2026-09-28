@@ -321,7 +321,8 @@ export function PortalSettingsTab({ editionId, portalSlug, onDirtyChange }: { ed
   }, [editionId]);
 
   useEffect(() => {
-    void load();
+    // N-06: yükleme commit-sonrası microtask'te başlar — effect gövdesinde senkron setState yok.
+    queueMicrotask(() => void load());
   }, [load]);
 
   // CRON-6: dirty durumunu üst bileşene bildir — sekme değiştirme koruması için
@@ -2014,7 +2015,8 @@ function QuestionsModerationCard({ editionId }: { editionId: string }) {
   }, [editionId, t, toast]);
 
   useEffect(() => {
-    void load();
+    // N-06: yükleme commit-sonrası microtask'te başlar — effect gövdesinde senkron setState yok.
+    queueMicrotask(() => void load());
   }, [load]);
 
   const moderate = async (id: string, body: { status?: string; answerBody?: string | null }) => {

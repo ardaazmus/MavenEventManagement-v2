@@ -539,7 +539,8 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   // ── bildirim merkezi (CRON-4): canlı duyuru listesi + okunmadı takibi ──
   const [liveAnnouncements, setLiveAnnouncements] = useState<Announcement[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [lastReadMs, setLastReadMs] = useState(0);
+  // N-06: depo değeri tembel başlatılır; edisyon değişiminde render-fazında tazelenir.
+  const [lastReadMs, setLastReadMs] = useState(() => loadNotifReadMs(editionSlug));
 
   const fetchContent = useCallback(
     async (sessionKey: string | null) => {
@@ -616,10 +617,12 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     void Promise.resolve().then(() => bootstrap());
   }, []);
 
-  // okunmadı taban çizgisi — localStorage'dan (SSR güvenli: mount sonrası)
-  useEffect(() => {
+  // okunmadı taban çizgisi — localStorage'dan (N-06: render-fazında tazele).
+  const [readFor, setReadFor] = useState(editionSlug);
+  if (readFor !== editionSlug) {
+    setReadFor(editionSlug);
     setLastReadMs(loadNotifReadMs(editionSlug));
-  }, [editionSlug]);
+  }
 
   // bildirim merkezinde okundu işaretleme — KAPANIŞTA (okurken okunmadı noktası görünür kalır)
   const markAnnouncementsRead = useCallback(() => {
@@ -1816,10 +1819,13 @@ function ProgramScreen({ content, onBack, sessionKey, onGotoLogin }: { content: 
   const [busyReg, setBusyReg] = useState<string | null>(null);
   // doluluk çipleri yerel iyileştirme — aksiyon sonrası bootstrap beklemeden tutarlı görünüm
   const [countDelta, setCountDelta] = useState<Record<string, number>>({});
-  useEffect(() => {
+  // N-06: tohum senkronu render-fazında (resmî "önceki render" deseni) — effect içi senkron setState yok.
+  const [regFor, setRegFor] = useState(content.mySessionRegIds);
+  if (regFor !== content.mySessionRegIds) {
+    setRegFor(content.mySessionRegIds);
     setRegIds(new Set(content.mySessionRegIds ?? []));
     setCountDelta({});
-  }, [content.mySessionRegIds]);
+  }
 
   const toggleRegistration = async (s: ProgramItem) => {
     if (!sessionKey || !isAuth) {

@@ -191,8 +191,8 @@ export function ApiGatewayView() {
   const { currentEditionId, editions, tenant, bump, refreshKey } = useApp();
   const { toast } = useToast();
   useLang();
-  const [origin, setOrigin] = useState("");
-  useEffect(() => setOrigin(window.location.origin), []);
+  // N-06: istemci kökeni tembel başlatılır (SSR güvenli) — mount effect'i kaldırıldı.
+  const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin));
 
   const [dryRun, setDryRun] = useState(true);
   const [runningId, setRunningId] = useState<string | null>(null);

@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 
 function norm(s: string | null | undefined): string {
   return (s ?? "").toLocaleLowerCase("tr-TR").replace(/\s+/g, " ").trim();
@@ -18,6 +19,9 @@ function normPhone(s: string | null | undefined): string {
 }
 
 export async function GET(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     // G0-b: tarama bağlam kiracısıyla sınırlandırılır — başka kiracının adayları listelenmez
     const ctx = await resolveContext(null);

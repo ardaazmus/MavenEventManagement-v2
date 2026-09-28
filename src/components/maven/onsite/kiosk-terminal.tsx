@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as Icons from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -102,27 +102,29 @@ export function KioskTerminal({
     }
   };
 
-  // Auto-reset countdown after successful check-in
-  useEffect(() => {
-    if (resetCountdown === null) return;
-    if (resetCountdown <= 0) {
-      resetToScanning();
-      return;
-    }
-    const timer = setTimeout(() => {
-      setResetCountdown((c) => (c !== null ? c - 1 : null));
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [resetCountdown]);
-
-  const resetToScanning = () => {
+  // N-06: effect'ten ÖNCE tanımlı + useCallback (TDZ/immutability kapalı, kararlı kimlik).
+  const resetToScanning = useCallback(() => {
     setLastResult(null);
     setPrintResult(null);
     setResetCountdown(null);
     setManualCode("");
     setIsProcessing(false);
     if (barcodeInputRef.current) barcodeInputRef.current.focus();
-  };
+  }, []);
+
+  // Auto-reset countdown after successful check-in
+  useEffect(() => {
+    if (resetCountdown === null) return;
+    if (resetCountdown <= 0) {
+      // N-06: sıfırlama zamanlayıcıda — effect gövdesinde senkron setState yok (temizlikli).
+      const t = setTimeout(() => resetToScanning(), 0);
+      return () => clearTimeout(t);
+    }
+    const timer = setTimeout(() => {
+      setResetCountdown((c) => (c !== null ? c - 1 : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [resetCountdown, resetToScanning]);
 
   // Perform thermal badge print
   const dispatchBadgePrint = async (person: any, badge: any, isReprint = false) => {

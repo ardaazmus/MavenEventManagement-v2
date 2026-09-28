@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth/request-context";
 
 // GET /api/custom-fields/definitions?entityType=PERSON&editionId=...
 export async function GET(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const { searchParams } = new URL(req.url);
     const entityType = searchParams.get("entityType");
@@ -29,6 +33,9 @@ export async function GET(req: NextRequest) {
 
 // POST /api/custom-fields/definitions
 export async function POST(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const body = await req.json();
     const {

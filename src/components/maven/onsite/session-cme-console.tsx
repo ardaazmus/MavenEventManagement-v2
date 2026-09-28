@@ -61,12 +61,11 @@ export function SessionCmeConsole() {
     return (sessions ?? []).find((s) => s.id === selectedSessionId) ?? sessions?.[0];
   }, [sessions, selectedSessionId]);
 
-  // Set default session if none selected
-  React.useEffect(() => {
-    if (!selectedSessionId && sessions && sessions.length > 0) {
-      setSelectedSessionId(sessions[0].id);
-    }
-  }, [sessions, selectedSessionId]);
+  // Set default session if none selected (N-06: render-fazında — koşul set sonrası
+  // false olur, döngü yok; effect içi senkron setState kaldırıldı).
+  if (!selectedSessionId && sessions && sessions.length > 0) {
+    setSelectedSessionId(sessions[0].id);
+  }
 
   // Calculate CME results for the active session
   const attendeeCmeResults = useMemo(() => {

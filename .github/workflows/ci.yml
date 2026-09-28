@@ -13,6 +13,8 @@ concurrency:
 env:
   NODE_ENV: test
   MAVEN_AUTH: "off"
+  # N-09: prod+auth-off artık boot'ta fatal — E2E duman testleri demo modunu açıkça ilan eder.
+  MAVEN_DEMO_MODE: "on"
   DATABASE_URL: "file:./ci-test.db"
 
 jobs:
@@ -32,7 +34,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "bun"
+          # NOT: setup-node "bun" önbelleğini desteklemez (yalnız npm/yarn/pnpm) —
+          # geçersiz cache anahtarı bu adımı düşürüyordu (CI kırmızı kök nedeni). Bun
+          # kendi önbelleğini yönetir; frozen-lockfile kurulumu deterministtir.
 
       - name: 1. Frozen Dependency Installation
         run: bun install --frozen-lockfile

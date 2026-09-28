@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 import { buildPlanSnapshot } from "@/lib/api/floor";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,9 @@ export const dynamic = "force-dynamic";
 // GET /api/floor-studio/sync?editionId=...
 // Floor Studio uygulamasının "çek" (pull) ucu — plan anlık görünümünü döner.
 export async function GET(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   const editionId = req.nextUrl.searchParams.get("editionId");
   if (!editionId) {
     return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
@@ -36,6 +40,9 @@ export async function GET(req: NextRequest) {
 const BOOTH_STATUSES = ["AVAILABLE", "HELD", "OPTION", "RESERVED", "CONTRACTED", "BLOCKED", "OCCUPIED", "RELEASED"];
 
 export async function POST(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   let body: {
     editionId?: string;
     source?: string;

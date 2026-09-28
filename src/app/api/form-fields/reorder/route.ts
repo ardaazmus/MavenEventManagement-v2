@@ -5,8 +5,12 @@
 // Güvenlik: orderedIds listedeki HER alan gerçekten formId'ye ait olmalı (yabancı id → 409).
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireStaff } from "@/lib/auth/request-context";
 
 export async function POST(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const body = (await req.json()) as { formId?: unknown; orderedIds?: unknown };
     const formId = typeof body.formId === "string" ? body.formId : "";

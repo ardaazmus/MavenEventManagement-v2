@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireAdmin } from "@/lib/auth/request-context";
 
 const JURISDICTIONS = ["TR", "EU", "CUSTOM"] as const;
 const BREACH_WINDOWS = [24, 72, 96] as const;
@@ -42,6 +43,9 @@ function fail(message: string): NextResponse {
 }
 
 export async function GET() {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
     const profile = await db.jurisdictionProfile.upsert({
@@ -58,6 +62,9 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
     const body = (await req.json().catch(() => null)) as PatchBody | null;

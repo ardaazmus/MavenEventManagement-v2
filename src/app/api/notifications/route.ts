@@ -4,9 +4,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 import { moduleFor, severityFor } from "@/lib/api/notification-meta";
 
 export async function GET(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const editionId = req.nextUrl.searchParams.get("editionId");
     const limitParam = Number(req.nextUrl.searchParams.get("limit") ?? 25);

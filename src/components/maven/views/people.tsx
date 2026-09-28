@@ -152,7 +152,12 @@ function LinkedPhotoUploader({
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<string | null>(currentUrl ?? null);
-  useEffect(() => { setPreview(currentUrl ?? null); }, [currentUrl]);
+  // N-06: prop→state senkronu render-fazında (resmî "önceki render" deseni).
+  const [previewFor, setPreviewFor] = useState<string | null>(currentUrl ?? null);
+  if (previewFor !== (currentUrl ?? null)) {
+    setPreviewFor(currentUrl ?? null);
+    setPreview(currentUrl ?? null);
+  }
 
   const pick = async (ev: React.ChangeEvent<HTMLInputElement>) => {
     const file = ev.target.files?.[0];
@@ -1123,13 +1128,18 @@ export function PeopleView() {
   };
 
   // hedef seçilince çakışma önizlemesi + varsayılan çözümler
+  // N-06: yoklukta temizleme render-fazında; yükleme tetikleme microtask'te.
+  const mergeSource = mergeSug && mergeTarget ? mergeSug.persons.find((p) => p.id !== mergeTarget) ?? null : null;
+  if (!mergeSource && mergePreview !== null) setMergePreview(null);
   useEffect(() => {
-    if (!mergeSug || !mergeTarget) { setMergePreview(null); return; }
-    const source = mergeSug.persons.find((p) => p.id !== mergeTarget);
-    if (!source) { setMergePreview(null); return; }
+    if (!mergeSource || !mergeTarget) return;
+
+
     let alive = true;
-    setPreviewLoading(true);
-    apiGet<MergePreview>(`/api/people/merge-preview?sourceId=${source.id}&targetId=${mergeTarget}`)
+    queueMicrotask(() => {
+      if (!alive) return;
+      setPreviewLoading(true);
+    apiGet<MergePreview>(`/api/people/merge-preview?sourceId=${mergeSource.id}&targetId=${mergeTarget}`)
       .then((d) => {
         if (!alive) return;
         setMergePreview(d);
@@ -1139,8 +1149,9 @@ export function PeopleView() {
       })
       .catch(() => { if (alive) setMergePreview(null); })
       .finally(() => { if (alive) setPreviewLoading(false); });
+    });
     return () => { alive = false; };
-  }, [mergeSug, mergeTarget]);
+  }, [mergeSource, mergeTarget]);
 
   // Onaylı birleştirme — çakışma çözümleriyle (sunucu tek işlemde taşır)
   const confirmMerge = async () => {

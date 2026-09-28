@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 import { buildPlanSnapshot } from "@/lib/api/floor";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,9 @@ export const dynamic = "force-dynamic";
 // Maven → Floor Studio plan anlık görünümü (§20: ortak kimlik boothUnitId).
 // Dış Floor Studio uygulaması bu endpoint ile salon planını çeker.
 export async function GET(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   const editionId = req.nextUrl.searchParams.get("editionId");
   if (!editionId) {
     return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });

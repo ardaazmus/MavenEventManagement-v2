@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
 import { resolveContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireAdmin } from "@/lib/auth/request-context";
 
 const KINDS = ["AYDINLATMA", "ACIK_RIZA", "VERI_SAKLAMA", "DST", "KVKK_POLITIKA", "E_FATURA", "VERBIS", "OTHER"] as const;
 type DocKind = (typeof KINDS)[number];
@@ -31,6 +32,9 @@ function fail(message: string): NextResponse {
 }
 
 export async function GET() {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
     const items = await db.documentRecord.findMany({
@@ -48,6 +52,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
     const body = (await req.json().catch(() => null)) as CreateBody | null;
@@ -126,6 +133,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const adminGate = await requireAdmin();
+  if (adminGate) return adminGate;
   try {
     const tenantId = await resolveContext(null);
     const body = (await req.json().catch(() => null)) as { id?: string; action?: string } | null;

@@ -5,10 +5,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveEditionContext, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 
 const REALIZED_EXPENSE = ["APPROVED", "PAID", "REIMBURSED"];
 
 export async function GET(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const editionId = new URL(req.url).searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });

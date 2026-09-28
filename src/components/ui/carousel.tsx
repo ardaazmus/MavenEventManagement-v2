@@ -90,12 +90,14 @@ function Carousel({
 
   React.useEffect(() => {
     if (!api || !setApi) return
-    setApi(api)
+    // N-06: ebeveyne commit-sonrası bildirim — microtask (boya öncesi, aynı davranış).
+    queueMicrotask(() => setApi(api))
   }, [api, setApi])
 
   React.useEffect(() => {
     if (!api) return
-    onSelect(api)
+    // N-06: ilk seçim bildirimi microtask'te — effect gövdesinde senkron setState yok.
+    queueMicrotask(() => onSelect(api))
     api.on("reInit", onSelect)
     api.on("select", onSelect)
 

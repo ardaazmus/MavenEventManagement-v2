@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -351,7 +351,8 @@ export function SponsorshipKanban({
   const [amountTouched, setAmountTouched] = useState(false);
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
   const [saving, setSaving] = useState(false);
-  const submittedRef = useRef(false);
+  // N-06: ref→state — render'da okunuyor (disabled) + çift-gönderim koruması.
+  const [submitted, setSubmitted] = useState(false);
   const [newOrgOpen, setNewOrgOpen] = useState(false);
   const [newOrgName, setNewOrgName] = useState("");
   const [newOrgSaving, setNewOrgSaving] = useState(false);
@@ -478,12 +479,12 @@ export function SponsorshipKanban({
     setNewDueDate("");
     setAmountTouched(false);
     setFormError(null);
-    submittedRef.current = false;
+    setSubmitted(false);
   };
 
   const handleCreateDeal = async () => {
     // P11.4: çift-gönderim koruması — biten kayıt tekrar gönderilmez.
-    if (!newOrgId || !onNewDeal || saving || submittedRef.current) return;
+    if (!newOrgId || !onNewDeal || saving || submitted) return;
     setSaving(true);
     setFormError(null);
     try {
@@ -495,7 +496,7 @@ export function SponsorshipKanban({
         packageId: newPackageId || null,
         notes: newNotes.trim() || null,
       });
-      submittedRef.current = true;
+      setSubmitted(true);
       // P11.3: sözleşme vadesi bir teslim kaydı üretir (ayrı validasyonlu çağrı).
       if (newDueDate !== "") {
         await apiSend("/api/deliverables", "POST", {
@@ -906,7 +907,7 @@ export function SponsorshipKanban({
                 İleri
               </Button>
             ) : (
-              <Button onClick={handleCreateDeal} disabled={saving || submittedRef.current || !newOrgId || draftAmountMinor == null}>
+              <Button onClick={handleCreateDeal} disabled={saving || submitted || !newOrgId || draftAmountMinor == null}>
                 {saving ? t("common.saving") : t("sponsorship.saveDeal")}
               </Button>
             )}

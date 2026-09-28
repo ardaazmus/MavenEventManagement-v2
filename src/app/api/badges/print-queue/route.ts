@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveContext, verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
+import { requireStaff } from "@/lib/auth/request-context";
 import { ActivityType } from "@/lib/api/activity";
 
 const INCLUDE = {
@@ -19,6 +20,9 @@ const INCLUDE = {
 };
 
 export async function GET(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const editionId = new URL(req.url).searchParams.get("editionId");
     if (!editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
@@ -97,6 +101,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
+  const staffGate = await requireStaff();
+  if (staffGate) return staffGate;
   try {
     const body = (await req.json()) as { ids?: string[]; action?: string; reason?: string };
     const ids = (body.ids ?? []).filter(Boolean);

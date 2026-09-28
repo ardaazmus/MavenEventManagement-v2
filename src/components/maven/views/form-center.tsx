@@ -224,7 +224,8 @@ export function FormCenterView() {
 
   // STUDIO-DND — sürükle-bırak sıralama + elle genişlik (iyimser yerel kopyalar)
   const canvasRef = useRef<HTMLDivElement | null>(null);
-  const insertAtRef = useRef<number | null>(null); // paletten tuvale bırakmada ekleme konumu
+  // N-06: ref→state — render'da okunuyor (ref render'da okunamaz).
+  const [insertAt, setInsertAt] = useState<number | null>(null); // paletten tuvale bırakmada ekleme konumu
   const [localOrder, setLocalOrder] = useState<string[] | null>(null);
   const [localWidth, setLocalWidth] = useState<Record<string, number>>({});
   const [dragId, setDragId] = useState<string | null>(null);
@@ -267,55 +268,63 @@ export function FormCenterView() {
   // FORM-EXP2 DÜZELTME (yarış): oluşturma/şablon uygulama sonrası setSelectedFormId(created.id)
   // STALE formList ile bu effect'i tetikliyordu → seçim formList[0]'a geri dönüyordu.
   // Otomatik seçim edisyon-başına BİR KEZ kısıtlandı — açık seçimler artık korunur.
-  const autoPickedRef = useRef<string>("");
-  useEffect(() => {
-    if (selectedFormId && !formList.some((f) => f.id === selectedFormId)) setSelectedFormId("");
-    else if (!selectedFormId && formList.length > 0 && autoPickedRef.current !== (currentEditionId ?? "")) {
-      autoPickedRef.current = currentEditionId ?? "";
-      setSelectedFormId(formList[0].id);
-    }
-  }, [selectedFormId, formList, currentEditionId]);
+  // N-06: seçim sıfırlamaları render-fazında (resmî "önceki render" deseni) —
+  // effect içi senkron setState yok; edisyon-başına otomatik seçim state ile izlenir.
+  const [autoPickedFor, setAutoPickedFor] = useState<string>("");
+  if (selectedFormId && !formList.some((f) => f.id === selectedFormId)) {
+    setSelectedFormId("");
+  } else if (!selectedFormId && formList.length > 0 && autoPickedFor !== (currentEditionId ?? "")) {
+    setAutoPickedFor(currentEditionId ?? "");
+    setSelectedFormId(formList[0].id);
+  }
 
   // Canlı masada yayında + herkese açık ilk formu seç; geçersiz seçimi temizle
-  useEffect(() => {
-    if (liveFormId && !liveForms.some((f) => f.id === liveFormId)) setLiveFormId("");
-    else if (!liveFormId && liveForms.length > 0) setLiveFormId(liveForms[0].id);
-  }, [liveFormId, liveForms]);
+  if (liveFormId && !liveForms.some((f) => f.id === liveFormId)) {
+    setLiveFormId("");
+  } else if (!liveFormId && liveForms.length > 0) {
+    setLiveFormId(liveForms[0].id);
+  }
 
   // Seçili form değişince (veya kaydedilince) ayar panelini sunucu değerleriyle tazele
-  useEffect(() => {
-    const f = formList.find((x) => x.id === selectedFormId);
-    if (!f) return;
+  // N-06: render-fazında sıfırla (resmî "önceki render" deseni) — effect içi senkron setState yok.
+  const settingsForm = formList.find((x) => x.id === selectedFormId) ?? null;
+  const [settingsFor, setSettingsFor] = useState(settingsForm);
+  if (settingsForm && settingsFor !== settingsForm) {
+    setSettingsFor(settingsForm);
     setSettings({
-      name: f.name,
-      description: f.description ?? "",
-      successMessage: f.successMessage ?? "",
-      honeypotEnabled: f.honeypotEnabled,
-      minSubmitSeconds: String(f.minSubmitSeconds ?? 4),
-      maxPerEmailPerDay: String(f.maxPerEmailPerDay ?? 5),
-      blockedDomains: f.blockedDomains ?? "",
-      autoApprove: f.autoApprove,
-      enableOnlinePayment: f.enableOnlinePayment,
-      defaultCategoryId: f.defaultCategoryId ?? "AUTO",
-      captchaEnabled: f.captchaEnabled,
-      hasPublicResults: f.hasPublicResults,
-      slug: f.slug ?? "",
-      enableSteps: f.enableSteps ?? false,
-      notifyEmail: f.notifyEmail ?? "",
-      confirmEmail: f.confirmEmail ?? false,
+      name: settingsForm.name,
+      description: settingsForm.description ?? "",
+      successMessage: settingsForm.successMessage ?? "",
+      honeypotEnabled: settingsForm.honeypotEnabled,
+      minSubmitSeconds: String(settingsForm.minSubmitSeconds ?? 4),
+      maxPerEmailPerDay: String(settingsForm.maxPerEmailPerDay ?? 5),
+      blockedDomains: settingsForm.blockedDomains ?? "",
+      autoApprove: settingsForm.autoApprove,
+      enableOnlinePayment: settingsForm.enableOnlinePayment,
+      defaultCategoryId: settingsForm.defaultCategoryId ?? "AUTO",
+      captchaEnabled: settingsForm.captchaEnabled,
+      hasPublicResults: settingsForm.hasPublicResults,
+      slug: settingsForm.slug ?? "",
+      enableSteps: settingsForm.enableSteps ?? false,
+      notifyEmail: settingsForm.notifyEmail ?? "",
+      confirmEmail: settingsForm.confirmEmail ?? false,
     });
-  }, [selectedFormId, formList]);
+  }
 
-  // Form değişince alan seçimini temizle
-  useEffect(() => {
+  // Form değişince alan seçimini temizle (N-06: render-fazında — resmî "önceki render" deseni).
+  const [fieldFor, setFieldFor] = useState(selectedFormId);
+  if (fieldFor !== selectedFormId) {
+    setFieldFor(selectedFormId);
     setSelectedFieldId(null);
-  }, [selectedFormId]);
+  }
 
-  // STUDIO-DND: sunucu verisi tazelendikçe iyimser sıra/genişlik kopyalarını eşitle
-  useEffect(() => {
+  // STUDIO-DND: sunucu verisi tazelendikçe iyimser sıra/genişlik kopyalarını eşitle (N-06: render-fazında).
+  const [syncFor, setSyncFor] = useState({ id: selectedFormId, list: formList });
+  if (syncFor.id !== selectedFormId || syncFor.list !== formList) {
+    setSyncFor({ id: selectedFormId, list: formList });
     setLocalOrder(null);
     setLocalWidth({});
-  }, [selectedFormId, formList]);
+  }
 
   // ── Aksiyonlar ────────────────────────────────────────────────────────────
 
@@ -506,10 +515,10 @@ export function FormCenterView() {
         order: selectedForm.fields.length + 1,
       });
       // STUDIO-DND: paletten bırakılan konuma ekleme — yeni alan tam sıraya tek istekte yerleşir
-      if (insertAtRef.current != null) {
+      if (insertAt != null) {
         const ids = [...selectedForm.fields].sort((a, b) => a.order - b.order).map((x) => x.id);
-        ids.splice(Math.min(Math.max(insertAtRef.current, 0), ids.length), 0, created.id);
-        insertAtRef.current = null;
+        ids.splice(Math.min(Math.max(insertAt, 0), ids.length), 0, created.id);
+        setInsertAt(null);
         await apiSend("/api/form-fields/reorder", "POST", { formId: selectedForm.id, orderedIds: ids });
       }
       toast({ title: t("forms.toastFieldAdded"), description: t("forms.toastFieldAddedDesc", { name: newField.label, order: selectedForm.fields.length + 1 }) });
@@ -759,7 +768,8 @@ export function FormCenterView() {
 
   // ── STUDIO-DND: sürükle-bırak sıralama + elle genişlik ────────────────────
   // Gösterim listesi: iyimser sürükleme kopyası varsa onu, yoksa sunucu sırasını kullan
-  const orderedFields = useMemo(() => {
+  // N-06: manuel memo kaldırıldı (derleyici koruyamıyordu) — n küçük, sıralama render'da ucuz.
+  const orderedFields = (() => {
     if (!selectedForm) return [];
     const sorted = [...selectedForm.fields].sort((a, b) => a.order - b.order);
     if (!localOrder) return sorted;
@@ -767,7 +777,7 @@ export function FormCenterView() {
     const list = localOrder.map((id) => byId.get(id)).filter((f): f is FormFieldDef => Boolean(f));
     for (const f of sorted) if (!localOrder.includes(f.id)) list.push(f); // yeni eklenenler sonda
     return list;
-  }, [selectedForm, localOrder]);
+  })();
 
   const fieldW = (f: FormFieldDef) => {
     if (f.type === "SECTION") return 100; // bölüm başlığı her zaman tam satır
@@ -815,7 +825,7 @@ export function FormCenterView() {
       e.preventDefault();
       setDropTarget(null);
       const idx = orderedFields.findIndex((x) => x.id === f.id);
-      insertAtRef.current = Math.max(0, idx + (after ? 1 : 0));
+      setInsertAt(Math.max(0, idx + (after ? 1 : 0)));
       pickFieldType(paletteType);
       return;
     }
@@ -834,7 +844,7 @@ export function FormCenterView() {
     if (!paletteType) return;
     e.preventDefault();
     setDropTarget(null);
-    insertAtRef.current = orderedFields.length;
+    setInsertAt(orderedFields.length);
     pickFieldType(paletteType);
   };
 
@@ -1186,7 +1196,7 @@ export function FormCenterView() {
                       title={t("forms.fieldsTitle", { n: selectedForm.fields.length })}
                       desc={t("forms.fieldsDesc", { n: selectedForm.fields.length })}
                       action={
-                        <Button size="sm" onClick={() => { setNewField(emptyNewField); insertAtRef.current = null; setFieldOpen(true); }}>
+                        <Button size="sm" onClick={() => { setNewField(emptyNewField); setInsertAt(null); setFieldOpen(true); }}>
                           <Icons.Plus className="size-3.5" /> {t("forms.addField")}
                         </Button>
                       }
@@ -2266,7 +2276,7 @@ export function FormCenterView() {
           <DialogHeader>
             <DialogTitle>Alan Ekle</DialogTitle>
             <DialogDescription>
-              {selectedForm ? `${selectedForm.name} — yeni alan sıra ${(insertAtRef.current ?? selectedForm.fields.length) + 1} olarak eklenir.` : "Form seçilmedi."}
+              {selectedForm ? `${selectedForm.name} — yeni alan sıra ${(insertAt ?? selectedForm.fields.length) + 1} olarak eklenir.` : "Form seçilmedi."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">

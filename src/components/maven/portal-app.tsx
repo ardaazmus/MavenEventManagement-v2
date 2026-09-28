@@ -2200,6 +2200,7 @@ function SpeakersScreen({ content, onBack, onRegisterSubBack }: { content: Porta
   const { t } = useLang();
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const { lang } = useLang(); // arama locale'i (çift çağrı: aynı store, ek maliyet yok)
   // sistem geri/swipe önce açık detayı kapatır (ekrandan çıkarmaz)
   useEffect(() => {
     onRegisterSubBack?.(() => {
@@ -2210,10 +2211,10 @@ function SpeakersScreen({ content, onBack, onRegisterSubBack }: { content: Porta
   }, [selected, onRegisterSubBack]);
   const speakers = content.speakers ?? [];
   const current = speakers.find((s) => s.personId === selected);
-  const q = query.trim().toLocaleLowerCase("tr");
+  const q = query.trim().toLocaleLowerCase(lang);
   const filtered = q.length === 0
     ? speakers
-    : speakers.filter((s) => `${s.name} ${s.title ?? ""} ${s.company ?? ""}`.toLocaleLowerCase("tr").includes(q));
+    : speakers.filter((s) => `${s.name} ${s.title ?? ""} ${s.company ?? ""}`.toLocaleLowerCase(lang).includes(q));
 
   if (current) {
     return (

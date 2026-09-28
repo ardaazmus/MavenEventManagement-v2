@@ -1,9 +1,9 @@
 {
-  "totalDiscovered": 160,
-  "totalClassified": 160,
+  "totalDiscovered": 161,
+  "totalClassified": 161,
   "unclassifiedCount": 0,
   "categoryCounts": {
-    "PUBLIC": 45,
+    "PUBLIC": 46,
     "STAFF": 75,
     "ADMIN": 36,
     "DOMAIN_POLICY": 4
@@ -807,6 +807,13 @@
       "authRequired": false,
       "enforcement": "Sihirli bağlantı e-posta gönderimi",
       "description": "Portal sihirli giriş bağlantısı oluşturma"
+    },
+    {
+      "path": "src/app/api/portal/manifest/route.ts",
+      "category": "PUBLIC",
+      "authRequired": false,
+      "enforcement": "PII yok — yalnız herkese açık edisyon adı + tema rengi",
+      "description": "Etkinliğe özel PWA manifesti (start_url=/?portal=<slug>)"
     },
     {
       "path": "src/app/api/portal/me/route.ts",

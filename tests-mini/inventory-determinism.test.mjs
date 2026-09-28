@@ -13,7 +13,11 @@ test("P00.1 - scripts/inventory.mjs exists and executes cleanly", () => {
   });
   const data = JSON.parse(stdout);
 
-  assert.strictEqual(data.baseSha, "bf2f5eb8f305a189d44fdcb9d2a340dae340cc2a", "baseSha matches rebased main commit");
+  // Sabit SHA pini TASARIM HATASIYDI: baseSha canlı HEAD'i raporlar, oysa pin her
+  // commit'te bir geriden geliyordu (bf2f5eb→28acc8c, 1dc7a86→bf2f5eb) — kapı
+  // HEAD'de asla yeşil olamazdı. Sözleşme: envanter HEAD'i doğru raporlar.
+  const head = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+  assert.strictEqual(data.baseSha, head, "baseSha canlı HEAD'i raporlamalı");
   assert.ok(data.counts.prismaModels >= 103, "Prisma models count must be at least 103 (103 baseline + additive models)");
   assert.ok(data.counts.apiRoutes >= 106, "API route count must be at least 106");
   assert.strictEqual(data.counts.modules, 27, "Module count must be 27 (26 + H-08 company-communications)");

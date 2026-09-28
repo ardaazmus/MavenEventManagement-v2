@@ -81,7 +81,9 @@
     "close": "Close",
     "saving": "Saving…",
     "all": "All",
-    "error": "Error"
+    "error": "Error",
+    "delete": "Delete",
+    "deleteTitle": "Confirm deletion"
   },
   "accounting": {
     "title": "Accounting",

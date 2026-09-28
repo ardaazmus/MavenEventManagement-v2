@@ -31,6 +31,7 @@ import dynamic from "next/dynamic";
 import { resolvePortalIcon } from "@/components/maven/portal-icon-library";
 import { haptic } from "@/lib/haptic";
 import { useSwipeBack } from "@/hooks/useSwipeBack";
+import { usePWAInstall } from "@/hooks/usePWAInstall";
 // PublicFormPage artık STATİK import EDİLMEZ — aşağıda dynamic (CRON-10 lazy chunk)
 
 // CRON-10: form motoru ağır bir pakettir — portala STATİK değil, form açılınca
@@ -637,8 +638,8 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
 
   const cfg = content?.config;
 
-  // ── PWA: service worker + install prompt ──
-  const [deferredPrompt, setDeferredPrompt] = useState<{ prompt: () => void } | null>(null);
+  // ── PWA: service worker + install prompt (tek kaynak: usePWAInstall) ──
+  const { canInstall, promptInstall } = usePWAInstall();
   // CRON-8: yeni SW sürümü "installed" durumunda beklerken kullanıcıya toast göster
   const [swUpdateReady, setSwUpdateReady] = useState(false);
   const swRegRef = useRef<ServiceWorkerRegistration | null>(null);
@@ -698,27 +699,17 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     });
   }, [swUpdateReady, applySwUpdate, toast]);
 
-  // ── PWA: install prompt — SW effect'inden BAĞIMSIZ (CRON-8 ayırması) ──
-  useEffect(() => {
-    if (phase !== "ACTIVE") return;
-    const onBip = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e as unknown as { prompt: () => void });
-    };
-    window.addEventListener("beforeinstallprompt", onBip);
-    return () => window.removeEventListener("beforeinstallprompt", onBip);
-  }, [phase]);
-
+  // ── PWA: kurulum — sonuç (accepted/dismissed) beklenir; vazgeçmede sessiz çıkılır ──
   const installApp = async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
+    const accepted = await promptInstall();
+    if (!accepted) return;
+    haptic.success();
     try {
       await portalSend("/api/portal/interact", { action: "PWA_INSTALL" }, sessionKey);
-      toast({ title: t("portalApp.install.doneTitle"), description: t("portalApp.install.doneDesc") });
     } catch {
       /* analitik fire-and-forget */
     }
-    setDeferredPrompt(null);
+    toast({ title: t("portalApp.install.doneTitle"), description: t("portalApp.install.doneDesc") });
   };
 
   // ── canlı duyuru akışı (§5.4) — 20 sn polling ──
@@ -896,6 +887,21 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     meta.content = c;
   }, [phase, content?.config?.themeColor, content?.edition.portalHeaderAccent]);
 
+  // PWA: etkinliğe özel manifest — kurulan uygulama DOĞRU edisyonu açar
+  // (statik manifest start_url="/" personel kabuğuna düşerdi — denetim PWA-1).
+  // Tek <link rel="manifest"> mutate edilir; tarayıcı href değişiminde yeniden okur.
+  useEffect(() => {
+    if (phase !== "ACTIVE" || !content) return;
+    const href = `/api/portal/manifest?slug=${encodeURIComponent(editionSlug)}`;
+    let link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "manifest";
+      document.head.appendChild(link);
+    }
+    if (link.getAttribute("href") !== href) link.setAttribute("href", href);
+  }, [phase, editionSlug, content]);
+
   const openForm = async (formIdOrSlug: string | null) => {
     if (!formIdOrSlug) return;
     try {
@@ -934,12 +940,18 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   // ─── render dalları ───
   if (phase === "LOADING") {
     return (
-      <div className="grid min-h-screen place-items-center bg-background">
-        <div className="flex flex-col items-center gap-3" role="status" aria-label={t("portalApp.loading")}>
-          <img src="/portal-icon-192.png" alt="" className="size-16 rounded-2xl shadow-sm" />
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Icons.Loader2 className="size-4 animate-spin" /> {t("portalApp.loading")}
+      <div
+        className="grid min-h-dvh place-items-center bg-gradient-to-b from-teal-50 via-background to-background"
+        style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <div className="flex flex-col items-center gap-5" role="status" aria-label={t("portalApp.loading")}>
+          <img src="/portal-icon-192.png" alt="" className="size-20 rounded-[22px] shadow-lg motion-safe:animate-[portal-pop-in_0.4s_ease-out]" />
+          <div className="h-1.5 w-28 overflow-hidden rounded-full bg-muted" aria-hidden>
+            <div className="h-full w-1/2 rounded-full bg-teal-500 motion-safe:animate-[portal-splash-slide_1.1s_ease-in-out_infinite]" />
           </div>
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Icons.Loader2 className="size-3.5 animate-spin" /> {t("portalApp.loading")}
+          </p>
         </div>
       </div>
     );
@@ -947,7 +959,10 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
 
   if (phase === "ERROR") {
     return (
-      <div className="grid min-h-screen place-items-center bg-background p-6">
+      <div
+        className="grid min-h-dvh place-items-center bg-background p-6"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 24px)", paddingBottom: "calc(env(safe-area-inset-bottom) + 24px)" }}
+      >
         <div className="max-w-sm text-center">
           <div className="mx-auto grid size-12 place-items-center rounded-full bg-red-50 text-red-600">
             <Icons.AlertTriangle className="size-6" />
@@ -1126,9 +1141,9 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
       </div>
       )}
 
-      {/* ── Event Header (§3.1) — ANASAYFA: hero kart (banner + logo + ad AYNI kartta;
-          negatif-marj bindirme KALDIRILDI — "logo/ad header alanı ile çakışıyor" sorunu bitti) ── */}
-      {showEventBar && screen === "home" && (
+      {/* ── Event Header (§3.1) — ANASAYFA hero: baner tam-bleed, yoksa aksan bandı.
+          Admin özel başlık arka planı varsa eski kart düzeni korunur (okunabilirlik). ── */}
+      {showEventBar && screen === "home" && (design?.headerBgColor || design?.headerBgImage ? (
         <header className="px-4 pt-3">
           <div className="overflow-hidden rounded-2xl border bg-background shadow-sm" style={headerBgStyle}>
             {content.edition.headerImageUrl && (
@@ -1162,7 +1177,44 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             </div>
           </div>
         </header>
-      )}
+      ) : (
+        <header className="relative overflow-hidden">
+          {content.edition.headerImageUrl ? (
+            <>
+              <img src={content.edition.headerImageUrl} alt={`${content.edition.name} ${t("portalApp.bannerAlt")}`} className="absolute inset-0 size-full object-cover" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/25 to-transparent" />
+            </>
+          ) : (
+            <div aria-hidden className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${accent}, ${accent}b3)` }}>
+              <div className="absolute -right-12 -top-20 size-56 rounded-full bg-white/10" />
+              <div className="absolute -left-10 bottom-0 size-36 rounded-full bg-black/10" />
+            </div>
+          )}
+          <div className="relative mx-auto flex w-full max-w-2xl items-center gap-3.5 px-4 pb-6 pt-9">
+            <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-2xl border border-white/40 bg-white shadow-md">
+              {content.edition.logoUrl ? (
+                <img src={content.edition.logoUrl} alt={`${content.edition.name} ${t("portalApp.logoAlt")}`} className="size-full object-contain p-1.5" />
+              ) : (
+                <Icons.CalendarRange className="size-7" style={{ color: accent }} />
+              )}
+            </div>
+            <div className="min-w-0 flex-1 text-white">
+              <h1 className="line-clamp-2 text-xl font-extrabold leading-tight tracking-tight">
+                {content.edition.portalHeaderTitle || content.edition.name}
+              </h1>
+              <p className="mt-1 truncate text-xs font-medium text-white/85">
+                {[
+                  content.edition.startDate ? fmtDate(content.edition.startDate) : null,
+                  content.edition.city,
+                  content.edition.venueName,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || content.edition.portalHeaderSubtitle || "—"}
+              </p>
+            </div>
+          </div>
+        </header>
+      ))}
 
       {/* ── ALT EKRANLAR: kompakt sabit (sticky) uygulama çubuğu — mobil app hissi; büyük
           banner + Maven bandı YOK (kullanıcı isteği: "Ana sayfa haricinde Maven ın üst bandı görünmesin") ── */}
@@ -1206,7 +1258,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             accent={accent}
             iconOverrides={iconOverrides}
             gameData={gameData}
-            deferredPrompt={deferredPrompt}
+            canInstall={canInstall}
             onInstall={() => void installApp()}
             onNavigate={gotoScreen}
             onOpenForm={openForm}
@@ -1253,7 +1305,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             onNavigate={gotoScreen}
             onOpenForm={openForm}
             onGotoLogin={gotoLogin}
-            deferredPrompt={deferredPrompt}
+            canInstall={canInstall}
             onInstall={() => void installApp()}
           />
         )}
@@ -1300,8 +1352,9 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
                 }}
                 className={cn(
                   "flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium transition-[color,background-color,transform] active:scale-95 min-h-[52px]",
-                  active ? "text-primary" : "text-muted-foreground hover:text-foreground",
+                  !active && "text-muted-foreground hover:text-foreground",
                 )}
+                style={{ color: active ? accent : undefined }}
                 aria-current={active ? "page" : undefined}
               >
                 {/* aktif-sekme pill'i — native uygulama hissi (kullanıcı isteği: mobil app feel) */}
@@ -1435,58 +1488,96 @@ function LoginScreen({
   // tasarım uygulaması — giriş ekranı da admin marka ayarlarını izler (§5.2+)
   const dsg = content.config?.design ?? null;
   const sp = content.config?.portalSponsor ?? null;
+  const accent = content.config?.themeColor ?? content.edition.portalHeaderAccent ?? "#0d9488";
+  const dateCity = [content.edition.startDate ? fmtDate(content.edition.startDate) : null, content.edition.city].filter(Boolean);
+  const submitDisabled = busy || !code.trim() || (mode === "EMAIL" && !email.trim());
+  const switchMode = (m: "CODE" | "EMAIL") => {
+    if (m === mode) return;
+    haptic.selection();
+    setMode(m);
+  };
   return (
     <div
-      className="flex min-h-screen flex-col bg-gradient-to-b from-teal-50 to-background"
+      className="flex min-h-dvh flex-col bg-gradient-to-b from-teal-50 to-background"
       style={{
         fontFamily: dsg?.fontFamily && dsg.fontFamily !== "system" ? PORTAL_FONT_STACKS(dsg.fontFamily) : undefined,
         fontSize: dsg?.fontScale && dsg.fontScale !== 100 ? `${16 * (dsg.fontScale / 100)}px` : undefined,
+        paddingTop: "env(safe-area-inset-top)",
         ...(dsg?.contentBgColor ? { backgroundColor: dsg.contentBgColor } : {}),
         ...(dsg?.contentBgImage ? { backgroundImage: `url(${dsg.contentBgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}),
       }}
     >
-      <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-5 py-8">
-        <div className="text-center">
-          {content.edition.headerImageUrl ? (
-            <img src={content.edition.headerImageUrl} alt="" className="mx-auto h-28 w-full rounded-2xl object-cover shadow-sm" />
-          ) : null}
-          <div className={cn("mx-auto -mt-6 grid size-14 place-items-center overflow-hidden rounded-xl border bg-white shadow-sm", !content.edition.headerImageUrl && "mt-0")}>
+      {/* karşılama bandı — baner varsa tam-bleed görsel, yoksa aksan degrade (boş kutu asla) */}
+      <div
+        className="relative w-full shrink-0 overflow-hidden"
+        style={content.edition.headerImageUrl ? undefined : { background: `linear-gradient(135deg, ${accent}, ${accent}b3)` }}
+      >
+        {content.edition.headerImageUrl ? (
+          <>
+            <img src={content.edition.headerImageUrl} alt="" className="absolute inset-0 size-full object-cover" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/20 to-black/5" />
+          </>
+        ) : (
+          <>
+            <div aria-hidden className="absolute -right-10 -top-16 size-48 rounded-full bg-white/10" />
+            <div aria-hidden className="absolute -left-10 top-14 size-32 rounded-full bg-black/10" />
+          </>
+        )}
+        <div className="relative mx-auto flex w-full max-w-md items-center gap-3.5 px-5 pb-7 pt-10">
+          <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-2xl border border-white/40 bg-white shadow-md">
             {content.edition.logoUrl ? (
-              <img src={content.edition.logoUrl} alt="" className="size-full object-contain p-1" />
+              <img src={content.edition.logoUrl} alt="" className="size-full object-contain p-1.5" />
             ) : (
-              <Icons.CalendarRange className="size-6 text-teal-600" />
+              <Icons.CalendarRange className="size-7" style={{ color: accent }} />
             )}
           </div>
-          <h1 className="mt-3 text-lg font-bold">{content.edition.portalHeaderTitle || content.edition.name}</h1>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {[content.edition.startDate ? fmtDate(content.edition.startDate) : null, content.edition.city].filter(Boolean).join(" · ")}
-          </p>
+          <div className="min-w-0 text-white">
+            <h1 className="text-[22px] font-extrabold leading-tight tracking-tight">
+              {content.edition.portalHeaderTitle || content.edition.name}
+            </h1>
+            {dateCity.length > 0 && (
+              <p className="mt-1 flex items-center gap-1.5 truncate text-xs font-medium text-white/85">
+                <Icons.MapPin className="size-3.5 shrink-0" /> {dateCity.join(" · ")}
+              </p>
+            )}
+          </div>
         </div>
+      </div>
 
-        <div className="mt-6 rounded-2xl border bg-white p-4 shadow-sm dark:bg-card">
-          <div className="mb-3 flex rounded-lg bg-muted p-1" role="tablist" aria-label={t("portalApp.login.methodAria")}>
+      <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-5 pb-6" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 24px)" }}>
+        <div className="mt-5 rounded-[20px] border bg-white p-5 shadow-md dark:bg-card">
+          <div className="mb-4 grid grid-cols-2 rounded-xl bg-muted p-1" role="tablist" aria-label={t("portalApp.login.methodAria")}>
             <button
               role="tab"
               aria-selected={mode === "CODE"}
-              onClick={() => setMode("CODE")}
-              className={cn("flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition", mode === "CODE" ? "bg-background shadow-sm" : "text-muted-foreground")}
+              onClick={() => switchMode("CODE")}
+              className={cn("h-10 rounded-lg text-sm font-semibold transition active:scale-[0.98]", mode === "CODE" ? "bg-white shadow-sm dark:bg-background" : "text-muted-foreground")}
+              style={mode === "CODE" ? { color: accent } : undefined}
             >
               {t("portalApp.login.codeTab")}
             </button>
             <button
               role="tab"
               aria-selected={mode === "EMAIL"}
-              onClick={() => setMode("EMAIL")}
+              onClick={() => switchMode("EMAIL")}
               disabled={!opts.emailLogin}
-              className={cn("flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition disabled:opacity-40", mode === "EMAIL" ? "bg-background shadow-sm" : "text-muted-foreground")}
+              className={cn("h-10 rounded-lg text-sm font-semibold transition active:scale-[0.98] disabled:opacity-40", mode === "EMAIL" ? "bg-white shadow-sm dark:bg-background" : "text-muted-foreground")}
+              style={mode === "EMAIL" ? { color: accent } : undefined}
             >
               {t("portalApp.login.emailTab")}
             </button>
           </div>
 
-          <div className="space-y-3">
+          {/* form sarmalayıcı — mobil klavyede "Git" tuşu gönderir */}
+          <form
+            className="space-y-3.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!submitDisabled) void submit();
+            }}
+          >
             <div className="space-y-1.5">
-              <Label htmlFor="p-code">{t("portalApp.login.codeLabel")}</Label>
+              <Label htmlFor="p-code" className="text-xs font-semibold">{t("portalApp.login.codeLabel")}</Label>
               <Input
                 id="p-code"
                 value={code}
@@ -1494,12 +1585,14 @@ function LoginScreen({
                 placeholder="ABC123"
                 autoCapitalize="characters"
                 autoComplete="off"
-                className="text-center font-mono text-base uppercase tracking-widest"
+                autoFocus
+                enterKeyHint="go"
+                className="h-12 rounded-xl text-center font-mono text-base uppercase tracking-[0.2em]"
               />
             </div>
             {mode === "EMAIL" && (
               <div className="space-y-1.5">
-                <Label htmlFor="p-email">{t("portalApp.login.emailLabel")}</Label>
+                <Label htmlFor="p-email" className="text-xs font-semibold">{t("portalApp.login.emailLabel")}</Label>
                 <Input
                   id="p-email"
                   type="email"
@@ -1508,11 +1601,13 @@ function LoginScreen({
                   placeholder={t("portalApp.login.emailPh")}
                   autoComplete="email"
                   inputMode="email"
+                  enterKeyHint="go"
+                  className="h-12 rounded-xl text-base"
                 />
               </div>
             )}
-            <Button className="w-full" onClick={() => void submit()} disabled={busy || !code.trim() || (mode === "EMAIL" && !email.trim())}>
-              {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.LogIn className="size-4" />}
+            <Button type="submit" disabled={submitDisabled} className="h-12 w-full rounded-xl text-[15px] font-bold text-white active:scale-[0.99]" style={{ backgroundColor: accent }}>
+              {busy ? <Icons.Loader2 className="size-5 animate-spin" /> : <Icons.LogIn className="size-5" />}
               {t("portalApp.login.submit")}
             </Button>
             <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
@@ -1520,14 +1615,14 @@ function LoginScreen({
                 ? t("portalApp.login.emailHint")
                 : t("portalApp.login.codeHint")}
             </p>
-          </div>
+          </form>
         </div>
 
         {/* §2 Anonim oturum mantığı: kayıt yönlendirmesi */}
         {opts.allowRegistrationRedirect && (
-          <div className="mt-4 rounded-2xl border border-dashed bg-white/60 p-4 text-center dark:bg-card/60">
+          <div className="mt-3.5 rounded-[20px] border border-dashed bg-white/60 p-4 text-center dark:bg-card/60">
             <p className="text-xs text-muted-foreground">{t("portalApp.login.registerHint")}</p>
-            <Button variant="outline" size="sm" className="mt-2" onClick={() => onOpenForm(opts.registrationFormId)} disabled={!opts.registrationFormId}>
+            <Button variant="outline" className="mt-2 h-10 rounded-xl font-semibold" onClick={() => onOpenForm(opts.registrationFormId)} disabled={!opts.registrationFormId}>
               <Icons.UserPlus className="size-4" /> {t("portalApp.login.registerBtn")}
             </Button>
           </div>
@@ -1536,9 +1631,9 @@ function LoginScreen({
         <p className="mt-auto pt-6 text-center text-[11px] text-muted-foreground">{content.tenant.name} · {t("portalApp.login.poweredBy")}</p>
         {/* Mobil Portal Sponsoru şeridi (§5.2+) — giriş ekranında da görünür */}
         {(sp?.logoUrl || sp?.name) && (
-          <div className="flex items-center justify-end gap-2 pb-4">
+          <div className="flex items-center justify-end gap-2 pt-3">
             <span className="text-[10px] font-medium text-muted-foreground">{t("portalApp.design.sponsorLabel")}</span>
-            {sp.logoUrl ? <img src={sp.logoUrl} alt={sp.name ?? ""} className="h-5 w-auto max-w-28 object-contain" /> : <Icons.BadgeCheck className="size-4 text-teal-600" />}
+            {sp.logoUrl ? <img src={sp.logoUrl} alt={sp.name ?? ""} className="h-5 w-auto max-w-28 object-contain" /> : <Icons.BadgeCheck className="size-4" style={{ color: accent }} />}
             {sp.name && <span className="text-[11px] font-semibold">{sp.name}</span>}
           </div>
         )}
@@ -1555,7 +1650,7 @@ function HomeScreen({
   accent,
   iconOverrides,
   gameData,
-  deferredPrompt,
+  canInstall,
   onInstall,
   onNavigate,
   onOpenForm,
@@ -1566,7 +1661,7 @@ function HomeScreen({
   accent: string;
   iconOverrides: Record<string, IconOverride>;
   gameData: GameData | null;
-  deferredPrompt: { prompt: () => void } | null;
+  canInstall: boolean;
   onInstall: () => void;
   onNavigate: (s: string) => void;
   onOpenForm: (id: string | null) => void;
@@ -1677,7 +1772,7 @@ function HomeScreen({
       )}
 
       {/* PWA kurulum kartı */}
-      {cfg.pwaEnabled && deferredPrompt && (
+      {cfg.pwaEnabled && canInstall && (
         <div className="flex items-center gap-3 rounded-xl border border-dashed border-teal-300 bg-teal-50/60 p-3 dark:bg-teal-950/30">
           <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-white shadow-sm dark:bg-card">
             <img src="/portal-icon-192.png" alt="" className="size-7 rounded-md" />
@@ -2477,7 +2572,7 @@ function ProfileScreen({
   onNavigate,
   onOpenForm,
   onGotoLogin,
-  deferredPrompt,
+  canInstall,
   onInstall,
 }: {
   content: PortalContent;
@@ -2487,7 +2582,7 @@ function ProfileScreen({
   onNavigate: (s: string) => void;
   onOpenForm: (id: string | null) => void;
   onGotoLogin: () => void;
-  deferredPrompt: { prompt: () => void } | null;
+  canInstall: boolean;
   onInstall: () => void;
 }) {
   const { t } = useLang();
@@ -2672,7 +2767,7 @@ function ProfileScreen({
           )}
 
           {/* PWA kurulum */}
-          {content.config?.pwaEnabled && deferredPrompt && (
+          {content.config?.pwaEnabled && canInstall && (
             <Button variant="outline" className="w-full" onClick={onInstall}>
               <Icons.Smartphone className="size-4" /> {t("portalApp.install.btn")}
             </Button>
@@ -2902,19 +2997,19 @@ function Confetti({ accent }: { accent: string }) {
 }
 
 // ─── küçük parçalar ─────────────────────────────────────────────────────────
-function ScreenShell({ title, icon, onBack, action, children }: { title: string; icon?: React.ReactNode; onBack?: () => void; action?: React.ReactNode; children: React.ReactNode }) {
+function ScreenShell({ title, icon: _icon, onBack, action, children }: { title: string; icon?: React.ReactNode; onBack?: () => void; action?: React.ReactNode; children: React.ReactNode }) {
+  void _icon; // büyük-başlık düzeninde ikon gösterilmez (prop geriye-uyumluluk için durur)
   const { t } = useLang();
   return (
     <div>
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-4 flex items-center gap-2.5">
         {onBack && (
-          <button onClick={onBack} aria-label={t("portalApp.back")} className="grid size-8 shrink-0 place-items-center rounded-lg border bg-white shadow-sm transition hover:bg-muted active:scale-95 dark:bg-card">
+          <button onClick={() => { haptic.selection(); onBack(); }} aria-label={t("portalApp.back")} className="grid size-9 shrink-0 place-items-center rounded-full border bg-white shadow-sm transition hover:bg-muted active:scale-95 dark:bg-card">
             <Icons.ArrowLeft className="size-4" />
           </button>
         )}
-        {icon}
-        <h2 className="text-sm font-bold">{title}</h2>
-        {action && <span className="ml-auto shrink-0">{action}</span>}
+        <h2 className="min-w-0 flex-1 truncate text-[22px] font-extrabold tracking-tight">{title}</h2>
+        {action && <span className="shrink-0">{action}</span>}
       </div>
       {children}
     </div>

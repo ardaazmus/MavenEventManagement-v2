@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { apiSend, listEntity } from "@/lib/client";
 import { useApp } from "@/lib/store";
-import { SectionCard, EmptyState, PageHeader, StatusBadge, Chip, useApi, KpiCard } from "../bits";
+import { SectionCard, EmptyState, PageHeader, StatusBadge, Chip, useApi, KpiCard, ConfirmDialog } from "../bits";
 import { B2B_PLAN_STATUS, B2B_ASSIGNMENT_STATUS, B2B_ROLES, label } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -74,6 +74,7 @@ export function B2bView() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
   const [busy, setBusy] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<B2bPlanRow | null>(null);
 
   // ── kişi atama diyaloğu ──
   const [assignPlan, setAssignPlan] = useState<B2bPlanRow | null>(null);
@@ -144,10 +145,12 @@ export function B2bView() {
     } finally { setBusy(false); }
   };
 
-  const removePlan = async (p: B2bPlanRow) => {
-    if (!window.confirm(t("b2b.deleteConfirm", { subject: p.subject }))) return;
+  const removePlan = async () => {
+    const p = deleteTarget;
+    if (!p) return;
     try {
       await apiSend(`/api/b2b-plans/${p.id}`, "DELETE");
+      setDeleteTarget(null);
       toast({ title: t("b2b.planDeleted") });
       reload(); bump();
     } catch (e) {
@@ -347,7 +350,7 @@ export function B2bView() {
                   <Button size="sm" variant="ghost" onClick={() => { setMobilePersonId(""); setMobileOpen(true); }} aria-label={t("b2b.mobilePreviewAria")}><Icons.Smartphone className="size-3.5" /></Button>
                   <Button size="sm" variant="ghost" onClick={() => openEdit(p)} aria-label={t("b2b.editAria")}><Icons.Pencil className="size-3.5" /> {t("b2b.btnEdit")}</Button>
                   {p.status === "ACTIVE" && <Button size="sm" variant="ghost" onClick={() => setPlanStatus(p, "COMPLETED")}>{t("b2b.btnComplete")}</Button>}
-                  <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => removePlan(p)} aria-label={t("b2b.deleteAria", { subject: p.subject })}><Icons.Trash2 className="size-3.5" /></Button>
+                  <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => setDeleteTarget(p)} aria-label={t("b2b.deleteAria", { subject: p.subject })}><Icons.Trash2 className="size-3.5" /></Button>
                 </div>
               </SectionCard>
             );
@@ -448,6 +451,16 @@ export function B2bView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(v) => !v && setDeleteTarget(null)}
+        title={t("common.deleteTitle")}
+        description={deleteTarget ? t("b2b.deleteConfirm", { subject: deleteTarget.subject }) : ""}
+        confirmLabel={t("common.delete")}
+        cancelLabel={t("common.cancel")}
+        onConfirm={() => void removePlan()}
+      />
 
       {/* Mobil Uygulama Önizlemesi — kişinin B2B kabul & görüş akışı */}
       <Dialog open={mobileOpen} onOpenChange={setMobileOpen}>

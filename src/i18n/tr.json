@@ -81,7 +81,9 @@
     "close": "Kapat",
     "saving": "Kaydediliyor…",
     "all": "Tümü",
-    "error": "Hata"
+    "error": "Hata",
+    "delete": "Sil",
+    "deleteTitle": "Silme onayı"
   },
   "accounting": {
     "title": "Muhasebe",

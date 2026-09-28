@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { apiSend, listEntity } from "@/lib/client";
 import { useApp } from "@/lib/store";
-import { SectionCard, EmptyState, PageHeader, StatusBadge, Chip, useApi, KpiCard } from "../bits";
+import { SectionCard, EmptyState, PageHeader, StatusBadge, Chip, useApi, KpiCard, ConfirmDialog } from "../bits";
 import {
   SOCIAL_KINDS, SOCIAL_PLAN_TYPES, SOCIAL_PLAN_STATUS, SOCIAL_ANNOUNCE_CHANNELS, SOCIAL_RESPONSE,
   label,
@@ -97,6 +97,7 @@ export function SocialView() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
   const [busy, setBusy] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<SocialPlanRow | null>(null);
 
   // ── duyuru diyaloğu ──
   const [announcePlan, setAnnouncePlan] = useState<SocialPlanRow | null>(null);
@@ -179,10 +180,12 @@ export function SocialView() {
     } finally { setBusy(false); }
   };
 
-  const removePlan = async (p: SocialPlanRow) => {
-    if (!window.confirm(t("social.deleteConfirm", { title: p.title }))) return;
+  const removePlan = async () => {
+    const p = deleteTarget;
+    if (!p) return;
     try {
       await apiSend(`/api/social-plans/${p.id}`, "DELETE");
+      setDeleteTarget(null);
       toast({ title: t("social.planDeleted") });
       reload(); bump();
     } catch (e) {
@@ -364,7 +367,7 @@ export function SocialView() {
                     </Button>
                   )}
                   <Button size="sm" variant="ghost" onClick={() => openEdit(p)} aria-label={t("social.ariaEdit", { title: p.title })}><Icons.Pencil className="size-3.5" /> {t("social.btnEdit")}</Button>
-                  <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => removePlan(p)} aria-label={t("social.ariaDelete", { title: p.title })}><Icons.Trash2 className="size-3.5" /></Button>
+                  <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => setDeleteTarget(p)} aria-label={t("social.ariaDelete", { title: p.title })}><Icons.Trash2 className="size-3.5" /></Button>
                 </div>
               </SectionCard>
             );
@@ -438,6 +441,16 @@ export function SocialView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(v) => !v && setDeleteTarget(null)}
+        title={t("common.deleteTitle")}
+        description={deleteTarget ? t("social.deleteConfirm", { title: deleteTarget.title }) : ""}
+        confirmLabel={t("common.delete")}
+        cancelLabel={t("common.cancel")}
+        onConfirm={() => void removePlan()}
+      />
 
       {/* Duyuru diyaloğu */}
       <Dialog open={Boolean(announcePlan)} onOpenChange={(v) => !v && setAnnouncePlan(null)}>

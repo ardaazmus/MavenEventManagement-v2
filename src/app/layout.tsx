@@ -17,7 +17,8 @@ export const metadata: Metadata = {
   description: "Çok kiracılı Event Operations Platform: kayıt, bilimsel süreç, program, sponsorluk, konaklama, saha ve finans tek çekirdek üzerinde.",
   keywords: ["Maven", "Event Management", "Etkinlik", "Kongre", "Fuar", "Entitlement"],
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    // harici CDN favicon KALDIRILDI (offline-first ihlali — denetim PWA-8) → yerel logo
+    icon: "/logo.svg",
     // PWA simgeleri — Katılımcı Dış Portalı (manifest + apple-touch)
     apple: "/portal-icon-180.png",
   },

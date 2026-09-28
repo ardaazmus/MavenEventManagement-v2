@@ -225,6 +225,12 @@ export const ROUTE_POLICY_DEFINITIONS = {
     enforcement: "Açık portal içerik verisi",
     description: "Etkinlik içerik ve program akışı",
   },
+  "src/app/api/portal/manifest/route.ts": {
+    category: "PUBLIC",
+    authRequired: false,
+    enforcement: "PII yok — yalnız herkese açık edisyon adı + tema rengi",
+    description: "Etkinliğe özel PWA manifesti (start_url=/?portal=<slug>)",
+  },
   "src/app/api/portal/game/route.ts": {
     category: "PUBLIC",
     authRequired: false,

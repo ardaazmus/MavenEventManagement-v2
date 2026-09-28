@@ -7,6 +7,7 @@ import { tStatus } from "@/lib/i18n"; // TASK-A F8: StatusBadge dil-duyarlı (TR
 import { Skeleton } from "@/components/ui/skeleton";
 import { Inbox, RefreshCw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export function StatusBadge({ map, value, className }: { map: Record<string, string>; value?: string | null; className?: string }) {
   // TASK-A F8: TR modunda donuk map etiketi, EN modunda status.<value> — TR birebir korunur
@@ -207,5 +208,33 @@ export function PageHeader({ title, desc, children }: { title: string; desc?: st
       </div>
       <div className="flex flex-wrap items-center gap-2">{children}</div>
     </div>
+  );
+}
+
+// Paylaşılan yıkıcı-aksiyon onayı — window.confirm YERİNE kullanılır (denetim UI-1:
+// native istem tarayıcı dilinde açılır, i18n/tema dışı kalır, PWA'da güvenilmez).
+export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, cancelLabel, onConfirm, busy }: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  onConfirm: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{cancelLabel}</Button>
+          <Button variant="destructive" onClick={onConfirm} disabled={busy}>{confirmLabel}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -929,7 +929,7 @@ export function PeopleView() {
     setDetailLoading(true);
     try {
       const d = await apiGet<Person360>(`/api/people/${p.id}`);
-      console.log("[360] loaded", p.id, d?.person?.id, Object.keys(d ?? {}).length);
+
       setDetail(d);
     } catch (e) {
       console.error("[360] failed", p.id, e);

@@ -617,7 +617,7 @@ model FormDefinition {
   defaultCategoryId   String? // kayıtta ön seçilecek kategori
   successMessage      String?
   // — F-EXP: dış sayfa paylaşımı + gerçek captcha —
-  slug                String?  @unique // kısa paylaşım bağlantısı: /?form=<slug>
+  slug                String?  @unique // N-04: BY-DESIGN global - kısa paylaşım bağlantısı: /?form=<slug>
   captchaEnabled      Boolean  @default(true) // HMAC imzalı doğrulama sorusu (bot kapısı)
   hasPublicResults    Boolean  @default(false) // oylama/anket sonuçları herkese açık
   // — FORM-EXP2: çok-adımlı form + gönderim bildirimi —

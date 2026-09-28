@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 function runNpm(args) {
@@ -36,7 +37,10 @@ test("P01.2 - tsc --noEmit passes on clean codebase", () => {
 });
 
 test("P01.2 - tsc --noEmit fails on broken type fixture (negative verification)", () => {
-  const fixturePath = path.resolve("src/lib/__test_broken_fixture.ts");
+  // Yarış güvenliği: fiksür ASLA çalışma ağacına yazılmaz (tsconfig `**/*.ts`
+  // kapsar — eşzamanlı koşan başka bir tsc'yi de kırmızıya boyardı).
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "maven-tsc-neg-"));
+  const fixturePath = path.join(tmpDir, "broken-fixture.ts");
   try {
     // Write intentionally broken typescript file
     fs.writeFileSync(
@@ -45,17 +49,19 @@ test("P01.2 - tsc --noEmit fails on broken type fixture (negative verification)"
       "utf8"
     );
 
-    const res = runNpm(["run", "typecheck"]);
+    const res = spawnSync(
+      process.execPath,
+      ["./node_modules/typescript/bin/tsc", "--noEmit", "--strict", "--skipLibCheck", fixturePath],
+      { encoding: "utf8" }
+    );
 
     assert.notStrictEqual(
       res.status,
       0,
-      "npm run typecheck MUST fail when invalid types or broken imports exist"
+      "tsc MUST fail when invalid types or broken imports exist"
     );
   } finally {
-    if (fs.existsSync(fixturePath)) {
-      fs.unlinkSync(fixturePath);
-    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
 

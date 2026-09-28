@@ -20,9 +20,10 @@ const en = JSON.parse(fs.readFileSync(path.join(process.cwd(), "src/i18n/en.json
 const moduleComponentsSrc = fs.readFileSync(path.join(process.cwd(), "src/lib/module-components.tsx"), "utf8");
 
 test.describe.serial("M24 — UI organizasyonu & hak yönetimi", () => {
-  test("kayıpsızlık — 27 modül: registry ↔ bileşen haritası ↔ i18n üçlü kapsama", () => {
-    expect(MODULES).toHaveLength(27);
-    expect(MODULE_GROUPS).toHaveLength(7);
+  test("kayıpsızlık — registry ↔ bileşen haritası ↔ i18n üçlü kapsama", () => {
+    // Büyüme-toleranslı sayı: şekil aşağıda + module-coherence'te kilitli.
+    expect(MODULES.length).toBeGreaterThanOrEqual(27);
+    expect(MODULE_GROUPS.length).toBeGreaterThanOrEqual(7);
     const groupIds = MODULE_GROUPS.map((g) => g.id);
     for (const m of MODULES) {
       // her modülün bileşen girdisi var (yeni modül eklerken unutulmayı engelleyen yapısal garanti)
@@ -78,7 +79,7 @@ test.describe.serial("M24 — UI organizasyonu & hak yönetimi", () => {
     expect(roleCanSee(mod("accounting"), "SCIENTIFIC_MANAGER")).toBe(false);
   });
 
-  test("UI — sidebar'da 7 grup + 27 modül etiketinin tamamı görünür", async ({ page }) => {
+  test("UI — sidebar'da grup + modül etiketlerinin tamamı görünür", async ({ page }) => {
     await page.goto("/");
     await removeDevtoolsOverlay(page);
     await page.waitForLoadState("networkidle");
@@ -89,7 +90,7 @@ test.describe.serial("M24 — UI organizasyonu & hak yönetimi", () => {
       const label = tr.shell[g.labelKey.split(".")[1]];
       await expect(aside.getByText(label, { exact: true }), `grup başlığı yok: ${g.id}`).toBeVisible({ timeout: 10_000 });
     }
-    // 26 modül etiketinin tamamı — kayıpsızlık kanıtı (scroll alanında da olsa görünür sayılır)
+    // modül etiketlerinin tamamı — kayıpsızlık kanıtı (scroll alanında da olsa görünür sayılır)
     for (const m of MODULES) {
       await expect(aside.getByText(tr.modules[m.id], { exact: true }), `sidebar'da yok: ${m.id}`).toBeVisible({ timeout: 10_000 });
     }

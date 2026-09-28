@@ -296,7 +296,8 @@ export async function PUT(req: NextRequest) {
 
     // ── ekran üst-bant görünürlüğü (chrome) — bilinen ekran anahtarlarıyla beyaz-liste ──
     if (body.chrome !== undefined) {
-      const CHROME_SCREENS = new Set(["home", "program", "speakers", "forms", "qa", "sponsors", "map", "b2b", "profile"]);
+      // MC-9: nav ekran kümesiyle birebir — "form" bilinçli dışarıda (formda üst-bant gizlenemez).
+      const CHROME_SCREENS = new Set(["home", "program", "speakers", "forms", "qa", "sponsors", "map", "b2b", "profile", "game"]);
       if (body.chrome && typeof body.chrome === "object") {
         const clean: { topHeader: Record<string, boolean>; eventBar: Record<string, boolean> } = { topHeader: {}, eventBar: {} };
         for (const [screen, on] of Object.entries(body.chrome.topHeader ?? {})) {

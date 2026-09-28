@@ -47,7 +47,7 @@ test("P00.2 - git index does not track runtime db or .env files", () => {
   );
 });
 
-test("P00.2 - physical files exist on disk (zero data loss)", () => {
+test("P00.2 - physical files exist on disk (zero data loss)", { skip: process.env.CI ? "dev-makinesi değişmezi: taze CI checkout'ında db/.env yoktur" : false }, () => {
   const dbPath = path.resolve("db/custom.db");
   const envPath = path.resolve(".env");
 

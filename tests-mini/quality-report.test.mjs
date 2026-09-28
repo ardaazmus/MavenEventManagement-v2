@@ -14,11 +14,13 @@ test("P00.3 - quality-report emits JSON with all gates and unmasked exit codes",
     encoding: "utf8",
   });
 
-  // Because lint and i18n currently have known errors, overall exit code must be non-zero (unmasked)
-  assert.notStrictEqual(result.status, 0, "quality-report must fail (non-zero exit) when any gate fails");
+  // Tüm kapılar yeşil (N-06 sonrası): rapor 0 çıkmalı; başarısızlık yolu
+  // --simulate-gate-failure fiksürüyle (bir sonraki test) kilitlidir.
+  assert.strictEqual(result.status, 0, `quality-report exit 0 olmalı, görülen: ${result.status} ${result.stderr ?? ""}`);
 
   assert.ok(result.stdout, "Must produce stdout JSON");
   const data = JSON.parse(result.stdout);
+  assert.strictEqual(data.hasFailure, false, "hasFailure false olmalı");
 
   assert.ok(Array.isArray(data.gates), "gates array must be present");
   const gateNames = data.gates.map((g) => g.name);

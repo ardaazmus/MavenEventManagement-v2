@@ -32,6 +32,7 @@ import { resolvePortalIcon } from "@/components/maven/portal-icon-library";
 import { haptic } from "@/lib/haptic";
 import { useSwipeBack } from "@/hooks/useSwipeBack";
 import { usePWAInstall } from "@/hooks/usePWAInstall";
+import { PORTAL_NAV_ROOT, parseNavHash, navHash, pushNav, popNav, resetNav, syncNav, isPortalScreen } from "@/lib/portal-nav";
 // PublicFormPage artık STATİK import EDİLMEZ — aşağıda dynamic (CRON-10 lazy chunk)
 
 // CRON-10: form motoru ağır bir pakettir — portala STATİK değil, form açılınca
@@ -530,8 +531,15 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   const [phase, setPhase] = useState<Phase>("LOADING");
   const [content, setContent] = useState<PortalContent | null>(null);
   const [kind, setKind] = useState<"GUEST" | "AUTH" | null>(null);
-  const [screen, setScreen] = useState("home");
-  useSwipeBack({ onSwipeBack: () => setScreen("home"), enabled: screen !== "home" });
+  // ── gezinme yığını: her ekranın "önceki sayfa"sı buradan çözülür (kök: home) ──
+  const [nav, setNav] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [PORTAL_NAV_ROOT];
+    return resetNav(parseNavHash(window.location.hash) ?? PORTAL_NAV_ROOT);
+  });
+  const screen = nav[nav.length - 1] ?? PORTAL_NAV_ROOT;
+  // detay-içi geri (konuşmacı/sponsor detayı): açık detay önce kapanır, sonra yığın pop'lanır
+  const subBackRef = useRef<(() => boolean) | null>(null);
+  const registerSubBack = useCallback((fn: (() => boolean) | null) => { subBackRef.current = fn; }, []);
   const [formRef, setFormRef] = useState<string | null>(null); // portal-İÇİ form ekranı (?form= yerine)
   const [fatal, setFatal] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState<string | null>(null);
@@ -915,20 +923,85 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     // Kullanıcı isteği: "Formlar acılınca header ve footer kayboluyor Kaybolmasın."
     // → form artık portal İÇİNDE ekran olarak açılır (?form= tam-sayfa yerine)
     setFormRef(formIdOrSlug);
-    setScreen("form");
+    setNav((prev) => pushNav(prev, "form"));
+    mirrorHistory("form", "push");
     window.scrollTo({ top: 0 });
   };
 
+  // N-06: derleyici el-memoizasyonunu koruyamıyor — düz fonksiyon (taban şekli)
   const trackClick = (widgetKey: string) => {
     void portalSend("/api/portal/interact", { action: "WIDGET_CLICK", widgetKey }, sessionKey).catch(() => undefined);
   };
 
-  const gotoScreen = (s: string) => {
+  // history aynası — sistem geri/ileri tuşunun yığını takip etmesi için (#p=<ekran>)
+  const mirrorHistory = useCallback((s: string, mode: "push" | "replace") => {
+    try {
+      const url = `${window.location.pathname}${window.location.search}${navHash(s)}`;
+      if (mode === "push") window.history.pushState({ portal: s }, "", url);
+      else window.history.replaceState({ portal: s }, "", url);
+    } catch {
+      /* file:// vb. uç durumlar — yığın yine çalışır */
+    }
+  }, []);
+
+  // ileri gezinme (widget/kart/CTA) — yığına push'lar
+  const gotoScreen = useCallback((s: string) => {
     haptic.selection();
     trackClick(s);
-    setScreen(s);
+    setNav((prev) => pushNav(prev, s));
+    mirrorHistory(s, "push");
     window.scrollTo({ top: 0 });
-  };
+  }, [trackClick, mirrorHistory]);
+
+  // GERİ — her ekranın geri oku + swipe + (popstate üzerinden) sistem tuşu buraya düşer
+  const goBack = useCallback(() => {
+    if (subBackRef.current?.()) { haptic.selection(); return; } // açık detay kapandı
+    if (nav.length <= 1) {
+      if (screen === PORTAL_NAV_ROOT) return; // kök (home) — geri yok
+      // sekme kökü (örn. [program]): mantıksal "önceki sayfa" home'dur
+      haptic.selection();
+      setNav(resetNav(PORTAL_NAV_ROOT));
+      mirrorHistory(PORTAL_NAV_ROOT, "replace");
+      window.scrollTo({ top: 0 });
+      return;
+    }
+    const next = popNav(nav);
+    const target = next[next.length - 1] ?? PORTAL_NAV_ROOT;
+    haptic.selection();
+    setNav(next);
+    mirrorHistory(target, "replace");
+    window.scrollTo({ top: 0 });
+  }, [nav, screen, mirrorHistory]);
+
+  // sekme değişimi (alt menü) — native davranış: yığın sıfırlanır
+  const resetTab = useCallback((s: string) => {
+    haptic.selection();
+    if (s === screen && nav.length === 1) { window.scrollTo({ top: 0 }); return; }
+    trackClick(s);
+    setNav(resetNav(s));
+    mirrorHistory(s, "replace");
+    window.scrollTo({ top: 0 });
+  }, [screen, nav.length, trackClick, mirrorHistory]);
+
+  useSwipeBack({ onSwipeBack: goBack, enabled: screen !== "home" });
+
+  // sistem geri/ileri tuşu (Android gesture + tarayıcı) — yığınla eşitle
+  useEffect(() => {
+    if (phase !== "ACTIVE") return;
+    mirrorHistory(screen, "replace"); // ilk girişi çapala (derin-bağ hash'i dahil)
+    const onPop = (e: PopStateEvent) => {
+      const target = (e.state as { portal?: unknown } | null)?.portal;
+      if (typeof target !== "string") return; // portal öncesi sayfa — tarayıcıya bırak
+      const dest = parseNavHash(window.location.hash)
+        ?? (isPortalScreen(target) ? target : null)
+        ?? (target === "form" && formRef ? "form" : null);
+      if (!dest) return;
+      setNav((prev) => syncNav(prev, dest));
+      window.scrollTo({ top: 0 });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [phase, mirrorHistory, formRef, screen]);
 
   // oturumu bırak ve giriş ekranına dön — B2B/Program kapasite kaydı gibi AUTH-gated
   // özelliklerin misafir kullanıcıya gösterdiği tek-tık CTA bunu kullanır
@@ -937,6 +1010,8 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     sessionRef.current = null;
     setSessionKey(null);
     setKind(null);
+    setNav(resetNav("home"));
+    mirrorHistory("home", "replace");
     setPhase("LOGIN");
   };
 
@@ -1267,17 +1342,17 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             onOpenForm={openForm}
           />
         )}
-        {screen === "program" && <ProgramScreen content={content} onBack={() => setScreen("home")} sessionKey={sessionKey} onGotoLogin={gotoLogin} />}
-        {screen === "speakers" && <SpeakersScreen content={content} onBack={() => setScreen("home")} />}
-        {screen === "sponsors" && <SponsorsScreen content={content} />}
-        {screen === "map" && <VenueMapScreen content={content} />}
-        {screen === "qa" && <QaScreen content={content} sessionKey={sessionKey} onSubmitted={() => void refreshContent()} onGameRefresh={() => void fetchGame()} />}
-        {screen === "forms" && <FormsScreen content={content} gameData={gameData} accent={accent} onOpenForm={openForm} />}
+        {screen === "program" && <ProgramScreen content={content} onBack={goBack} sessionKey={sessionKey} accent={accent} onGotoLogin={gotoLogin} />}
+        {screen === "speakers" && <SpeakersScreen content={content} onBack={goBack} onRegisterSubBack={registerSubBack} />}
+        {screen === "sponsors" && <SponsorsScreen content={content} onBack={goBack} onRegisterSubBack={registerSubBack} />}
+        {screen === "map" && <VenueMapScreen content={content} onBack={goBack} />}
+        {screen === "qa" && <QaScreen content={content} sessionKey={sessionKey} onBack={goBack} onSubmitted={() => void refreshContent()} onGameRefresh={() => void fetchGame()} />}
+        {screen === "forms" && <FormsScreen content={content} gameData={gameData} accent={accent} onBack={goBack} onOpenForm={openForm} />}
         {screen === "form" && (
           <FormScreen
             content={content}
             formRef={formRef}
-            onBack={() => setScreen("forms")}
+            onBack={goBack}
             onSubmitted={formRef ? () => onPortalFormSubmitted(formRef) : undefined}
           />
         )}
@@ -1286,23 +1361,26 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             data={gameData}
             accent={accent}
             confettiKey={confettiKey}
+            onBack={goBack}
             onRefresh={() => void fetchGame()}
             onOpenForm={openForm}
             onNavigate={gotoScreen}
           />
         )}
-        {screen === "b2b" && <B2bScreen content={content} sessionKey={sessionKey} onChanged={() => { void bootstrap(); void fetchGame(); }} onGotoLogin={gotoLogin} />}
+        {screen === "b2b" && <B2bScreen content={content} sessionKey={sessionKey} onBack={goBack} onChanged={() => { void bootstrap(); void fetchGame(); }} onGotoLogin={gotoLogin} />}
         {screen === "profile" && (
           <ProfileScreen
             content={content}
             kind={kind}
             accent={accent}
+            onBack={goBack}
             onLogout={() => {
               clearSession(editionSlug);
               sessionRef.current = null;
               setSessionKey(null);
               setKind(null);
-              setScreen("home");
+              setNav(resetNav("home"));
+              mirrorHistory("home", "replace");
               void bootstrap();
             }}
             onNavigate={gotoScreen}
@@ -1349,10 +1427,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
             return (
               <button
                 key={n.key}
-                onClick={() => {
-                  haptic.selection();
-                  setScreen(n.key);
-                }}
+                onClick={() => resetTab(n.key)}
                 className={cn(
                   "flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium transition-[color,background-color,transform] active:scale-95 min-h-[52px]",
                   !active && "text-muted-foreground hover:text-foreground",
@@ -1672,7 +1747,13 @@ function HomeScreen({
   const { t } = useLang();
   const cfg = content.config!;
   const program = content.program ?? [];
-  const nextSession = program.find((s) => new Date(s.startTime).getTime() > Date.now());
+  const nowMs = Date.now();
+  const liveSession = program.find((s) => {
+    const st = new Date(s.startTime).getTime();
+    const en = new Date(s.endTime).getTime();
+    return st <= nowMs && nowMs <= en;
+  });
+  const nextSession = program.find((s) => new Date(s.startTime).getTime() > nowMs);
   // duyuru görünürlüğü (CRON-4): kapatılan duyuru kalıcı — kapatılmamış EN GÜNCEL duyuru gösterilir
   const [dismissed, setDismissed] = useState<string | null>(() => loadAnnDismissed(editionSlug));
   const dismiss = (id: string) => {
@@ -1682,14 +1763,16 @@ function HomeScreen({
   const announcement = (content.announcements ?? []).find((a) => a.id !== dismissed);
 
   const widgets = cfg.widgets;
-  const WIDGET_META: Record<string, { label: string; icon: typeof Icons.Home; sub: string; target: string }> = {
-    agenda: { label: t("portalApp.widget.agenda"), icon: Icons.CalendarDays, sub: nextSession ? fmtDateTime(nextSession.startTime) : t("portalApp.widget.agendaEmpty"), target: "program" },
-    speakers: { label: t("portalApp.widget.speakers"), icon: Icons.Mic2, sub: t("portalApp.widget.speakersSub", { count: content.speakers?.length ?? 0 }), target: "speakers" },
-    forms: { label: t("portalApp.widget.forms"), icon: Icons.ClipboardList, sub: t("portalApp.widget.formsSub", { count: content.forms?.length ?? 0 }), target: "forms" },
-    qa: { label: t("portalApp.widget.qa"), icon: Icons.MessageCircleQuestion, sub: t("portalApp.widget.qaSub"), target: "qa" },
-    map: { label: t("portalApp.widget.map"), icon: Icons.Map, sub: content.edition.venueName ?? t("portalApp.widget.mapSub"), target: "map" },
-    b2b: { label: t("portalApp.widget.b2b"), icon: Icons.Handshake, sub: t("portalApp.widget.b2bSub", { count: content.b2b?.length ?? 0 }), target: "b2b" },
-    game: { label: t("portalApp.widget.game"), icon: Icons.Trophy, sub: gameData ? t("portalApp.widget.gameSub", { points: gameData.points }) : t("portalApp.widget.gameEmpty"), target: "game" },
+  // modül renkleri — lider event uygulamalarındaki renkli modül dili (Whova/Cvent referansı);
+  // admin renk override ederse (iconOverrides[w].color) onunki kazanır
+  const WIDGET_META: Record<string, { label: string; icon: typeof Icons.Home; sub: string; target: string; color: string }> = {
+    agenda: { label: t("portalApp.widget.agenda"), icon: Icons.CalendarDays, sub: nextSession ? fmtDateTime(nextSession.startTime) : t("portalApp.widget.agendaEmpty"), target: "program", color: "#2563eb" },
+    speakers: { label: t("portalApp.widget.speakers"), icon: Icons.Mic2, sub: t("portalApp.widget.speakersSub", { count: content.speakers?.length ?? 0 }), target: "speakers", color: "#9333ea" },
+    forms: { label: t("portalApp.widget.forms"), icon: Icons.ClipboardList, sub: t("portalApp.widget.formsSub", { count: content.forms?.length ?? 0 }), target: "forms", color: "#d97706" },
+    qa: { label: t("portalApp.widget.qa"), icon: Icons.MessageCircleQuestion, sub: t("portalApp.widget.qaSub"), target: "qa", color: "#db2777" },
+    map: { label: t("portalApp.widget.map"), icon: Icons.Map, sub: content.edition.venueName ?? t("portalApp.widget.mapSub"), target: "map", color: "#059669" },
+    b2b: { label: t("portalApp.widget.b2b"), icon: Icons.Handshake, sub: t("portalApp.widget.b2bSub", { count: content.b2b?.length ?? 0 }), target: "b2b", color: "#0284c7" },
+    game: { label: t("portalApp.widget.game"), icon: Icons.Trophy, sub: gameData ? t("portalApp.widget.gameSub", { points: gameData.points }) : t("portalApp.widget.gameEmpty"), target: "game", color: "#ea580c" },
   };
 
   return (
@@ -1732,11 +1815,11 @@ function HomeScreen({
             <div key={w.key} role="listitem" className="min-h-[92px]">
             <button
               onClick={() => onNavigate(meta.target)}
-              className="group flex h-full w-full flex-col items-start gap-1.5 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 hover:shadow active:scale-[0.97] dark:bg-card"
+              className="group flex h-full w-full flex-col items-start gap-1.5 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:shadow-md active:scale-[0.97] dark:bg-card"
             >
               <span
                 className={cn("grid size-8 place-items-center rounded-lg text-white transition-transform", !hasCustom && "group-hover:scale-105")}
-                style={{ backgroundColor: hasCustom && o?.svg ? "transparent" : accent }}
+                style={{ backgroundColor: hasCustom && o?.svg ? "transparent" : (o?.color ?? meta.color) }}
               >
                 {o?.svg ? (
                   <img src={o.svg} alt="" className="size-7 object-contain" />
@@ -1757,22 +1840,49 @@ function HomeScreen({
         })}
       </div>
 
-      {/* yaklaşan oturum şeridi */}
-      {nextSession && (
-        <button onClick={() => onNavigate("program")} className="flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm dark:bg-card">
-          <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-teal-50 text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
-            <Icons.Clock className="size-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{t("portalApp.home.upNext")}</p>
-            <p className="truncate text-xs font-semibold">{nextSession.title}</p>
-            <p className="truncate text-[11px] text-muted-foreground">
-              {fmtDateTime(nextSession.startTime)}{nextSession.room ? ` · ${nextSession.room}` : ""}
-            </p>
-          </div>
-          <Icons.ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-        </button>
-      )}
+      {/* sıradaki/canli hero — "Up Next" deseni (Eventbase/Whova referansı) */}
+      {(liveSession ?? nextSession) && (() => {
+        const s = (liveSession ?? nextSession)!;
+        const live = Boolean(liveSession);
+        const sp = s.speakers.slice(0, 3);
+        return (
+          <button
+            onClick={() => onNavigate("program")}
+            className="relative block w-full overflow-hidden rounded-2xl p-4 text-left text-white shadow-md transition active:scale-[0.99]"
+            style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}
+          >
+            <div aria-hidden className="absolute -right-10 -top-14 size-44 rounded-full bg-white/10" />
+            <div aria-hidden className="absolute -bottom-16 right-16 size-32 rounded-full bg-black/10" />
+            <div className="relative">
+              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/85">
+                {live && (
+                  <span className="relative flex size-2">
+                    <span className="absolute inline-flex size-full rounded-full bg-white opacity-75 motion-safe:animate-ping" />
+                    <span className="relative inline-flex size-2 rounded-full bg-white" />
+                  </span>
+                )}
+                {live ? t("portalApp.home.liveNow") : t("portalApp.home.upNext")}
+              </p>
+              <p className="mt-1 line-clamp-2 text-base font-extrabold leading-snug">{s.title}</p>
+              <p className="mt-0.5 truncate text-xs font-medium text-white/85">
+                {fmtDateTime(s.startTime)}{s.room ? ` · ${s.room}` : ""}
+              </p>
+              {sp.length > 0 && (
+                <span className="mt-2.5 flex items-center">
+                  {sp.map((p) => (
+                    <span key={p.personId} className="-ml-1.5 grid size-7 place-items-center overflow-hidden rounded-full border-2 border-white/70 bg-white/20 text-[9px] font-bold first:ml-0">
+                      {p.photoUrl ? <img src={p.photoUrl} alt="" className="size-full object-cover" /> : p.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}
+                    </span>
+                  ))}
+                  <span className="ml-2 truncate text-[11px] font-medium text-white/85">
+                    {sp.map((p) => p.name).join(", ")}{s.speakers.length > 3 ? ` +${s.speakers.length - 3}` : ""}
+                  </span>
+                </span>
+              )}
+            </div>
+          </button>
+        );
+      })()}
 
       {/* PWA kurulum kartı */}
       {cfg.pwaEnabled && canInstall && (
@@ -1806,10 +1916,12 @@ function HomeScreen({
 }
 
 // ─── PROGRAM (§3.2 Genel Program) ───────────────────────────────────────────
-function ProgramScreen({ content, onBack, sessionKey, onGotoLogin }: { content: PortalContent; onBack: () => void; sessionKey: string | null; onGotoLogin: () => void }) {
+function ProgramScreen({ content, onBack, sessionKey, accent, onGotoLogin }: { content: PortalContent; onBack: () => void; sessionKey: string | null; accent: string; onGotoLogin: () => void }) {
   const { t } = useLang();
   const { toast } = useToast();
   const [open, setOpen] = useState<string | null>(null);
+  const [activeDay, setActiveDay] = useState(0);
+  const nowMs = Date.now();
   const program = content.program ?? [];
   const slug = content.edition.slug;
   const reminders = loadReminders(slug);
@@ -1905,20 +2017,46 @@ function ProgramScreen({ content, onBack, sessionKey, onGotoLogin }: { content: 
     </ScreenShell>;
   }
 
+  const jumpToDay = (di: number) => {
+    setActiveDay(di);
+    document.getElementById(`portal-day-${di}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <ScreenShell title={t("portalApp.program.title")} onBack={onBack} icon={<Icons.CalendarDays className="size-4" />}>
+      {/* gün hapları — çok-günlü programda hızlı atlama (Cvent/EventMobi deseni) */}
+      {byDay.length > 1 && (
+        <div className="sticky top-0 z-20 -mx-1 mb-3 flex gap-1.5 overflow-x-auto bg-background/95 px-1 py-2 backdrop-blur-sm" role="tablist" aria-label={t("portalApp.program.title")}>
+          {byDay.map(([day], di) => (
+            <button
+              key={day}
+              role="tab"
+              aria-selected={activeDay === di}
+              onClick={() => jumpToDay(di)}
+              className={cn(
+                "shrink-0 rounded-full border px-3.5 py-1.5 text-[11px] font-semibold transition active:scale-95",
+                activeDay === di ? "border-transparent text-white shadow-sm" : "bg-white text-muted-foreground dark:bg-card",
+              )}
+              style={activeDay === di ? { backgroundColor: accent } : undefined}
+            >
+              {t("portalApp.program.day", { n: di + 1 })}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="space-y-4">
-        {byDay.map(([day, items]) => (
-          <div key={day}>
-            <div className="sticky top-0 z-10 -mx-1 bg-muted/40 px-1 py-1.5 backdrop-blur-sm">
+        {byDay.map(([day, items], di) => (
+          <div key={day} id={`portal-day-${di}`} className="scroll-mt-14">
+            <div className="py-1">
               <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{day}</h3>
             </div>
             <div className="mt-2 space-y-2">
               {items.map((s) => {
                 const expanded = open === s.id;
                 const reminded = reminders.some((r) => r.key === `session:${s.id}`);
+                const live = new Date(s.startTime).getTime() <= nowMs && nowMs <= new Date(s.endTime).getTime();
                 return (
-                  <div key={s.id} className="overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card">
+                  <div key={s.id} className={cn("overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card", live && "border-red-300 ring-1 ring-red-500/40 dark:border-red-800")}>
                     <button className="flex w-full items-start gap-3 p-3 text-left" onClick={() => setOpen(expanded ? null : s.id)} aria-expanded={expanded}>
                       <div className="w-14 shrink-0 text-center">
                         <p className="text-sm font-bold tabular-nums">
@@ -1931,6 +2069,15 @@ function ProgramScreen({ content, onBack, sessionKey, onGotoLogin }: { content: 
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-semibold leading-snug">{s.title}</p>
                         <div className="mt-1 flex flex-wrap items-center gap-1">
+                          {live && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                              <span className="relative flex size-1.5">
+                                <span className="absolute inline-flex size-full rounded-full bg-white opacity-75 motion-safe:animate-ping" />
+                                <span className="relative inline-flex size-1.5 rounded-full bg-white" />
+                              </span>
+                              {t("portalApp.program.liveNow")}
+                            </span>
+                          )}
                           <span className={cn("rounded-full px-1.5 py-0.5 text-[9px] font-medium", SESSION_TYPE_COLORS[s.type] ?? "bg-muted text-muted-foreground")}>
                             {t(`portalApp.sessionType.${s.type}`)}
                           </span>
@@ -1957,6 +2104,16 @@ function ProgramScreen({ content, onBack, sessionKey, onGotoLogin }: { content: 
                             );
                           })()}
                         </div>
+                        {s.speakers.length > 0 && (
+                          <div className="mt-1.5 flex items-center">
+                            {s.speakers.slice(0, 4).map((sp) => (
+                              <span key={sp.personId} title={sp.name} className="-ml-1 grid size-5 place-items-center overflow-hidden rounded-full border border-white bg-muted text-[7px] font-bold text-muted-foreground first:ml-0 dark:border-card">
+                                {sp.photoUrl ? <img src={sp.photoUrl} alt="" className="size-full object-cover" /> : sp.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}
+                              </span>
+                            ))}
+                            {s.speakers.length > 4 && <span className="ml-1 text-[9px] tabular-nums text-muted-foreground">+{s.speakers.length - 4}</span>}
+                          </div>
+                        )}
                       </div>
                       <Icons.ChevronDown className={cn("mt-1 size-4 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-180")} />
                     </button>
@@ -2039,11 +2196,24 @@ function ProgramScreen({ content, onBack, sessionKey, onGotoLogin }: { content: 
 }
 
 // ─── KONUŞMACILAR (§3.4) ────────────────────────────────────────────────────
-function SpeakersScreen({ content, onBack }: { content: PortalContent; onBack: () => void }) {
+function SpeakersScreen({ content, onBack, onRegisterSubBack }: { content: PortalContent; onBack: () => void; onRegisterSubBack?: (fn: (() => boolean) | null) => void }) {
   const { t } = useLang();
   const [selected, setSelected] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  // sistem geri/swipe önce açık detayı kapatır (ekrandan çıkarmaz)
+  useEffect(() => {
+    onRegisterSubBack?.(() => {
+      if (selected) { setSelected(null); return true; }
+      return false;
+    });
+    return () => onRegisterSubBack?.(null);
+  }, [selected, onRegisterSubBack]);
   const speakers = content.speakers ?? [];
   const current = speakers.find((s) => s.personId === selected);
+  const q = query.trim().toLocaleLowerCase("tr");
+  const filtered = q.length === 0
+    ? speakers
+    : speakers.filter((s) => `${s.name} ${s.title ?? ""} ${s.company ?? ""}`.toLocaleLowerCase("tr").includes(q));
 
   if (current) {
     return (
@@ -2090,7 +2260,24 @@ function SpeakersScreen({ content, onBack }: { content: PortalContent; onBack: (
         <EmptyMini text={t("portalApp.speakers.empty")} />
       ) : (
         <div className="space-y-2" role="list">
-          {speakers.map((s) => (
+          {/* konuşmacı arama — isim/unvan/kurum (lider uygulamalarda standart) */}
+          <div className="relative">
+            <Icons.Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t("portalApp.speakers.search")}
+              aria-label={t("portalApp.speakers.search")}
+              className="h-10 rounded-xl bg-white pl-9 shadow-sm dark:bg-card"
+            />
+            {query && (
+              <button onClick={() => setQuery("")} aria-label={t("portalApp.announce.dismiss")} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:text-foreground">
+                <Icons.X className="size-4" />
+              </button>
+            )}
+          </div>
+          {filtered.length === 0 && <EmptyMini text={t("portalApp.speakers.noResult")} />}
+          {filtered.map((s) => (
             <div key={s.personId} role="listitem">
             <button onClick={() => setSelected(s.personId)} className="flex w-full items-center gap-3 rounded-xl border bg-white p-3 text-left shadow-sm transition hover:border-teal-300 dark:bg-card">
               <div className="grid size-11 shrink-0 place-items-center overflow-hidden rounded-full border bg-muted">
@@ -2118,9 +2305,17 @@ function SpeakersScreen({ content, onBack }: { content: PortalContent; onBack: (
 }
 
 // ─── SPONSORLAR (§3.3 nav-3) ────────────────────────────────────────────────
-function SponsorsScreen({ content }: { content: PortalContent }) {
+function SponsorsScreen({ content, onBack, onRegisterSubBack }: { content: PortalContent; onBack: () => void; onRegisterSubBack?: (fn: (() => boolean) | null) => void }) {
   const { t } = useLang();
   const [selected, setSelected] = useState<string | null>(null);
+  // sistem geri/swipe önce açık detayı kapatır (ekrandan çıkarmaz)
+  useEffect(() => {
+    onRegisterSubBack?.(() => {
+      if (selected) { setSelected(null); return true; }
+      return false;
+    });
+    return () => onRegisterSubBack?.(null);
+  }, [selected, onRegisterSubBack]);
   const sponsors = content.sponsors ?? [];
   const current = sponsors.find((s) => s.organizationId === selected);
   // katman gruplama — liste küçük olduğundan memo gerektirmez (erken-return ile uyumlu)
@@ -2171,7 +2366,7 @@ function SponsorsScreen({ content }: { content: PortalContent }) {
   }
 
   return (
-    <ScreenShell title={t("portalApp.sponsors.title")} icon={<Icons.Handshake className="size-4" />}>
+    <ScreenShell title={t("portalApp.sponsors.title")} onBack={onBack} icon={<Icons.Handshake className="size-4" />}>
       {sponsors.length === 0 ? (
         <EmptyMini text={t("portalApp.sponsors.empty")} />
       ) : (
@@ -2213,11 +2408,11 @@ function SponsorsScreen({ content }: { content: PortalContent }) {
 }
 
 // ─── YER PLANI (§3.3 nav-4) ─────────────────────────────────────────────────
-function VenueMapScreen({ content }: { content: PortalContent }) {
+function VenueMapScreen({ content, onBack }: { content: PortalContent; onBack: () => void }) {
   const { t } = useLang();
   const map = content.config!.venueMap;
   return (
-    <ScreenShell title={t("portalApp.map.title")} icon={<Icons.Map className="size-4" />}>
+    <ScreenShell title={t("portalApp.map.title")} onBack={onBack} icon={<Icons.Map className="size-4" />}>
       {content.edition.venueName && (
         <div className="mb-2 flex items-center gap-2 rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
           <Icons.MapPin className="size-4 shrink-0 text-teal-600" />
@@ -2239,7 +2434,7 @@ function VenueMapScreen({ content }: { content: PortalContent }) {
 }
 
 // ─── Q&A (§3.2 widget) ──────────────────────────────────────────────────────
-function QaScreen({ content, sessionKey, onSubmitted, onGameRefresh }: { content: PortalContent; sessionKey: string | null; onSubmitted?: () => void; onGameRefresh?: () => void }) {
+function QaScreen({ content, sessionKey, onBack, onSubmitted, onGameRefresh }: { content: PortalContent; sessionKey: string | null; onBack: () => void; onSubmitted?: () => void; onGameRefresh?: () => void }) {
   const { t } = useLang();
   const { toast } = useToast();
   const program = content.program ?? [];
@@ -2282,7 +2477,7 @@ function QaScreen({ content, sessionKey, onSubmitted, onGameRefresh }: { content
   };
 
   return (
-    <ScreenShell title={t("portalApp.qa.title")} icon={<Icons.MessageCircleQuestion className="size-4" />}>
+    <ScreenShell title={t("portalApp.qa.title")} onBack={onBack} icon={<Icons.MessageCircleQuestion className="size-4" />}>
       <div className="rounded-xl border bg-white p-3 shadow-sm dark:bg-card">
         <div className="space-y-2.5">
           <div className="space-y-1.5">
@@ -2360,11 +2555,13 @@ function FormsScreen({
   content,
   gameData,
   accent,
+  onBack,
   onOpenForm,
 }: {
   content: PortalContent;
   gameData: GameData | null;
   accent: string;
+  onBack: () => void;
   onOpenForm: (id: string | null) => void;
 }) {
   const { t } = useLang();
@@ -2424,7 +2621,7 @@ function FormsScreen({
   };
 
   return (
-    <ScreenShell title={t("portalApp.forms.title")} icon={<Icons.ClipboardList className="size-4" />}>
+    <ScreenShell title={t("portalApp.forms.title")} onBack={onBack} icon={<Icons.ClipboardList className="size-4" />}>
       {forms.length === 0 ? (
         <EmptyMini text={t("portalApp.forms.empty")} />
       ) : gameOn ? (
@@ -2452,7 +2649,7 @@ function FormsScreen({
 }
 
 // ─── B2B GÖRÜŞMELER (§4.1 — yalnız AUTH) ────────────────────────────────────
-function B2bScreen({ content, sessionKey, onChanged, onGotoLogin }: { content: PortalContent; sessionKey: string | null; onChanged: () => void; onGotoLogin: () => void }) {
+function B2bScreen({ content, sessionKey, onBack, onChanged, onGotoLogin }: { content: PortalContent; sessionKey: string | null; onBack: () => void; onChanged: () => void; onGotoLogin: () => void }) {
   const { t } = useLang();
   const { toast } = useToast();
   const meetings = content.b2b ?? [];
@@ -2462,7 +2659,7 @@ function B2bScreen({ content, sessionKey, onChanged, onGotoLogin }: { content: P
 
   if (content.session?.kind !== "AUTH") {
     return (
-      <ScreenShell title={t("portalApp.b2b.title")} icon={<Icons.Handshake className="size-4" />}>
+      <ScreenShell title={t("portalApp.b2b.title")} onBack={onBack} icon={<Icons.Handshake className="size-4" />}>
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center dark:border-amber-900 dark:bg-amber-950/40">
           <Icons.Lock className="mx-auto size-5 text-amber-600" />
           <p className="mt-1.5 text-xs font-medium">{t("portalApp.b2b.authOnly")}</p>
@@ -2496,7 +2693,7 @@ function B2bScreen({ content, sessionKey, onChanged, onGotoLogin }: { content: P
   };
 
   return (
-    <ScreenShell title={t("portalApp.b2b.title")} icon={<Icons.Handshake className="size-4" />}>
+    <ScreenShell title={t("portalApp.b2b.title")} onBack={onBack} icon={<Icons.Handshake className="size-4" />}>
       {meetings.length === 0 ? (
         <EmptyMini text={t("portalApp.b2b.empty")} />
       ) : (
@@ -2574,6 +2771,7 @@ function ProfileScreen({
   content,
   kind,
   accent,
+  onBack,
   onLogout,
   onNavigate,
   onOpenForm,
@@ -2584,6 +2782,7 @@ function ProfileScreen({
   content: PortalContent;
   kind: "GUEST" | "AUTH" | null;
   accent: string;
+  onBack: () => void;
   onLogout: () => void;
   onNavigate: (s: string) => void;
   onOpenForm: (id: string | null) => void;
@@ -2631,7 +2830,7 @@ function ProfileScreen({
   };
 
   return (
-    <ScreenShell title={t("portalApp.profile.title")} icon={<Icons.UserRound className="size-4" />}>
+    <ScreenShell title={t("portalApp.profile.title")} onBack={onBack} icon={<Icons.UserRound className="size-4" />}>
       {kind === "GUEST" || kind === null ? (
         /* ── ANONİM: giriş çağrısı + kayıt formu (§2) ── */
         <div className="space-y-3">
@@ -2822,6 +3021,7 @@ function GameScreen({
   data,
   accent,
   confettiKey,
+  onBack,
   onRefresh,
   onOpenForm,
   onNavigate,
@@ -2829,6 +3029,7 @@ function GameScreen({
   data: GameData | null;
   accent: string;
   confettiKey: number;
+  onBack: () => void;
   onRefresh: () => void;
   onOpenForm: (id: string | null) => void;
   onNavigate: (s: string) => void;
@@ -2836,7 +3037,7 @@ function GameScreen({
   const { t } = useLang();
   if (!data) {
     return (
-      <ScreenShell title={t("portalApp.game.title")} icon={<Icons.Trophy className="size-4" />}>
+      <ScreenShell title={t("portalApp.game.title")} onBack={onBack} icon={<Icons.Trophy className="size-4" />}>
         <EmptyMini text={t("portalApp.game.disabled")} />
       </ScreenShell>
     );
@@ -2845,6 +3046,7 @@ function GameScreen({
     <ScreenShell
       title={t("portalApp.game.title")}
       icon={<Icons.Trophy className="size-4" />}
+      onBack={onBack}
       action={
         <button onClick={onRefresh} aria-label={t("portalApp.game.refresh")} className="grid size-8 place-items-center rounded-lg border bg-white shadow-sm transition hover:bg-muted active:scale-95 dark:bg-card">
           <Icons.RotateCcw className="size-4" />

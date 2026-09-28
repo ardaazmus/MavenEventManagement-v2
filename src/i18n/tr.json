@@ -2939,6 +2939,7 @@
     },
     "home": {
       "upNext": "Sıradaki oturum",
+      "liveNow": "Şimdi devam ediyor",
       "sponsorsTitle": "Sponsorlarımız",
       "sponsorsDesc": "{count} destekçi kurum"
     },
@@ -2982,12 +2983,16 @@
       "title": "Genel Program",
       "empty": "Yayınlanmış oturum bulunmuyor — program yakında burada.",
       "speakers": "Konuşmacılar",
+      "liveNow": "ŞİMDİ",
+      "day": "Gün {n}",
       "ics": "Takvime Ekle"
     },
     "speakers": {
       "title": "Konuşmacılar",
       "detail": "Konuşmacı Detayı",
       "empty": "Programa atanan konuşmacı bulunmuyor.",
+      "search": "Konuşmacı, unvan ya da kurum ara…",
+      "noResult": "Aramayla eşleşen konuşmacı bulunamadı.",
       "sessions": "Katıldığı oturumlar ({count})",
       "noSession": "Atanmış oturum yok"
     },

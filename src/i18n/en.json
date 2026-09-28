@@ -2939,6 +2939,7 @@
     },
     "home": {
       "upNext": "Up next",
+      "liveNow": "Happening now",
       "sponsorsTitle": "Our sponsors",
       "sponsorsDesc": "{count} supporting organizations"
     },
@@ -2982,12 +2983,16 @@
       "title": "Agenda",
       "empty": "No published sessions yet — the agenda will appear here soon.",
       "speakers": "Speakers",
+      "liveNow": "LIVE",
+      "day": "Day {n}",
       "ics": "Add to Calendar"
     },
     "speakers": {
       "title": "Speakers",
       "detail": "Speaker Detail",
       "empty": "No speakers assigned to the program.",
+      "search": "Search name, title or company…",
+      "noResult": "No speakers match your search.",
       "sessions": "Sessions ({count})",
       "noSession": "No assigned sessions"
     },

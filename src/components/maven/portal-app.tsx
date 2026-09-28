@@ -532,10 +532,8 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   const [content, setContent] = useState<PortalContent | null>(null);
   const [kind, setKind] = useState<"GUEST" | "AUTH" | null>(null);
   // ── gezinme yığını: her ekranın "önceki sayfa"sı buradan çözülür (kök: home) ──
-  const [nav, setNav] = useState<string[]>(() => {
-    if (typeof window === "undefined") return [PORTAL_NAV_ROOT];
-    return resetNav(parseNavHash(window.location.hash) ?? PORTAL_NAV_ROOT);
-  });
+  const [nav, setNav] = useState<string[]>(() => [PORTAL_NAV_ROOT]);
+  // reload→home: hash yalnizca popstate esitlemesi icindir (derin-bag cozulmez)
   const screen = nav[nav.length - 1] ?? PORTAL_NAV_ROOT;
   // detay-içi geri (konuşmacı/sponsor detayı): açık detay önce kapanır, sonra yığın pop'lanır
   const subBackRef = useRef<(() => boolean) | null>(null);
@@ -988,7 +986,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   // sistem geri/ileri tuşu (Android gesture + tarayıcı) — yığınla eşitle
   useEffect(() => {
     if (phase !== "ACTIVE") return;
-    mirrorHistory(screen, "replace"); // ilk girişi çapala (derin-bağ hash'i dahil)
+    mirrorHistory(screen, "replace"); // ilk girişi çapala (popstate eşitlemesi için)
     const onPop = (e: PopStateEvent) => {
       const target = (e.state as { portal?: unknown } | null)?.portal;
       if (typeof target !== "string") return; // portal öncesi sayfa — tarayıcıya bırak

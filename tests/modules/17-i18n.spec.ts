@@ -56,5 +56,5 @@ test("FULL — admin EN geçişi → htmlLang=en → portal EN etiketleri → TR
 
 test("FULL — sözlük simetrisi: i18n bakım kapısı (tırmık) 0 ihlal", async () => {
   // bake script'in simetri denetimi — tırmık aşılırsa exit 1 (test kırmızı)
-  expect(() => execSync("node scripts/i18n-hardcoded-scan.mjs", { cwd: "/home/z/my-project", stdio: "pipe" })).not.toThrow();
+  expect(() => execSync("node scripts/i18n-hardcoded-scan.mjs", { cwd: process.cwd(), stdio: "pipe" })).not.toThrow();
 });

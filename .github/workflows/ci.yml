@@ -50,10 +50,13 @@ jobs:
         run: npm run test:unit
 
       - name: 6. Static Analysis (ESLint)
-        run: npm run lint || true
+        run: npm run lint
+
+      - name: 6b. Architecture Gate (dependency-cruiser)
+        run: npm run lint:arch
 
       - name: 7. Hardcoded i18n Scan
-        run: npm run i18n:scan || true
+        run: npm run i18n:scan
 
       - name: 8. Production Standalone Build
         run: npm run build

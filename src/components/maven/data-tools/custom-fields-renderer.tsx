@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { isFieldVisible } from "./condition-evaluator";
+import { useLang } from "@/lib/i18n";
 
 export interface CustomFieldDef {
   id: string;
@@ -34,6 +35,7 @@ export function CustomFieldsRenderer({
   onChange,
   allFormData = {},
 }: CustomFieldsRendererProps) {
+  const { t } = useLang();
   const [definitions, setDefinitions] = useState<CustomFieldDef[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -128,7 +130,7 @@ export function CustomFieldsRenderer({
                 </Label>
                 <Select value={String(val || "")} onValueChange={(next) => onChange(def.key, next)}>
                   <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Seçiniz..." />
+                    <SelectValue placeholder={t("customFields.selectPh")} />
                   </SelectTrigger>
                   <SelectContent>
                     {options.map((opt, i) => (

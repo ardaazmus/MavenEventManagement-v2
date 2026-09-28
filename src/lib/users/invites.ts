@@ -36,7 +36,7 @@ export class InviteError extends Error {
   }
 }
 
-const INVITABLE_ROLES = new Set([
+export const INVITABLE_ROLES = new Set([
   "ORG_ADMIN",
   "EVENT_MANAGER",
   "FINANCE_MANAGER",

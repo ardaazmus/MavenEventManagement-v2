@@ -8,6 +8,7 @@ import { verifyPassword } from "@/lib/auth/password";
 import { verifyTotp, hashRecoveryCode } from "@/lib/auth/totp";
 import { decryptSecret } from "@/lib/secrets";
 import { sessionCookieHeader, SESSION_TTL_SECONDS, mfaPendingCookieHeader } from "@/lib/auth/session";
+import { selectLoginCandidate } from "@/lib/auth/login-candidates";
 import { enforceRateLimit, enforceRateLimitById } from "@/lib/rate-limit";
 
 const MAX_FAILED = 5;
@@ -22,33 +23,59 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
 
   try {
-    const body = (await req.json()) as { email?: string; password?: string; totp?: string; recoveryCode?: string };
+    const body = (await req.json()) as { email?: string; password?: string; totp?: string; recoveryCode?: string; tenantSlug?: string };
     const email = body.email?.trim().toLowerCase();
     if (!email || !body.password) return NextResponse.json({ error: "E-posta ve parola zorunlu" }, { status: 400 });
     const deniedUser = enforceRateLimitById(req, { key: "auth-login", limit: 5, windowMs: 900_000, scopeId: email });
     if (deniedUser) return deniedUser; // aynı kimliğe daha sıkı kova — stuffing/brute denemesi IP değiştirse de yakalanır
 
-    const user = await db.user.findFirst({ where: { email } });
-    if (!user) return NextResponse.json({ error: "E-posta veya parola hatalı" }, { status: 401 }); // varlık ifşa edilmez
-    if (user.lockedUntil && user.lockedUntil > new Date()) {
-      return NextResponse.json({ error: `Hesap kilitli — ${user.lockedUntil.toLocaleTimeString("tr-TR")} kadar` }, { status: 423 });
+    // N-03: e-posta kiracılar-arası yinelenebilir — parola HER adayda denenir,
+    // tek eşleşme kazanır; çoklu eşleşme tenantSlug ister (yanlış-kiracı girişi yok).
+    const candidates = await db.user.findMany({
+      where: { email },
+      select: {
+        id: true, tenantId: true, name: true, role: true, status: true,
+        passwordHash: true, mfaSecretCipher: true, mfaEnabled: true, recoveryCodes: true,
+        failedLoginCount: true, sessionVersion: true, lockedUntil: true,
+        tenant: { select: { slug: true } },
+      },
+      orderBy: { createdAt: "asc" },
+      take: 10,
+    });
+    const selection = await selectLoginCandidate(
+      candidates.map((c) => ({ ...c, tenantSlug: c.tenant?.slug ?? null })),
+      (hash, pw) => (hash ? verifyPassword(hash, pw) : Promise.resolve(false)),
+      body.password,
+      body.tenantSlug?.trim() || null,
+    );
+    if (selection.kind === "ambiguous") {
+      return NextResponse.json(
+        { error: "Bu e-posta birden fazla kurumda kayıtlı — giriş için kurum seçin", needTenant: true, tenants: selection.slugs },
+        { status: 409 },
+      );
+    }
+    if (selection.kind === "not-found") {
+      // Başarısız deneme sayaçları TÜM adaylara işlenir (tek-kullanıcı davranışıyla aynı).
+      for (const c of candidates) {
+        if (c.lockedUntil && c.lockedUntil > new Date()) continue;
+        const failed = c.failedLoginCount + 1;
+        await db.user.update({
+          where: { id: c.id },
+          data: {
+            failedLoginCount: failed,
+            lockedUntil: failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null,
+          },
+        });
+      }
+      return NextResponse.json({ error: "E-posta veya parola hatalı" }, { status: 401 }); // varlık ifşa edilmez
+    }
+    const user = candidates.find((c) => c.id === selection.candidate.id)!;
+    if (selection.kind === "locked") {
+      return NextResponse.json({ error: `Hesap kilitli — ${user.lockedUntil!.toLocaleTimeString("tr-TR")} kadar` }, { status: 423 });
     }
     // P06.4b: devre dışı hesap giriş yapamaz (kilit kontrolüyle aynı konumda, 403).
-    if (user.status !== "ACTIVE") {
+    if (selection.kind === "disabled") {
       return NextResponse.json({ error: "Hesap devre dışı bırakıldı" }, { status: 403 });
-    }
-
-    const ok = user.passwordHash ? await verifyPassword(user.passwordHash, body.password) : false;
-    if (!ok) {
-      const failed = user.failedLoginCount + 1;
-      await db.user.update({
-        where: { id: user.id },
-        data: {
-          failedLoginCount: failed,
-          lockedUntil: failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null,
-        },
-      });
-      return NextResponse.json({ error: "E-posta veya parola hatalı" }, { status: 401 });
     }
 
     // TASK-B 12: ZORUNLU MFA — ORG_OWNER/FINANCE_MANAGER mfaEnabled=false ise oturum YOK:

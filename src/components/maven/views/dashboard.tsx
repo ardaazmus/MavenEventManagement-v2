@@ -10,6 +10,7 @@ import * as Icons from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { AnnounceStrip } from "./announce-card";
 
 interface DashData {
   scope: "PORTFOLIO" | "EDITION";
@@ -52,6 +53,8 @@ export function DashboardView() {
         <PageHeader title="Genel Bakış" desc="Tüm etkinlikler, görevler, kuruluşlar ve kişiler — çalışma alanı kapsamında">
           <Button variant="outline" size="sm" onClick={() => setModule("editions")}><Icons.CalendarRange className="size-4" /> Etkinlikler</Button>
         </PageHeader>
+
+        <AnnounceStrip />
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <KpiCard label="Etkinlik" value={data.portfolio?.editionCount ?? 0} sub={`${data.portfolio?.activeEditions ?? 0} aktif edisyon`} icon={<Icons.CalendarRange className="size-4" />} />

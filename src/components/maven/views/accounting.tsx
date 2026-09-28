@@ -683,7 +683,7 @@ export function AccountingView() {
                   { key: "title", placeholder: "Gider Başlığı / Fatura Açıklaması", width: "w-64" },
                   { key: "amount", placeholder: "Tutar (TL)", type: "number", width: "w-28" },
                   { key: "vendor", placeholder: "Tedarikçi Firma", width: "w-40" },
-                  { key: "spentBy", placeholder: "Harcayan Kişi", width: "w-40" },
+                  { key: "spentBy", placeholder: t("accounting.spentByPh"), width: "w-40" },
                 ]}
                 onAdd={async (values) => {
                   if (!currentEditionId || !values.title || !values.amount) return false;
@@ -705,7 +705,7 @@ export function AccountingView() {
                     refreshAll();
                     return true;
                   } catch (e: any) {
-                    toast({ title: "Kayıt Başarısız", description: e.message, variant: "destructive" });
+                    toast({ title: t("accounting.saveFailed"), description: e.message, variant: "destructive" });
                     return false;
                   }
                 }}
@@ -1548,7 +1548,7 @@ export function AccountingView() {
           { key: "title", label: "Gider Başlığı / Açıklama", synonyms: ["title", "başlık", "açıklama", "gider", "tanım", "harcama"], required: true },
           { key: "amount", label: "Tutar (TL)", synonyms: ["amount", "tutar", "bedel", "fiyat", "ücret"], required: true },
           { key: "vendor", label: "Tedarikçi", synonyms: ["vendor", "tedarikçi", "firma", "satıcı", "kurum"] },
-          { key: "spentBy", label: "Harcayan Kişi", synonyms: ["spentby", "harcayan", "personel", "ödeyen"] },
+          { key: "spentBy", label: t("accounting.spentByPh"), synonyms: ["spentby", "harcayan", "personel", "ödeyen"] },
           { key: "category", label: "Kategori", synonyms: ["category", "kategori", "tür", "tip"] },
           { key: "receiptNo", label: "Fiş/Fatura No", synonyms: ["receiptno", "fiş", "fatura", "belge no", "makbuz"] },
         ]}
@@ -1574,10 +1574,10 @@ export function AccountingView() {
               });
               count++;
             } catch (err) {
-              console.error("Toplu gider ekleme hatası:", err);
+              console.error(t("accounting.bulkImportRowError"), err);
             }
           }
-          toast({ title: "Toplu Aktarım Başarılı", description: `${count} adet gider kalemi deftere işlendi.` });
+          toast({ title: t("accounting.bulkImportDone"), description: t("accounting.bulkImportedDesc", { count }) });
           refreshAll();
           return { imported: count };
         }}

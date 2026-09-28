@@ -1,0 +1,5221 @@
+﻿01 — Kaynak analizi ve sektör karşılaştırması
+Kaynak hiyerarşisi
+Birincil iş ilkesi, sağlanan Maven_Event_Management_Ortak_Organizasyonel_Mimari(1).md dosyasındaki 63 başlıktır. Görseller güncel bir örnek admin arayüzünün görünen durumlarını gösterir; işlevlerin çalıştığını, veri modelini veya görünmeyen akışları kanıtlamaz. Aşağıdaki sektörel inceleme ürün kararına ilham verir; rakip davranışının birebir kopyalanmasını önermez. Kaynaklar 23.09.2026 tarihinde incelendi.
+Sağlanan ekranların izlenebilir envanteri
+Görsel
+	Ekranda gözlenen odak
+	Ürün tasarımında bağlanacağı temel kayıt
+	Açık UX ihtiyacı
+	dashboard(2).png
+	Etkinlik dashboard'u, ilerleme/kurulum kartları
+	EventEdition, readiness
+	Her kurulum kartından eksik işe geçiş
+	dashboard (1)(2).png
+	Gelir ve kayıt analitik kartları, grafik alanları
+	Registration, Order, Payment, Attendance
+	Kart tanımı, sıfır/payda, ayrıntı
+	api-dashboard(2).png
+	API paneli ve kullanım göstergeleri
+	Yönetimsel entegrasyon görünümü
+	Organizasyonel kullanım/sağlık; teknoloji ayrıntısı bu çalışmanın dışında
+	ana-sayfa(2).png, ana-sayfa (1)(1).png
+	Konaklama yönetimi özetleri
+	RoomBlock, Reservation, Stay
+	Oda-gece ve rezervasyon ayrımı
+	katilimci-listesi (1)(2).png
+	Kayıt yönetimi sayaç, filtre ve liste
+	EventParticipation, Registration
+	Çok eksenli durum ve kişi 360
+	liste(2).png
+	Bildiri listesi ve özet kartlar
+	Submission, Review, Decision
+	Bilimsel karar ve program slotunu ayırma
+	yonetim(1).png
+	Poster yönetiminde tablo ve görünürlük
+	Presentation, PosterAsset
+	Yayın görünürlüğü ile kabul kararını ayırma
+	oturumlar(1).png
+	Program/oturum arama ve oluşturma
+	Session, Slot, Room
+	Çakışma ve atama takvimi
+	SunumKontrol(1).png
+	Sunum kontrolü özet ve boş liste
+	PresentationAsset, Review
+	Dosya/AV kontrol görevleri
+	odemeler(1).png
+	Ödeme satırları ve durum filtreleri
+	Order, Payment, Refund
+	Sipariş, tahsilat, iade, manuel teyit
+	LCV-Yonetimi(1).png
+	LCV davet/yanıt özetleri
+	Invitation, RSVP
+	Davet ile kayıt ve giriş farkı
+	portal(1).png
+	Sponsor portalı boş durum
+	OrganizationAssignment, Entitlement
+	Rol kapsamında ilerleme ve hak kullanımı
+	ekhizmetler(2).png
+	Ek hizmetler kategori sekmeleri
+	CatalogItem, EntitlementClaim
+	Hak ve ücretli seçenek aynı seçimde
+	onsite-kontrol(1).png
+	Onsite kontrol boş durum
+	Credential, CheckInEvent
+	Kapı ve oturum taraması farkı
+	eposta-iletişim-kampanya(2).png
+	İletişim modülü boş durumu
+	AudienceSegment, Campaign
+	Segment, önizleme, gönderim ve sonuç
+	genel-bakis(2).png
+	Sertifikalar özet ve liste
+	CertificateEligibility, Certificate
+	Uygunluk kuralı ve belge gönderimi
+	
+
+Görünürlük sınırı: Görsellerin bir kısmında sayaçlar sıfır ve boş durumlar var. Metin küçük olduğu için pikselden kesin alan adı/iş kuralı çıkarılmıyor. Özellikle “API Dashboard” ekranından teknik mimari çıkarılmıyor. Ekranların birbirine bağlılığı bu belgede önerilen ürün kurgusudur.
+Sektörel karşılaştırma ve Maven'e uyarlama
+Ürün ve gözlenen güçlü çözüm
+	Kaynak
+	Maven için ürün kararı
+	Cvent: kayıt, check-in, oturum katılımı ve raporlamayı etkinlik ve etkinlikler arası ölçüyor
+	Cvent özellikleri, raporlama
+	Tek etkinlik ve portföy dashboard'u; oturum katılımı etkinlik girişinden ayrı
+	Whova: kişisel gündem, iletişim, sponsor/katılımcı etkileşimi ve etkinlik sonrası rapor
+	Whova ürün, uygulama deneyimi, rapor
+	Katılımcı portalında “programım”; sponsor için izinli etkileşim; hazır kapanış raporu
+	Bizzabo: özelleştirilen kayıt akışı, onsite kimlik/badge ve etkileşim analitiği
+	kayıt, onsite, analitik
+	Kayıt formu öngörüsü, erişim kontrolü ve sahada canlı operasyon
+	Eventbrite: sipariş formunda katılımcı bazında özel sorular, canlı kayıt ve check-in
+	form, kontrol
+	Alıcı bilgisi ile her katılımcı cevabını açık ayırma
+	Splash: koşullu soru gösterimi ve yanıt bazlı kişisel deneyim
+	koşullu form
+	Soru tasarımcısında koşul simülasyonu ve alternatif yol testi
+	pretix: kapasite, bekleme listesi, soru ve check-in kurallarını birlikte ele alıyor
+	kavramlar, sorular, bekleme listesi
+	Kapasite dolunca açık bekleme listesi, teklif süresi ve cevap hatırlatması
+	
+
+Bu son sütunlar kaynaklardan yapılan tasarım çıkarımıdır, ürünlerin aynı işlemi tam olarak aynı şekilde uyguladığını iddia etmez. Ürünlerin pazarlama sayfalarındaki yetenek listeleri doğrulanmış kullanıcı araştırmasının yerine geçmez.
+Kaynak MD'den devralınan bağlayıcı ayrımlar
+Person ≠ EventParticipation ≠ Registration ≠ EventRole ≠ Payment; seri/edisyon; kuruluş/etkinlik rolü; sponsorluk paketi/tekil hak; bildiri kararı/program ataması; oda stoğu/gecelik konaklama; stant ticari tahsisi/Floor Studio geometrisi. Tek status, ücretli=ödenmiş veya tek Participant nesnesi gibi kısayollar yasak tasarım örnekleridir.
+Doğrulanması gereken araştırma soruları
+1. Bir tenant birden fazla müşterinin etkinliğini mi yönetiyor; müşterinin panel erişimi hangi düzeyde?
+2. Katılımcı kaydında onay olmadan ödeme alınan etkinlikler olacak mı?
+3. Veri sahibi ve iletişim izinleri ülke/organizasyon bazında nasıl tanımlanacak?
+4. Aynı kişi için bir etkinlikte birden çok ücretli kayıt ve dönüşüm hangi koşullarda kabul edilir?
+5. Oturum bazında koltuk, davetli kontenjanı ve salona girişin hangileri zorunlu?
+6. Bilimsel değerlendirmede körlük ve çıkar çatışması kimin tarafından ilan edilir?
+7. Stand haritasının katılımcı tarafındaki yayımlanma anı ve onay sahibi kim?
+8. İade, sponsor hakkı geri alma ve sertifika iptali kararlarını kim verir?
+İlk saha çalışması
+Bir kongre PCO'su, bir fuar operasyoncusu, bir kurum içi etkinlik ekibi ve bir kayıt masası sorumlusu ile görev bazlı görüşme; ardından 10 senaryo üzerinde tıklanabilir prototip testi. Özellikle karma rol, ücretsiz ama sponsor fonlu kayıt, oda arkadaşı, kısmi iade, aynı kişinin yeniden giriş taraması ve revize edilen bildirinin programa alınması senaryoları ölçülür.
+
+
+________________
+
+
+02 — Organizasyonel bilgi modeli ve kavramsal ilişkiler
+Bu bir ürün bilgi şemasıdır: ekranların hangi kayıtları okuduğu ve hangi hareketlerin hangi anlamı değiştirdiği. SQL sütunu, servis, endpoint ve depolama tercihi değildir. Kaynak: ana MD'nin 1–60. bölümleri.
+Hiyerarşi ve aidiyet
+Kavram
+	Tek cümlelik anlam
+	Üst kayıt
+	Örnek ekranda görünme
+	Platform
+	Birden çok müşteri çalışma alanı
+	—
+	Platform yönetimi
+	Tenant
+	Organizatörün izole çalışma alanı
+	Platform
+	Üst bağlam seçici
+	Organization
+	Kurumun kalıcı profili
+	Tenant
+	Sponsor/tedarikçi/ev sahibi arama
+	Person
+	Kişinin tenant içindeki kimliği
+	Tenant
+	Kişi 360
+	EventSeries
+	Yıllar arasında devam eden etkinlik markası
+	Tenant
+	Seri seçici
+	EventEdition
+	Tarihli gerçek etkinlik
+	Seri veya bağımsız
+	Tüm etkinlik ekranları
+	EventParticipation
+	Kişinin belirli edisyondaki bağı
+	Person + Edition
+	Katılımcı 360 üst başlığı
+	Kavramsal kayıt kartları ve bağlar
+İş kaydı
+	Ayırt edici bilgi
+	Bağlar ve çokluk
+	Sahip ekran
+	EventOrganizationAssignment
+	Kuruluş, edisyon, rol, geçerlilik
+	Bir kurum/etkinlikte birden çok rol
+	Kuruluşlar / etkinlik ekibi
+	EventProfileSnapshot
+	Rozet adı, o etkinlikteki kurum/unvan, özel cevap
+	Bir katılıma bağlı sürümlü görünüm
+	Kişi 360
+	Registration
+	Kategori, kaynak, başvuru durumu, tarih
+	Katılıma bağlı bir veya izinliyse birden çok kayıt
+	Kayıtlar
+	EventRoleAssignment
+	Konuşmacı, yazar, VIP, hakem vb.
+	Katılım başına çok rol
+	Rol ve görevler
+	Invitation / RSVP
+	Hedef, kanal, davet zamanı, LCV yanıtı
+	Bir katılım veya davetli iletişim kaydı; kayda dönüşebilir
+	LCV
+	FormDefinition / FormVersion
+	Hedef kitle, soru sırası, koşullar
+	Yayınlanmış kayıt sürümüne cevaplar bağlanır
+	Form tasarımcısı
+	FormAnswer
+	Soru sürümü, yanıt, kime ait, zaman
+	Sipariş alıcısı / her katılımcı / kurum ayrımı
+	Form cevapları
+	CatalogItem / PriceRule
+	Kategori, ürün, dönem, para birimi, kota
+	Kayıt seçimine ve sipariş satırına kaynak
+	Bilet/ek hizmet
+	Order / OrderLine
+	Ödeyen, toplam ve kalemler
+	Bir veya çok kayıt/rezervasyon kalemi
+	Ödemeler
+	Payment / Refund
+	Tahsilat/iade tutarı, tarih ve teyit
+	Siparişle çok ödeme ve kısmi iade
+	Ödemeler
+	Entitlement / Claim
+	Hak kaynağı, miktarı, koşulu, kullanımı
+	Sponsor/konuşmacı/paket → katılım veya kaynak
+	Haklar
+	Submission / AuthorRelation
+	Bildiri, yazar, sunucu, tür, konu
+	Başvuran kişi, harici ortak yazarlar olabilir
+	Bilimsel
+	Review / Decision
+	Hakem görevi, değerlendirme, bilimsel karar
+	Bir bildiriye çok inceleme; karar sürümlü
+	Bilimsel
+	Session / Slot / ProgramAssignment
+	Salon, zaman, konu ve kişi rolü
+	Bir oturumda çok slot ve kişi
+	Program
+	Hotel / RoomBlock / InventoryNight
+	Otel, oda tipi, gün ve sayı
+	Oda stoğu tarih bazlı
+	Konaklama
+	Reservation / OccupancySlot
+	Varış, çıkış, konuk, oda arkadaşı, ödeyen
+	Bir rezervasyon birden çok gece ve konuk
+	Konaklama
+	Credential / CheckInEvent
+	Geçiş hakkı, kapı/oturum, tarama zamanı
+	Bir katılıma birden çok denetim olayı
+	Onsite
+	CertificateEligibility / Certificate
+	Kural, uygunluk, üretim/teslim
+	Katılım ve gerekiyorsa oturum katılımına bağlı
+	Sertifika
+	SponsorAgreement / Deliverable
+	Paket sözleşmesi ve yapılacak iş
+	Kurum, etkinlik, haklar ve yerleşimler
+	Sponsor
+	BoothAllocation / SpatialResource
+	Ticari stant ataması ve mekânsal işaret
+	Tahsis Maven'de, şekil Floor Studio'da
+	Fuar/Floor Studio
+	Campaign / AudienceSegment
+	Alıcıların sabitlenmiş ölçütü, gönderim
+	Kayda/role/duruma göre seçilen katılımlar
+	İletişim
+	Kimlik ve ilişki kuralları
+1. Aynı e-posta kişi eşleştirme için güçlü bir işarettir, kesin kimlik değildir; yönetici adayları karşılaştırır ve geçmişi koruyarak birleştirir.
+2. Kurumun “sponsor” niteliği ana kurum türü olarak yazılmaz; belirli edisyona bir rol atamasıdır.
+3. Kişi profilinin güncellenmesi geçmiş rozet/raporu geriye dönük değiştirmez. Etkinlik anındaki onaylanmış görünüm ayrıca korunur.
+4. Bir siparişi bir kurumsal alıcı ödeyebilir, satırları farklı katılımcılara ait olabilir. LCV yanıtı, katılımcı kaydı ve ödeme birbirine dönüşmez.
+5. Sponsorun 20 kayıt hakkı ile 14 kullanılan hak görünür; hakkın kullanılması ödenmiş bir finansal işlem gibi gösterilmez.
+6. Kabul edilmiş sözlü bildiri, oturum planında otomatik yer almaz; program görevi bekler.
+7. 12 m² stant hakkı A24 standı değildir; ayrılan stant, Floor Studio'daki şekle bağlanabilir.
+8. Check-in olayı tekrarlandığında ilk geçerli giriş ve tekrar tarama ayrılır; geçmiş giriş silinmez.
+Durum matrisi: birbirine karıştırılmayan eksenler
+Eksen
+	Önerilen görünür durumlar
+	İlerletici olay
+	Geri alma / istisna
+	Kayıt
+	Taslak, gönderildi, onay bekliyor, onaylandı, reddedildi, iptal
+	Form gönderimi / organizatör onayı
+	İptal gerekçesi, yeniden açma yetkisi
+	Ödeme
+	Gerekmez, bekliyor, kısmi, ödendi, başarısız, kısmi iade, iade
+	Tahsilat teyidi
+	İade ile kaydı otomatik iptal etme
+	LCV
+	Davetli, teslim, yanıt bekliyor, gelecek, gelmeyecek
+	Davetli yanıtı
+	Yanıt değiştirme süresi
+	Bildiri
+	Taslak, gönderildi, incelemede, revizyon, kabul, ret, çekildi
+	Hakem/komite kararı
+	Kararı gerekçe ile revize etme
+	Program
+	Taslak, atandı, onaylandı, yayınlandı, iptal
+	Slot/konuşmacı onayı
+	Geçmiş yayını görünür tutma
+	Konaklama
+	Talep, bekleme, ayrıldı, teyit, giriş, çıkış, iptal
+	Oda stoğu ve otel onayı
+	Oda-geceyi serbest bırakma
+	Badge
+	Uygun değil, hazır, basıldı, yeniden basıldı, geçersiz
+	Hak kontrolü / baskı
+	Yeniden baskı gerekçesi
+	Katılım
+	Gelmedi, giriş, çıkış, no-show
+	Sahadaki geçerli tarama
+	Yanlış taramayı gerekçeli düzeltme
+	Sertifika
+	Uygun değil, uygun, oluşturuldu, gönderildi, iptal
+	Uygunluk kuralının sağlanması
+	Yeniden değerlendirme kaydı
+	Ekranlar arasında “haberleşme” sözleşmesi
+Kullanıcının eylemi
+	Değişen iş kaydı
+	Etkilenen ekran / bildirim
+	Kontrol
+	Kayıt kategorisini değiştirme
+	Registration + fiyat/erişim uygunluğu
+	Kişi 360, ödeme özeti, program hakları, filtreler
+	Var olan sipariş ve hak için onay ekranı
+	Onaylı kayıt oluşturma
+	Registration
+	Katılımcı listesi, rozet uygunluğu, iletişim kitlesi
+	Ödeme gereksinimi ayrıca hesaplanır
+	Sponsor misafirini ekleme
+	Participation + Claim + Registration
+	Sponsor kalan hak, liste, rozet
+	Kota ve uygun kategori
+	Ödeme alma / iadeyi onaylama
+	Payment/Refund
+	Tahsilat dashboard'u, sipariş, katılımcı kartı
+	Çifte tahsilat ve kısmi iade görünür
+	Bildiriyi kabul etme
+	Decision
+	Sunum havuzu, konuşmacı daveti
+	Otomatik program slotu oluşturulmaz
+	Oturuma yerleştirme
+	ProgramAssignment
+	Program, kişisel gündem, salon kapasitesi
+	Kişi/salon/zaman çakışması
+	Otel rezervasyonu
+	Reservation + gecelik stok kullanımı
+	Konaklama doluluğu, katılımcı portalı
+	Her gece için yeterli stok
+	Kapıdan giriş
+	CheckInEvent
+	Canlı onsite, katılım ve belge uygunluğu
+	Kategori ve geçiş yetkisi
+	Kampanya yollama
+	Campaign
+	Teslim/yanıt paneli, kişi iletişim geçmişi
+	Onaylı hedef kitle anlık önizleme
+	360 ekranları
+Kişi 360: üstte kimlik, edisyon, kaynak ve roller; sekmelerde kayıt/form cevapları, sipariş/ödeme, haklar, bildiri, program, otel, taramalar, iletişim, sertifika, değişiklik geçmişi. Her satır “kaynak ekranına git” bağlantısı taşır. Kurum 360: kalıcı profil, etkinlik rolleri, sözleşmeler, haklar, stand tahsisleri, personel, faturalar, kampanya/teslimler. Üst seviyedeki bilgilerden yalnızca yetkili bağlamda düzenleme açılır.
+
+
+________________
+
+
+03 — Bilgi mimarisi, yetki ve navigasyon
+Bağlam ve ana menü
+Üst şerit: Çalışma alanı > Etkinlik serisi > Ediyon seçici, edisyon tarihleri/durum rozeti, arama, görevler, bildirimler, yardım ve profil. Edisyon değiştirilince ekran başlığı ve filtreler açıkça güncellenir; kaydedilmemiş form varsa geçiş öncesi uyarı. Etkinlikler arası sonuç ekranı farklı renkte değil, belirgin “Tüm etkinlikler” kapsam etiketiyle gösterilir.
+
+
+Seviye
+	Menü
+	Alt ekranlar ve ana eylem
+	Görünürlük
+	Çalışma alanı
+	Genel bakış
+	Tüm etkinlikler, görevler, kuruluşlar, kişiler, şablonlar
+	Tenant yetkisine göre
+	Edisyon
+	Başlangıç
+	Hazırlık checklist, dönüm noktaları, canlı uyarılar
+	Her edisyon
+	Edisyon
+	Etkinlik ayarları
+	Kimlik, tarih, yer, ekip, yayın, modül seçimleri
+	Her edisyon
+	Edisyon
+	Kayıt & katılımcılar
+	Kategoriler, fiyat, formlar, liste, kişi 360, LCV
+	Registration/Invitation açıkken
+	Edisyon
+	Bilimsel
+	Çağrı, bildiri, hakem, karar, poster/sunum kontrol
+	Scientific açıkken
+	Edisyon
+	Program
+	Oturum, salon, görevli, çakışma, kişisel program
+	Program açıkken
+	Edisyon
+	Sponsor & fuar
+	Sözleşme, hak, portal, stant, teslimat
+	Sponsorship/Exhibition açıkken
+	Edisyon
+	Konaklama & seyahat
+	Otel, gecelik stok, rezervasyon, transfer
+	İlgili özellik açıkken
+	Edisyon
+	Ödeme & ek hizmet
+	Sipariş, tahsilat, iade, katalog, hak tüketimi
+	Finance/Catalog açıkken
+	Edisyon
+	İletişim
+	Segment, şablon, kampanya, gönderim sonuçları
+	Communications açıkken
+	Edisyon
+	Sahada
+	Check-in, rozet, kapılar, hatalar, canlı görünüm
+	Onsite açıkken
+	Edisyon
+	Belgeler
+	Sertifika, kredi kuralı, gönderim
+	Certificates açıkken
+	Edisyon
+	Analitik
+	Kayıt, gelir, program, sponsor, anket, kapanış
+	Yetki bazlı
+	
+
+Menü ilkesi: kapalı yeteneğin menüsü baştan gizlenir; bağlantı üzerinden gelen yetkisiz kullanıcıya neden göremediği ve kime başvuracağı açıklanır. Yakın modüllerde menü kalabalığını azaltmak için ikinci seviye sekme, üçüncü seviyede içerik içi adım kullanılır. Listeler aynı arama/filtre/kayıtlı görünüm/ayrıntı çekmecesi dilini paylaşır.
+Rol ve izin tablosu
+Rol
+	Alan
+	Okur
+	Değiştirir
+	Özellikle görmez / yapamaz
+	Platform sorumlusu
+	Platform
+	Hesap/tenant durumu
+	Destek kapsamı
+	Etkinlik finansını varsayılan olarak görmez
+	Tenant sahibi
+	Çalışma alanı
+	Tüm ilgili kayıtlar
+	Ekip, şablon, yetki
+	Denetim geçmişini silemez
+	Event yöneticisi
+	Atanan edisyon
+	Tüm operasyon
+	Kurulum, yayın, görev atama
+	Tenant sahipliğini değiştiremez
+	Kayıt sorumlusu
+	Edisyon
+	Kişi/kayıt/LCV
+	Kayıt onayı, kategori
+	Tahsilat teyidi yetki yoksa yapamaz
+	Finans sorumlusu
+	Edisyon
+	Sipariş/tahsilat
+	Manuel teyit, iade talebi/onayı
+	Bilimsel karara dokunamaz
+	Bilimsel komite
+	Edisyon
+	İzinli bildiri ve değerlendirme
+	Karar, atama
+	Kör değerlendirmede kapalı kimliği görmez
+	Program sorumlusu
+	Edisyon
+	Kabul edilmiş içerik
+	Slot ve yayın
+	Bilimsel kararı değiştirmez
+	Onsite görevlisi
+	Kapı / oturum
+	En az gerekli kimlik ve hak
+	Tarama ve istisna talebi
+	Finans detayı, tam profil, toplu dışa aktarma
+	Sponsor temsilcisi
+	Sadece atanan kurum/edisyon
+	Kendi paket/hak/teslim
+	Misafir ve profil
+	Diğer sponsorlar ve finans geneli
+	Katılımcı
+	Kendi edisyonları
+	Kendi kayıtları
+	İzinli tarih aralığında kendi bilgiler
+	Başkasının profili
+	
+
+İzin, rol + atama kapsamı + eylem + kayıt hassasiyeti olarak düşünülür. Örnek: “finans okuma” rolü tek başına tüm etkinliklere erişim vermez. Hassas soru yanıtı (erişilebilirlik, beslenme vb.) yalnızca görev gerektiren ekibe sınırlı gösterilir; liste ihracında ayrı yetki gerekir. Onaylayan ile talep edenin ayrılması tutar/etki eşiğiyle belirlenebilir.
+Ortak ekran kalıbı
+Her ekran: başlık ve kısa açıklama; kapsama/son güncelleme etiketi; ana eylem; gerekiyorsa kısa KPI; filtre/arama; ana liste/kanban/takvim; boş durum; ayrıntı paneli; ilişkili işlere bağlantı; yardım ve değişiklik geçmişi. “0 kayıt”, “henüz kurulum yok”, “erişim yok”, “filtre sonucu yok”, “yükleniyor”, “gecikmiş veri” ayrı görünür. Kartlardaki sayıya tıklama aynı filtreli listeyi açar; hangi zaman dilimi ve statüler dahil edildiği tooltip ile görünür.
+Etkinlik yaşam döngüsüne göre ana ekran
+Evre
+	En görünür içerik
+	Birincil eylem
+	Taslak
+	Eksik karar ve hazırlık yüzdesi
+	Kurulum wizard'ını sürdür
+	Yayına hazır
+	Engelleyici hata / uyarı listesi
+	Önizle ve yayınla
+	Kayıt açık
+	Başvurular, dönüşüm, bekleyen onay
+	Bekleyenleri incele
+	Etkinlik haftası
+	Salon, badge, konaklama, görev
+	Operasyon panosunu aç
+	Canlı
+	Giriş hızı, doluluk, hatalı tarama
+	Sahadaki sorunu çöz
+	Sonrası
+	No-show, belgeler, anket, teslimler
+	Kapanışı tamamla
+	Arşiv
+	Salt okunur tarihsel rapor, yeni edisyon
+	Şablondan yeni edisyon başlat
+	Görünüm kuralları
+Mobilde katılımcı ve sahadaki görevli akışları birinci önceliktir; admin tabloları dar ekranda kart ve filtre çekmecesine dönüşür. Masaüstünde aynı kişinin 360 paneli satır seçimine rağmen bağlamı korur. Erişilebilir odak, klavye, açık hata metni, etiket, renk dışı durum işareti ve yerel tarih/saat gösterimi tüm akışlarda standarttır.
+
+
+________________
+
+
+04 — İlk kayıt, giriş ve mikro metinler
+Bu dosyadaki metinler arayüz taslağıdır. Sözleşme, gizlilik ve onay metinlerinin nihai içeriği ilgili kuruluş tarafından ayrıca onaylanır. Her alanın üstünde kalıcı etiket; gerektiğinde altında yardımcı metin vardır. Yer tutucu etiket yerine geçmez.
+1. Açılış sayfası
+Üst: logo, “Ürünü keşfet”, “Yardım”, “Giriş yap”. Ana başlık: Etkinliğinizin tüm operasyonunu tek yerden yönetin. Alt: “Kayıttan programa, sponsorluktan sahadaki girişe kadar ekibinizle aynı etkinlik üzerinde çalışın.” Eylem: Çalışma alanı oluştur. İkincil: Davet aldım. Alt açıklama: “Zaten bir etkinliğe katılacak mısınız? Katılımcı girişine gidin.” Giriş tipleri ilk anda ayrılır: organizatör yönetimi, davetli ekip, sponsor/kurum ve katılımcı. Her biri aynı kişinin farklı bağlamına dönüşebilir.
+2. Organizatör ilk kaydı: 4 küçük adım
+Adım
+	Üst başlık ve açıklama
+	Alan: etiket — alt yardım — hata örneği
+	Alt/üst eylem
+	1 Kimlik
+	“Sizi tanıyalım” / “Bu bilgiler yönetici hesabınız için kullanılacak.”
+	Ad soyad — “Ekip arkadaşlarınız sizi bu adla görecek.” — “Adınızı girin.”; İş e-postası — “Davet ve güvenlik bildirimleri bu adrese gider.” — “Geçerli bir e-posta yazın.”
+	“Devam et”; “Zaten hesabım var”
+	2 Alan
+	“Çalışma alanınızı adlandırın” / “Etkinliklerinizi bu alan altında yöneteceksiniz.”
+	Kuruluş adı — “Fatura unvanı daha sonra ayrıca eklenebilir.”; Görünen alan adı — “Ekibinize davette gösterilir.”; Ülke, saat dilimi — “Etkinlik tarihleri yerel saatle gösterilir.”
+	“Geri”; “Devam et”
+	3 Erişim
+	“Hesabınızı güvenceye alın”
+	Şifre — “En az 12 karakter; uzun ve benzersiz bir parola seçin.”; Şifreyi göster; tekrar girişi — “Şifreler eşleşmiyor.”
+	“Hesap oluştur”
+	4 Doğrulama
+	“E-posta adresinizi doğrulayın” / “Doğrulama bağlantısını {maskeli adres} adresine gönderdik.”
+	Kod/bağlantı, kalan geçerlilik göstergesi
+	“Yeniden gönder”; “E-postayı değiştir”
+	
+
+Koşul/onay alanları boş bırakılmayan ayrı seçeneklerdir: “Kullanım koşullarını ve gizlilik bildirimini okudum” (zorunlu), “Ürün duyurularını almak istiyorum” (isteğe bağlı, önceden seçili değil). Başarılı sonuç: “Çalışma alanınız hazır. İlk etkinliğinizi oluşturun veya ekibinizi davet edin.” Hata: “Bu e-posta zaten kullanılıyor. Giriş yapın veya şifrenizi yenileyin.” E-posta bulunmaması gibi durumlarda hesap tespiti riskine karşı genel bildirim kullanılabilir.
+3. Ekip davetiyle giriş
+Başlık: “{Organizasyon adı} ekibi sizi davet etti.” Alt: “{Etkinlik adı / tüm alan} kapsamında {rol} erişiminiz olacak.” Göster: davet edenin adı, kapsam, bitiş tarihi; daveti kabul etmeden önce kendi hesabı varsa o hesapla giriş seçeneği. Davet süresi dolmuşsa: “Bu davetin süresi dolmuş. Yeni bağlantı istemek için yöneticinizle iletişime geçin.” Kabul sonrası çalışılacak etkinlik ve rol şeridi görünür.
+4. Giriş ekranı
+Başlık: “Maven'e giriş yapın”; alt: “Yönetim, kurum ve katılımcı erişiminizi aynı hesabınızla açın.” Alanlar: “E-posta adresi”, “Şifre”; şifre göster/gizle. Seçenek “Bu cihazda oturumumu açık tut” (paylaşılan cihaz uyarısıyla). Eylem “Giriş yap”; bağlantılar “Şifremi unuttum”, “Hesap oluştur”. Hata metni: “Giriş bilgileri doğrulanamadı. E-postanızı ve şifrenizi kontrol edin.” Genel sistem sorunu: “Şu anda giriş tamamlanamıyor. Biraz sonra tekrar deneyin.” Rol ve tenant birden fazla ise girişten sonra seçici: “Nerede çalışmak istiyorsunuz?”; son kullanılan önerilir, otomatik açma değiştirilebilir.
+5. Şifremi unuttum ve sıfırlama
+Ekran 1: “Şifrenizi sıfırlayın” / “Hesabınızla ilişkili e-postayı yazın. Varsa sıfırlama bağlantısı göndereceğiz.” Alan “E-posta adresi”; düğme “Bağlantı gönder”; alt “Girişe dön”. Sonuç: “E-posta adresi kayıtlıysa birkaç dakika içinde bir bağlantı alacaksınız. Gelen kutunuzu ve gereksiz klasörünü kontrol edin.” Yeniden gönder süre göstergesi. Bağlantı ekranı: “Yeni şifrenizi belirleyin”; alanlar “Yeni şifre”, “Yeni şifreyi tekrar yazın”; düğme “Şifreyi değiştir”. Süresi doldu: “Bu bağlantı artık geçerli değil. Yeni bir bağlantı isteyin.” Başarı: “Şifreniz değiştirildi. Şimdi giriş yapabilirsiniz.” Aktif oturumların sonlandırılıp sonlandırılmadığı kullanıcıya açıkça bildirilir.
+6. Etkinlik oluşturma başlangıcı ve boş durum metinleri
+Tenant ana sayfa boşken: “Henüz bir etkinliğiniz yok. İlk etkinliğinizi oluşturup kayıt ve program akışını birlikte planlayın.” CTA “Etkinlik oluştur”. İkinci CTA “Şablonları incele”. İzin yoksa: “Etkinlik oluşturma yetkiniz bulunmuyor. Çalışma alanı yöneticisinden erişim isteyin.” Listede filtre sonucu yoksa: “Bu filtrelerle eşleşen kayıt yok. Filtreleri temizleyin.” Modül açık ama veri yoksa ayrı yönlendirme: “Henüz oturum oluşturulmadı. Programın başlaması için ilk oturumu ekleyin.”
+7. Yazım ve bildirim standartları
+Olay
+	Metin
+	Sonraki adım
+	Taslak kaydedildi
+	“Taslak kaydedildi. Katılımcılar henüz göremez.”
+	“Önizle”
+	Yayınlandı
+	“Kayıt formu yayınlandı. Katılımcı bağlantısı artık açık.”
+	“Bağlantıyı kopyala”
+	Yayın engeli
+	“Yayınlanamadı: ücretli kategori için ödeme talimatı eksik.”
+	“Ödemeyi ayarla”
+	İşlem tamam
+	“{Kişi} için kayıt onaylandı. Ödeme durumu: bekliyor.”
+	“Kaydı görüntüle”
+	Geri alınabilir işlem
+	“Görev ataması kaldırıldı.”
+	“Geri al” (uygunsa)
+	Kalıcı etki
+	“Bu iptal rozet ve erişim hakkını etkileyebilir.”
+	“Etkileri incele”
+	Bekleyen veri
+	“Son güncelleme {saat}. Yeni girişler işlenirken sayılar değişebilir.”
+	“Yenile”
+	
+
+Form üstünde amaç + tahmini süre + adım; form sonunda gizlilik notu, geri dön, taslağı kaydet, ileri. Her hata ilgili alanın hemen altında, üstte kısa hata özetiyle birlikte görünür. Zorunlu alanlar hem metinle hem simgeyle açıklanır. Onay ve davet ile ilgili son tarih mutlaka saat dilimiyle yazılır.
+
+
+________________
+
+
+05 — Etkinlik kurulum wizard'ı, form ve soru tasarımcısı
+Kurulumun giriş kararı
+Yeni etkinlik: “Tek seferlik etkinlik”, “Var olan seriye yeni yıl ekle”, “Şablondan başla”. Şablonlar bilimsel kongre, fuar, kurumsal etkinlik ve yalın kayıt; etkinlik türü sabit bir koda kilitlenmez. Seçim sadece başlangıç modüllerini önerir. Önceki edisyondan kopyalanabilecekler (kategori, form, sponsor paketi, badge, bilimsel iz, yerleşim şablonu) tek tek işaretlenir; kişiler, ödeme, check-in, takvim tarihi ve kararlar kopyalanmaz. Kopya inceleme ekranında her fark ve yeni edisyona hangi içerik taşınacağı gösterilir.
+Wizard adımları ve ayrıntılı alanlar
+Adım
+	Alanlar ve yardımcı metin
+	Bağ ve ileri koşulu
+	1 Kimlik
+	Görünen ad, seri, edisyon etiketi, kısa açıklama, etkinlik sahibi kurum, dil(ler), format, etkinlik görseli
+	Ad/tarih taslakta gerekli; seri varsa eski edisyona dokunulmaz
+	2 Tarih/yer
+	Başlama ve bitiş tarihi, saat dilimi, fiziksel/sanal konum, salon varsayılanı, açık adres, erişilebilirlik özeti
+	Bitiş başlangıçtan sonra; tarih değişimi program ve otel uyarısı üretir
+	3 Amaç/yetenek
+	Kayıt, davet, bilimsel, program, sponsor, fuar, konaklama, seyahat, onsite, sertifika, ek hizmet, Floor Studio
+	Etkinlikte en az bir katılım yolu; bağımlılık açıklaması
+	4 Kurum/ekip
+	Ev sahibi, müşteri, PCO ve diğer rol atamaları, sorumlu kişi, ekip daveti, kapsam
+	Aynı kurum çok rol alabilir; rolün görünürlüğü seçilir
+	5 Kayıt/LCV
+	Açılış/kapanış, kapasite, kategoriler, başvuru onayı, grup kaydı, bekleme listesi, davet/LCV
+	Ücretli kategori ise fiyat/ödeme talimatı; onay gerektiren akış önizlemesi
+	6 Form/soru
+	Katılımcı bilgisi, sipariş alıcısı, kurum, oturum, erişim/özel gereksinim, koşullar ve izinler
+	Her hedefin “kime soruluyor?” özeti; önizleme
+	7 Program/diğer
+	Oturum zamanları, salonlar, bildiri takvimi, otel blokları, sponsor paketleri, kapılar
+	Açık yetenek başına kısa konfigürasyon; sonra tamamlanabilir
+	8 Markalama/iletişim
+	Portal başlığı, tema, logo, kayıt tamamlandı ve iptal e-postası, cevap adresi
+	Önizleme ve test alıcısı; gönderim şablonu olmadan yayın engeli olabilir
+	9 Kontrol/yayın
+	Zorunlu hata, uyarı, link ve görünüm önizlemeleri, başvuru testi
+	“Taslak kaydet” / “Yayınla”; onay eşiği ve yayın saati
+	
+
+Adım üstü: “Adım 3/9 · yaklaşık 4 dakika”; altında “Bu ayarlar yayın sonrasında değiştirilebilir ancak mevcut kayıtları etkileyen değişiklikleri ayrıca onaylamanız gerekir.” Her modül kartı: amaç, açılınca hangi menü/form/raporun geleceği, bağımlılık ve yaklaşık kurulum süresi. Adımlar arasında ileri/geri; taslak her adımda görünür kaydedilme durumu; tek sayfa kaydırma yerine özlü karar ekranı.
+Yayın öncesi denetim
+Engelleyici: kayıt açılışı bitişten sonra; kaydı olmayan kategori; ücretli kategoriye fiyat/ödeme yönergesi yok; zorunlu soruda seçenek yok; koşul döngüsü; aynı salonda onaylı iki oturum; etkinlik kapalı olduğu halde açık kayıt bağlantısı. Uyarı: sertifika açık ama uygunluk kuralı yok; bildiri açık ama değerlendirme dönemi yok; sponsor paketi var ama teslim sorumlusu atanmamış; otel kapasitesi tanımlı ama rezervasyon bitişi yok. Her öğe “Düzenle” bağlantısı ve etki açıklaması içerir.
+Form tasarımcısı: ekrandaki düzen
+Sol: bölüm ağacı, sorular ve sürükle sırası. Orta: gerçek katılımcı görünümü; kategori, dil ve cihaz önizlemesi. Sağ: seçili alan ayarları, doğrulama, gösterim/koşul, veri hassasiyeti ve rapor etiketi. Üst: taslak/yayın sürümü, “Değişiklikleri karşılaştır”, “Deneme yanıtı gönder”. Alt: kaydet/yayınla. Yayınlanan form cevapları kendi form sürümüne bağlı kalır; büyük değişiklik mevcut başvuruları sessizce geriye dönük dönüştürmez.
+Soru tanım sözlüğü
+Özellik
+	Önerilen seçenekler
+	Arayüz yardımı
+	Sahiplik
+	Sipariş alıcısı, her katılımcı, kurum, grup lideri, başvuru/bildiri, konaklama
+	“Bu cevabı kim vermeli?”
+	Tip
+	Kısa/uzun metin, sayı, tarih, tek/çok seçim, onay, dosya, adres, ülke, telefon
+	Gerekli minimum bilgi seçilir
+	Etiket
+	İç editör adı, katılımcı sorusu, yardım, örnek yanıt
+	“Katılımcıya görünen soruyu açık yazın.”
+	Zorunluluk
+	Her zaman, yalnız koşul doğruyken, isteğe bağlı
+	Gizli alan zorunlu tutulmaz
+	Görünürlük
+	Kategori, rol, dil, önceki cevap, davet kanalı, ürün seçimi
+	“Şu durumda göster” kuralı
+	Geçerlilik
+	Min/maks, biçim, seçenek sayısı, dosya türü/boyutu
+	Hata metni editörü ve test
+	Gizlilik
+	Standart, operasyonel hassas, yalnız ilgili ekip
+	Dışa aktarma izinleri belirtilir
+	Raporlama
+	Dahil/haric, grafik için seçenek etiketi, payda
+	Serbest metin varsayılan grafik olmaz
+	Zaman
+	Kayıtta, kayıt sonrası, sahada, otel teyidinde
+	Soru ilgili aşamada sorulur
+	Örnek koşullu soru şeması
+“Konaklama istiyor musunuz?” evet ise “Giriş tarihi”, “Çıkış tarihi” ve “Oda tercihi” açılır; tek konaklama ile çakışan bir tarih seçilirse yerinde hata. “Oda arkadaşı tercih ediyor musunuz?” evet ise ad/e-posta önerisi ve “Diğer kişinin onayı gerekir” yardım metni görünür. “Başka katılımcı adına ödeme yapıyorum” seçilirse fatura alıcısı bölümü açılır. Koşulu kapatınca önceki yanıt silinmez; kullanıcıya “Artık görünmeyecek yanıtları koru / temizle” kararı ve ileride rapora dahil edilme etkisi gösterilir.
+Soru istatistikleri
+Her sorunun paneli: görünme sayısı (soru koşuluna uyan form gösterimleri), cevap sayısı, cevap oranı = geçerli cevap / soru görünen uygun kişi, boş bırakma, seçeneğe göre dağılım, kategori/kanal kırılımı, zaman eğrisi. Çoklu seçimde yüzdelerin toplamı %100'ü aşabilir; not gösterilir. Kısa metinler otomatik olarak kategorik çizelgeye konulmaz. Hassas sorularda küçük grup görünümünü maskeleme ayarı ve dışa aktarma yetkisi. FormAnswer değişince cevap sayısı ve ilgili filtreli rapor yenilenir; yayın sürümleri ayrı seçilebilir.
+Form QA senaryoları
+Ücretsiz, ücretli, sponsor haklı, davetli, grup lideri + üç katılımcı, konuşmacı, konaklama isteyen, çok dilli katılımcı ve sahada walk-in önizlenir. Koşulların tüm dalları, klavyeyle doldurma, yanlış dosya, ekran okuyucu etiketi, geri gitme, bağlantı kopması sonrası taslak ve başvuru sonrası düzeltme penceresi kontrol edilir.
+
+
+________________
+
+
+06 — Katılımcı, kayıt, LCV, ödeme ve kurum portalları
+Katılımcı yolculuğu
+Etkinlik sayfası: ad/tarih/saat dilimi, yer, kimler için, program özeti, kategoriler, dahil haklar, başvuru son tarihi, ücret ve iade koşulu, destek bağlantısı. Birincil eylem “Kayıt ol” veya davetle “Katılımımı bildir”; erişim yoksa “Bu kayıt yalnızca davetlilere açık”. Kategori seçiminde fiyat, vergi/ek masraf açıklaması, kapasite, kalan yer gerekiyorsa ve uygunluk koşulu. Sonra katılımcı bilgisi, kategoriye bağlı sorular, ek hizmet/oturum/konaklama, ödeyen bilgisi, özet, koşullar, gönder. Sonuç ekranında kayıt numarası, kayıt durumu, ödeme durumu, sonraki adım ve e-postanın gönderilip gönderilmediği ayrı görünür.
+
+
+Durum
+	Katılımcıya görünen sonuç
+	Ana eylem
+	Taslak
+	“Başvurunuz henüz gönderilmedi.”
+	“Devam et”
+	İncelemede
+	“Başvurunuz alındı; onaylandığında haber vereceğiz.”
+	“Başvurumu görüntüle”
+	Onaylı/ödemesi bekliyor
+	“Yeriniz onaylandı. Ödemenizi {tarih} öncesi tamamlayın.”
+	“Ödeme yap”
+	Sponsor haklı
+	“Kaydınız {kurum} davet hakkı kapsamında onaylandı. Sizden ödeme istenmiyor.”
+	“Biletimi görüntüle”
+	Bekleme listesi
+	“Şu anda yer yok; listedeki durumunuz ve teklif süresi...”
+	“Bildirim tercihimi değiştir”
+	İptal
+	“Kaydınız iptal edildi. Varsa iade ayrıca işlenir.”
+	“Destek al”
+	
+
+Kişisel portal: “Etkinliklerim”, “Kayıt ve belge”, “Programım”, “Ödemelerim”, “Konaklama”, “Mesajlarım”. Her kartta yalnız o edisyonun kapsamı. Kişi farklı edisyonlarda ayrı rol ve durumları görür; geçmiş sertifika mevcut yıl profili ile karışmaz.
+Kayıt yönetimi (katilimci-listesi)
+Üstte onaylı, bekleyen onay, iptal, ödeme bekleyen ve etkinliğe gelen kartları. Filtreler: kategori, kaynak, fon sağlayan, kayıt, ödeme, rol, ülke, tarih, check-in, soru cevabı (izinliyse). Arama ad/e-posta/kayıt no; kaydedilmiş görünüm. Satır: ad, kurum, kategori, roller, kayıt durumu, ödeme durumu, kayıt kaynağı, son işlem; eylem “Kişiyi aç”. Toplu işlem yalnız seçilen listede önizlenen sayı, çakışma ve işlem sonrası örnek mesajla. İçe aktarmada kolon eşleme, tekrar adayı, olası mevcut kişi, önizleme, satır hataları ve sonuç özeti.
+LCV (LCV-Yonetimi)
+Davet listesi kaynaktan/kurumdan yüklenebilir; davet bir kayıt yerine geçmez. Davet gönderilmeden hedef kişi, kategori/rol önerisi, cevap son tarihi ve hatırlatma doğrulanır. “Geleceğim” yanıtı açık kayıt koşuluna göre ön doldurulmuş kayıt yoluna gider veya yöneticinin onayını bekler; “Gelmeyeceğim” yer hakkını hemen bırakıp bırakmayacağı etkinlik kuralına bağlıdır. LCV paneli davet edildi, ulaştı, yanıtladı, gelecek, gelmeyecek, yanıt yok sayıları ve “kayıt tamamlandı” sayısını ayrı gösterir.
+Ödeme (odemeler)
+Ödeme ekranının üstünde: toplam sipariş tutarı, tahsil edilen, açık bakiye, iade edilen, manuel teyit bekleyen. Satır: sipariş no, fatura/ödeyen, ilgili kişi(ler), kalem, para birimi, tutar, tahsil edilen, ödeme durumu, tarih, kaynak, sorumlu. Ayrıntı: sipariş satırları ve hangi katılım/otel/ek hizmete ait olduğu; ödeme zaman çizelgesi; iade gerekçesi; makbuz/fatura durumları. “Ödeme alındı” kartı yalnız doğrulanan tutarı sayar; ücretsiz kayıt veya sponsorluk hakkı tahsilat toplamına girmez. Kısmi tahsilat, iki ödeme, başarısız deneme, geri ödeme ve farklı para birimi ayrı görünür. Manuel ödeme teyidi: kanıt, tarih, tutar, ödeyen, kontrol eden, açıklama ve ikinci onay (belirlenen eşik aşılırsa).
+Sponsor portalı (portal)
+Üstte kurum/edisyon ve temsilcinin yetki kapsamı. Paket özeti: anlaşma türü, sözleşme durumu, teslim takvimi, ücretsiz kayıt 20/14/6 gibi hak dökümü, stant hakkı ve ayrılmış gerçek stant ayrı satır. Sekmeler: profil/logo, haklar ve davetliler, stand/personel, ek hizmetler, marka görünürlüğü, dosyalar, teslimler, sorular. “Misafir ekle” adımında hakkın hangi paketten düşeceği ve geri alma kuralı görünür. Sponsor başka kurumun verisini göremez. Etkinlik sahibi bekleyen logo/davetli onaylarını ayrı iş kuyruğunda görür.
+Fuar ve Floor Studio görünümü
+Maven ekranında ticari tahsis: A24, 12 m², durum, firma, fiyat/sözleşme ve opsiyon bitişi. Floor Studio bağlantısı: görsel mekân üzerindeki A24 nesnesi ve çakışma uyarısı. Stand paketinde “1 × 12 m²” hakkı görsel A24 ile eşleşene kadar “Tahsis bekliyor”. Plan değişirse anlaşma sessizce değişmez; çakışma bildirimi ve tekrar atama işi açılır.
+İletişim kampanyası (eposta-iletişim-kampanya)
+Akış: amaç seç → izinli hedef segment (ör. kayıt onaylı ama ödeme bekliyor) → sayı ve örnek alıcıları incele → şablon/kişisel değişkenler → gönderici/yanıt adresi → test gönder → zamanla/gönder → sonuçlar. Mesajda etkinlik adı, gönderim sebebi ve uygun çıkış/tercih yolu. Zamanlamadan sonra segmentin sabit mi gönderim anında güncel mi hesaplanacağı ekranda yazılı. Rapor: hedef, uygun, hariç, gönderilen, teslim, açılma (ölçüm sınırlı olabilir), tıklama, yanıt ve başarısızlık; her sayıya filtreli örnek liste. Hassas soru cevabı kampanya değişkeni olarak açık onaysız kullanılmaz.
+
+
+________________
+
+
+07 — Bilimsel süreç, program, konaklama, sahada kontrol
+Bilimsel süreç (liste, yonetim, SunumKontrol)
+Çağrı sayfası konu/iz, bildiri türü, kelime/dosya sınırı, körlük biçimi, önemli tarihler, değerlendirme ölçütleri ve iletişim. Başvuru wizard'ı: başlık/özet, konu, anahtar sözcük, yazarlar sırası ve kurumları, sunan/sorumlu yazar, dosyalar, çıkar çatışması, önizleme, gönderim. Harici ortak yazar için zorunlu hesap açtırılmaz. Yazar değişikliğinde rol ve iletişim etkisi açık uyarıyla onaylanır.
+
+
+Hakem ekranında davet, kabul/red/çıkar çatışması; izinli içerik, rubrik, yorum alanı, taslak, kesin gönderim ve son tarih. Kör değerlendirmede kimlik gizleme yalnız görsel maskeleme düzeyinde kalmaz; hakeme gösterilen ekler ve dışa aktarımlar da kontrol kapsamına girer. Komite karar ekranı: değerlendirmeler, aykırı görüş, karar ve gerekçe; yazara gidecek metin önizlemesi; revizyon tarihi. “Kabul” sonrası sunum nesnesi adayı oluşur; sunum türü ve slot program ekibinin ayrı kararıdır.
+
+
+Poster yönetim listesi: kabul türü, dosya sürümü, kontrol sonucu, poster numarası, yayın durumu, görünürlük tarihi, sorumlu. SunumKontrol ekranı: eksik dosya, format/AV sorunu, son sürüm, onaylayan ve kontrol zamanı. Poster görünürlüğünü kapatmak bilimsel kararı geri almaz. Sunum dosyası değiştirilince önceki sürüm ve programdaki son onaylı dosya açık görünür.
+Program (oturumlar)
+Oturum oluştur: başlık, gün, başlangıç/bitiş, saat dilimi, salon, kapasite, tür, iz, moderatör, konuşmacı, kaynak bildiri/sunum, oturum hedef kitlesi, erişim koşulu, yayın görünürlüğü. Takvim gün/salon ekseninde sürüklenebilir; sürükleme öncesi/sonrası zaman ve etkilenen katılımcılar açık gösterilir. Çakışmalar: aynı salon/zaman, aynı görevli/zaman, slot süresi, salon kapasitesi, konuşmacı kabulü, etkinlik tarihinin dışı. Çakışmalı yayın engellenir veya yetkili gerekçeyle işaretlenir. Kişisel program seçiminde kapasite doluysa bekleme yolu veya “Yer kalmadı”; etkinlik giriş hakkı ile oturuma ayrılmış yer farklıdır.
+
+
+Program sayfası katilimci, speaker, bilimsel ve onsite görünümünde aynı oturum kimliğini kullanır; her görünüm yalnız izinli veriyi gösterir. Son dakika saat/yer değişikliği: “Eski → yeni” farkı, bildirilecek hedef kişi sayısı ve yayın onayı.
+Konaklama (ana-sayfa iki görünüm)
+Kurulum: otel, oda türü, blok adı, anlaşmalı fiyat/belirli tarihler, her gece toplam/ayrılan/kalan oda, rezervasyon son günü, iptal koşulu, ödeyen taraf. Rezervasyon formu: giriş/çıkış, kişi sayısı, oda tercihi, erişim isteği, oda arkadaşı isteği, finansal sorumluluk, konuk onayı. Oda arkadaşı eşleştirmesi diğer kişinin kabulüyle kesinleşir. Doluluk metrikleri “oda”, “oda-gece”, “kişi” ve “talep” olarak ayrı verilir. Örneğin 1 odanın üç gece kullanımı 1 rezervasyon, 3 oda-gece olarak sayılır. Tarih kaydırıldığında hangi gecelerin stoğunun serbest kalıp hangilerinin tükeneceği önizlenir. Katılımcı otel bekleme listesinde ise kayıt onayı yine ayrı kalır.
+Ek hizmetler (ekhizmetler)
+Katalog kartında: ad, kapsam, tarih, kapasite, fiyat, kimin kullanabileceği, paket hakkı var mı, teslim alma yöntemi. Seçim sepeti aynı hizmet için hak kullanılabiliyorsa “Paket hakkını kullan” ve “Ayrı satın al” seçeneklerini açık ayırır. Hak talebi gerçekleştiğinde kalan miktar sponsor/kişi kartına yansır; hizmetin fiziksel teslimi ayrıca işaretlenir. Tur, gala, ulaşım, stand elektriği gibi hizmetler aynı katalog biçimini paylaşır ama her birinin hedef kitlesi ve teslim sorumlusu görünür.
+Onsite (onsite-kontrol)
+Kapı masası başlangıcı: etkinlik/gün/kapı seç, görevli kapsamı, canlı sayaç, ad veya QR ile bul. Sonuç kartı: kimlik için gerekli asgari bilgi, badge kategorisi, izinli kapı, kayıt ve ödeme uyarıları, girişin tam zamanı, “Girişe izin ver” / “Yetkiliye yönlendir”. Barkodun daha önce taranması ayrı sarı durum, iptal edilmiş hak kırmızı durum, yerinde yeni kayıt için yönlendirme. Manuel istisna gerekçe ve yetkili onayı ile; tarama geçmişi silinmez. Oturum giriş/çıkış ayrı tarama listesine aittir; etkinlik girişinden otomatik oturum devamı çıkarılmaz. Ağ yoksa görevliye son doğrulama zamanı ve belirsizlik açıkça gösterilir; çevrimdışı karar ve yeniden eşleşme ürün test senaryosudur, teknik uygulama bu dokümanın dışında.
+Sertifikalar (genel-bakis)
+Kural oluştur: belge türü, uygun roller/kayıtlar, gerekli etkinlik veya oturum katılımı, minimum süre/puan varsa açık eşik, imzacı ve görünürlük. Önizleme “uygun 420 / eksik katılım 32 / bekleyen inceleme 8”. Belgede kişiye gösterilecek ad event snapshot'ından alınır, gerekli düzeltme onaylı süreçten geçer. “Oluşturuldu”, “gönderildi”, “indirildi” ayrı. Yanlış belgeyi geri alma etkinlik katılımını silmez. Katılımcı kendi belgesinin uygunluk nedenini ve varsa itiraz yolunu görür.
+
+
+________________
+
+
+08 — Gösterge panelleri, istatistik ve hesap sözlüğü
+Her metrik için ortak sözleşme
+Başlık; iş tanımı; sayı/birim/para birimi; pay/payda; edisyon/kurum/rol/kategori filtresi; tarih alanı ve saat dilimi; son güncelleme; kaynak kayıt; “ayrıntıyı gör”; sıfır ve veri yok halleri. Varsa önceki dönem farkı aynı uzunluktaki eşdeğer döneme göre gösterilir. Grafik hover'ında sayı, payda ve kapsam yazılır. Kullanıcının rolü kaynak satırları göremiyorsa agregat için de izin/maskeleme kuralı uygulanır.
+Kayıt ve katılım
+Kart
+	Kesin iş tanımı
+	Dahil/hariç ve açılan liste
+	Başvurular
+	Belirtilen aralıkta gönderilmiş benzersiz Registration sayısı
+	Taslak hariç; iptaller ayrı filtre. Gönderim tarihi bazlı
+	Aktif onaylı
+	Kayıt durumu onaylı olan kayıtların anlık sayısı
+	Ödeme bekleyen dahil, ayrı etiket; kişi sayısı ile karıştırılmaz
+	Benzersiz kişi
+	En az bir aktif katılımı olan benzersiz Person
+	Aynı kişinin iki rolü tek kişi; drilldown kişi 360
+	Onay oranı
+	Onaylı başvuru / karara bağlanmış başvuru
+	Bekleyenler paydada yok; 0 payda “—”
+	Kayıt dönüşümü
+	Tamamlanan başvuru / formu başlatan izinli kullanıcı
+	Kimliği tanımlanamayan ziyaretler varsa ayrı web ölçümü
+	Kategori doluluğu
+	Ayrılan onaylı yer / satılabilir toplam kapasite
+	Bekleme listesi ve iptal ayrı; kapasite tanımsızsa yüzde yok
+	Sahada gelen
+	Geçerli etkinlik kapısı ilk girişine sahip benzersiz katılım
+	Oturum girişi sayılmaz; her kapı/gün kırılımı
+	No-show
+	Etkinlik bittiğinde onaylı ve geçerli girişsiz katılım
+	İptaller hariç, canlı etkinlikte “henüz gelmedi”
+	Katılım oranı
+	Geçerli giriş yapan onaylı / etkinlik sonundaki onaylı
+	Walk-in ayrı kaynak veya açıkça paya/paydaya dahil politikası
+	Finans ve haklar
+Kart
+	Tanım / formül
+	Önleyici ayrım
+	Sipariş edilen
+	Geçerli sipariş satırları toplamı, vergiler ve indirimler açık
+	Tahsilat değildir
+	Tahsil edilen
+	Başarılı tahsilatların toplamı − kesinleşen iadeler
+	Gerekirse brüt tahsilat ve iade ayrı kart
+	Açık bakiye
+	Ödeme yükümlülüğü olan geçerli sipariş toplamı − tahsilat + iade etkisi
+	Sponsor hakkı/ücretsiz kayıt sıfır borçtur
+	Kısmi ödemeler
+	Geçerli siparişte 0 < tahsil edilen < borç
+	Kişi değil sipariş sayısı
+	Sponsor hakkı kullanım
+	Kullanılan hak / tanınan hak
+	“Ayrılmış”, “talep edilmiş”, “gerçekleşmiş” ayrı
+	Otel doluluğu
+	Ayrılan oda-gece / satılabilir oda-gece
+	Otel ve tarih kırılımı, iptal sonrası stok geri gelir
+	
+
+Çoklu para birimini sessizce toplamamak gerekir; para birimine göre ayrı kart ya da tanımlı raporlama kuru/tarihi açık gösterilir. Finans kartları “son mutabakat” zamanını taşır. İade edilmiş kaydın önceki tarihteki satış grafiği ile güncel net gelir neden farklı sorusuna drilldown yanıt verir.
+Bilimsel, program, sahada ve iletişim
+Panel
+	Kartlar
+	İş kararı
+	Bilimsel
+	Taslak, gönderilen, atanmayı bekleyen, hakem geciken, kabul/ret/revizyon
+	Hakem yükünü dengele ve karar gecikmesini azalt
+	Program
+	Atanmamış kabul, çakışma, yayınlı oturum, salon doluluk, kişisel programa ekleme
+	Kabulden yayına darboğazı gör
+	Sunum kontrol
+	Dosya eksik, format sorunlu, AV bekliyor, onaylı
+	Sahadan önce eksikleri kapat
+	Onsite
+	Son 15 dk giriş, kapı başına geliş, tekrar tarama, reddedilen, müdahale kuyruğu
+	Personel ve kapı kapasitesini ayarla
+	Sertifika
+	Uygun, bekleyen kanıt, üretilen, gönderilen, geri alınan
+	Kapanış görevlerini tamamla
+	LCV
+	Gönderilen, teslim, yanıt, gelecek, kayıt tamamlayan
+	Takip kitlesini seç
+	İletişim
+	Uygun hedef, gönderilen, başarısız, tıklanan, kayıt/yanıt ile ilişki
+	Mesajın sonuçtaki etkisini incele; nedensellik iddiası kurma
+	Sponsor
+	Satılan paket, tüketilen hak, geciken teslim, marka yerleşimi
+	Sözleşme yükümlülüklerini kapat
+	
+
+Oturum katılım oranı: oturumun geçerli girişine sahip benzersiz kişi / oturuma kayıtlı ve uygun kişi; açık katılımlı oturumda oran için “kayıtlı” paydası anlamlı değilse salon kapasitesi doluluğu ayrıca gösterilir. Soru cevap oranı: 05'te tanımlandığı gibi koşula uygun kişilerin gerçekten gördüğü sorular üzerinden hesaplanır. Soru seçenekleri değişirse grafikte form sürümü filtresi zorunlu olur.
+Dört dashboard görünümü
+1. Portföy: aktif edisyon sayısı, yaklaşan yayınlar, kayıt hacmi, net tahsilat, kapatılmamış işler; seri/yıl kıyası yalnız eşdeğer tanımlarda.
+2. Etkinlik hazırlığı (dashboard(2)): hazır/eksik modül kartları, açılış tarihleri, sorumlular ve sıradaki iş; örneğin 8/8 kartı açıkça 8 denetimin tamamı ise anlamlıdır.
+3. Etkinlik analitiği (dashboard (1)(2)): kayıt ve gelir eğrileri, kategori/kaynak, ödeme durumu, karşılaştırmalar; boş grafikte “veri yok” açıklaması.
+4. Canlı saha: kapı, oturum, badge baskısı, müdahale kuyruğu; canlı/gecikmiş veri işareti ve filtreli satır.
+Dashboard etkileşim örneği
+“Ödeme bekleyen: 26” kartı tıklanınca ödemeler listesi yalnız PENDING/PARTIALLY_PAID ve aktif borç kapsamına filtrelenir; listede 26 satır görünmesi beklenir. Bir siparişte üç katılımcı varsa kart sipariş sayıyorsa liste 26 sipariş göstermelidir. “26 kişi” yazılacaksa kişi sayımı ayrı tanımlanır. Filtre dışa aktarımda ve tarayıcı geri dönüşünde korunur. Zaman eğrisindeki noktaya basmak o gün gönderilen kayıt listesini açar.
+Kalite ve rapor etiketleri
+“Gözlenen”, “tahmini”, “henüz doğrulanmadı” veri niteliği; son güncelleme; kapsam; filtre; hesap sürümü. Birbiriyle uyuşmayan sayaç için yardım bağlantısı ve örnek ayrıştırma: “Onaylı 500; ödeme bekleyen 40; gelen 380” aynı kümenin bağımsız eksenleridir. Yönetici raporunda dönem karşılaştırması, kaynak, hedef ve alınan aksiyon notu birlikte sunulur.
+
+
+________________
+
+
+09 — Uçtan uca süreçler ve istisnalar
+A. Organizatör ilk etkinliği yayınlar
+Giriş → alan oluştur → kimlik/doğrulama → etkinlik şablonu/seri seç → 9 adımlı kurulum → kategoriler ve koşullu form → kendi test kaydı → yayın kontrolü → yayın. Her adım üstünde kalan iş listesi; yayın sonrası dashboard “kayıtlar 0” iken ilk bağlantı paylaşma eylemi. Yayın engelleyici hatalar listelenir, düzeltildikten sonra kullanıcı aynı kontrole döner. Etkinlik açılışından sonra kayıt formunda değişiklik varsa yeni sürüm, mevcut yanıtların ne olacağı ve yeniden cevap gerektiren kişi sayısı gösterilir.
+B. Ücretli bireysel kayıt
+Ziyaretçi kategori seçer → her katılımcıya ait sorular → ek hizmet ve gerekirse otel → ödeyen/fatura bilgisi → sipariş özeti → gönderim → kayıt durumu/ödeme durumu ayrı sonuç → ödeme teyidi → badge/portal. Ödeme başarısızsa başvuru kaybolmaz, borç ve yer tutma son tarihi görünür; son tarih geçince yer bekleme listesine bırakılabilir. Kısmi ödeme finans sorumlusu kuyruğunda. İptal ile iade farklı karar; iade ekranı hangi kalemlerin hakkını geri alacağını önizler.
+C. Sponsor haklı misafir
+Sponsor portalında kurum/edisyon/paket seç → kalan hak ve kısıtları gör → misafir ekle/davet et → katılımcı bilgilerini tamamlar → Claim ayrılır veya tüketilir (etkinlik kuralına göre ekranda yazılır) → kayıt onay → badge. Davet kabul edilmezse süresi dolunca ayrılmış hak geri döner. Paket 20, kullanılan 14, bekleyen 2, kullanılabilir 4 gibi dört sayı açıkça gösterilir. Kayıt iptalinde hak geri yükleme politikası ayrı karar olarak görünür.
+D. Bilimsel bildiri → sunum → program
+Yazar başvuru taslağı → gönderim → hakem daveti/çıkar çatışması → değerlendirmeler → komite kararı → yazara bildirim → kabul edilen içerik sunum havuzu → sunan yazara görev daveti → kabul → salon/zaman slotu → çakışma denetimi → yayın → sunum dosyası kontrolü. “Kabul” ile “programa alındı” arasındaki bekleyen işler bilimsel ve program dashboard'larında görünür. Yazar rolü, sunucu rolü, konferans kaydı ve ödeme ayrı tutulur.
+E. Konaklama ve oda arkadaşı
+Katılımcı iki tarih seçer → her gece stoğu gösterilir → oda tercihi → arkadaş daveti → diğer kişinin onayı → rezervasyon teyidi ve kimin ödeyeceği → otel misafir listesi. Arkadaş reddederse bekleyen slot görünür ve oda tipi/fiyat etkisi yeniden gösterilir. Bir gecede kapasite yoksa tüm konaklamanın “teyit” görünmesini engelle; alternatif tarih/otel veya bekleme listesi. Değişiklik önizlemesinde oda-gece farkı ve ilgili fatura etkisi.
+F. Canlı etkinlik → sertifika
+Giriş masası kayıt/hak doğrular → ilk etkinlik check-in → badge basımı → oturum bazlı giriş/çıkış → sertifika kuralı kontrolü → uygunluk listesi → isim önizleme ve imza onayı → yayın/gönderim → indirme. Tekrar tarama ilk check-in yerine geçmez; yanlış kişiye basılan badge iptal edilip gerekçeyle yenisi verilir. Katılımcı itirazında görevli kaynak tarama olayını inceler ve belge düzeltme akışına yönlendirir.
+G. Stand paketi ve mekânsal düzen
+Sponsor anlaşması → stand hakkı → uygun boyut/alan listesi → A24 ticari opsiyon → sözleşme ve tahsis → Floor Studio'da A24 şekli → plan önizleme ve yayın. Opsiyon süresi dolduğunda tekrar müsait olarak işaretlenir; taahhüt edilen stant hakkı kaybolmaz. Mekân planında yer değişince sponsorun sözleşmesi korunur, yeni yer ayrıca onaylanır.
+Durum geçişlerinin ürün tablosu
+Kaynak → hedef
+	Tetikleyici / kim
+	Ön koşul
+	Ekrandaki sonuç / geri alma
+	Kayıt taslak → gönderildi
+	Katılımcı
+	Zorunlu cevap ve koşullar
+	Numara, özet; izinli düzeltme süresi
+	Gönderildi → onaylı
+	Kayıt sorumlusu veya tanımlı kural
+	Kategori/kapasite/uygunluk
+	Bildirim + hak ve ödeme kontrolü
+	Onaylı → iptal
+	Yetkili / katılımcı kural dahilinde
+	Etki onayı
+	Rozet ve yer etkisi, iade ayrıca
+	Hak ayrıldı → kullanıldı
+	Misafir kaydı kesinleşir
+	Hak geçerli ve boş
+	Kalan hak kartı yenilenir
+	Bildiri gönderildi → kabul
+	Komite
+	İnceleme/karar yetkisi
+	Sunum havuzu ve bildirim
+	Oturum taslak → yayın
+	Program sorumlusu
+	Çakışma ve rol onayı
+	Kişisel programlarda görünür
+	Rezervasyon talep → teyit
+	Otel sorumlusu
+	Her gece stok + ödeme kuralı
+	Konaklama kartı ve doluluk
+	Check-in uygun → giriş
+	Onsite görevlisi
+	Geçerli kimlik/hak
+	Anlık sayaç ve tarama geçmişi
+	Belge uygun → gönderildi
+	Belge sorumlusu
+	Onaylı isim/kural
+	Katılımcı portalında belge
+	Olayların görünür etkisi ve kullanıcı güveni
+Her kritik değişiklikte “ne değişti, kime bildirilecek, hangi rapor etkilenecek, hangi hak değişecek?” önizlemesi. İptal, toplu iletişim, fatura düzeltme, yayın ve hak geri alma için neden alanı. Geçmiş eylemler zaman çizelgesinde aktör ve kapsamıyla görünür. Geri alınamayan durumda “geri al” yanıltıcı butonu gösterilmez; düzeltici yeni kayıt önerilir.
+
+
+________________
+
+
+10 — Ekran envanteri, kapsam ve kabul kriterleri
+Görselden tasarıma izleme matrisi
+Ekran
+	Görseldeki çekirdek / önerilen tam görünüm
+	Önemli bağlantı
+	Kabul ölçütü
+	Etkinlik dashboard dashboard(2)
+	URL, kurulum sayaçları → eksik işler, tarihler
+	Wizard → yayın
+	Eksik karta basmak düzeltilecek ayarı açar; 8/8'in paydası yazılı
+	Gelir analitik dashboard (1)(2)
+	Sayaç ve grafik → tanımlı ölçümler
+	Sipariş/ödeme/kayıt
+	“Tahsil edilen” kaydı ücretsiz kayıtla artmaz
+	API dashboard api-dashboard(2)
+	Görünen kullanım kartları → organizasyonel entegrasyon durumu
+	Edisyon/kullanım kapsamı
+	Yetkisiz rol işlevsiz teknik panel görmez; kapsam belirtilir
+	Konaklama ana-sayfa × 2
+	Özet/grafik → gece stok ve rezervasyon işleri
+	Katılımcı/otel/finans
+	1 oda × 3 gece = 3 oda-gece
+	Kayıt listesi katilimci-listesi
+	Özet, filtre, satırlar → çoklu durum
+	Kişi 360/ödeme
+	Liste filtresi kart sayısıyla aynı birime göre eşleşir
+	Bildiri liste
+	Özet ve satırlar → değerlendirme kuyruğu
+	Yazar/hakem/program
+	Kabul edilen bildiri otomatik programlanmış görünmez
+	Poster yonetim
+	Görünürlük ve tablo → onay/sürüm
+	Bildiri/sunum kontrol
+	Yayından kaldırma bilimsel kararı değiştirmez
+	Program oturumlar
+	Boş takvim → oturum editörü
+	Salon/konuşmacı/katılımcı
+	Çakışmalı salon saati yayınlanmaz
+	Sunum SunumKontrol
+	Kontrol sayaçları → dosya/AV işi
+	Program/speaker
+	Eksik dosya için sorumlu ve tarih görünür
+	Ödemeler odemeler
+	Satırlar/sayaçlar → sipariş ayrıntısı
+	Kayıt/otel/ek hizmet
+	İade ve tahsilat ayrı satırlarda izlenebilir
+	LCV LCV-Yonetimi
+	Davet/cevap kartları → kayıt dönüşümü
+	Davet/kayıt
+	“Geleceğim” ile “kayıt onaylı” sayısı ayrı
+	Sponsor portal
+	Boş portal → kurum hakları/teslim
+	Kurum/katılım/stand
+	20/14/6 hakkı satır ayrıntısı ile açıklanır
+	Ek hizmet ekhizmetler
+	Kategori sekmeleri → ürün/hak seçimi
+	Sipariş/hak
+	Ücretsiz hakla ücretli satın alma aynı görünmez
+	Onsite onsite-kontrol
+	Kapı seçimi/boş durum → tarama
+	Credential/katılım
+	Tekrar tarama toplam benzersiz geleni artırmaz
+	İletişim eposta-iletişim-kampanya
+	Boş modül → segment ve gönderim
+	Kayıt/LCV/ödeme
+	Test gönderim ve kitle önizleme olmadan canlı gönderim yok
+	Sertifika genel-bakis
+	Sayaç/liste → uygunluk ve belge
+	Giriş/oturum/person
+	“Üretildi” ile “gönderildi” ayrı metrik
+	Önerilen yeni ekranlar (görsellerde doğrulanmadı)
+İlk kullanım/onboarding, çalışma alanı ve rol seçici; çok adımlı etkinlik kurulum sihirbazı; form ve koşullu soru editörü; kişi/kurum 360; tenant arası değil tenant içi çoklu edisyon portföyü; bekleme listesi; katılımcı ve sponsor portalı ayrıntıları; haklar/teslimler; finans ayrıntı/iadeler; otel gecelik stok çizelgesi; oturum çakışma paneli; canlı onsite müdahale kuyruğu; ölçüm sözlüğü; kapanış raporu. Bunlar ekran görüntüsünde görülen ürüne ait olduğu iddiası taşımayan tasarım önerileridir.
+Kullanıcı senaryosu ile kabul
+1. Başlangıç: Organizatör hiçbir veri yokken 10 dakika içinde taslak bir etkinlik oluşturur, yayına engel olan eksikleri görür; davet edilen ekip kendi rol/kapsamını kabulden önce anlar.
+2. Çok rol: Aynı kişi yazar, konuşmacı ve sponsor konuğu olarak görünür; katılımcı listesinde bir kişi, roller bölümünde üç rol; ödeme ve rozet durumları ayrıca.
+3. Soru: Sponsor davetlisi yalnız kendisine uygun soruları görür; koşullu sorunun cevap oranı gerçekten gördüğü uygun kişiler üzerinden hesaplanır.
+4. Kapasite: Son yer dolunca yeni kullanıcı bekleme listesine yönlenir; teklif son tarihi ve sponsor ayrılmış kotası şeffaftır.
+5. Finans: 1000 birimlik siparişe 400 + 600 tahsilat, ardından 200 iade girildiğinde net tahsilat 800 ve sipariş/borç/iadeler ayrı okunur.
+6. Bilimsel: Kabul edilen bir bildiri oturum atanmadan listede “program bekliyor” kalır; yazar kararı ve program saatini farklı zamanlarda alır.
+7. Konaklama: Tarih değişikliği her gece stok ve fiyat etkisini gösterir; bir gece eksikse “teyitli” görünmez.
+8. Onsite: Aynı rozet iki kez taranınca tek benzersiz gelen ve bir tekrar uyarısı; oturum giriş sayısı ayrıca.
+9. Sponsor: 20 hakkın 14'ü kullanılmış, 2'si ayrılmışsa kalan kullanılabilir 4 görünür ve misafir listesi mutabık kalır.
+10. Rapor: Her KPI kartından aynı filtreli liste açılır; veri yok ve sıfır değer ayrı anlaşılır; son güncelleme görünür.
+11. Yetki: Kapı görevlisi hassas form cevaplarını, sponsor diğer sponsorun misafirlerini, bilimsel hakem kör kimliği göremez.
+12. İade/iptal: İade onayı etkinlik kaydını sessizce iptal etmez; kullanıcı etkiyi önizler.
+Tasarım araştırması ve karar sırası
+Aşama
+	Teslim ve karar
+	Bağımlılık
+	0
+	Terimler, statü/kapsam kararı, dört temsilî persona, gerçek etkinlik örnekleri
+	İş sahipleri
+	1
+	Onboarding, etkinlik sihirbazı, form, kayıt listesi, kişi 360 tıklanabilir akış
+	0
+	2
+	Kayıt/LCV/ödeme ve ölçüm sözlüğü; ücretsiz/ücretli/sponsor testleri
+	1
+	3
+	Bilimsel, program, konaklama ve sponsor hak akışları
+	1–2
+	4
+	Onsite, iletişim, sertifika, Floor Studio bağlantısı
+	2–3
+	5
+	12 kabul senaryosu, erişilebilirlik testi, rol bazlı prototip testi, karar defteri
+	1–4
+	Açık karar defteri
+Karar
+	Seçenekler
+	Önerilen varsayım
+	Onay sahibi
+	Kayıt onayı ve ücret
+	Önce onay / önce ödeme
+	Etkinlik/kategori düzeyinde seçilebilir
+	Ürün + finans
+	Kişi tekilleştirme
+	Otomatik / önerili
+	Önerili ve onaylı birleştirme
+	Operasyon
+	Sponsor hakkı tüketim anı
+	Davette / onayda
+	Davette ayır, onayda kullan; süre dolarsa bırak
+	Sponsor operasyonu
+	Salona giriş
+	Açık / rezervasyon / tarama
+	Oturum başına seçilebilir
+	Program + onsite
+	İade ve hak iadesi
+	Birlikte / ayrı
+	Ayrı gerekçeli adımlar
+	Finans + kayıt
+	Konaklama ödeyeni
+	Kişi / kurum / sponsor
+	Rezervasyon bazında ayrı göster
+	Konaklama + finans
+	Küçük grupların analitiği
+	Açık / maskeli
+	Hassas kırılımda maskeli
+	Veri sorumlusu
+	Tasarım dışı sınır
+Teknoloji seçimi, fiziksel veritabanı şeması, API çağrıları, veri taşıma protokolü, gerçek ödeme altyapısı, güvenlik implementasyonu ve mevzuat yorumu bu ürün Ar-Ge dosyasının dışındadır. Ancak ilgili iş kuralı ve kullanıcıya görünecek davranış tüm dosyalarda belirtilmiştir.
+
+
+________________
+
+
+11 — Yönetim ekranları alan sözlüğü ve boş durum taslakları
+Bu sözlük görünen örnek ekranların üstüne tasarlanan ayrıntı düzeyini belirtir. Adlandırma ve alanlar öneridir; görsellerdeki her öğenin mevcut üründe çalıştığı iddiası değildir. Her tabloda satır seçimi ayrıntı çekmecesi; kalıcı değişiklik, etki önizlemesi ve işlem geçmişi ile tamamlanır.
+Event dashboard
+Üst bağlam: edisyon adı, tarih aralığı, saat dilimi, yer, taslak/yayında/canlı/kapandı, etkinlik bağlantısı ve son düzenleyen. Hazırlık kartları: kayıt formu, kategori/fiyat, program, bilimsel, sponsor, konaklama, check-in, iletişim; her kart “hazır / yapılacak / dikkat” ve sorumlu. “8/8” yalnız etkin yeteneklerden tamamlama kriteri olan 8 iş varsa gösterilir. Boş: “Bu etkinliğin hazırlık işleri henüz tanımlanmadı.” CTA “Kuruluma devam et”. Bir kartın görünmemesi yeteneğin kapalı olmasından kaynaklanıyorsa kullanıcı bunu modüller alanında görebilir.
+Gelir analitiği ve yönetimsel API görünümü
+Gelir ekranı kartları: sipariş edilen, tahsil edilen, iade edilen, açık bakiye, ödeme bekleyen sipariş; filtre tarih alanı ve para birimi. Grafik kayıt başvuru tarihi ile tahsilat tarihi farklı eksenler olduğunu belirtir. Boş: “Seçili aralıkta finansal işlem yok.” CTA “Siparişleri gör”. API paneli görsel olarak ayrı dashboard'dur; burada yalnız organizatör açısından bağlantı adı, kapsamı, son başarılı kullanım, sorun sayısı, etkinliğe etkisi ve sorumlu gösterilir; protokol/anahtar/endpoint ayrıntıları tasarlanmaz. Boş: “Bu etkinliğe bağlı bir dış bağlantı yok.”
+Kayıt listesi ve kişi 360
+KPI: toplam gönderim, onaylı, incelemede, iptal, etkinliğe gelen; her kartın birimi. Tablo: kişi adı, iletişim, kurum, kayıt no, kategori, kaynak, roller, kayıt/ödeme/onsite rozetleri, oluşturma tarihi, son hareket. Filtre çubuğu kategori, durum eksenleri, davet/sponsor kaynağı, kurum, ülke, tarih ve özel sorular. Yeni kayıt CTA, içe aktar ve görünüm kaydet. Boş: “Henüz kayıt yok. Kayıt bağlantısını paylaşın veya ilk kişiyi ekleyin.” Kişi 360 alanları 02'deki sekmelerle açılır; ad, kategori veya rol değişimi hangi belge ve iletişimi etkiler önizlemesi gösterir.
+Bildiri, poster ve sunum kontrol
+Bildiri tablosu: kod, başlık, iz/tür, sunan yazar, gönderim/sürüm, hakem durumu, değerlendirme sayısı, karar, program durumu. Filtre: karar, iz, tür, tarih, hakem gecikmesi. Boş: “Henüz bildiri gönderilmedi. Çağrıyı ve son tarihi kontrol edin.” Poster: bildiri kodu, dosya sürümü, format kontrolü, poster no, yayın durumu, görünürlük tarihi; CTA “Dosyaları incele”. Sunum kontrol: oturum, konuşmacı, dosya son yükleme, AV gereksinimi, kontrol sonucu, onaylayan, kontrol tarihi; filtre “eksik dosya / yeniden inceleme / hazır”. Boş: “Kontrol edilecek sunum yok. Programdaki sunumları içeri alın.”
+Program ve oturum
+Üst filtre gün, salon, iz, yayın durumu; takvim ve liste görünümü. Oturum formu: ad, açıklama, zaman, salon, kapasite, görünürlük, moderatör, konuşmacı, kabul edilmiş bildiri/sunum, kayıt zorunluluğu ve izinli kategoriler. Sağ panel: çakışmalar, boş slot, oturum katılımı. Boş: “Bu gün için oturum yok. Oturum oluşturun veya başka gün seçin.” Yanlış filtrede “Filtreleri temizle”. Yayın düğmesi etkilenen konuşmacıları ve katılımcıları sayar.
+Konaklama
+Üst: oteller, oda stoğu, ayrılan oda-gece, rezervasyon bekleyen, gelir/borç ilişkisi (yetkili). Sekmeler: genel bakış, oteller, bloklar, gecelik stok, rezervasyonlar, oda arkadaşı, rapor. Satır: otel, oda tipi, varış/çıkış, konuk(lar), ödeyen, teyit, iptal koşulu. Boş: “Henüz oda bloğu tanımlanmadı. Konaklama taleplerini açmadan önce otel ve tarihleri ekleyin.” Alternatif CTA “Bu etkinlikte konaklamayı kapat”. Grafik ekseni tarih, çizgiler satılabilir/ayrılmış oda-gece.
+Ödeme ve ek hizmet
+Ödeme tablo alanları 06'daki sipariş ayrıntısıyla tutarlı. Filtre: sipariş/ödeme/iade durumu, kategori, para birimi, kanal, tarih; “Manuel teyit bekleyen” ayrı kuyruk. Boş: “Henüz sipariş yok. Kategori fiyatlarını ve kayıt bağlantısını kontrol edin.” Ek hizmet katalog kartı: kategori, ürün, tarih/yer, kapasite, ücret, hak kaynağı, kime açık, son sipariş tarihi, teslim durumu. Boş: “Bu kategoride hizmet yok. Hizmet ekleyin.” Satın al butonu ile haktan kullan butonu yan yana ama anlamı açık.
+LCV, sponsor portalı ve iletişim
+LCV tablo: davetli, e-posta/kurum, davet kaynağı, davet tarihi, son yanıt tarihi, cevap, kayıt durumu, hatırlatma. Boş: “Henüz davet oluşturmadınız. Davetli ekleyin.” Sponsor görünümü: kurum, anlaşma, paketteki haklar, ayrılmış/kullanılmış/kalan, bekleyen dosya ve teslim tarihi. Boş: “Bu kuruma atanmış bir sponsorluk yok. Sözleşme ekleyin veya kurum rolünü kontrol edin.” İletişim: kampanya adı, hedef segment, hedef sayı, test sonucu, durum, tarih, teslim/tıklama; boş: “Henüz kampanya hazırlamadınız. Önce hedef kitleyi seçin.”
+Onsite ve sertifika
+Onsite giriş: kapı, gün, arama/QR, kişi özet kartı, geçiş kararı, gerekçe, badge; canlı sayaç ve tekrar/ret kuyruğu. Boş: “Bu kapı için giriş kaydı yok. Doğru gün ve kapıyı seçtiğinizden emin olun.” Sertifika: tür, uygunluk koşulu, uygun/bekleyen/üretildi/gönderildi/geri alındı, belge şablonu, isim onayı, dağıtım tarihi. Boş: “Henüz sertifika türü oluşturulmadı. Önce uygunluk koşullarını tanımlayın.”
+İstisnaların ortak arayüzü
+Alan hatası için soru altında somut düzeltme; filtre sonucu yoksa filtreleri temizle; erişim yoksa istenecek rol; kaydedilmemiş değişiklikte ayrılma onayı; anlık veri gecikiyorsa son güncelleme; başarılı toplu işlemde toplam/atlanan/hatalı satır. İlgisiz modüller, erişim anahtarları ve teknik hata kodları son kullanıcı metninde gösterilmez.
+
+
+________________
+
+
+Maven Event Management + Event Floor Studio
+Ortak Organizasyonel Mimari ve Modüler Event Operations Platform Tasarımı
+Doküman amacı:
+Maven Event Management ana uygulaması ile Event Floor Studio'nun birbirinden bağımsız çalıştığı, ancak aynı organizasyonel şema, tenant yapısı, kurum/kişi/event kimlikleri ve ortak domain sözleşmelerini kullandığı bütünleşik bir event operasyon mimarisi tanımlamak.
+
+
+Temel karar:
+Event Floor Studio, Maven Event Management'ın bir alt modülü değildir. Ayrı bir uygulama olarak çalışır. Ancak her iki sistem aynı temel organizasyonel modeli, kimlikleri ve entegrasyon sözleşmelerini kullanmalıdır.
+
+
+________________
+
+
+1. Ürün Konumlandırması
+Maven Event Management'ın hedefi basit bir kayıt sistemi değil, çok kiracılı bir Event Operations Platform / Event ERP olmaktır.
+
+
+Event Floor Studio ise bu yapının içinde bağımsız çalışan:
+
+
+* venue/floor plan,
+* exhibition alanı,
+* booth/stand yerleşimi,
+* mekânsal kaynak yönetimi,
+* görsel planlama
+
+
+odaklı ayrı bir uygulamadır.
+
+
+Doğru ilişki:
+
+
+MAVEN EVENT MANAGEMENT
+
+
+│
+
+
+├── Tenant / Organization / Event Core
+
+
+├── People / Registration
+
+
+├── Finance
+
+
+├── Sponsorship
+
+
+├── Scientific
+
+
+├── Program
+
+
+├── Accommodation
+
+
+├── Onsite
+
+
+├── Operations
+
+
+└── Integration Layer
+
+
+        │
+
+
+        └────────────── Event Floor Studio
+
+
+                         │
+
+
+                         ├── Venue
+
+
+                         ├── Floor
+
+
+                         ├── Exhibition Area
+
+
+                         ├── Booth / Stand
+
+
+                         └── Spatial Resources
+
+
+Floor Studio kendi veri modeline ve kullanıcı arayüzüne sahip olabilir; ancak ortak ana nesneler için Maven ile aynı kimlikleri kullanmalıdır.
+
+
+________________
+
+
+2. En Temel Mimari İlke
+Sistemin merkezine tek bir Participant tablosu koymak yanlış olur.
+
+
+Doğru ayrım:
+
+
+Person ≠ Participant ≠ Registration ≠ Role ≠ Payment
+
+
+Bir insan aynı etkinlikte aynı anda:
+
+
+* katılımcı,
+* konuşmacı,
+* bildiri yazarı,
+* hakem,
+* sponsor davetlisi,
+* workshop katılımcısı,
+* exhibitor staff,
+* VIP
+
+
+olabilir.
+
+
+Aynı kişinin:
+
+
+* kayıt durumu,
+* ödeme durumu,
+* bilimsel rolü,
+* program rolü,
+* konaklama durumu,
+* badge durumu,
+* check-in durumu,
+* sertifika durumu
+
+
+birbirinden bağımsız tutulmalıdır.
+
+
+________________
+
+
+3. Ana Organizasyon Hiyerarşisi
+PLATFORM
+
+
+└── TENANT
+
+
+    ├── ORGANIZATIONS
+
+
+    ├── PEOPLE
+
+
+    ├── EVENT SERIES
+
+
+    │    └── EVENT EDITIONS
+
+
+    └── SHARED CONFIGURATION
+3.1 Platform
+Event Floor Studio ve Maven Event Management aynı SaaS ekosisteminin parçaları olabilir.
+3.2 Tenant
+İlk kullanımda tenant organizasyon şirketinin kendisidir.
+
+
+İleride:
+
+
+Platform
+
+
+├── Tenant: Organizasyon Firması A
+
+
+├── Tenant: Organizasyon Firması B
+
+
+├── Tenant: Kongre Merkezi C
+
+
+├── Tenant: Dernek D
+
+
+└── Tenant: Kurumsal Etkinlik Firması E
+
+
+Tenant izolasyonu zorunludur.
+
+
+Bir tenant:
+
+
+* kendi organizasyonlarını,
+* kişilerini,
+* eventlerini,
+* finansal kayıtlarını,
+* sponsorlarını,
+* kullanıcılarını
+
+
+yönetir.
+
+
+________________
+
+
+4. Organization Ana Nesnesi
+Firma/kurum kimliği ile event içindeki rolü birbirinden ayrılmalıdır.
+
+
+Yanlış:
+
+
+Organization.type = SPONSOR
+
+
+Doğru:
+
+
+Organization
+
+
+    │
+
+
+    └── EventOrganizationAssignment
+
+
+Örnek event rolleri:
+
+
+HOST
+
+
+EVENT_OWNER
+
+
+CLIENT
+
+
+PCO
+
+
+CO_ORGANIZER
+
+
+SCIENTIFIC_OWNER
+
+
+PUBLIC_AUTHORITY
+
+
+SUPPORTER
+
+
+SPONSOR
+
+
+EXHIBITOR
+
+
+VENUE
+
+
+HOTEL
+
+
+SUPPLIER
+
+
+MEDIA_PARTNER
+
+
+ACADEMIC_PARTNER
+
+
+ASSOCIATION
+
+
+Aynı organizasyon aynı eventte birden fazla role sahip olabilir.
+
+
+Örneğin:
+
+
+ABC Pharma
+
+
+SPONSOR
+
+
+EXHIBITOR
+
+
+WORKSHOP_SPONSOR
+
+
+Başka bir eventte ise yalnızca:
+
+
+EXHIBITOR
+
+
+olabilir.
+
+
+________________
+
+
+5. Event Series ve Event Edition
+Bu iki kavram mutlaka ayrılmalıdır.
+
+
+EventSeries
+
+
+"No-Dig Turkey"
+
+
+├── EventEdition 2026
+
+
+├── EventEdition 2027
+
+
+└── EventEdition 2028
+
+
+EventSeries kalıcı markayı/seriyi temsil eder.
+
+
+EventEdition:
+
+
+* tarih,
+* venue,
+* sponsorlar,
+* fiyatlar,
+* konuşmacılar,
+* program,
+* bildiri süreci,
+* kayıtlar,
+* oteller,
+* finans
+
+
+gibi o yıla/edisyona özgü verileri taşır.
+
+
+Yeni edition oluşturulurken önceki edition'dan:
+
+
+* registration category,
+* sponsor package,
+* form,
+* email template,
+* badge profile,
+* scientific track,
+* venue/floor plan şablonu
+
+
+kopyalanabilir.
+
+
+Ancak geçmiş edition'ın tarihsel verisi değişmemelidir.
+
+
+________________
+
+
+6. Event Type Yerine Template + Capability
+Event türlerini hard-code etmek yerine capability tabanlı model kullanılmalıdır.
+
+
+Örnek capability'ler:
+
+
+REGISTRATION
+
+
+SCIENTIFIC
+
+
+PROGRAM
+
+
+SPONSORSHIP
+
+
+EXHIBITION
+
+
+FLOOR_PLAN
+
+
+ACCOMMODATION
+
+
+TRAVEL
+
+
+BADGING
+
+
+ACCESS_CONTROL
+
+
+CERTIFICATES
+
+
+CME_CREDITS
+
+
+TOURS
+
+
+SOCIAL_EVENTS
+
+
+OPERATIONS
+Scientific Congress Template
+Registration      ON
+
+
+Scientific        ON
+
+
+Program           ON
+
+
+Speakers          ON
+
+
+Sponsors          ON
+
+
+Exhibition        OPTIONAL
+
+
+Accommodation     ON
+
+
+Travel            OPTIONAL
+
+
+Badging           ON
+
+
+Certificates      ON
+
+
+CME/Credits       OPTIONAL
+Trade Fair Template
+Registration      ON
+
+
+Scientific        OFF
+
+
+Program           OPTIONAL
+
+
+Sponsors          ON
+
+
+Exhibition        ON
+
+
+Floor Plan        ON
+
+
+Exhibitors        ON
+
+
+Stand Services    ON
+
+
+Lead Capture      OPTIONAL
+
+
+Accommodation     OPTIONAL
+
+
+Badging           ON
+Corporate Event Template
+Invitation
+
+
+Registration
+
+
+Program
+
+
+Seating
+
+
+Badging
+
+
+Hospitality
+
+
+Suppliers
+
+
+Operations
+
+
+Böylece yeni event türü için yeni kod yazmak yerine capability seti oluşturulur.
+
+
+________________
+
+
+7. Event Yaşam Döngüsü
+OPPORTUNITY
+
+
+↓
+
+
+BID / PROPOSAL
+
+
+↓
+
+
+AWARDED / CONTRACTED
+
+
+↓
+
+
+PLANNING
+
+
+↓
+
+
+CONFIGURATION
+
+
+↓
+
+
+SALES / SPONSORSHIP / EXHIBITION
+
+
+↓
+
+
+REGISTRATION / SCIENTIFIC / PROGRAM
+
+
+↓
+
+
+LOGISTICS / ACCOMMODATION
+
+
+↓
+
+
+PRE-EVENT
+
+
+↓
+
+
+ONSITE / LIVE
+
+
+↓
+
+
+POST-EVENT
+
+
+↓
+
+
+FINANCIAL RECONCILIATION
+
+
+↓
+
+
+ARCHIVED
+
+
+Her alt modülün kendi yaşam döngüsü vardır.
+
+
+Örneğin:
+
+
+* registration açılış/kapanış,
+* abstract submission açılış/kapanış,
+* review period,
+* sponsor sales period,
+* hotel booking period
+
+
+ayrı ayrı yönetilir.
+
+
+________________
+
+
+8. Ana Modüller ve Sorumluluk Sınırları
+Modül
+	Kendi Sorumluluğu
+	Dışarıya Sağladığı
+	Tenant & IAM
+	Tenant, kullanıcı, yetki
+	Kim ne yapabilir
+	Organizations / CRM
+	Firma, kurum, contact
+	Organizasyon kimliği
+	Event Core
+	Event series/edition, venue, capability
+	Event bağlamı
+	People
+	Tekil kişi kimliği
+	Person ID
+	Participation
+	Kişi-event ilişkisi
+	EventParticipation
+	Registration
+	Kayıt süreci
+	Registration
+	Catalog & Pricing
+	Ürün, ticket, fiyat, dönem
+	Fiyatlandırma
+	Entitlements
+	Hak/kota sistemi
+	Hak tüketimi
+	Finance
+	Order, invoice, payment, refund
+	Finansal gerçek
+	Sponsorship
+	Paket, sözleşme, haklar
+	Sponsor entitlements
+	Exhibition
+	Stand ticari tahsisi
+	Booth allocation
+	Floor Studio
+	Geometri ve mekânsal kaynak
+	Spatial resource
+	Scientific
+	Abstract/review/decision
+	Bilimsel sonuç
+	Program
+	Agenda, session, room
+	Program planı
+	Speaker Management
+	Speaker/moderator görevleri
+	Program assignment
+	Accommodation
+	Hotel/room/stay
+	Konaklama
+	Travel
+	Uçuş, transfer, tur
+	Seyahat planı
+	Onsite
+	Check-in/badge/access
+	Attendance
+	Certificates
+	Sertifika/credit
+	Belge
+	Communications
+	E-mail/SMS/push
+	İletişim
+	Operations
+	Task/vendor/logistics
+	Operasyon
+	Assets/Documents
+	Logo, dosya, sözleşme
+	Dosya servisi
+	Reporting/Audit
+	Rapor ve denetim
+	Operasyonel görünürlük
+	
+
+________________
+
+
+9. Sistemin Kalbi: EventParticipation
+Person
+
+
+    │
+
+
+    └── EventParticipation
+
+
+            ├── Registration[]
+
+
+            ├── EventRoleAssignment[]
+
+
+            ├── EntitlementClaim[]
+
+
+            ├── Order[]
+
+
+            ├── AccommodationStay[]
+
+
+            ├── ProgramAssignment[]
+
+
+            ├── ScientificRelation[]
+
+
+            ├── Credential[]
+
+
+            ├── CheckInEvent[]
+
+
+            └── Certificate[]
+
+
+Person tenant içinde mümkün olduğunca tekil olmalıdır.
+
+
+Event içinde değişebilecek bilgiler ise snapshot tutulabilir:
+
+
+EventProfileSnapshot
+
+
+Örnek:
+
+
+* event sırasındaki firma,
+* unvan,
+* ülke,
+* badge'de yazılacak isim,
+* kurum adı,
+* özel form cevapları.
+
+
+Böylece kişi daha sonra şirket değiştirdiğinde eski event raporu bozulmaz.
+
+
+________________
+
+
+10. Tek Status Yerine Çok Eksenli Durum Modeli
+Registration
+DRAFT
+
+
+SUBMITTED
+
+
+PENDING_APPROVAL
+
+
+CONFIRMED
+
+
+REJECTED
+
+
+CANCELLED
+Payment
+NOT_REQUIRED
+
+
+PENDING
+
+
+PARTIALLY_PAID
+
+
+PAID
+
+
+FAILED
+
+
+PARTIALLY_REFUNDED
+
+
+REFUNDED
+
+
+CHARGEBACK
+Attendance
+NOT_ARRIVED
+
+
+CHECKED_IN
+
+
+CHECKED_OUT
+
+
+NO_SHOW
+Badge
+NOT_ELIGIBLE
+
+
+READY
+
+
+ISSUED
+
+
+PRINTED
+
+
+REPRINTED
+
+
+VOID
+Certificate
+NOT_ELIGIBLE
+
+
+ELIGIBLE
+
+
+GENERATED
+
+
+DELIVERED
+
+
+REVOKED
+Accommodation
+NOT_REQUESTED
+
+
+REQUESTED
+
+
+WAITLIST
+
+
+RESERVED
+
+
+CONFIRMED
+
+
+CHECKED_IN
+
+
+CHECKED_OUT
+
+
+CANCELLED
+
+
+Bir kişinin gerçek durumu örneğin:
+
+
+Registration      CONFIRMED
+
+
+Payment           PAID
+
+
+Role              SPEAKER
+
+
+Attendance        CHECKED_IN
+
+
+Accommodation     CONFIRMED
+
+
+Certificate       ELIGIBLE
+
+
+şeklinde çok eksenli olmalıdır.
+
+
+________________
+
+
+11. Registration Category ile Role Ayrımı
+Registration Categories
+Regular
+
+
+Student
+
+
+Member
+
+
+Non-Member
+
+
+Invited Speaker
+
+
+Exhibitor Staff
+
+
+Sponsor Guest
+
+
+Press
+
+
+VIP
+
+
+Staff
+
+
+Accompanying Person
+
+
+Day Visitor
+Event Roles
+ATTENDEE
+
+
+AUTHOR
+
+
+REVIEWER
+
+
+SPEAKER
+
+
+MODERATOR
+
+
+SESSION_CHAIR
+
+
+PANELIST
+
+
+COMMITTEE_MEMBER
+
+
+VIP
+
+
+PRESS
+
+
+STAFF
+
+
+Bir kişi birden fazla role sahip olabilir.
+
+
+RegistrationCategory çoğunlukla:
+
+
+* ticari yol,
+* fiyat,
+* kayıt formu,
+* approval,
+* hangi ürünlere erişebildiği
+
+
+ile ilgilidir.
+
+
+________________
+
+
+12. Registration Source ve Funding Source
+Registration Source
+PUBLIC_FORM
+
+
+INVITATION
+
+
+SPONSOR_PORTAL
+
+
+EXHIBITOR_PORTAL
+
+
+SCIENTIFIC_PORTAL
+
+
+ADMIN_ENTRY
+
+
+IMPORT
+
+
+API
+
+
+ONSITE_WALK_IN
+
+
+GROUP_REGISTRATION
+Funding Source
+SELF_PAID
+
+
+ORGANIZATION_PAID
+
+
+SPONSOR_ENTITLEMENT
+
+
+HOST_COMPLIMENTARY
+
+
+SPEAKER_ENTITLEMENT
+
+
+STAFF
+
+
+SCHOLARSHIP
+
+
+GRANT
+
+
+PROMO
+
+
+Örnek:
+
+
+Registration source = SPONSOR_PORTAL
+
+
+Funding source      = SPONSOR_ENTITLEMENT
+
+
+Payment status      = NOT_REQUIRED
+
+
+________________
+
+
+13. Sponsor Modeli
+Gold/Silver/Bronze hard-code edilmemelidir.
+SponsorTierDefinition
+name
+
+
+display_order
+
+
+capacity
+
+
+price
+
+
+currency
+
+
+branding_rules
+
+
+Örnek:
+
+
+Gold Sponsor
+
+
+Maximum Sponsors: 5
+
+
+Silver Sponsor
+
+
+Maximum Sponsors: 10
+
+
+Başka bir eventte:
+
+
+Naming Sponsor: 1
+
+
+Lunch Sponsor: unlimited
+
+
+Coffee Break Sponsor: 3
+
+
+Badge Sponsor: 1
+
+
+olabilir.
+
+
+________________
+
+
+14. Sponsor Tier ile Sponsor Package Ayrımı
+Tier:
+
+
+GOLD
+
+
+Package:
+
+
+Gold Sponsorship 2027
+
+
+Paket hakları:
+
+
+20 x Complimentary Registration
+
+
+5 x Exhibitor Staff Badge
+
+
+1 x 12m² Booth
+
+
+1 x Speaking Slot
+
+
+1 x Website Logo Placement
+
+
+1 x Mobile App Banner
+
+
+1 x Program Advertisement
+
+
+2 x Gala Ticket
+
+
+________________
+
+
+15. Entitlement Engine
+Bu sistem platformun en temel motorlarından biri olmalıdır.
+
+
+Entitlement
+
+
+owner
+
+
+source
+
+
+type
+
+
+quantity_granted
+
+
+quantity_consumed
+
+
+quantity_remaining
+
+
+valid_from
+
+
+valid_until
+
+
+restrictions
+
+
+Örnek:
+
+
+Owner:
+
+
+ABC Pharma
+
+
+Source:
+
+
+Gold Sponsorship Agreement
+
+
+Type:
+
+
+COMPLIMENTARY_REGISTRATION
+
+
+Granted:
+
+
+20
+
+
+Consumed:
+
+
+14
+
+
+Remaining:
+
+
+6
+
+
+________________
+
+
+16. Entitlement Kullanım Alanları
+Aynı motor:
+
+
+Sponsor → Complimentary Registration
+
+
+Sponsor → Booth
+
+
+Sponsor → Gala Ticket
+
+
+Sponsor → Badge
+
+
+Speaker → Free Registration
+
+
+Speaker → Hotel
+
+
+Committee → Gala Access
+
+
+VIP → Lounge Access
+
+
+Reviewer → Discount
+
+
+Exhibitor → Staff Badge
+
+
+Delegate → Lunch
+
+
+Registration Package → Session Access
+
+
+için kullanılabilir.
+
+
+Bu sayede sistem if/else karmaşasından korunur.
+
+
+________________
+
+
+17. Sponsor Hakkından Kayıt
+Sponsor portalı:
+
+
+ABC Pharma
+
+
+Gold Sponsorship
+
+
+20 Registration Rights
+
+
+[Add Guest]
+
+
+Kişi eklendiğinde:
+
+
+Person
+
+
+↓
+
+
+EventParticipation
+
+
+↓
+
+
+Registration
+
+
+↓
+
+
+EntitlementClaim
+
+
+↓
+
+
+Gold Sponsorship Registration #14
+
+
+oluşur.
+
+
+Bu kaydın neden ücretsiz olduğu sistemde açıkça bilinir.
+
+
+________________
+
+
+18. Group / Delegation
+Delegation
+
+
+├── Leader
+
+
+├── Billing Organization
+
+
+├── Members
+
+
+├── Registration Rules
+
+
+├── Hotel Block
+
+
+└── Payment Account
+
+
+Kullanım alanları:
+
+
+* sponsor grubu,
+* şirket delegasyonu,
+* kamu heyeti,
+* öğrenci grubu,
+* VIP delegation,
+* tur grubu.
+
+
+________________
+
+
+19. Exhibition Modeli
+Venue
+
+
+└── Floor
+
+
+    └── ExhibitionArea
+
+
+        └── BoothUnit
+
+
+              ↕
+
+
+        FloorPlanObject
+
+
+BoothUnit ticari/resource nesnedir.
+
+
+FloorPlanObject ise görsel/geometrik nesnedir.
+
+
+Örnek:
+
+
+BoothUnit #A24
+
+
+Size: 12m²
+
+
+Type: Shell Scheme
+
+
+Commercial Status: CONTRACTED
+
+
+Exhibitor: ABC Ltd.
+
+
+Floor Studio tarafında:
+
+
+resource_id = booth_A24
+
+
+geometry = x/y/w/h/rotation
+
+
+yeterlidir.
+
+
+________________
+
+
+20. Event Floor Studio ile Maven Arasındaki Sınır
+Maven Event Management Sahip Olur
+* Event
+* Organization
+* Exhibitor
+* Sponsorship agreement
+* Booth commercial status
+* Contract
+* Payment
+* Entitlement
+* Allocation
+* User permissions
+Event Floor Studio Sahip Olur
+* Venue geometry
+* Floor geometry
+* Exhibition area geometry
+* Booth visual object
+* Coordinates
+* Rotation
+* Visual grouping
+* Layer
+* Lock/visibility
+* Spatial validation
+Paylaşılan Kimlikler
+tenant_id
+
+
+event_id
+
+
+venue_id
+
+
+floor_id
+
+
+exhibition_area_id
+
+
+booth_unit_id
+
+
+organization_id
+
+
+Floor Studio hiçbir zaman kendi başına sponsor, payment veya contract gerçeği üretmez.
+
+
+________________
+
+
+21. Booth Durumları
+AVAILABLE
+
+
+HELD
+
+
+OPTION
+
+
+RESERVED
+
+
+CONTRACTED
+
+
+BLOCKED
+
+
+OCCUPIED
+
+
+RELEASED
+
+
+HELD veya OPTION için zaman aşımı olabilir.
+
+
+Örnek:
+
+
+ABC Ltd.
+
+
+A24
+
+
+OPTION
+
+
+expires_at: 2026-09-27 17:00
+
+
+Süre dolunca tekrar AVAILABLE olabilir.
+
+
+________________
+
+
+22. Sponsor ile Booth İlişkisi
+Sponsor paketinde:
+
+
+1 x 12m² Booth
+
+
+olabilir.
+
+
+Bu doğrudan A24 tahsis edilmesi değildir.
+
+
+Doğru akış:
+
+
+SponsorAgreement
+
+
+↓
+
+
+Booth Entitlement
+
+
+↓
+
+
+Booth Allocation
+
+
+↓
+
+
+A24
+
+
+Bu ayrım gelecekte sponsor stand seçimini de kolaylaştırır.
+
+
+________________
+
+
+23. Exhibitor Portal
+Exhibitor kendi portalından:
+
+
+* firma profilini,
+* logosunu,
+* booth personelini,
+* badge taleplerini,
+* elektrik talebini,
+* internet talebini,
+* mobilya,
+* AV,
+* catering,
+* stand tasarım dosyalarını,
+* yükleme/boşaltma bilgilerini,
+* belgelerini
+
+
+yönetebilir.
+
+
+Bu alan ileride ayrı ExhibitorServiceOrder domainine dönüşebilir.
+
+
+________________
+
+
+24. Scientific Modülü
+ScientificEvent
+
+
+├── CallForPapers
+
+
+├── Tracks
+
+
+├── Topics
+
+
+├── SubmissionTypes
+
+
+├── Submissions
+
+
+├── Authors
+
+
+├── ReviewRounds
+
+
+├── ReviewAssignments
+
+
+├── Reviews
+
+
+├── Decisions
+
+
+├── FinalSubmissions
+
+
+└── Presentations
+
+
+________________
+
+
+25. Submission / Bildiri Modeli
+Submission
+
+
+├── Submitter
+
+
+├── Authors[]
+
+
+├── PresentingAuthor
+
+
+├── CorrespondingAuthor
+
+
+├── Track
+
+
+├── Topic[]
+
+
+├── SubmissionType
+
+
+├── Keywords
+
+
+├── Files[]
+
+
+└── Status
+
+
+External co-author ilk aşamada Person hesabına bağlı olmak zorunda değildir.
+
+
+Daha sonra Person kaydı ile eşleştirilebilir.
+
+
+________________
+
+
+26. Hakemlik
+ReviewerAssignment
+
+
+durumları:
+
+
+INVITED
+
+
+ACCEPTED
+
+
+DECLINED
+
+
+CONFLICT
+
+
+ASSIGNED
+
+
+IN_PROGRESS
+
+
+COMPLETED
+
+
+OVERDUE
+
+
+Review mode:
+
+
+OPEN
+
+
+SINGLE_BLIND
+
+
+DOUBLE_BLIND
+
+
+Event veya review round bazında belirlenebilir.
+
+
+________________
+
+
+27. Submission Decision
+Canonical decision tipleri:
+
+
+ACCEPT_ORAL
+
+
+ACCEPT_POSTER
+
+
+ACCEPT_E_POSTER
+
+
+ACCEPT_PANEL
+
+
+REVISION_REQUIRED
+
+
+WAITLIST
+
+
+REJECT
+
+
+WITHDRAWN
+
+
+UI label'ları event bazında özelleştirilebilir.
+
+
+Temel kural:
+
+
+Custom label serbest, canonical business semantic kontrollü.
+
+
+________________
+
+
+28. Scientific ile Program Ayrımı
+Bilimsel karar:
+
+
+Submission
+
+
+↓
+
+
+Decision
+
+
+ACCEPT_ORAL
+
+
+Programlama:
+
+
+Presentation
+
+
+↓
+
+
+ProgramSession
+
+
+↓
+
+
+ProgramSlot
+
+
+Scientific modülü bilimsel değerlendirmeyi yönetir.
+
+
+Program modülü zaman, oda ve sahne planını yönetir.
+
+
+________________
+
+
+29. Speaker Management
+ProgramAssignment
+
+
+Person
+
+
+Session
+
+
+Role:
+
+
+    SPEAKER
+
+
+    MODERATOR
+
+
+    SESSION_CHAIR
+
+
+    PANELIST
+
+
+Status:
+
+
+    INVITED
+
+
+    ACCEPTED
+
+
+    DECLINED
+
+
+    CONFIRMED
+
+
+    CANCELLED
+
+
+Ek bilgiler:
+
+
+* bio,
+* fotoğraf,
+* presentation file,
+* AV requirement,
+* travel,
+* hotel,
+* honorarium,
+* disclosure,
+* conflict declaration.
+
+
+________________
+
+
+30. Registration ile Scientific Bağlantısı
+Örnek rule:
+
+
+IF
+
+
+Submission = ACCEPT_ORAL
+
+
+AND
+
+
+Person = PresentingAuthor
+
+
+THEN
+
+
+Create SpeakerInvitation
+
+
+Notify Registration Module
+
+
+Ancak auto-registration event bazında konfigüre edilmelidir.
+
+
+________________
+
+
+31. Accommodation Modeli
+HotelProperty
+
+
+├── RoomType
+
+
+├── Contract
+
+
+├── RoomBlock
+
+
+│    └── InventoryNight
+
+
+├── RatePlan
+
+
+└── Reservation
+
+
+________________
+
+
+32. Oda Stoğu Gün Bazlı Olmalı
+Hotel A
+
+
+Standard Double
+
+
+3 Dec   50
+
+
+4 Dec   50
+
+
+5 Dec   42
+
+
+6 Dec   30
+
+
+Reservation:
+
+
+arrival_date
+
+
+departure_date
+
+
+üzerinden inventory tüketmelidir.
+
+
+________________
+
+
+33. Single / Double / Roommate
+Reservation
+
+
+├── RoomType
+
+
+├── CheckIn
+
+
+├── CheckOut
+
+
+├── PrimaryGuest
+
+
+└── OccupancySlots[]
+
+
+Double örneği:
+
+
+Slot 1 → Ahmet
+
+
+Slot 2 → Pending
+
+
+Roommate talebi:
+
+
+RoommateRequest
+
+
+Ahmet → Mehmet
+
+
+PENDING
+
+
+ACCEPTED
+
+
+DECLINED
+
+
+EXPIRED
+
+
+Kabul edilince ikinci occupancy slot atanır.
+
+
+________________
+
+
+34. Eş ve Çocuklar
+GuestParty
+
+
+veya:
+
+
+Companion
+
+
+kullanılabilir.
+
+
+Companion tipleri:
+
+
+Adult
+
+
+Child
+
+
+Infant
+
+
+Companion ayrıca:
+
+
+* hotel,
+* breakfast,
+* gala,
+* tour,
+* transfer
+
+
+gibi ürün veya haklara sahip olabilir.
+
+
+________________
+
+
+35. Hotel Ödeme Kaynağı
+Konaklama ödemesini:
+
+
+* participant,
+* sponsor,
+* organization,
+* organizer,
+* speaker hospitality budget
+
+
+karşılayabilir.
+
+
+Room reservation ile payer aynı kişi olmak zorunda değildir.
+
+
+________________
+
+
+36. Finance Modülü
+Kayıt tablosunda:
+
+
+paid = true
+
+
+kullanılmamalıdır.
+
+
+Doğru finans modeli:
+
+
+Order
+
+
+├── OrderLine[]
+
+
+├── Invoice[]
+
+
+├── Payment[]
+
+
+├── PaymentAllocation[]
+
+
+├── Refund[]
+
+
+└── CreditNote[]
+
+
+________________
+
+
+37. Payment Source
+ONLINE_CARD
+
+
+BANK_TRANSFER
+
+
+POS
+
+
+CASH
+
+
+PAYMENT_LINK
+
+
+MANUAL_EXTERNAL
+
+
+Örnek:
+
+
+Payment
+
+
+10,000 TRY
+
+
+daha sonra:
+
+
+PaymentAllocation
+
+
+Invoice #123 → 7,500
+
+
+Invoice #124 → 2,500
+
+
+şeklinde dağıtılabilir.
+
+
+________________
+
+
+38. Manuel Ödeme
+Admin "ödendi" butonuyla doğrudan status değiştirmemelidir.
+
+
+Bunun yerine:
+
+
+ManualPayment
+
+
+amount
+
+
+currency
+
+
+date
+
+
+method
+
+
+reference
+
+
+entered_by
+
+
+reason
+
+
+oluşturulmalıdır.
+
+
+Tüm finansal state buradan türetilmelidir.
+
+
+________________
+
+
+39. Ücretsiz Kayıt ile Paid Ayrımı
+Örnek:
+
+
+Registration Fee:       5,000 TRY
+
+
+Speaker Entitlement:   -5,000 TRY
+
+
+Final Payable:              0 TRY
+
+
+Bu:
+
+
+PAID
+
+
+değil,
+
+
+NOT_REQUIRED / ZERO_BALANCE
+
+
+durumudur.
+
+
+________________
+
+
+40. Badge Modülü
+BadgeInstance
+
+
+├── Person
+
+
+├── EventParticipation
+
+
+├── BadgeProfile
+
+
+├── Credential
+
+
+├── PrintHistory
+
+
+└── Status
+
+
+Badge Profile:
+
+
+Delegate
+
+
+Speaker
+
+
+Exhibitor
+
+
+Sponsor
+
+
+VIP
+
+
+Staff
+
+
+Press
+
+
+olabilir.
+
+
+________________
+
+
+41. Access Control
+AccessProfile:
+
+
+VIP
+
+
+şu alanlara izin verebilir:
+
+
+Main Hall
+
+
+VIP Lounge
+
+
+Gala
+
+
+Speaker:
+
+
+Main Hall
+
+
+Speaker Ready Room
+
+
+Backstage
+
+
+Exhibitor:
+
+
+Exhibition Hall
+
+
+Setup Hours
+
+
+Badge erişim hakkını taşır, erişim gerçeğinin sahibi değildir.
+
+
+________________
+
+
+42. Check-In / Scan Event
+ScanEvent
+
+
+credential
+
+
+timestamp
+
+
+location
+
+
+device
+
+
+operator
+
+
+action
+
+
+tutulmalıdır.
+
+
+Sadece:
+
+
+checked_in = true
+
+
+yeterli değildir.
+
+
+________________
+
+
+43. Certificate Modülü
+CertificateDefinition
+
+
+↓
+
+
+EligibilityRule
+
+
+↓
+
+
+CertificateIssue
+
+
+Örnek:
+Participant Certificate
+registration confirmed
+
+
+AND
+
+
+event checked-in
+Speaker Certificate
+speaker assignment confirmed
+
+
+AND
+
+
+session delivered
+Reviewer Certificate
+completed reviews >= configured minimum
+
+
+CME/credit gerekiyorsa ayrıca:
+
+
+CreditLedger
+
+
+kullanılabilir.
+
+
+________________
+
+
+44. Form Engine
+FormDefinition
+
+
+├── Pages
+
+
+├── Sections
+
+
+├── Fields
+
+
+├── Conditions
+
+
+├── Validation
+
+
+└── Submission
+
+
+Örnek:
+
+
+IF RegistrationCategory == Student
+
+
+THEN Show StudentDocument
+
+
+IF Accommodation == Yes
+
+
+THEN Show HotelOptions
+
+
+IF Role == Speaker
+
+
+THEN Show Bio + Photo + AV Requirements
+
+
+Kritik domain verileri custom JSON içine gömülmemelidir.
+
+
+________________
+
+
+45. Custom Ama Kontrollü Model
+Örneğin:
+
+
+Canonical Type:
+
+
+SPEAKER
+
+
+Display Label:
+
+
+Davetli Bilimsel Konuşmacı
+
+
+veya:
+
+
+Canonical Entitlement:
+
+
+COMPLIMENTARY_REGISTRATION
+
+
+Display Label:
+
+
+Gold Sponsor Ücretsiz Katılım Hakkı
+
+
+Bu sayede kullanıcıya esneklik verilirken business logic bozulmaz.
+
+
+________________
+
+
+46. Workflow / Rules Engine
+Örnek:
+
+
+EVENT:
+
+
+PaymentReceived
+
+
+IF
+
+
+RegistrationApproval == APPROVED
+
+
+AND
+
+
+Balance == 0
+
+
+THEN
+
+
+RegistrationConfirmed
+
+
+Başka örnek:
+
+
+EVENT:
+
+
+SponsorAgreementActivated
+
+
+THEN
+
+
+Grant Sponsorship Entitlements
+
+
+Başka örnek:
+
+
+EVENT:
+
+
+AbstractAcceptedAsOral
+
+
+THEN
+
+
+Create SpeakerInvitation
+
+
+Başka örnek:
+
+
+EVENT:
+
+
+RegistrationCancelled
+
+
+THEN
+
+
+Release Session Seat
+
+
+Release Unused Entitlements
+
+
+Notify Accommodation
+
+
+Invalidate Badge
+
+
+Create RefundRequest
+
+
+Refund doğrudan yapılmak zorunda değildir.
+
+
+________________
+
+
+47. Domain Events
+İlk aşamada mikroservis zorunlu değildir.
+
+
+Önerilen yapı:
+
+
+Modular Monolith
+
+
+Ancak domainler event yayınlamalıdır:
+
+
+RegistrationConfirmed
+
+
+PaymentReceived
+
+
+SponsorAgreementActivated
+
+
+BoothAllocated
+
+
+SubmissionAccepted
+
+
+SpeakerConfirmed
+
+
+HotelReservationConfirmed
+
+
+BadgeIssued
+
+
+ParticipantCheckedIn
+
+
+CertificateEligible
+
+
+Bir modül diğer modülün tablolarını doğrudan güncellememelidir.
+
+
+________________
+
+
+48. Yetki Modeli
+Platform/Tenant Roles
+ORG_OWNER
+
+
+ORG_ADMIN
+
+
+EVENT_MANAGER
+
+
+FINANCE_MANAGER
+
+
+REGISTRATION_MANAGER
+
+
+SPONSORSHIP_MANAGER
+
+
+SCIENTIFIC_MANAGER
+
+
+PROGRAM_MANAGER
+
+
+ONSITE_MANAGER
+External Portal Roles
+SPONSOR_ADMIN
+
+
+EXHIBITOR_ADMIN
+
+
+REVIEWER
+
+
+SPEAKER
+
+
+GROUP_LEADER
+
+
+HOTEL_CONTACT
+Event Roles
+SPEAKER
+
+
+ATTENDEE
+
+
+VIP
+
+
+AUTHOR
+
+
+REVIEWER
+
+
+Bu üç rol ailesi birbirinden ayrı tutulmalıdır.
+
+
+________________
+
+
+49. Sponsorluk Hiyerarşisi
+Sponsorship Program
+
+
+├── Headline Sponsorship
+
+
+│   └── Naming Sponsor
+
+
+│
+
+
+├── Tier Sponsorship
+
+
+│   ├── Platinum
+
+
+│   ├── Gold
+
+
+│   └── Silver
+
+
+│
+
+
+├── Activity Sponsorship
+
+
+│   ├── Gala
+
+
+│   ├── Lunch
+
+
+│   ├── Coffee Break
+
+
+│   └── Welcome Reception
+
+
+│
+
+
+├── Content Sponsorship
+
+
+│   ├── Session
+
+
+│   └── Workshop
+
+
+│
+
+
+└── Branding Sponsorship
+
+
+    ├── Badge
+
+
+    ├── Lanyard
+
+
+    ├── Mobile App
+
+
+    └── Wi-Fi
+
+
+________________
+
+
+50. Branding Placement
+BrandingPlacement
+
+
+Website / Home / Main Sponsors
+
+
+Website / Footer
+
+
+Mobile App / Home
+
+
+Stage / Main Screen
+
+
+Program Book / Back Cover
+
+
+Badge
+
+
+Lanyard
+
+
+Entitlement:
+
+
+1 x Website/MainSponsors
+
+
+gibi tanımlanabilir.
+
+
+________________
+
+
+51. Sponsor Deliverables
+SponsorAgreement
+
+
+↓
+
+
+Deliverables
+
+
+Örnek deliverables:
+
+
+Logo Required
+
+
+Contract Signature
+
+
+Payment
+
+
+Company Description
+
+
+Banner Artwork
+
+
+Guest List
+
+
+Stand Design
+
+
+Advertisement
+
+
+Speaker Information
+
+
+Durumlar:
+
+
+NOT_STARTED
+
+
+WAITING_SPONSOR
+
+
+SUBMITTED
+
+
+UNDER_REVIEW
+
+
+APPROVED
+
+
+REJECTED
+
+
+COMPLETED
+
+
+________________
+
+
+52. Operations Modülü
+PCO operasyonunda ayrıca:
+
+
+Venue
+
+
+Supplier
+
+
+Procurement
+
+
+Contract
+
+
+Budget
+
+
+Task
+
+
+Milestone
+
+
+Production
+
+
+AV
+
+
+Catering
+
+
+Transportation
+
+
+Signage
+
+
+Printing
+
+
+Staff
+
+
+Protocol
+
+
+Security
+
+
+Logistics
+
+
+Shipment
+
+
+Social Events
+
+
+Tours
+
+
+alanları bulunur.
+
+
+Bunların tamamının V1'de geliştirilmesi gerekmeyebilir.
+
+
+Ancak domain modelde yerleri ayrılmalıdır.
+
+
+________________
+
+
+53. Event Ekranı Bilgi Mimarisi
+OVERVIEW
+
+
+PEOPLE
+
+
+  People
+
+
+  Participations
+
+
+  Groups / Delegations
+
+
+REGISTRATION
+
+
+  Registrations
+
+
+  Categories
+
+
+  Products & Pricing
+
+
+  Forms
+
+
+  Approvals
+
+
+PROGRAM
+
+
+  Agenda
+
+
+  Sessions
+
+
+  Speakers
+
+
+  Rooms
+
+
+SCIENCE
+
+
+  Submissions
+
+
+  Authors
+
+
+  Reviewers
+
+
+  Reviews
+
+
+  Decisions
+
+
+PARTNERS
+
+
+  Sponsors
+
+
+  Sponsorship Packages
+
+
+  Exhibitors
+
+
+  Deliverables
+
+
+EXPO
+
+
+  Floor Plan
+
+
+  Booths
+
+
+  Stand Services
+
+
+HOSPITALITY
+
+
+  Hotels
+
+
+  Room Blocks
+
+
+  Reservations
+
+
+  Travel
+
+
+  Transfers
+
+
+  Tours
+
+
+FINANCE
+
+
+  Orders
+
+
+  Invoices
+
+
+  Payments
+
+
+  Refunds
+
+
+  Reconciliation
+
+
+ONSITE
+
+
+  Check-in
+
+
+  Badges
+
+
+  Access
+
+
+  Attendance
+
+
+CERTIFICATES
+
+
+COMMUNICATIONS
+
+
+OPERATIONS
+
+
+REPORTS
+
+
+SETTINGS
+
+
+Capability kapalıysa ilgili menü görünmez.
+
+
+________________
+
+
+54. Person 360 View
+AHMET YILMAZ
+
+
+Identity
+
+
+────────────────────
+
+
+Company: ABC Pharma
+
+
+Email: ...
+
+
+Phone: ...
+
+
+Event Participation
+
+
+────────────────────
+
+
+Registration       CONFIRMED
+
+
+Category           Invited Speaker
+
+
+Source             Sponsor Portal
+
+
+Roles
+
+
+────────────────────
+
+
+Speaker
+
+
+Author
+
+
+Reviewer
+
+
+Finance
+
+
+────────────────────
+
+
+Registration       Sponsor Entitlement
+
+
+Workshop           2,000 TRY / PAID
+
+
+Balance            0 TRY
+
+
+Scientific
+
+
+────────────────────
+
+
+SUB-108            Accepted / Oral
+
+
+Reviews            3 Completed
+
+
+Program
+
+
+────────────────────
+
+
+Session 12         Speaker
+
+
+Workshop 4         Participant
+
+
+Accommodation
+
+
+────────────────────
+
+
+Hotel X
+
+
+4–7 December
+
+
+Double Room
+
+
+Roommate           Mehmet / Confirmed
+
+
+Badge
+
+
+────────────────────
+
+
+Speaker
+
+
+Printed
+
+
+Attendance
+
+
+────────────────────
+
+
+Event              Checked In
+
+
+Session 12         Attended
+
+
+Certificate
+
+
+────────────────────
+
+
+Speaker Certificate    Eligible
+
+
+Participant Certificate Eligible
+
+
+Bu ekran veri sahibi değildir.
+
+
+Diğer modüllerin gerçeklerini birleştiren 360 görünümüdür.
+
+
+________________
+
+
+55. Organization 360 View
+ABC PHARMA
+
+
+Roles
+
+
+────────────────────
+
+
+Gold Sponsor
+
+
+Exhibitor
+
+
+Sponsorship
+
+
+────────────────────
+
+
+50,000 EUR
+
+
+Rights
+
+
+────────────────────
+
+
+Registration       14 / 20
+
+
+Exhibitor Badge     5 / 5
+
+
+12m² Booth           1 / 1
+
+
+Gala Invitations     6 / 10
+
+
+Booth
+
+
+────────────────────
+
+
+A24
+
+
+Financial
+
+
+────────────────────
+
+
+Contracted         50,000 EUR
+
+
+Paid               25,000 EUR
+
+
+Outstanding        25,000 EUR
+
+
+Deliverables
+
+
+────────────────────
+
+
+Logo               Approved
+
+
+Banner             Waiting
+
+
+Guest List         Incomplete
+
+
+Stand Design       Approved
+
+
+People
+
+
+────────────────────
+
+
+19 linked people
+
+
+________________
+
+
+56. Floor Studio'nun Ürün İçindeki Yeri
+Doğru konumlandırma:
+
+
+EVENT OPERATING SYSTEM
+
+
+        │
+
+
+        └── EXHIBITION DOMAIN
+
+
+                │
+
+
+                └── SPACE & RESOURCE PLANNING
+
+
+                        │
+
+
+                        └── EVENT FLOOR STUDIO
+
+
+Floor Studio'nun teknik bağımsızlığı korunmalıdır.
+
+
+Maven ile ortak olması gereken şey UI veya kod tabanı değil; domain kimlikleri ve entegrasyon sözleşmeleridir.
+
+
+________________
+
+
+57. Kaçınılması Gereken Anti-Patternler
+57.1 Mega Participants Tablosu
+Kaçınılmalı:
+
+
+is_speaker
+
+
+is_sponsor
+
+
+paid
+
+
+hotel
+
+
+certificate
+
+
+abstract_status
+
+
+gibi yüzlerce kolon.
+57.2 Tek Status
+CONFIRMED kelimesi tek başına yetersizdir.
+57.3 Hard-coded Sponsor Tier
+Gold/Silver/Bronze kod içinde olmamalıdır.
+57.4 Complimentary Kaydı Paid Göstermek
+Finansal gerçek bozulur.
+57.5 Scientific + Registration Birleştirmek
+Aynı kişi farklı bilimsel ve operasyonel rollere sahip olabilir.
+57.6 Floor Plan'ı Ticari Kaynak Haline Getirmek
+Canvas geometri yönetmelidir.
+
+
+Contract/Payment/Entitlement Maven'da kalmalıdır.
+57.7 Kritik Business Verilerini JSON Custom Field İçine Gömmek
+Payment, Room, Sponsor Entitlement, Submission gibi kavramlar gerçek entity olmalıdır.
+57.8 Modüllerin Birbirinin DB Tablolarını Doğrudan Güncellemesi
+Domain action/event kullanılmalıdır.
+
+
+________________
+
+
+58. Master Domain Graph
+Tenant
+
+
+│
+
+
+├── User / Permission
+
+
+│
+
+
+├── Organization
+
+
+│   ├── OrganizationContact
+
+
+│   └── OrganizationRelationship
+
+
+│
+
+
+├── Person
+
+
+│
+
+
+└── EventSeries
+
+
+    │
+
+
+    └── EventEdition
+
+
+        │
+
+
+        ├── EventOrganizationAssignment
+
+
+        │
+
+
+        ├── EventParticipation
+
+
+        │   ├── Registration
+
+
+        │   ├── RoleAssignment
+
+
+        │   ├── EntitlementClaim
+
+
+        │   ├── ProgramAssignment
+
+
+        │   ├── AccommodationStay
+
+
+        │   ├── BadgeCredential
+
+
+        │   ├── Attendance
+
+
+        │   └── CertificateIssue
+
+
+        │
+
+
+        ├── Catalog
+
+
+        │   ├── Products
+
+
+        │   ├── Prices
+
+
+        │   └── PriceRules
+
+
+        │
+
+
+        ├── Finance
+
+
+        │   ├── Order
+
+
+        │   ├── Invoice
+
+
+        │   ├── Payment
+
+
+        │   └── Refund
+
+
+        │
+
+
+        ├── Sponsorship
+
+
+        │   ├── TierDefinition
+
+
+        │   ├── PackageDefinition
+
+
+        │   ├── SponsorAgreement
+
+
+        │   ├── EntitlementPool
+
+
+        │   └── Deliverables
+
+
+        │
+
+
+        ├── Exhibition
+
+
+        │   ├── BoothProduct
+
+
+        │   ├── BoothUnit
+
+
+        │   ├── BoothAllocation
+
+
+        │   └── ServiceOrder
+
+
+        │
+
+
+        ├── FloorPlan
+
+
+        │
+
+
+        ├── Scientific
+
+
+        │   ├── Submission
+
+
+        │   ├── Authorship
+
+
+        │   ├── ReviewAssignment
+
+
+        │   ├── Review
+
+
+        │   └── Decision
+
+
+        │
+
+
+        ├── Program
+
+
+        │   ├── Track
+
+
+        │   ├── Session
+
+
+        │   ├── Slot
+
+
+        │   └── Room
+
+
+        │
+
+
+        ├── Accommodation
+
+
+        │   ├── Hotel
+
+
+        │   ├── RoomBlock
+
+
+        │   ├── InventoryNight
+
+
+        │   ├── Reservation
+
+
+        │   └── Occupancy
+
+
+        │
+
+
+        ├── Onsite
+
+
+        │   ├── Credential
+
+
+        │   ├── Badge
+
+
+        │   └── ScanEvent
+
+
+        │
+
+
+        └── Workflow
+
+
+            ├── Rule
+
+
+            ├── Trigger
+
+
+            ├── Action
+
+
+            └── Audit
+
+
+________________
+
+
+59. Maven Event Management ↔ Floor Studio Ortak Contract
+İki sistemin ortak anlayacağı minimum contract:
+
+
+Tenant
+
+
+Event
+
+
+Venue
+
+
+Floor
+
+
+Exhibition Area
+
+
+Booth Unit
+
+
+Organization
+
+
+Exhibitor
+
+
+Allocation
+
+
+User / Permission Scope
+
+
+Önerilen kimlik yaklaşımı:
+
+
+tenant_id
+
+
+event_id
+
+
+venue_id
+
+
+floor_id
+
+
+area_id
+
+
+booth_unit_id
+
+
+organization_id
+
+
+allocation_id
+
+
+Floor Studio'nun kendi geometrik nesneleri ayrıca kendi internal ID'lerine sahip olabilir.
+
+
+________________
+
+
+60. Veri Sahipliği Matrisi
+Veri
+	Sistem of Record
+	Tenant
+	Maven Core
+	Organization
+	Maven Core
+	Person
+	Maven Core
+	Event
+	Maven Core
+	Venue business identity
+	Maven Core
+	Venue geometry
+	Floor Studio
+	Floor geometry
+	Floor Studio
+	Booth commercial identity
+	Maven Exhibition
+	Booth geometry
+	Floor Studio
+	Exhibitor
+	Maven
+	Sponsor agreement
+	Maven
+	Booth allocation
+	Maven Exhibition
+	Visual placement
+	Floor Studio
+	Payment
+	Maven Finance
+	Entitlement
+	Maven
+	Stand contract
+	Maven
+	Floor plan rendering
+	Floor Studio
+	
+
+Bu ayrım entegrasyonun temelidir.
+
+
+________________
+
+
+61. Önerilen Geliştirme Sırası
+Faz 1 — Foundation
+Tenant
+
+
+IAM
+
+
+Organization
+
+
+Person
+
+
+Audit
+Faz 2 — Event Core
+EventSeries
+
+
+EventEdition
+
+
+Capabilities
+
+
+EventOrganizationAssignment
+Faz 3 — Participation
+EventParticipation
+
+
+Roles
+
+
+Registration
+
+
+RegistrationCategory
+
+
+RegistrationSource
+Faz 4 — Catalog / Pricing
+Products
+
+
+Prices
+
+
+PriceRules
+
+
+Discounts
+Faz 5 — Entitlement Engine
+EntitlementDefinition
+
+
+EntitlementGrant
+
+
+EntitlementClaim
+
+
+Quota
+
+
+Restrictions
+Faz 6 — Finance
+Order
+
+
+Invoice
+
+
+Payment
+
+
+PaymentAllocation
+
+
+Refund
+
+
+CreditNote
+Faz 7 — Sponsorship / Exhibition
+Sponsor Tier
+
+
+Package
+
+
+Agreement
+
+
+Deliverables
+
+
+Booth Inventory
+
+
+Allocation
+Faz 8 — Floor Studio Integration
+Shared IDs
+
+
+Venue/Floor sync
+
+
+Booth sync
+
+
+Allocation sync
+
+
+Floor event notifications
+Faz 9 — Scientific
+Submissions
+
+
+Authors
+
+
+Review
+
+
+Decision
+Faz 10 — Program
+Session
+
+
+Track
+
+
+Room
+
+
+Speaker Assignment
+Faz 11 — Accommodation / Travel
+Hotel
+
+
+Room Block
+
+
+Reservation
+
+
+Roommate
+
+
+Transfer
+
+
+Tour
+Faz 12 — Onsite
+Badge
+
+
+Credential
+
+
+Check-In
+
+
+Access
+
+
+Attendance
+Faz 13 — Certificates
+Certificate Definition
+
+
+Eligibility
+
+
+Issue
+
+
+Credit
+Faz 14 — Operations / Automation
+Workflow
+
+
+Rules
+
+
+Tasks
+
+
+Supplier
+
+
+Production
+
+
+Logistics
+
+
+________________
+
+
+62. Mimari Özet
+Platformun temel modeli şu şekilde düşünülmelidir:
+
+
+WHO
+
+
+Person / Organization
+
+
+WHERE
+
+
+Tenant / Event / Venue / Floor / Booth
+
+
+WHY
+
+
+Role / Registration / Agreement
+
+
+WHAT THEY ARE ENTITLED TO
+
+
+Entitlement
+
+
+WHAT THEY BOUGHT
+
+
+Order
+
+
+WHAT THEY PAID
+
+
+Payment
+
+
+WHAT THEY RECEIVED
+
+
+Allocation / Reservation / Badge / Access
+
+
+WHAT THEY DID
+
+
+Submission / Review / Attendance
+
+
+WHAT THEY ARE ELIGIBLE FOR
+
+
+Certificate / Credit
+
+
+Bu ayrım sistemin ölçeklenebilirliğinin temelidir.
+
+
+________________
+
+
+63. Sonuç
+Maven Event Management ile Event Floor Studio'nun aynı uygulamaya dönüştürülmesi gerekmemektedir.
+
+
+Doğru yaklaşım:
+
+
+Ayrı uygulamalar, ortak organizasyonel model, ortak ana kimlikler, açık veri sahipliği ve kontrollü domain entegrasyonu.
+
+
+Event Floor Studio bugün oturmuş ve işlevsel yapısını koruyabilir.
+
+
+Maven Event Management ise:
+
+
+* tenant,
+* organization,
+* event,
+* person,
+* registration,
+* entitlement,
+* sponsorship,
+* finance,
+* scientific,
+* accommodation,
+* onsite
+
+
+gibi business domainlerin sahibi olur.
+
+
+Event Floor Studio:
+
+
+* venue,
+* floor,
+* booth,
+* spatial resource,
+* geometry,
+* layout
+
+
+alanında uzmanlaşır.
+
+
+İki sistem arasında paylaşılması gereken en önemli şey kod değil, domain contract olmalıdır.
+
+
+Bu temel üzerine kurulduğunda sistem:
+
+
+* fuar,
+* kongre,
+* bilimsel sempozyum,
+* kurumsal event,
+* workshop,
+* hibrit etkinlik,
+* sponsorlu organizasyon,
+* konaklamalı kongre
+
+
+gibi çok farklı etkinlik türlerini aynı çekirdek üzerinde yönetebilir.
+
+
+Ve en önemlisi, bugün düşünülmeyen yüzlerce özel durum yeni kolonlar ve istisna kodları üretmeden modele eklenebilir.

@@ -25,10 +25,13 @@ export async function POST(req: NextRequest) {
     const pwError = passwordPolicyError(body.password ?? "");
     if (pwError) return NextResponse.json({ error: pwError }, { status: 422 });
 
-    const existing = await db.user.findFirst({ where: { email } });
+    const tenantId = await resolveContext(null);
+
+    // N-03: çakışma denetimi kiracı-kapsamlı (davet akışıyla tutarlı);
+    // yarış penceresi @@unique([tenantId, email]) + P2002 yakalamayla kapalı.
+    const existing = await db.user.findFirst({ where: { tenantId, email } });
     if (existing) return NextResponse.json({ error: "Bu e-posta ile kayıt mevcut" }, { status: 409 });
 
-    const tenantId = await resolveContext(null);
     const isFirstUser = (await db.user.count({ where: { tenantId } })) === 0;
     const passwordHash = await hashPassword(body.password!);
 
@@ -46,6 +49,9 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ ok: true, user, role: user.role }, { status: 201 });
   } catch (e) {
+    if ((e as { code?: string }).code === "P2002") {
+      return NextResponse.json({ error: "Bu e-posta ile kayıt mevcut" }, { status: 409 });
+    }
     console.error("POST /api/auth/register", e);
     return NextResponse.json({ error: "Kayıt başarısız" }, { status: 500 });
   }

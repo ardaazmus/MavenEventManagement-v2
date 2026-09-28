@@ -472,6 +472,9 @@ export const MODULES = [
   { id: "people", label: "Kişiler", icon: "Users", capability: null, group: "crm", roles: "*" },
   { id: "organizations", label: "Kurum/Kuruluşlar", icon: "Building2", capability: null, group: "crm", roles: "*" },
   { id: "communications", label: "İletişim", icon: "Megaphone", capability: "COMMUNICATIONS", group: "crm", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "REGISTRATION_MANAGER", "SPONSORSHIP_MANAGER", "SCIENTIFIC_MANAGER", "PROGRAM_MANAGER"] },
+  // H-08: şirket iletişim havuzu — etkinlik yeteneğinden BAĞIMSIZ (capability null).
+  // UI-only modül: API'ler mevcut communications/customer-contacts kapılarından geçer.
+  { id: "company-communications", label: "Şirket İletişimi", icon: "Mails", capability: null, group: "crm", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "REGISTRATION_MANAGER", "SPONSORSHIP_MANAGER", "SCIENTIFIC_MANAGER", "PROGRAM_MANAGER"] },
   // ── 4) Kayıt & Finans — kayıt akışı, formlar, ödeme, tek muhasebe defteri
   { id: "registrations", label: "Kayıt & Katılımcılar", icon: "ClipboardList", capability: "REGISTRATION", group: "registration", roles: ["ORG_OWNER", "ORG_ADMIN", "EVENT_MANAGER", "FINANCE_MANAGER", "REGISTRATION_MANAGER", "ONSITE_MANAGER"] },
   { id: "forms", label: "Form Merkezi", icon: "FileInput", capability: null, group: "registration", roles: "*" },

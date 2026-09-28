@@ -1566,7 +1566,9 @@ function ImportReservationsDialog({ open, onOpenChange, editionId, onImported }:
     try {
       const XLSX = await import("xlsx");
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
+      // N-05: sheetRows tavanı — bozuk/devasa dosyanın parse maliyetini sınırlar
+      // (CVE-2024-22363 ReDoS yüzeyini küçültür; tam çözüm exceljs göçüdür).
+      const wb = XLSX.read(buf, { type: "array", sheetRows: 1005 });
       const ws = wb.Sheets[wb.SheetNames[0]];
       if (!ws) throw new Error(t("accImp.fileEmpty"));
       const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "", raw: false });

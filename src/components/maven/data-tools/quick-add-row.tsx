@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Plus, Loader2 } from "lucide-react";
+import { useLang } from "@/lib/i18n";
 
 export interface QuickAddColumnConfig {
   key: string;
@@ -17,7 +18,9 @@ export interface QuickAddRowProps {
   buttonLabel?: string;
 }
 
-export function QuickAddRow({ columns, onAdd, buttonLabel = "Hızlı Ekle" }: QuickAddRowProps) {
+export function QuickAddRow({ columns, onAdd, buttonLabel }: QuickAddRowProps) {
+  const { t } = useLang();
+  const label = buttonLabel ?? t("quickAdd.add");
   const [rowState, setRowState] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -72,7 +75,7 @@ export function QuickAddRow({ columns, onAdd, buttonLabel = "Hızlı Ekle" }: Qu
         className="h-8 gap-1 text-xs shrink-0 cursor-pointer"
       >
         {submitting ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-        {buttonLabel}
+        {label}
       </Button>
     </div>
   );

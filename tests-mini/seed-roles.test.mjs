@@ -67,7 +67,7 @@ test("P05.2 - seedSystemRoles is idempotent and deterministic across repeated ru
     // ── Run 1: First seed on clean migrated DB ──
     const run1 = await seedSystemRoles(prisma);
     assert.strictEqual(run1.totalRolesInDb, 11, "Run 1 must create 11 system roles");
-    assert.strictEqual(run1.totalPermissionsInDb, 716, "Run 1 must create 716 system role permissions");
+    assert.strictEqual(run1.totalPermissionsInDb, 747, "Run 1 must create 747 system role permissions");
     assert.ok(run1.digest, "Run 1 must emit a deterministic digest");
 
     // Verify all roles in DB have isSystem: true and tenantId: null
@@ -89,8 +89,8 @@ test("P05.2 - seedSystemRoles is idempotent and deterministic across repeated ru
     );
     assert.strictEqual(
       run2.totalPermissionsInDb,
-      716,
-      "Run 2 must NOT duplicate permissions (must remain 716)"
+      747,
+      "Run 2 must NOT duplicate permissions (must remain 747)"
     );
     assert.strictEqual(
       run2.digest,
@@ -124,8 +124,8 @@ test("P05.2 - seedSystemRoles is idempotent and deterministic across repeated ru
     );
     assert.strictEqual(
       run3.totalPermissionsInDb,
-      716,
-      "Run 3 permissions must remain 716"
+      747,
+      "Run 3 permissions must remain 747"
     );
     assert.strictEqual(
       run3.digest,

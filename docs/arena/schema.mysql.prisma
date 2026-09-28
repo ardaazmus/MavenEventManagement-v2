@@ -1,0 +1,2186 @@
+// ═══ MySQL/MariaDB MIGRATION ARTEFAKTI — otomatik üretilmiş (scripts/generate-mysql-schema.mjs) ═══
+// Kaynak: prisma/schema.prisma · Üretim: 2026-09-25T12:13:31.398Z
+// Amaç: Hostinger MySQL/MariaDB taşınması için hazır şema — prisma schema.mysql.prisma olarak
+// ayrı klasörde durur (prisma/ klasörüne KOYULMAZ — çoklu-şema birleşmesi çakışması önlenir).
+// Doğrulama akışı: bkz. Admin → Ayarlar → Veritabanı & Migration (geçici sekme).
+
+// ============================================================================
+// MAVEN EVENT MANAGEMENT — ORTAK ORGANİZASYONEL MİMARİ
+// Master Domain Graph (§58) + 02 Organizasyonel Bilgi Modeli birebir uygulama
+// Temel ilke (§2): Person ≠ Participation ≠ Registration ≠ Role ≠ Payment
+// SQLite kısıtı: enum yerine String + src/lib/constants.ts sabitleri
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── FAZ 1: FOUNDATION — Tenant, IAM, Organization, Person, Audit ──────────
+
+model Tenant {
+  id           String   @id @default(cuid())
+  name String @db.Text
+  slug         String   @unique
+  plan         String   @default("PRO") // FREE | PRO | ENTERPRISE
+  status       String   @default("ACTIVE")
+  country String? @db.Text
+  timezone     String   @default("Europe/Istanbul")
+  createdAt    DateTime @default(now())
+  // — Firma kimliği (Faz C / R11) — vitrin + shell logo için nullable alanlar
+  logoUrl String? @db.LongText // shell sol üst + vitrin hero (medya/dataURL)
+  tagline String? @db.Text // kısa slogan (shell alt yazı + vitrin)
+  aboutText String? @db.Text // vitrin "Hakkında" metni
+  contactName String? @db.Text // yetkili adı (vitrin kartı)
+  contactPhone String? @db.Text // yetkili telefon (tel: linki)
+  contactEmail String? @db.Text // yetkili e-posta (mailto: linki)
+  website String? @db.Text // firma web sitesi
+
+  users               User[]
+  organizations       Organization[]
+  people              Person[]
+  series              EventSeries[]
+  editions            EventEdition[]
+  activityLogs        ActivityLog[]
+  apiIntegrations     ApiIntegration[]
+  mailProviders       MailProviderConfig[]
+  mailSuppressions    MailSuppression[] // S3: istismar denetimi — bastırma listesi
+  kvkkErasureRequests KvkkErasureRequest[] // K7: silme talepleri
+  jurisdictionProfile JurisdictionProfile? // TASK-B 19: yargı çerçevesi profili (tek-etkin)
+  documents           DocumentRecord[] // TASK-B 20: belge sicili
+  subscription        TenantSubscription? // TASK-B 22: abonelik (manuel ilk aşama)
+}
+
+model User {
+  id                String    @id @default(cuid())
+  tenantId          String
+  email String @db.Text
+  name String @db.Text
+  role              String    @default("ORG_ADMIN") // §48: ORG_OWNER|ORG_ADMIN|EVENT_MANAGER|FINANCE_MANAGER|REGISTRATION_MANAGER|SPONSORSHIP_MANAGER|SCIENTIFIC_MANAGER|PROGRAM_MANAGER|ONSITE_MANAGER
+  status            String    @default("ACTIVE")
+  // — A4: kimlik doğrulama altyapısı (flag-off; MAVEN_AUTH=on ile devreye girer) —
+  passwordHash String? @db.Text // argon2id (m=19456,t=2,p=1) — plaintext ASLA saklanmaz/yazılmaz
+  mfaSecretCipher String? @db.LongText // TOTP secret (AES-256-GCM cipher; secrets.ts ile)
+  mfaEnabled        Boolean   @default(false)
+  recoveryCodes String? @db.Text // JSON: [{ hash, usedAt|null }] — kurtarma faktörü (tek kullanımlık, hash'li)
+  failedLoginCount  Int       @default(0)
+  lockedUntil       DateTime?
+  lastLoginAt       DateTime?
+  // — A4: asgari rıza (KVKK) —
+  consentVersion String? @db.Text
+  consentAcceptedAt DateTime?
+  createdAt         DateTime  @default(now())
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  passkeys      Passkey[]
+  oauthAccounts OAuthAccount[]
+}
+
+// A4: WebAuthn passkey — opaque userId (cuid) dışa ifşa edilmez; challenge tek kullanımlık;
+// counter monoton artar (klonlama tespiti); rpID ortam-öncelikli (MAVEN_RPID → apex).
+model Passkey {
+  id           String    @id @default(cuid())
+  userId       String
+  credentialId String    @unique
+  publicKey String @db.Text // base64 (COSE)
+  counter      Int       @default(0)
+  transports String? @db.Text // CSV: internal|hybrid|usb|nfc|ble
+  name String? @db.Text
+  aaguid String? @db.Text
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// A4: OAuth bağlantı tablosu — YALNIZ şema (not: bağlayıcı akış A4 kapsamı dışı,
+// sağlayıcı sözleşmeleri netleşince eklenecek; stub endpoint YOK).
+model OAuthAccount {
+  id                String   @id @default(cuid())
+  userId            String
+  provider          String // GOOGLE|MICROSOFT|LINKEDIN (bkz. not)
+  providerAccountId String
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+// K7: KVKK silme talebi (madde 7/11) — 30 gün SLA; anonimleştirme (tombstone):
+// katılım/finans geçmişi yasal saklama için KALIR, kimlik alanları anonimleşir.
+// Yasal saklama yükümlülüğü olan talep REJECTED + gerekçe ile reddedilir (legal hold).
+// İşlem günlüğü ActivityLog'da 3 yıl saklanır; 6 aydan eski açık talep sweep ile kapatılır.
+model KvkkErasureRequest {
+  id           String    @id @default(cuid())
+  tenantId     String
+  email String @db.Text // talep sahibi başvuru adresi (doğrulama: kayıtla eşleşme)
+  personId     String? // eşleşen kişi (doğrulama sonrası)
+  status       String    @default("PENDING") // PENDING|VERIFIED|COMPLETED|REJECTED
+  note String? @db.Text // talepçinin açıklaması
+  rejectReason String? @db.Text // legal-hold gerekçesi (reddedildiyse)
+  verifiedAt   DateTime?
+  completedAt  DateTime?
+  handledBy String? @db.Text
+  requestedAt  DateTime  @default(now())
+  dueAt        DateTime // requestedAt + 30 gün (SLA)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name String @db.Text
+  code String? @db.Text
+  type String? @db.Text // COMPANY|ASSOCIATION|UNIVERSITY|AGENCY|PUBLIC_AUTHORITY|VENUE|HOTEL|MEDIA (sponsor TÜRÜ DEĞİL — §4)
+  website String? @db.Text
+  country String? @db.Text
+  city String? @db.Text
+  taxNo String? @db.Text
+  logoUrl String? @db.LongText
+  notes String? @db.LongText
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // — Kurumsal kimlik kartı (kullanıcı isteği 5) —
+  generalEmail String? @db.Text // genel e-posta (info@...)
+  address String? @db.Text // fiziksel adres
+  description String? @db.LongText // genel açıklama/bilgi
+  locationNote String? @db.Text // Salon/Fuar alanı/Otel konum + QR notu
+  // TASK-A F1: portalToken skaleri KALDIRILDI — düz metin saklama yasak; belirteçler
+  // PortalToken tablosunda sha256-hash ile yaşar (expiresAt + scope + revokedAt).
+
+  tenant            Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts          OrganizationContact[]
+  eventAssignments  EventOrganizationAssignment[]
+  sponsorAgreements SponsorAgreement[]
+  boothAllocations  BoothAllocation[]
+  entitlements      Entitlement[]
+  orders            Order[]
+  invitations       Invitation[]
+  delegationBilling Delegation[]
+  portalTokens      PortalToken[]
+}
+
+model OrganizationContact {
+  id             String  @id @default(cuid())
+  organizationId String
+  personId       String?
+  name String @db.Text
+  title String? @db.Text
+  email String? @db.Text
+  phone String? @db.Text
+  isPrimary      Boolean @default(false)
+  role           String  @default("PRIMARY") // PRIMARY|AUTHORIZED|PAYMENT|TECHNICAL|PRESS|CUSTOM — rol bazlı sınırsız kontak
+  department String? @db.Text
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  person       Person?      @relation(fields: [personId], references: [id], onDelete: SetNull)
+}
+
+model Person {
+  id                String    @id @default(cuid())
+  tenantId          String
+  firstName String @db.Text
+  lastName          String
+  email             String? // güçlü eşleştirme işareti, kesin kimlik değil (Kimlik kuralı 1)
+  phone String? @db.Text
+  title String? @db.Text
+  company String? @db.Text // kalıcı profil; etkinlik anı görünümü snapshot'ta
+  country String? @db.Text
+  city String? @db.Text
+  bio String? @db.LongText
+  photoUrl String? @db.LongText
+  linkedin String? @db.Text
+  status            String    @default("ACTIVE") // ACTIVE|PASSIVE|MERGED
+  mergedIntoId      String? // kişi tekilleştirme: önerili + onaylı birleştirme
+  // TASK-A F1: portalToken skaleri KALDIRILDI — düz metin saklama yasak; belirteçler
+  // PortalToken tablosunda sha256-hash ile yaşar (expiresAt + scope + revokedAt).
+  // — Misafir/aile hiyerarşisi (Self-Referencing Parent_ID, kullanıcı isteği 8) —
+  parentPersonId    String? // bağlı olduğu ana katılımcı (aile/misafir profili)
+  relationType String? @db.Text // SELF|SPOUSE|CHILD|GUEST|ASSISTANT|OTHER
+  // — TASK-B 14: asgari rıza (KVKK m.4 asgari veri) — herkese açık kayıt yüzeyi —
+  consentVersion String? @db.Text // gösterilen aydınlatma/rıza metni sürümü
+  consentAcceptedAt DateTime? // gerekli-bilgilendirme onayı zamanı (gönderim anı)
+  commsOptIn        Boolean? // fonksiyonel seçimli onay (iletişim) — zorunlu DEĞİL
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant              Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parent              Person?                  @relation("PersonGuardian", fields: [parentPersonId], references: [id], onDelete: SetNull)
+  dependents          Person[]                 @relation("PersonGuardian")
+  cvEntries           CvEntry[]
+  materials           SessionMaterial[]
+  participations      EventParticipation[]
+  submissions         Submission[]             @relation("Submitter")
+  authorships         Authorship[]
+  reviewAssignments   ReviewAssignment[]
+  programAssignments  ProgramAssignment[]
+  contacts            OrganizationContact[]
+  scanEvents          ScanEvent[]
+  taskAssignments     Task[]
+  delegationLeaders   Delegation[]             @relation("DelegationLeader")
+  waitlistEntries     WaitlistEntry[]
+  socialAnnouncements SocialPlanAnnouncement[]
+  b2bAssignments      B2bAssignment[]
+  portalTokens        PortalToken[]
+  portalSessions      PortalSession[] // PWA portal AUTH oturumları
+
+  @@index([email])
+  @@index([lastName])
+}
+
+// ─── FAZ 2: EVENT CORE — Series, Edition, Capabilities, Org Assignment ─────
+
+model EventSeries {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name String @db.Text // örn. "No-Dig Turkey"
+  slug        String   @unique
+  description String? @db.LongText
+  template String? @db.Text // SCIENTIFIC_CONGRESS|TRADE_FAIR|CORPORATE|CUSTOM
+  logoUrl String? @db.LongText
+  createdAt   DateTime @default(now())
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  editions EventEdition[]
+}
+
+model EventEdition {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  seriesId             String? // null → bağımsız tek seferlik etkinlik
+  name String @db.Text
+  slug                 String    @unique
+  editionLabel String? @db.Text // örn. "2026"
+  status               String    @default("PLANNING") // §7 yaşam döngüsü: OPPORTUNITY|BID|AWARDED|PLANNING|CONFIGURATION|SALES|REGISTRATION|LOGISTICS|PRE_EVENT|ONSITE|POST_EVENT|RECONCILIATION|ARCHIVED
+  isPublished          Boolean   @default(false)
+  template String? @db.Text // başlangıç yetenek seti önerisi
+  startDate            DateTime?
+  endDate              DateTime?
+  timezone             String    @default("Europe/Istanbul")
+  venueName String? @db.Text
+  city String? @db.Text
+  country String? @db.Text
+  format               String    @default("IN_PERSON") // IN_PERSON|VIRTUAL|HYBRID
+  description String? @db.LongText
+  coverColor String? @db.Text // UI vurgu rengi
+  languages String? @db.Text // "tr,en"
+  isFeatured           Boolean   @default(false)
+  // — Etkinlik kimliği (kullanıcı isteği: üst firma ayarlarından AYRI, edisyon bazlı) —
+  logoUrl String? @db.LongText // etkinlik logosu — etkinlik kartı + ayarlar (medya/dataURL)
+  headerImageUrl String? @db.LongText // etkinlik kartı başlık görseli — etkinlik kartı bandı (medya/dataURL)
+  // — Dış portal header tasarımı (kullanıcı isteği: arka resim + başlık) —
+  portalHeaderTitle String? @db.Text
+  portalHeaderSubtitle String? @db.Text
+  portalHeaderImageUrl String? @db.LongText // medya klasörü PORTAL bağlantılı
+  portalHeaderAccent String? @db.Text // vurgu rengi hex
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  series EventSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+
+  capabilities        EventCapability[]
+  orgAssignments      EventOrganizationAssignment[]
+  participations      EventParticipation[]
+  categories          RegistrationCategory[]
+  registrations       Registration[]
+  invitations         Invitation[]
+  forms               FormDefinition[]
+  catalogItems        CatalogItem[]
+  orders              Order[]
+  entitlements        Entitlement[]
+  sponsorTiers        SponsorTierDefinition[]
+  sponsorPackages     SponsorPackage[]
+  sponsorAgreements   SponsorAgreement[]
+  hotels              HotelProperty[]
+  reservations        Reservation[]
+  scientificSetup     ScientificSetup?
+  tracks              Track[]
+  submissions         Submission[]
+  rooms               ProgramRoom[]
+  sessions            ProgramSession[]
+  badgeProfiles       BadgeProfile[]
+  certificateDefs     CertificateDefinition[]
+  boothUnits          BoothUnit[]
+  campaigns           Campaign[]
+  tasks               Task[]
+  activityLogs        ActivityLog[]
+  delegations         Delegation[]
+  expenses            Expense[]
+  portalTokens        PortalToken[]
+  formSubmissions     FormSubmission[]
+  waitlistEntries     WaitlistEntry[]
+  customRoles         CustomRole[]
+  cvEntries           CvEntry[]
+  sessionMaterials    SessionMaterial[]
+  mediaFolders        MediaFolder[]
+  mediaAssets         MediaAsset[]
+  portalBlocks        PortalBlock[] // TASK-B 25: düzenleyici kontrollü portal içerik blokları
+  apiIntegrations     ApiIntegration[]
+  emailTemplates      EmailTemplate[]
+  badgeDesigns        BadgeDesign[]
+  socialPlans         SocialPlan[]
+  b2bPlans            B2bPlan[]
+  incomes             Income[]
+  // — PWA Katılımcı Dış Portalı: modüler ek tablolar (mevcut tablolar BOZULMAZ) —
+  portalConfig        EventPortalConfig?
+  portalSessions      PortalSession[]
+  notificationChannel NotificationChannelConfig? // WhatsApp/SMS dış bildirim kanalı (edisyon başına tek)
+  portalAnalyticsLogs PortalAnalyticsLog[]
+  portalAnnouncements PortalAnnouncement[]
+  portalQuestions     PortalQuestion[]
+
+  @@index([status])
+  @@index([startDate])
+}
+
+model EventCapability {
+  id         String  @id @default(cuid())
+  editionId  String
+  key        String // §6: REGISTRATION|SCIENTIFIC|PROGRAM|SPONSORSHIP|EXHIBITION|FLOOR_PLAN|ACCOMMODATION|TRAVEL|BADGING|ACCESS_CONTROL|CERTIFICATES|CME_CREDITS|TOURS|SOCIAL_EVENTS|OPERATIONS|COMMUNICATIONS|FLOOR_STUDIO
+  enabled    Boolean @default(false)
+  isRequired Boolean @default(false)
+  setupNote String? @db.Text // modül kartı notu (hazır/yapılacak/dikkat)
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@unique([editionId, key])
+}
+
+model EventOrganizationAssignment {
+  id             String    @id @default(cuid())
+  editionId      String
+  organizationId String
+  role String @db.Text // §4: HOST|EVENT_OWNER|CLIENT|PCO|CO_ORGANIZER|SCIENTIFIC_OWNER|PUBLIC_AUTHORITY|SUPPORTER|SPONSOR|EXHIBITOR|VENUE|HOTEL|SUPPLIER|MEDIA_PARTNER|ACADEMIC_PARTNER|ASSOCIATION|WORKSHOP_SPONSOR
+  validFrom      DateTime?
+  validTo        DateTime?
+  notes String? @db.LongText
+  createdAt      DateTime  @default(now())
+
+  edition      EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([editionId])
+}
+
+// ─── FAZ 3: PARTICIPATION — Sistemin Kalbi (§9) ────────────────────────────
+
+model EventParticipation {
+  id         String   @id @default(cuid())
+  editionId  String
+  personId   String
+  source     String   @default("ADMIN_ENTRY") // §12: PUBLIC_FORM|INVITATION|SPONSOR_PORTAL|EXHIBITOR_PORTAL|SCIENTIFIC_PORTAL|ADMIN_ENTRY|IMPORT|API|ONSITE_WALK_IN|GROUP_REGISTRATION
+  attendance String   @default("NOT_ARRIVED") // §10: NOT_ARRIVED|CHECKED_IN|CHECKED_OUT|NO_SHOW
+  notes String? @db.LongText
+  createdAt  DateTime @default(now())
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  person  Person       @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  snapshots          EventProfileSnapshot[]
+  registrations      Registration[]
+  roleAssignments    EventRoleAssignment[]
+  entitlementClaims  EntitlementClaim[]
+  programAssignments ProgramAssignment[]
+  formAnswers        FormAnswer[]
+  reservations       Reservation[]          @relation("PrimaryGuest")
+  occupancySlots     OccupancySlot[]
+  badgeInstances     BadgeInstance[]
+  credentials        Credential[]
+  scanEvents         ScanEvent[]
+  certIssues         CertificateIssue[]
+  delegationMembers  DelegationMember[]
+  companions         Companion[]
+  orderLines         OrderLine[]
+  waitlistEntries    WaitlistEntry[]
+  sessionMaterials   SessionMaterial[]
+
+  @@unique([editionId, personId])
+  @@index([attendance])
+}
+
+model EventProfileSnapshot {
+  id              String   @id @default(cuid())
+  participationId String
+  badgeName String @db.Text // rozette yazacak isim — geçmiş geriye dönük değişmez (Kimlik kuralı 3)
+  company String? @db.Text // etkinlik anındaki kurum
+  title String? @db.Text
+  country String? @db.Text
+  specialNote String? @db.Text
+  version         Int      @default(1)
+  approved        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+}
+
+model Registration {
+  id              String    @id @default(cuid())
+  editionId       String
+  participationId String
+  categoryId      String?
+  confirmationNo  String    @unique @default(cuid())
+  source          String    @default("ADMIN_ENTRY") // §12 Registration Source
+  fundingSource   String    @default("SELF_PAID") // §12 Funding Source: SELF_PAID|ORGANIZATION_PAID|SPONSOR_ENTITLEMENT|HOST_COMPLIMENTARY|SPEAKER_ENTITLEMENT|STAFF|SCHOLARSHIP|GRANT|PROMO
+  status          String    @default("DRAFT") // §10: DRAFT|SUBMITTED|PENDING_APPROVAL|CONFIRMED|REJECTED|CANCELLED
+  submittedAt     DateTime?
+  decidedAt       DateTime?
+  decidedBy String? @db.Text
+  cancelReason String? @db.Text
+  notes String? @db.LongText
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  edition             EventEdition          @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  participation       EventParticipation    @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  category            RegistrationCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  entitlementClaims   EntitlementClaim[]
+  orderLines          OrderLine[]
+  formSubmissions     FormSubmission[]
+  waitlistConversions WaitlistEntry[]       @relation("WaitlistConversion")
+
+  @@index([editionId])
+  @@index([status])
+  @@index([editionId, status]) // TASK-A F6: liste durum filtresi + dashboard groupBy (hot combo)
+  @@index([editionId, categoryId]) // TASK-A F6: kategori doluluk/filtre (hot combo)
+}
+
+model RegistrationCategory {
+  id                 String  @id @default(cuid())
+  editionId          String
+  name String @db.Text // Regular|Student|Member|Invited Speaker|Sponsor Guest|Press|VIP|Staff|Accompanying Person...
+  code String @db.Text
+  basePrice          Int     @default(0) // F6: kuruş
+  currency           String  @default("TRY")
+  requiresApproval   Boolean @default(false)
+  capacity           Int? // null = sınırsız
+  paymentInstruction String? @db.Text // ücretli kategori için yayın engelleyici (05)
+  isActive           Boolean @default(true)
+  order              Int     @default(0)
+
+  edition         EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  registrations   Registration[]
+  waitlistEntries WaitlistEntry[]
+
+  @@index([editionId])
+}
+
+// ─── Bekleme Listesi (kategori bazlı otomatik teklif motoru) ────────────────
+model WaitlistEntry {
+  id                      String    @id @default(cuid())
+  editionId               String
+  categoryId              String? // null → genel bekleme (manuel teklif)
+  personId                String
+  participationId         String?
+  priority                Int       @default(100) // küçük sayı önce teklif alır
+  status                  String    @default("WAITING") // WAITING|OFFERED|CONVERTED|DECLINED|EXPIRED|CANCELLED
+  offeredAt               DateTime?
+  offerExpiresAt          DateTime? // teklif 48 saat geçerli (§12 kayıt politikası)
+  respondedAt             DateTime?
+  convertedRegistrationId String?
+  notes String? @db.LongText
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  edition               EventEdition          @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  person                Person                @relation(fields: [personId], references: [id], onDelete: Cascade)
+  participation         EventParticipation?   @relation(fields: [participationId], references: [id], onDelete: SetNull)
+  category              RegistrationCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  convertedRegistration Registration?         @relation("WaitlistConversion", fields: [convertedRegistrationId], references: [id], onDelete: SetNull)
+
+  @@index([editionId, status])
+  @@index([categoryId, status])
+}
+
+model EventRoleAssignment {
+  id              String   @id @default(cuid())
+  participationId String
+  role String @db.Text // §11: ATTENDEE|AUTHOR|REVIEWER|SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST|COMMITTEE_MEMBER|VIP|PRESS|STAFF|EXHIBITOR_STAFF + custom rol anahtarları
+  customRoleId    String? // özel rol tanımı (CustomRole) — hiyerarşik eşleme
+  status          String   @default("ACTIVE") // INVITED|ACCEPTED|ACTIVE|CANCELLED
+  notes String? @db.LongText
+  createdAt       DateTime @default(now())
+
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  customRole    CustomRole?        @relation(fields: [customRoleId], references: [id], onDelete: SetNull)
+
+  @@index([participationId])
+}
+
+// ─── LCV (Davet / RSVP) ─────────────────────────────────────────────────────
+
+model Invitation {
+  id                      String    @id @default(cuid())
+  editionId               String
+  organizationId          String? // davet kaynağı kurum olabilir
+  personId                String?
+  email String @db.Text
+  fullName String @db.Text
+  suggestedCategoryId     String?
+  channel                 String    @default("EMAIL") // EMAIL|SMS|PHONE|MANUAL
+  status                  String    @default("INVITED") // §10 LCV: INVITED|DELIVERED|RESPONSE_PENDING|COMING|NOT_COMING|NO_RESPONSE
+  sentAt                  DateTime?
+  respondedAt             DateTime?
+  convertedRegistrationId String?
+  notes String? @db.LongText
+  createdAt               DateTime  @default(now())
+
+  edition      EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([editionId])
+  @@index([status])
+}
+
+// ─── FORM ENGINE (§44) ──────────────────────────────────────────────────────
+
+model FormDefinition {
+  id                  String   @id @default(cuid())
+  editionId           String
+  name String @db.Text
+  type                String   @default("CUSTOM") // REGISTRATION|SURVEY|FEEDBACK|QA_MOBILE|CUSTOM — Form Merkezi türleri
+  audience            String   @default("PARTICIPANT") // PARTICIPANT|ORDER_BUYER|ORGANIZATION|SESSION|ACCESSIBILITY|ACCOMMODATION
+  status              String   @default("DRAFT") // DRAFT|PUBLISHED|CLOSED
+  version             Int      @default(1)
+  description String? @db.LongText
+  isPublic            Boolean  @default(false) // herkese açık bağlantı açık mı
+  // — Spam koruması (§44 genişletme) —
+  honeypotEnabled     Boolean  @default(true) // gizli alan tuzağı
+  minSubmitSeconds    Int      @default(4) // zaman tuzağı: daha hızlı dolduran bot şüpheli
+  maxPerEmailPerDay   Int      @default(5) // e-posta başına günlük gönderi limiti
+  blockedDomains String? @db.Text // virgülle ayrılmış engelli e-posta alan adları
+  autoApprove         Boolean  @default(false) // spam temizse otomatik onay
+  // — Kayıt formu ödeme entegrasyonu —
+  enableOnlinePayment Boolean  @default(false) // online ödeme seçenekleri gösterilsin
+  defaultCategoryId   String? // kayıtta ön seçilecek kategori
+  successMessage String? @db.LongText
+  // — F-EXP: dış sayfa paylaşımı + gerçek captcha —
+  slug                String?  @unique // kısa paylaşım bağlantısı: /?form=<slug>
+  captchaEnabled      Boolean  @default(true) // HMAC imzalı doğrulama sorusu (bot kapısı)
+  hasPublicResults    Boolean  @default(false) // oylama/anket sonuçları herkese açık
+  // — FORM-EXP2: çok-adımlı form + gönderim bildirimi —
+  enableSteps         Boolean  @default(false) // alanlar adımlara (sayfalara) bölünür; dış sayfada adım adım doldurma
+  notifyEmail String? @db.Text // yeni gönderimde bildirim e-postası (boşsa bildirim yok; bastırma/kota denetimli)
+  // — FORM-EXP3: yanıtlayana onay e-postası —
+  confirmEmail        Boolean  @default(false) // gönderim başarılıysa yanıtlayana onay e-postası (kota/bastırma denetimli)
+  // — FORM-EXP4: kullanıcı şablonu —
+  isTemplate          Boolean  @default(false) // form kullanıcı şablonu olarak işaretli (Şablonlarım listesinde görünür, tek tıkla kopyalanır)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  edition         EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  fields          FormField[]
+  answers         FormAnswer[]
+  submissions     FormSubmission[]
+  campaignQuizzes Campaign[] // etkileşimli quiz bağlantılı kampanyalar
+}
+
+model FormField {
+  id                String  @id @default(cuid())
+  formId            String
+  label String @db.Text
+  helpText String? @db.Text
+  type              String  @default("TEXT") // TEXT|LONGTEXT|NUMBER|EMAIL|PHONE|DATE|SINGLE_CHOICE|MULTI_CHOICE|CHECKBOX|FILE|COUNTRY|RATING|NPS|QA_QUIZ|SECTION — son 3'ü mobil interaktif
+  placeholder String? @db.Text
+  options String? @db.Text // satır bazlı seçenekler
+  required          String  @default("OPTIONAL") // ALWAYS|CONDITIONAL|OPTIONAL (§05)
+  conditionField String? @db.Text // koşullu gösterim
+  conditionValue String? @db.Text
+  sensitivity       String  @default("STANDARD") // STANDARD|OPERATIONAL_SENSITIVE|TEAM_ONLY (§05 gizlilik)
+  mobileInteractive Boolean @default(false) // mobil uygulamada interaktif öge (anket QA, NPS, rating)
+  correctAnswer String? @db.Text // QA_QUIZ: seçeneklerden doğru cevap (mobil QA scoring)
+  order             Int     @default(0)
+  // — STUDIO-DND: tasarımcı üzerinde elle konum/boyut —
+  width             Int     @default(100) // alan genişliği % (25..100; 100=tam satır; sürükleyerek ayarlanır)
+  // — FORM-EXP2: çok-adımlı form — alanın bulunduğu adım (1..20; enableSteps=false iken yoksayılır)
+  step              Int     @default(1)
+  // — F-EXP: mantık kapıları + genişletilmiş bileşenler —
+  logicRules String? @db.Text // JSON: [{"field":<fieldId>,"op":EQ|NEQ|CONTAINS|GT|LT|EMPTY|NOT_EMPTY,"value":string}] — çoklu koşul
+  logicMode String? @db.Text // ANY|ALL — koşulların birleşim biçimi (OR/AND kapısı)
+  logicAction String? @db.Text // SHOW|HIDE|GOTO — koşul sağlanınca göster/gizle/adıma atla
+  gotoStep          Int? // logicAction=GOTO: koşul sağlanınca gidilecek adım (2..20)
+  points            Int? // QA_QUIZ ağırlık puanı (varsayılan 1; puanlama ağırlıklı)
+  columns String? @db.Text // MATRIX: satır-bazlı kolonlar (options=satırlar)
+
+  form    FormDefinition @relation(fields: [formId], references: [id], onDelete: Cascade)
+  answers FormAnswer[]
+}
+
+model FormAnswer {
+  id              String   @id @default(cuid())
+  formId          String
+  fieldId         String
+  submissionId    String?
+  participationId String?
+  answer String? @db.Text
+  answeredAt      DateTime @default(now())
+
+  form          FormDefinition      @relation(fields: [formId], references: [id], onDelete: Cascade)
+  field         FormField           @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  submission    FormSubmission?     @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+}
+
+// ─── FORM MERKEZİ: gönderiler + spam koruması (kullanıcı isteği) ────────────
+
+model FormSubmission {
+  id              String   @id @default(cuid())
+  formId          String
+  editionId       String
+  registrationId  String?  @unique // REGISTRATION türünde onaylanınca oluşan kayıt — @unique = zincir idempotency anahtarı (aynı gönderiye ikinci zincir KURULAMAZ)
+  respondentName String @db.Text
+  respondentEmail String @db.Text
+  phone String? @db.Text
+  organization String? @db.Text
+  status          String   @default("PENDING") // PENDING|APPROVED|REJECTED|SPAM
+  spamScore       Float    @default(0) // 0-100 spam puanı
+  spamReasons String? @db.Text // JSON dizi: tespit gerekçeleri
+  honeypotValue String? @db.Text // gizli alan değeri (doluyorsa bot)
+  elapsedSeconds  Float? // form açılma→gönderim süresi (zaman tuzağı)
+  submitIp String? @db.Text
+  source          String   @default("WEB_PUBLIC") // WEB_PUBLIC|KIOSK|MOBILE|ADMIN
+  quizScore       Float? // QA_QUIZ başarı yüzdesi 0-100
+  quizCorrect     Int? // doğru sayısı
+  quizTotal       Int? // quiz sorusu sayısı
+  notes String? @db.LongText
+  createdAt       DateTime @default(now())
+
+  form         FormDefinition @relation(fields: [formId], references: [id], onDelete: Cascade)
+  edition      EventEdition   @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  registration Registration?  @relation(fields: [registrationId], references: [id])
+  answers      FormAnswer[]
+
+  @@index([formId])
+  @@index([status])
+}
+
+// ─── FAZ 6-B: MUHASEBE — gider kalemleri (saha dahil) ──────────────────────
+
+model Expense {
+  id            String   @id @default(cuid())
+  editionId     String
+  code          String   @unique @default(cuid()) // okunabilir: GSN-2026-001 (seed/rota set eder)
+  category      String   @default("OTHER") // FIELD_EXPENSE|VENDOR|LOGISTICS|MARKETING|VENUE|TECH|CATERING|STAFF_TRAVEL|OTHER
+  title String @db.Text
+  description String? @db.LongText
+  amount        Int      @default(0) // F6: kuruş
+  currency      String   @default("TRY")
+  vendor String? @db.Text
+  incurredAt    DateTime @default(now()) // harcama tarihi (sahada anlık)
+  spentBy String? @db.Text // harcayan personel
+  paymentMethod String   @default("COMPANY_CARD") // COMPANY_CARD|CASH|BANK_TRANSFER|PERSONAL_REIMBURSE
+  status        String   @default("PENDING_RECEIPT") // PLANNED|PENDING_RECEIPT|APPROVED|REJECTED|PAID|REIMBURSED
+  receiptNo String? @db.Text
+  approvedBy String? @db.Text
+  notes String? @db.LongText
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([editionId])
+  @@index([status])
+  @@index([category])
+}
+
+// ─── FAZ 6-C: MUHASEBE — manuel gelir kalemleri (Expense aynası) ────────────
+// Online ödeme (Payment) dışındaki gelirler: sponsorluk, kayıt, satış, hibe...
+// F6: amount Int (kuruş) — migrasyon tamamlandı.
+
+model Income {
+  id          String   @id @default(cuid())
+  editionId   String
+  code        String   @unique @default(cuid()) // okunabilir: GLR-2026-001 (istemci set eder)
+  category    String   @default("DIGER") // SPONSORLUK|KAYIT|SATIS|HIBE|DIGER
+  title String @db.Text
+  description String? @db.LongText
+  amount      Int      @default(0) // F6: kuruş
+  currency    String   @default("TRY")
+  method      String   @default("BANK_TRANSFER") // ONLINE_CARD|BANK_TRANSFER|POS|CASH|PAYMENT_LINK|MANUAL_EXTERNAL
+  payer String? @db.Text // ödeyen (kurum/kişi adı)
+  incomeDate  DateTime @default(now()) // gelir tarihi (varsayılan bugün)
+  status      String   @default("PLANNED") // PLANNED|PENDING_RECEIPT|APPROVED|RECEIVED
+  receiptNo String? @db.Text
+  approvedBy String? @db.Text
+  notes String? @db.LongText
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([editionId])
+  @@index([status])
+  @@index([category])
+}
+
+// ─── FAZ 4: CATALOG / PRICING ───────────────────────────────────────────────
+
+model CatalogItem {
+  id           String  @id @default(cuid())
+  editionId    String
+  category     String  @default("TICKET") // TICKET|ADDON|SERVICE|TOUR|GALA|TRANSFER
+  name String @db.Text
+  description String? @db.LongText
+  price        Int     @default(0) // F6: kuruş
+  currency     String  @default("TRY")
+  quantity     Int? // null = sınırsız
+  availableFor String  @default("ALL") // ALL|SPONSOR|SPEAKER|VIP|STAFF
+  isActive     Boolean @default(true)
+
+  edition    EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  orderLines OrderLine[]
+}
+
+// ─── FAZ 5: ENTITLEMENT ENGINE (§15-17) — Platformun temel motoru ──────────
+
+model Entitlement {
+  id                  String    @id @default(cuid())
+  editionId           String
+  ownerOrganizationId String? // ABC Pharma örneği
+  ownerPersonId       String? // konuşmacı hakkı
+  source              String    @default("SPONSOR_PACKAGE") // SPONSOR_PACKAGE|SPEAKER|COMMITTEE|VIP|STAFF|PACKAGE|PROMO
+  type                String    @default("COMPLIMENTARY_REGISTRATION") // COMPLIMENTARY_REGISTRATION|BOOTH|GALA_TICKET|BADGE|LOUNGE_ACCESS|DISCOUNT|SESSION_ACCESS|HOTEL|CUSTOM
+  label String @db.Text // "Gold Sponsor Ücretsiz Katılım Hakkı" (§45 custom ama kontrollü)
+  quantityGranted     Int       @default(0)
+  quantityConsumed    Int       @default(0)
+  quantityReserved    Int       @default(0) // ayrılmış — davette ayır, onayda kullan
+  // — Hak onay akışı (kullanıcı isteği 7) —
+  approvalStatus      String    @default("APPROVED") // PROPOSED|APPROVED|REJECTED — mevcut kayıtlar onaylı doğar (evrim güvenliği)
+  approvedBy String? @db.Text
+  approvedAt          DateTime?
+  restrictions String? @db.Text
+  validFrom           DateTime?
+  validUntil          DateTime?
+
+  edition           EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  ownerOrganization Organization?      @relation(fields: [ownerOrganizationId], references: [id], onDelete: Cascade)
+  claims            EntitlementClaim[]
+
+  @@index([editionId])
+}
+
+model EntitlementClaim {
+  id              String    @id @default(cuid())
+  entitlementId   String
+  participationId String?
+  registrationId  String?
+  guestName String? @db.Text
+  status          String    @default("RESERVED") // RESERVED|CONSUMED|RELEASED|EXPIRED (§09-C: davette ayır, onayda kullan)
+  reservedAt      DateTime  @default(now())
+  consumedAt      DateTime?
+  releasedAt      DateTime?
+  notes String? @db.LongText
+
+  entitlement   Entitlement         @relation(fields: [entitlementId], references: [id], onDelete: Cascade)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
+  registration  Registration?       @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+}
+
+// ─── FAZ 6: FINANCE (§36-39) — Order ≠ Payment ≠ Refund ────────────────────
+
+model Order {
+  id                  String   @id @default(cuid())
+  editionId           String
+  orderNo             String   @unique @default(cuid())
+  buyerOrganizationId String? // kurumsal alıcı
+  buyerPersonId       String?
+  payerName String? @db.Text // siparişi ödeyen ≠ satırların katılımcıları (Kimlik kuralı 4)
+  currency            String   @default("TRY")
+  totalAmount         Int      @default(0) // F6: kuruş
+  status              String   @default("OPEN") // OPEN|PARTIALLY_PAID|PAID|CANCELLED
+  notes String? @db.LongText
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  edition           EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  buyerOrganization Organization? @relation(fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
+  lines             OrderLine[]
+  payments          Payment[]
+  refunds           Refund[]
+
+  @@index([editionId])
+}
+
+model OrderLine {
+  id              String  @id @default(cuid())
+  orderId         String
+  participationId String? // satır kime ait
+  registrationId  String?
+  catalogItemId   String?
+  description String @db.LongText
+  quantity        Int     @default(1)
+  unitPrice       Int     @default(0) // F6: kuruş
+  total           Int     @default(0) // F6: kuruş
+
+  order         Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
+  registration  Registration?       @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+  catalogItem   CatalogItem?        @relation(fields: [catalogItemId], references: [id], onDelete: SetNull)
+}
+
+model Payment {
+  id         String    @id @default(cuid())
+  orderId    String
+  amount     Int
+  currency   String    @default("TRY")
+  source     String    @default("ONLINE_CARD") // §37: ONLINE_CARD|BANK_TRANSFER|POS|CASH|PAYMENT_LINK|MANUAL_EXTERNAL
+  status     String    @default("PENDING") // PENDING|SUCCEEDED|FAILED
+  reference String? @db.Text
+  enteredBy String? @db.Text // manuel teyit (§38): entered_by + reason zorunlu
+  reason String? @db.Text
+  approvedBy String? @db.Text // eşiği aşan manuel tahsilat ikinci onay
+  paidAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([orderId, status]) // P2: sipariş-başına tahsilat toplamı (dashboard/accounting aggregate)
+}
+
+model Refund {
+  id             String    @id @default(cuid())
+  orderId        String
+  paymentId      String?
+  amount         Int // MINOR UNIT (kuruş) — pozitif, sonlu, tam sayı; major-unit float KABUL edilmez
+  currency       String    @default("TRY") // sipariş para birimiyle AYNI olmalı (uyuşmazlık 400)
+  reason String? @db.Text
+  status         String    @default("REQUESTED") // REQUESTED|APPROVED|REJECTED|PROCESSED
+  requestedBy String? @db.Text
+  idempotencyKey String? // aynı siparişte aynı anahtar = İKİNCİ finansal hareket oluşmaz; farklı yük = 409
+  processedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, idempotencyKey]) // idempotent iade: anahtar çakışması P2002 → mevcut iade döner
+}
+
+// ─── FAZ 7: SPONSORSHIP (§13-14, §49-51) — Tier hard-code YOK ──────────────
+
+model SponsorTierDefinition {
+  id            String  @id @default(cuid())
+  editionId     String
+  name String @db.Text // her etkinlikte özelleştirilebilir: Gold|Naming|Lunch Sponsor...
+  displayOrder  Int     @default(0)
+  capacity      Int? // maksimum sponsor sayısı
+  price         Int     @default(0) // F6: kuruş
+  currency      String  @default("TRY")
+  brandingRules String? @db.Text
+
+  edition    EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  packages   SponsorPackage[]
+  agreements SponsorAgreement[]
+}
+
+model SponsorPackage {
+  id          String  @id @default(cuid())
+  editionId   String
+  tierId      String?
+  name String @db.Text // "Gold Sponsorship 2027"
+  price       Int     @default(0) // F6: kuruş
+  currency    String  @default("TRY")
+  description String? @db.LongText
+  rightsSpec String? @db.Text // paket hak özeti: "20x Ücretsiz Kayıt, 1x 12m² Stant..."
+
+  edition    EventEdition           @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  tier       SponsorTierDefinition? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  agreements SponsorAgreement[]
+}
+
+model SponsorAgreement {
+  id             String    @id @default(cuid())
+  editionId      String
+  organizationId String
+  packageId      String?
+  tierId         String?
+  amount         Int       @default(0) // F6: kuruş
+  currency       String    @default("TRY")
+  status         String    @default("PROSPECT") // PROSPECT|NEGOTIATION|CONTRACTED|ACTIVE|COMPLETED|CANCELLED
+  signedAt       DateTime?
+  notes String? @db.LongText
+  createdAt      DateTime  @default(now())
+
+  edition          EventEdition           @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  package          SponsorPackage?        @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  tier             SponsorTierDefinition? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  deliverables     Deliverable[]
+  boothAllocations BoothAllocation[]
+
+  @@index([editionId])
+  @@index([status])
+}
+
+model Deliverable {
+  id          String    @id @default(cuid())
+  agreementId String
+  name String @db.Text // Logo|Contract|Banner|Guest List|Stand Design...
+  type        String    @default("LOGO")
+  status      String    @default("NOT_STARTED") // §51: NOT_STARTED|WAITING_SPONSOR|SUBMITTED|UNDER_REVIEW|APPROVED|REJECTED|COMPLETED
+  dueDate     DateTime?
+  responsible String? @db.Text
+  notes String? @db.LongText
+
+  agreement SponsorAgreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+
+  @@index([agreementId])
+}
+
+// ─── FAZ 11: ACCOMMODATION (§31-35) — Gecelik stok ─────────────────────────
+
+model HotelProperty {
+  id             String  @id @default(cuid())
+  editionId      String
+  name String @db.Text
+  city String? @db.Text
+  district String? @db.Text
+  address String? @db.Text
+  contactName String? @db.Text
+  contactPhone String? @db.Text
+  notes String? @db.LongText
+  // — Detaylı otel girişi (kullanıcı isteği: logo, resim, adres, ilgili kişi, mail) —
+  logoUrl String? @db.LongText // medya klasörü OTEL bağlantılı (upload-linked)
+  imageUrl String? @db.LongText // kapak/oda görseli — medya klasörü OTEL bağlantılı
+  email String? @db.Text // rezervasyon/irtibat e-postası
+  website String? @db.Text
+  starRating     Int? // 1-5 yıldız
+  checkInNote String? @db.Text // giriş/çıkış saat notu (örn. "14:00 / 12:00")
+  // — TASK-B 25: kompakt portal alanları (giriş ekranından girilir; SIFIR hardcode) —
+  mapsUrl String? @db.LongText // harita bağlantısı (katılımcı portalı "Yol Tarifi")
+  transportInfo String? @db.Text // ulaşım bilgisi (metro/otobüs/vale)
+  localPhoneCode String? @db.Text // yerel telefon/contak kodu
+  powerInfo String? @db.Text // priz/gerilim bilgisi (220V Type-C vb.)
+
+  edition   EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  roomTypes RoomType[]
+  blocks    RoomBlock[]
+
+  @@index([editionId])
+}
+
+model RoomType {
+  id            String @id @default(cuid())
+  hotelId       String
+  name String @db.Text // Single|Double|Suite
+  capacity      Int    @default(2)
+  pricePerNight Int    @default(0) // F6: kuruş
+  currency      String @default("TRY")
+
+  hotel        HotelProperty @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  blocks       RoomBlock[]
+  reservations Reservation[]
+}
+
+model RoomBlock {
+  id                 String    @id @default(cuid())
+  hotelId            String
+  roomTypeId         String
+  name String @db.Text // "Maven Ana Blok"
+  releaseDate        DateTime? // rezervasyon son günü
+  cancellationPolicy String? @db.Text
+  payerPolicy String? @db.Text // SELF|ORGANIZATION|SPONSOR|ORGANIZER
+
+  hotel           HotelProperty    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  roomType        RoomType         @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  inventoryNights InventoryNight[]
+  reservations    Reservation[]
+
+  @@index([hotelId])
+}
+
+model InventoryNight {
+  id            String   @id @default(cuid())
+  blockId       String
+  date          DateTime
+  totalRooms    Int      @default(0)
+  reservedRooms Int      @default(0)
+
+  block RoomBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+
+  @@unique([blockId, date])
+}
+
+model Reservation {
+  id                          String   @id @default(cuid())
+  editionId                   String
+  blockId                     String?
+  roomTypeId                  String?
+  primaryGuestParticipationId String?
+  guestName String @db.Text
+  checkIn                     DateTime
+  checkOut                    DateTime
+  payerType                   String   @default("SELF") // §35: SELF|ORGANIZATION|SPONSOR|ORGANIZER|SPEAKER_HOSPITALITY
+  payerName String? @db.Text
+  status                      String   @default("REQUESTED") // §10 Konaklama: NOT_REQUESTED|REQUESTED|WAITLIST|RESERVED|CONFIRMED|CHECKED_IN|CHECKED_OUT|CANCELLED
+  // — Konaklama operasyon detayları (kullanıcı isteği 8) —
+  occupancyType String? @db.Text // SINGLE|DOUBLE|FAMILY_SHARED
+  ratePerNight                Int      @default(0) // F6: kuruş // hangi fiyattan
+  nights                      Int      @default(0) // kaç gece
+  noShow                      Boolean  @default(false) // gerçekleşmeyen konaklama — sistemden düşme
+  noShowFee                   Int      @default(0) // F6: kuruş
+  notes String? @db.LongText
+  createdAt                   DateTime @default(now())
+
+  edition        EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  block          RoomBlock?          @relation(fields: [blockId], references: [id], onDelete: SetNull)
+  roomType       RoomType?           @relation(fields: [roomTypeId], references: [id], onDelete: SetNull)
+  primaryGuest   EventParticipation? @relation("PrimaryGuest", fields: [primaryGuestParticipationId], references: [id], onDelete: SetNull)
+  occupancySlots OccupancySlot[]
+
+  @@index([editionId])
+}
+
+model OccupancySlot {
+  id              String  @id @default(cuid())
+  reservationId   String
+  participationId String?
+  guestName String? @db.Text
+  position        Int     @default(1)
+
+  reservation   Reservation         @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
+}
+
+model RoommateRequest {
+  id                       String   @id @default(cuid())
+  requesterParticipationId String
+  targetParticipationId    String?
+  targetName String @db.Text
+  status                   String   @default("PENDING") // PENDING|ACCEPTED|DECLINED|EXPIRED
+  createdAt                DateTime @default(now())
+}
+
+// ─── FAZ 9: SCIENTIFIC (§24-28, §30) ───────────────────────────────────────
+
+model ScientificSetup {
+  id                 String    @id @default(cuid())
+  editionId          String    @unique
+  callTitle String? @db.Text
+  callDescription String? @db.LongText
+  reviewMode         String    @default("SINGLE_BLIND") // OPEN|SINGLE_BLIND|DOUBLE_BLIND
+  submissionDeadline DateTime?
+  reviewDeadline     DateTime?
+  wordLimit          Int?
+  isVisible          Boolean   @default(false)
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+}
+
+model Track {
+  id          String  @id @default(cuid())
+  editionId   String
+  name String @db.Text
+  description String? @db.LongText
+
+  edition     EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+  sessions    ProgramSession[]
+}
+
+model Submission {
+  id                   String    @id @default(cuid())
+  editionId            String
+  trackId              String?
+  submitterId          String?
+  code                 String    @unique @default(cuid())
+  title String @db.Text
+  abstract String? @db.Text
+  type                 String    @default("ORAL") // ORAL|POSTER|E_POSTER|PANEL|WORKSHOP
+  keywords String? @db.Text
+  presentingAuthorName String? @db.Text
+  status               String    @default("DRAFT") // §10 Bildiri: DRAFT|SUBMITTED|UNDER_REVIEW|REVISION_REQUIRED|ACCEPTED|REJECTED|WITHDRAWN|WAITLIST
+  fileUrl String? @db.LongText
+  posterNo String? @db.Text
+  fileStatus String? @db.Text // SunumKontrol: MISSING|FORMAT_ISSUE|AV_PENDING|APPROVED
+  submittedAt          DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  edition           EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  track             Track?             @relation(fields: [trackId], references: [id], onDelete: SetNull)
+  submitter         Person?            @relation("Submitter", fields: [submitterId], references: [id], onDelete: SetNull)
+  authorships       Authorship[]
+  reviewAssignments ReviewAssignment[]
+  decisions         Decision[]
+  sessions          ProgramSession[]
+
+  @@index([editionId])
+  @@index([status])
+}
+
+model Authorship {
+  id               String  @id @default(cuid())
+  submissionId     String
+  personId         String? // harici ortak yazar hesapsız olabilir (§25)
+  name String @db.Text
+  organizationName String? @db.Text
+  position         Int     @default(0)
+  isPresenting     Boolean @default(false)
+  isCorresponding  Boolean @default(false)
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  person     Person?    @relation(fields: [personId], references: [id], onDelete: SetNull)
+
+  @@index([submissionId])
+}
+
+model ReviewAssignment {
+  id           String    @id @default(cuid())
+  submissionId String
+  reviewerId   String?
+  status       String    @default("INVITED") // §26: INVITED|ACCEPTED|DECLINED|CONFLICT|ASSIGNED|IN_PROGRESS|COMPLETED|OVERDUE
+  dueDate      DateTime?
+  invitedAt    DateTime  @default(now())
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  reviewer   Person?    @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviews    Review[]
+
+  @@index([submissionId])
+}
+
+model Review {
+  id             String   @id @default(cuid())
+  assignmentId   String
+  score          Float?
+  recommendation String? @db.Text // ACCEPT_ORAL|ACCEPT_POSTER|REJECT|REVISION
+  comment String? @db.Text
+  submittedAt    DateTime @default(now())
+
+  assignment ReviewAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+}
+
+model Decision {
+  id           String   @id @default(cuid())
+  submissionId String
+  decision String @db.Text // §27 canonical: ACCEPT_ORAL|ACCEPT_POSTER|ACCEPT_E_POSTER|ACCEPT_PANEL|REVISION_REQUIRED|WAITLIST|REJECT|WITHDRAWN
+  rationale String? @db.Text
+  decidedBy String? @db.Text
+  version      Int      @default(1)
+  decidedAt    DateTime @default(now())
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+}
+
+// ─── FAZ 10: PROGRAM (§28-29) — Bilimsel karar ≠ Program slotu ─────────────
+
+model ProgramRoom {
+  id        String  @id @default(cuid())
+  editionId String
+  name String @db.Text
+  capacity  Int     @default(100)
+  floor String? @db.Text
+
+  edition  EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  sessions ProgramSession[]
+}
+
+model ProgramSession {
+  id           String   @id @default(cuid())
+  editionId    String
+  roomId       String?
+  trackId      String?
+  submissionId String? // kaynak bildiri — kabul otomatik slot oluşturmaz (Kimlik kuralı 6)
+  title String @db.Text
+  description String? @db.LongText
+  type         String   @default("TALK") // KEYNOTE|TALK|PANEL|WORKSHOP|BREAK|NETWORKING|POSTER_SESSION
+  startTime    DateTime
+  endTime      DateTime
+  capacity     Int?
+  accessRule String? @db.Text // OPEN|REGISTRATION_REQUIRED|SCAN
+  status       String   @default("DRAFT") // §10 Program: DRAFT|ASSIGNED|APPROVED|PUBLISHED|CANCELLED
+  isVisible    Boolean  @default(false)
+  cmeCredits   Float? // CME kredi değeri — CME_CREDITS yeteneği açıkken akreditasyon sorumlusu girer (§08)
+
+  edition         EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  room            ProgramRoom?        @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  track           Track?              @relation(fields: [trackId], references: [id], onDelete: SetNull)
+  submission      Submission?         @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  assignments     ProgramAssignment[]
+  materials       SessionMaterial[]
+  scanEvents      ScanEvent[]
+  portalQuestions PortalQuestion[] // PWA portal Q&A soruları
+
+  @@index([editionId])
+}
+
+model ProgramAssignment {
+  id              String  @id @default(cuid())
+  sessionId       String
+  participationId String?
+  personId        String?
+  role            String  @default("SPEAKER") // §29: SPEAKER|MODERATOR|SESSION_CHAIR|PANELIST
+  status          String  @default("INVITED") // INVITED|ACCEPTED|DECLINED|CONFIRMED|CANCELLED
+  notes String? @db.LongText // AV gereksinimi, honorarium...
+
+  session       ProgramSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  person        Person?             @relation(fields: [personId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
+}
+
+// ─── FAZ 12: ONSITE — Badge, Credential, Scan (§40-42) ─────────────────────
+
+model BadgeProfile {
+  id          String  @id @default(cuid())
+  editionId   String
+  name String @db.Text // Delegate|Speaker|Exhibitor|Sponsor|VIP|Staff|Press
+  accessAreas String? @db.Text // "Main Hall, VIP Lounge, Gala"
+  color String? @db.Text
+  designId    String? // bağlı yaka kartı tasarımı (BadgeDesign)
+
+  edition        EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  design         BadgeDesign?    @relation(fields: [designId], references: [id], onDelete: SetNull)
+  badgeInstances BadgeInstance[]
+}
+
+model BadgeInstance {
+  id              String    @id @default(cuid())
+  participationId String
+  profileId       String?
+  badgeNo         String    @unique @default(cuid())
+  status          String    @default("NOT_ELIGIBLE") // §10: NOT_ELIGIBLE|READY|ISSUED|PRINTED|REPRINTED|VOID
+  issuedAt        DateTime?
+  printedAt       DateTime?
+  voidReason String? @db.Text
+
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  profile       BadgeProfile?      @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  credentials   Credential[]
+}
+
+model Credential {
+  id              String    @id @default(cuid())
+  participationId String
+  badgeId         String?
+  code            String    @unique @default(cuid())
+  type            String    @default("QR") // QR|NFC
+  accessProfile String? @db.Text // §41: VIP→Main Hall+Lounge; Speaker→Main Hall+Backstage...
+  validFrom       DateTime?
+  validUntil      DateTime?
+  status          String    @default("ACTIVE") // ACTIVE|SUSPENDED|REVOKED
+
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  badge         BadgeInstance?     @relation(fields: [badgeId], references: [id], onDelete: SetNull)
+  scanEvents    ScanEvent[]
+}
+
+model ScanEvent {
+  id              String   @id @default(cuid())
+  editionId       String? // TASK-A F6: edisyon-bağlı sayım hız yolu (participation join'i atlar); walk-in ise null
+  participationId String? // walk-in ise null
+  credentialId    String?
+  personId        String?
+  sessionId       String? // oturum girişi ayrı tarama listesine ait (§07)
+  location        String   @default("MAIN_DOOR") // MAIN_DOOR|SESSION|GALA|LOUNGE
+  doorName String? @db.Text
+  action          String   @default("ENTRY") // ENTRY|EXIT|SESSION_ENTRY|SESSION_EXIT|RESCAN|DENIED
+  result          String   @default("ALLOWED") // ALLOWED|RESCAN_WARNING|DENIED|MANUAL_EXCEPTION
+  reason String? @db.Text // manuel istisna gerekçesi — tarama geçmişi silinmez (Kimlik kuralı 8)
+  device String? @db.Text
+  operator String? @db.Text
+  scannedAt       DateTime @default(now())
+
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  credential    Credential?         @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  session       ProgramSession?     @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  person        Person?             @relation(fields: [personId], references: [id], onDelete: SetNull)
+
+  @@index([scannedAt])
+  @@index([participationId])
+  @@index([participationId, action, result]) // P2: kapı tekrar-tarama denetimi (hız-yol sorgusu)
+  @@index([editionId, scannedAt]) // TASK-A F6: edisyon tarama sayımları (hot combo)
+}
+
+// ─── FAZ 13: CERTIFICATES (§43) ────────────────────────────────────────────
+
+model CertificateDefinition {
+  id                 String  @id @default(cuid())
+  editionId          String
+  name String @db.Text // "Katılımcı Sertifikası", "Konuşmacı Sertifikası"
+  type               String  @default("PARTICIPANT") // düzeye göre seçimli: PARTICIPANT|SPEAKER|COMMITTEE|SPONSOR|STAFF|CUSTOM
+  eligibilityRule String? @db.Text // "registration=CONFIRMED AND checked_in" iş tanımı
+  minimumSessions    Int? // oturum katılım eşiği
+  signerName String? @db.Text
+  isActive           Boolean @default(true)
+  // — Sertifika tasarımcısı (kullanıcı isteği 9) —
+  widthMm            Float   @default(297)
+  heightMm           Float   @default(210)
+  bleedMm            Float   @default(0) // baskı payı seçimli
+  orientation        String  @default("LANDSCAPE")
+  backgroundDataUrl String? @db.LongText // tasarımcıdan gelen arka plan — en arka layer
+  fontKey            String  @default("serif")
+  textColor          String  @default("1f2937")
+  bodyTemplate String? @db.Text // kişi-özel gövde metni: {{fullName}}, {{title}}, {{edition}}... yer tutucular
+  tierNote String? @db.Text // düzey/katılım notu
+  mailDeliveredCount Int     @default(0)
+  // — Kanvas tabanlı sertifika tasarımcısı (yaka kartı tasarımcısı mimarisi) —
+  designJson String? @db.LongText // eleman dizisi: {type,x,y,w,h,...} mm — farklı alanlara farklı yerleşim
+
+  edition EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  issues  CertificateIssue[]
+}
+
+model CertificateIssue {
+  id              String    @id @default(cuid())
+  definitionId    String
+  participationId String
+  status          String    @default("NOT_ELIGIBLE") // §10: NOT_ELIGIBLE|ELIGIBLE|GENERATED|DELIVERED|REVOKED
+  eligibilityNote String? @db.Text // katılımcı uygunluk nedenini görür (§07)
+  generatedAt     DateTime?
+  deliveredAt     DateTime?
+  revokedReason String? @db.Text
+
+  definition    CertificateDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  participation EventParticipation    @relation(fields: [participationId], references: [id], onDelete: Cascade)
+
+  @@unique([definitionId, participationId])
+}
+
+// ─── EXHIBITION (§19-23) — Ticari stant ≠ Geometri ─────────────────────────
+
+model BoothUnit {
+  id              String    @id @default(cuid())
+  editionId       String
+  code String @db.Text // A24
+  sizeSqm         Float     @default(12)
+  type            String    @default("SHELL_SCHEME") // SHELL_SCHEME|SPACE_ONLY|CUSTOM
+  status          String    @default("AVAILABLE") // §21: AVAILABLE|HELD|OPTION|RESERVED|CONTRACTED|BLOCKED|OCCUPIED|RELEASED
+  price           Int       @default(0) // F6: kuruş
+  currency        String    @default("TRY")
+  optionExpiresAt DateTime? // ABC Ltd. OPTION expires_at örneği
+
+  edition     EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  allocation  BoothAllocation?
+  floorObject FloorPlanObject?
+
+  @@index([editionId])
+}
+
+model BoothAllocation {
+  id             String    @id @default(cuid())
+  boothUnitId    String    @unique
+  agreementId    String? // SponsorAgreement → Booth Entitlement → Allocation → A24 (§22)
+  organizationId String?
+  status         String    @default("HELD")
+  allocatedAt    DateTime  @default(now())
+  releasedAt     DateTime?
+
+  boothUnit    BoothUnit         @relation(fields: [boothUnitId], references: [id], onDelete: Cascade)
+  agreement    SponsorAgreement? @relation(fields: [agreementId], references: [id], onDelete: SetNull)
+  organization Organization?     @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+}
+
+model FloorPlanObject {
+  id          String  @id @default(cuid())
+  boothUnitId String? @unique // Paylaşılan kimlik: booth_unit_id (§20)
+  label String? @db.Text
+  x           Float   @default(0)
+  y           Float   @default(0)
+  width       Float   @default(4)
+  height      Float   @default(3)
+  rotation    Float   @default(0)
+  layer       String  @default("BOOTH")
+
+  boothUnit BoothUnit? @relation(fields: [boothUnitId], references: [id], onDelete: Cascade)
+}
+
+// ─── COMMUNICATIONS (§06 kampanya) ─────────────────────────────────────────
+
+model Campaign {
+  id               String    @id @default(cuid())
+  editionId        String
+  name String @db.Text
+  segmentRule String @db.Text // "kayıt onaylı ama ödeme bekliyor" gibi sabitlenmiş ölçüt
+  audienceCount    Int       @default(0)
+  channel          String    @default("EMAIL")
+  status           String    @default("DRAFT") // DRAFT|TESTED|SCHEDULED|SENT|FAILED
+  // — 360 Branding (kullanıcı isteği 6) —
+  phase            String    @default("PRE_EVENT") // PRE_EVENT|DURING_EVENT|POST_EVENT — 3 aşamalı süreç
+  audienceMode     String    @default("SEGMENT") // SEGMENT|CUSTOM|BOTH
+  customRecipients String? @db.Text // özel e-posta listesi (satır/virgül bazlı)
+  templateId       String? // HTML mailing şablonu
+  providerId       String? // gönderim sağlayıcısı (SMTP/Mailjet...)
+  formId           String? // etkileşimli quiz formu
+  isSegmentFixed   Boolean   @default(true) // sabit mi gönderim anında güncel mi
+  subject String? @db.Text
+  body String? @db.LongText
+  testSentTo String? @db.Text
+  scheduledAt      DateTime?
+  sentAt           DateTime?
+  sentCount        Int       @default(0)
+  deliveredCount   Int       @default(0)
+  openCount        Int       @default(0)
+  clickCount       Int       @default(0)
+  failCount        Int       @default(0)
+
+  edition  EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  template EmailTemplate?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  provider MailProviderConfig? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  quizForm FormDefinition?     @relation(fields: [formId], references: [id], onDelete: SetNull)
+
+  @@index([editionId])
+}
+
+// ─── OPERATIONS (§52) ──────────────────────────────────────────────────────
+
+model Task {
+  id          String    @id @default(cuid())
+  editionId   String?
+  title String @db.Text
+  description String? @db.LongText
+  module      String    @default("OPERATIONS") // REGISTRATION|SPONSORSHIP|SCIENTIFIC|PROGRAM|ACCOMMODATION|ONSITE|FINANCE|OPERATIONS|COMMUNICATIONS|CERTIFICATES
+  status      String    @default("TODO") // BACKLOG|TODO|IN_PROGRESS|REVIEW|DONE|BLOCKED
+  priority    String    @default("MEDIUM") // LOW|MEDIUM|HIGH|URGENT
+  assigneeId  String?
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  edition  EventEdition? @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  assignee Person?       @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  @@index([editionId])
+}
+
+model Delegation {
+  id                    String  @id @default(cuid())
+  editionId             String
+  name String @db.Text // sponsor grubu|şirket delegasyonu|kamu heyeti...
+  type                  String  @default("COMPANY") // SPONSOR_GROUP|COMPANY|GOVERNMENT|STUDENT|VIP|TOUR
+  leaderId              String?
+  billingOrganizationId String?
+  paymentAccount String? @db.Text
+  rules String? @db.Text
+
+  edition             EventEdition       @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  leader              Person?            @relation("DelegationLeader", fields: [leaderId], references: [id], onDelete: SetNull)
+  billingOrganization Organization?      @relation(fields: [billingOrganizationId], references: [id], onDelete: SetNull)
+  members             DelegationMember[]
+}
+
+model DelegationMember {
+  id              String @id @default(cuid())
+  delegationId    String
+  participationId String
+  role            String @default("MEMBER") // LEADER|MEMBER
+
+  delegation    Delegation         @relation(fields: [delegationId], references: [id], onDelete: Cascade)
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+
+  @@unique([delegationId, participationId])
+}
+
+model Companion {
+  id              String  @id @default(cuid())
+  participationId String
+  name String @db.Text
+  type            String  @default("ADULT") // §34: ADULT|CHILD|INFANT
+  notes String? @db.LongText // hotel, breakfast, gala, tour hakları
+
+  participation EventParticipation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+}
+
+// ─── AUDIT / ACTIVITY LOG ──────────────────────────────────────────────────
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  tenantId   String?
+  editionId  String?
+  type String @db.Text // REGISTRATION_CONFIRMED, PAYMENT_RECEIVED, SPONSOR_AGREEMENT_ACTIVATED, SCAN_ALLOWED...
+  message String @db.LongText
+  entityType String? @db.Text
+  entityId   String?
+  actorName String? @db.Text
+  createdAt  DateTime @default(now())
+
+  tenant  Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  edition EventEdition? @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([editionId, createdAt]) // P2: bildirim/recent-activity akışı (edisyon filtresi + tarih sırası)
+}
+
+// ─── GENİŞLETME DALGASI 1: Custom Rol Motoru + CV (kullanıcı isteği 1) ─────
+
+model CustomRole {
+  id             String   @id @default(cuid())
+  editionId      String
+  key            String // sistem rol anahtarına ek özel anahtar: "gala_host", "cme_auditor"...
+  name String @db.Text // "Gala Host", "Akreditasyon Denetçisi"
+  color String? @db.Text // rozet/kart rengi
+  hierarchyLevel Int      @default(50) // 1 en üst — hiyerarşik eşleme
+  permissions String? @db.Text // JSON dizi: CAPABILITIES anahtarları + custom izinler
+  description String? @db.LongText
+  isSystem       Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  edition         EventEdition          @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  roleAssignments EventRoleAssignment[]
+
+  @@unique([editionId, key])
+}
+
+model CvEntry {
+  id           String    @id @default(cuid())
+  personId     String
+  editionId    String // etkinlik bazlı izolasyon (tenant-like kural)
+  kind         String    @default("EXPERIENCE") // EDUCATION|EXPERIENCE|AWARD|LANGUAGE|PUBLICATION|CERTIFICATION
+  title String @db.Text
+  organization String? @db.Text // kurum/okul
+  city String? @db.Text
+  startDate    DateTime?
+  endDate      DateTime?
+  isCurrent    Boolean   @default(false)
+  description String? @db.LongText
+  order        Int       @default(0)
+  createdAt    DateTime  @default(now())
+
+  person  Person       @relation(fields: [personId], references: [id], onDelete: Cascade)
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([personId])
+}
+
+// ─── GENİŞLETME DALGASI 1: Oturum materyalleri (kullanıcı isteği 2) ────────
+
+model SessionMaterial {
+  id              String   @id @default(cuid())
+  sessionId       String
+  editionId       String
+  type            String   @default("SLIDES") // ABSTRACT|FULL_PAPER|SLIDES|VIDEO|SPEAKER_TEXT|LINK|OTHER
+  title String @db.Text
+  personId        String? // sahibi konuşmacıysa
+  participationId String?
+  url String? @db.Text // dış bağlantı
+  dataUrl String? @db.LongText // küçük dosyalar için base64 (≤ 400KB)
+  mimeType String? @db.Text
+  sizeKb          Int?
+  durationMin     Int? // video için
+  status          String   @default("PENDING") // PENDING|READY|MISSING
+  notes String? @db.LongText
+  order           Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  session       ProgramSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  edition       EventEdition        @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  person        Person?             @relation(fields: [personId], references: [id], onDelete: SetNull)
+  participation EventParticipation? @relation(fields: [participationId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
+}
+
+// ─── GENİŞLETME DALGASI 2: Merkezi Medya Arşivi (kullanıcı isteği 3) ───────
+
+model MediaFolder {
+  id          String   @id @default(cuid())
+  editionId   String
+  parentId    String? // esnek iç içe klasörleme (self-referencing)
+  name String @db.Text
+  color String? @db.Text
+  systemKey String? @db.Text // ROOT|PHOTOS|LOGOS|DOCUMENTS|PRESENTATIONS|VIDEOS|FLOOR_STUDIO|DESIGN_ASSETS — sistem klasörü işareti
+  description String? @db.LongText
+  createdAt   DateTime @default(now())
+
+  edition  EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  parent   MediaFolder?  @relation("FolderTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children MediaFolder[] @relation("FolderTree")
+  assets   MediaAsset[]
+
+  @@index([editionId])
+  @@index([parentId])
+}
+
+model MediaAsset {
+  id           String   @id @default(cuid())
+  editionId    String // ETKİNLİK İZOLASYONU — her varsa kendi edisyonunda
+  folderId     String?
+  name String @db.Text
+  kind         String   @default("IMAGE") // IMAGE|VIDEO|AUDIO|DOCUMENT|SPREADSHEET|ARCHIVE|FONT|OTHER
+  mimeType String? @db.Text
+  sizeKb       Int?
+  externalUrl String? @db.LongText // dış bağlantı
+  dataUrl String? @db.LongText // küçük dosyalar için base64 (≤ 400KB)
+  thumbDataUrl String? @db.LongText // M5: 320px WebP önizleme (raster görseller; kaynak meta veriler temizlenmiş)
+  widthPx      Int? // M5: piksel denetimi (25MP iki-kapı)
+  heightPx     Int?
+  tags String? @db.Text // virgülle
+  notes String? @db.LongText
+  linkedType String? @db.Text // PERSON|ORGANIZATION|SUBMISSION|SESSION|BOOTH|BADGE_DESIGN|CERTIFICATE
+  linkedId     String?
+  uploadedBy String? @db.Text
+  createdAt    DateTime @default(now())
+
+  edition   EventEdition     @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  folder    MediaFolder?     @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  documents DocumentRecord[] // TASK-B 20: belge sicili bağlantısı
+
+  @@index([editionId])
+  @@index([folderId])
+}
+
+// ─── TASK-B 19: YARGI ÇERÇEVESİ PROFİLİ ────────────────────────────────────
+// Yasal METİNLER KODDA DEĞİL (harici kaynak) — profil yalnız operasyonel parametreleri
+// taşır. TR/EU hazır ayarları API tarafından uygulanır (legal TEXT external ilkesi).
+model JurisdictionProfile {
+  id                String   @id @default(cuid())
+  tenantId          String   @unique
+  jurisdiction      String   @default("TR") // TR|EU|CUSTOM
+  dsrSlaDays        Int      @default(30) // veri konusu talebi SLA (K7: 30 gün)
+  breachWindowHours Int      @default(72) // veri ihlali bildirim penceresi
+  opLogYears        Int      @default(3) // operasyon günlüğü saklama (K7 ile uyumlu)
+  consentVersion String? @db.Text // etkin rıza metni sürümü (metin HARİCİ)
+  cookieStrictness  String   @default("STRICT") // STRICT|OPT_OUT — üçüncü taraf script ZATEN YOK
+  dpoMode           Boolean  @default(false) // VK (veri sorumlusunu temsil) modu
+  transferMechanism String   @default("BOARD_AUTHORIZATION") // TR: Kurul izni | EU: SCC|ADEQUACY
+  retentionNotes String? @db.LongText // saklama özeti (serbest not — hukuk metni değil)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+// ─── TASK-B 20: BELGE SİCİLİ — sürümlü, TEK AKTİF, sha256 bütünlük ────────
+model DocumentRecord {
+  id           String   @id @default(cuid())
+  tenantId     String
+  kind         String // AYDINLATMA|ACIK_RIZA|VERI_SAKLAMA|DST|KVKK_POLITIKA|E_FATURA|VERBIS|OTHER
+  version      Int      @default(1)
+  title String @db.Text
+  sha256 String @db.Text // içerik bütünlüğü (hex 64)
+  mediaAssetId String? // dosya merkezi medya arşivinde
+  externalUrl String? @db.LongText // harici barındırma (göreli yol ilkesi: kullanıcı linki)
+  notes String? @db.LongText
+  active       Boolean  @default(true) // (tenantId,kind) başına TEK aktif — yeni sürüm eskisini arşivler
+  supersededBy String? @db.Text // yerini alan sürümün DocumentRecord id'si
+  createdBy String? @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  asset  MediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, kind, active])
+}
+
+// ─── TASK-B 22: SaaS ABONELİK + FATURA (kuruş — F6 minor birim; İLK AŞAMA MANUEL) ──
+model TenantSubscription {
+  id                String    @id @default(cuid())
+  tenantId          String    @unique
+  plan              String    @default("TRIAL") // TRIAL|BASIC|PRO|ENTERPRISE
+  status            String    @default("TRIAL") // TRIAL|ACTIVE|PAST_DUE|CANCELED
+  priceMonthlyMinor Int       @default(0) // kuruş/ay (F6 disiplini)
+  currency          String    @default("TRY")
+  periodStart       DateTime  @default(now())
+  periodEnd         DateTime?
+  trialQuotaBytes   Int       @default(524288000) // deneme kotası (512 MB) — YALNIZ soft-block
+  notes String? @db.LongText
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoices TenantInvoice[]
+}
+
+model TenantInvoice {
+  id             String    @id @default(cuid())
+  subscriptionId String
+  number         String    @unique
+  amountMinor    Int // kuruş
+  currency       String    @default("TRY")
+  status         String    @default("DRAFT") // DRAFT|ISSUED|PAID|VOID
+  issuedAt       DateTime?
+  paidAt         DateTime?
+  dueAt          DateTime?
+  notes String? @db.LongText
+  createdAt      DateTime  @default(now())
+
+  subscription TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+}
+
+// ─── TASK-B 25: PORTAL BLOKLARI — düzenleyici kontrollü içerik blokları ────
+model PortalBlock {
+  id          String   @id @default(cuid())
+  editionId   String
+  audience    String   @default("BOTH") // PARTICIPANT|SPONSOR|BOTH — hangi portal yüzeyi
+  type        String   @default("ANNOUNCEMENT") // ANNOUNCEMENT|BANNER|INFO|LINK|CUSTOM
+  title String @db.Text
+  payloadJson String? @db.LongText // yapılandırılmış içerik { text?, url?, imageUrl?, linkLabel? }
+  order       Int      @default(0)
+  isVisible   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([editionId, isVisible])
+}
+
+// ─── GENİŞLETME DALGASI 3: API Geçidi & Entegrasyon (kullanıcı isteği 4) ───
+
+model ApiIntegration {
+  id           String    @id @default(cuid())
+  tenantId     String
+  editionId    String? // tenant-düzeyi entegrasyonlarda null (ödeme sağlayıcısı vb.)
+  name String @db.Text
+  direction    String    @default("OUTBOUND") // OUTBOUND|INBOUND — çift yönlü akış
+  kind         String    @default("REST") // REST|WEBHOOK|PAYMENT|MAIL|SMS|CRM|TICKETING
+  provider String? @db.Text // IYZICO|PAYTR|STRIPE|MAILJET|RESEND|SMTP|CUSTOM
+  baseUrl String? @db.LongText
+  authType     String    @default("NONE") // NONE|API_KEY|BEARER|BASIC|OAUTH2|SIGNATURE
+  authConfig String? @db.Text // JSON (UI'da maskelenir)
+  inboundToken String?   @unique // INBOUND çağrı adresi: /api/integrations/hook/<token>
+  status       String    @default("DRAFT") // DRAFT|ACTIVE|PAUSED|ERROR
+  lastRunAt    DateTime?
+  lastStatus String? @db.Text // OK|FAILED
+  successCount Int       @default(0)
+  failCount    Int       @default(0)
+  notes String? @db.LongText
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant  Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  edition EventEdition?    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  logs    IntegrationLog[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model IntegrationLog {
+  id            String   @id @default(cuid())
+  integrationId String?
+  editionId     String?
+  direction     String   @default("OUTBOUND") // OUTBOUND|INBOUND
+  method String? @db.Text // GET|POST|PUT|...
+  endpoint String? @db.Text
+  statusCode    Int?
+  ok            Boolean  @default(false)
+  durationMs    Int?
+  summary String? @db.LongText
+  payload String? @db.Text // kısa özet (ilk 500 karakter)
+  createdAt     DateTime @default(now())
+
+  integration ApiIntegration? @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([integrationId])
+}
+
+// ─── GENİŞLETME DALGASI 4: 360 Branding altyapısı (kullanıcı isteği 6) ─────
+
+model EmailTemplate {
+  id         String   @id @default(cuid())
+  editionId  String
+  name String @db.Text
+  category   String   @default("INFORMATION") // INVITATION|CONFIRMATION|PAYMENT_REMINDER|INFORMATION|QUIZ|THANK_YOU|CUSTOM
+  phase      String   @default("PRE_EVENT") // PRE_EVENT|DURING_EVENT|POST_EVENT
+  subject String @db.Text
+  htmlBody String @db.LongText // HTML mail alanı
+  isActive   Boolean  @default(true)
+  usageCount Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  edition   EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@index([editionId])
+}
+
+model MailProviderConfig {
+  id             String    @id @default(cuid())
+  tenantId       String
+  name String @db.Text // "Şirket SMTP", "Mailjet Ana Hesap"
+  kind           String    @default("SMTP") // SMTP|MAILJET|SENDGRID|RESEND|POSTMARK|OTHER
+  host String? @db.Text
+  port           Int?
+  username String? @db.Text
+  password String? @db.Text // DEPRECATED (S3): düz metin saklanmaz — yalnız eski kayıtlar için; API'den MASKELİ döner
+  passwordCipher String? @db.LongText // S3: AES-256-GCM şifreli kimlik bilgisi (MAVEN_SECRET_KEY ile) — at-rest koruma
+  fromEmail String @db.Text
+  fromName String? @db.Text
+  replyTo String? @db.Text
+  dailyLimit     Int? // gönderim limiti
+  isDefault      Boolean   @default(false)
+  status         String    @default("ACTIVE") // ACTIVE|PAUSED
+  lastTestAt     DateTime?
+  lastTestStatus String? @db.Text
+  createdAt      DateTime  @default(now())
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@index([tenantId])
+}
+
+// S3: Mail istismarı denetimi — abonelikten çıkma/sıkıntı/şikayet listesi;
+// gönderim motoru bu listedeki adreslere ASLA gönderim yapmaz (KVKK güvenli çıkış).
+model MailSuppression {
+  id        String   @id @default(cuid())
+  tenantId  String
+  email     String
+  reason    String   @default("MANUAL") // UNSUBSCRIBE|BOUNCE|COMPLAINT|MANUAL
+  note String? @db.Text
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}
+
+// ─── GENİŞLETME DALGASI 5: Yaka Kartı Tasarımcısı (kullanıcı isteği 8-bis) ──
+
+model BadgeDesign {
+  id                     String   @id @default(cuid())
+  editionId              String
+  name String @db.Text
+  widthMm                Float    @default(105) // CR80 dikey: 54x86; konferans: 105x148 — tamamen custom
+  heightMm               Float    @default(148)
+  bleedMm                Float    @default(3) // baskı payı ekle/çıkar
+  cornerMm               Float    @default(4)
+  sideCount              Int      @default(1) // 1|2 — tek/çift taraflı
+  fontKey                String   @default("inter") // serbest font seçimi
+  frontBackgroundDataUrl String? @db.LongText // tasarımcıdan yüklenen arka layer
+  backBackgroundDataUrl String? @db.LongText
+  frontElements String? @db.Text // JSON: [{type:TEXT|FIELD|QR|LOGO|SPONSOR_LOGO|PROGRAM|CONTACT, x,y,w,h (mm), fontSize, weight, color, align, fieldKey?, text?}]
+  backElements String? @db.Text // arka yüz: fuar/event logosu, hiyerarşik sponsor logosu, program, iletişim
+  qrSource               String   @default("CREDENTIAL") // CREDENTIAL|VCARD — QR seçimli eklenip çıkarılır
+  sponsorHierarchyKey String? @db.Text // hangi sponsor seviyesi logosu arka yüzde
+  showProgramOnBack      Boolean  @default(false)
+  backContactInfo String? @db.Text
+  isActive               Boolean  @default(true)
+  isDefault              Boolean  @default(false)
+  createdAt              DateTime @default(now())
+
+  edition  EventEdition   @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  profiles BadgeProfile[]
+
+  @@index([editionId])
+}
+
+// ─── GENİŞLETME DALGASI 6: Sosyal Etkinlik & Tur Planı + B2B Planı (kullanıcı isteği: 2 yeni modül) ──
+// Sosyal Etkinlik Planı ile Tur Planı AYNI modülde birleşir (kind alanı ayırır);
+// tür çeşitliliği type alanı ile sağlanır, resmi/resmi olmayan isOfficial ile işaretlenir.
+
+model SocialPlan {
+  id           String    @id @default(cuid())
+  editionId    String
+  kind         String    @default("SOCIAL") // SOCIAL (sosyal etkinlik) | TOUR (tur planı) — birleşik modül içinde ayrım
+  type         String    @default("OTHER") // GALA|COCKTAIL|OFFICIAL_DINNER|WELCOME_RECEPTION|CLOSING|NETWORKING|CULTURAL_TOUR|CITY_TOUR|TECHNICAL_TOUR|OTHER
+  isOfficial   Boolean   @default(false) // Resmi (kurum/konakçı adına) plan
+  title String @db.Text
+  description String? @db.LongText
+  startsAt     DateTime?
+  endsAt       DateTime?
+  venue String? @db.Text // sosyal mekân / tur başlangıç noktası
+  meetingPoint String? @db.Text // tur buluşma noktası & saati notu
+  capacity     Int?
+  price        Int? // F6: kuruş
+  currency     String    @default("TRY")
+  status       String    @default("DRAFT") // DRAFT|ANNOUNCED|CLOSED|CANCELLED
+  notes String? @db.LongText
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  edition       EventEdition             @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  announcements SocialPlanAnnouncement[]
+
+  @@index([editionId])
+  @@index([kind])
+}
+
+model SocialPlanAnnouncement {
+  id          String    @id @default(cuid())
+  planId      String
+  personId    String?
+  fullName String? @db.Text // snapshot — kişi silinse de duyuru geçmişi kalır
+  channel     String    @default("IN_APP") // IN_APP|EMAIL|SMS|PUSH
+  message String? @db.LongText
+  response String? @db.Text // INVITED|ACCEPTED|DECLINED — mobil/portal yanıtı
+  respondedAt DateTime?
+  sentAt      DateTime  @default(now())
+
+  plan   SocialPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  person Person?    @relation(fields: [personId], references: [id], onDelete: SetNull)
+
+  @@index([planId])
+  @@index([personId])
+}
+
+// B2B Planı: kişilere atanır, kişi mobil uygulamadan kabul eder, görüş bildirir.
+// Plan kişilerin kendi özelinde kalır (isPrivate); KARŞILIKLI onay sonrası ACTIVE olur.
+
+model B2bPlan {
+  id          String    @id @default(cuid())
+  editionId   String
+  subject String @db.Text // Konu girişi
+  description String? @db.LongText
+  startsAt    DateTime? // Saat girişi
+  endsAt      DateTime?
+  venue String? @db.Text // Etkinlik yeri
+  location    String? // Konum (masa / stand / oda / buluşma noktası)
+  isPrivate   Boolean   @default(true) // kişilerin kendi özelinde kalır
+  status      String    @default("DRAFT") // DRAFT|PENDING_APPROVAL|ACTIVE|COMPLETED|CANCELLED
+  notes String? @db.LongText
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  edition     EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  assignments B2bAssignment[]
+
+  // Eşzamanlılık kontrolü: aynı edisyonda aynı saat+masa çift kaydı DB düzeyinde yasak
+  @@unique([editionId, startsAt, location])
+  @@index([editionId])
+  @@index([status])
+}
+
+model B2bAssignment {
+  id                String    @id @default(cuid())
+  planId            String
+  personId          String
+  role              String    @default("PARTICIPANT") // HOST|GUEST|PARTICIPANT
+  status            String    @default("ASSIGNED") // ASSIGNED|ACCEPTED|DECLINED|COMPLETED
+  organizerApproved Boolean   @default(false) // organizatör onayı
+  personApproved    Boolean   @default(false) // kişinin onayı (mobil uygulama)
+  feedback String? @db.LongText // görüş (mobil uygulamadan gelir)
+  feedbackAt        DateTime?
+  respondedAt       DateTime?
+  createdAt         DateTime  @default(now())
+
+  plan   B2bPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  person Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, personId])
+  @@index([planId])
+  @@index([personId])
+}
+
+// ═══ EŞZAMANLILIK KONTROLÜ (Concurrency Control) ═══════════════════════════
+// B2B randevu çakışması: aynı edisyonda AYNI saat + AYNI masa/konum kombinasyonu
+// veritabanı düzeyinde YASAK (son savunma hattı invariant). MySQL/MariaDB
+// taşınmasında da aynen korunur. NULL startsAt/location kayıtları kısıt DIŞINDADIR
+// (hem SQLite hem MySQL birden çok NULL'a izin verir). Çakışan-aralık kontrolü
+// (overlap) uygulama katmanında withLock + transaction ile yapılır (bkz. registry).
+// NOT: migration öncesi çift-kayıt taraması: 0 çift (2026-09 doğrulandı).
+
+// ═══ DIŞ BİLDİRİM KANALLARI — WhatsApp (şirket mobil telefonu) + SMS ════════
+// Portal/etkinlik bildirimlerinin web-push yanı sıra WhatsApp ve SMS ile de
+// gönderilmesi için sağlayıcı-bağımsız kanal yapılandırması. Sırlar (API token)
+// AES-256-GCM ile şifreli saklanır (MailProviderConfig.passwordCipher deseni);
+// API yanıtlarında daima maskeli döner.
+model NotificationChannelConfig {
+  id              String    @id @default(cuid())
+  editionId       String    @unique
+  channelsEnabled Boolean   @default(true) // dış kanal ana anahtarı (web-push'tan bağımsız)
+  // ── WhatsApp — bağlanan ŞİRKET MOBİL TELEFONU üzerinden ──
+  waEnabled       Boolean   @default(false)
+  waProvider String? @db.Text // META_CLOUD|TWILIO|ULTRAMSG|WAHA|GENERIC_WEBHOOK|DEMO
+  waEndpoint String? @db.Text // WAHA/UltraMsg/generic webhook API kök adresi
+  waPhoneId       String? // Meta Phone Number ID / WAHA session adı / UltraMsg instance
+  waAccountId     String? // hesap kimliği (Twilio Account SID vb.)
+  waFrom String? @db.Text // bağlı şirket mobil numarası (E.164, örn. +90555…)
+  waTokenCipher String? @db.LongText // API token — AES-256-GCM şifreli (at-rest koruma)
+  // ── SMS ──
+  smsEnabled      Boolean   @default(false)
+  smsProvider String? @db.Text // TWILIO|NETGSM|ILETIMERKEZI|VERIMOR|GENERIC_WEBHOOK|DEMO
+  smsEndpoint String? @db.Text // generic webhook / sağlayıcı API kök adresi
+  smsSenderId     String? // alfabetik gönderici başlığı (maks 11 karakter)
+  smsFrom String? @db.Text // sayısal gönderici numarası (E.164)
+  smsAccountId    String? // hesap kimliği (Twilio Account SID / Netgsm kullanıcı kodu)
+  smsTokenCipher String? @db.LongText // API anahtarı — AES-256-GCM şifreli
+  // ── Hangi olaylarda dış kanal kullanılır (olay-yönlendirme matrisi) ──
+  eventsJson String? @db.LongText // {"announcement":true,"b2b":true,"reminder":false,"magicLink":false}
+  lastTestAt      DateTime?
+  lastTestStatus String? @db.Text // son test sonucu (özet — sır içermez)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+}
+
+// ─── TASK-A F1: PORTAL TOKEN LIFECYCLE ──────────────────────────────────────
+// Dış portal yetenek belirteçleri — OWASP API1:2023 (BOLA) sertleştirmesi:
+// düz metin saklama YASAK (yalnız sha256 hash), yanıt alanlarında ASLA görünmez,
+// tek-görünlük çıkarım (registration-approval kanalı / yönetici çıkarımı),
+// kapsam (PARTICIPANT|SPONSOR), expiresAt ve revokedAt yaşam döngüsü.
+model PortalToken {
+  id             String    @id @default(cuid())
+  tokenHash      String    @unique // sha256 hex (64) — ham belirteç bir kez döner, sonra yok
+  scope String @db.Text // PARTICIPANT | SPONSOR
+  editionId      String
+  personId       String? // scope=PARTICIPANT
+  organizationId String? // scope=SPONSOR
+  issuedAt       DateTime  @default(now())
+  issuedBy String? @db.Text // çıkarım kanalı: REGISTRATION_APPROVAL | ADMIN | PREVIEW
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+
+  person       Person?       @relation(fields: [personId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  edition      EventEdition  @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([personId])
+  @@index([organizationId])
+  @@index([editionId])
+}
+
+// ═══ PWA / MOBILE-FIRST KATILIMCI DIŞ PORTALI — modüler ek tablolar ═════════
+// Kural (§Teknik Gereksinimler 1): mevcut tablolar (Tenants, Events, Users,
+// Sessions, Sponsors, Speakers…) KESİNLİKLE bozulmaz; portal yapılandırması bu
+// modüler tablolarla FK bağlarıyla yönetilir. Veriler kopyalanmaz — yalnız
+// "görünürlük ve davranış" kuralları burada yaşar.
+
+// Admin Yapılandırma Modülü (§5): edisyon başına TEK kayıt — Görünürlük ve
+// Davranış kuralları. Tümü düzenleyici (üst firma) kontrolündedir.
+model EventPortalConfig {
+  id                        String    @id @default(cuid())
+  editionId                 String    @unique
+  // §5.1 Erişim ve güvenlik yönetimi
+  portalEnabled             Boolean   @default(false) // pasifken bakım / geri sayım sayfası
+  maintenanceMessage String? @db.LongText
+  countdownTo               DateTime? // pasifken "başlama geri sayımı" hedefi
+  eventCode String? @db.Text // etkinlik özel genel giriş kodu (GUEST girişi)
+  allowRegistrationRedirect Boolean   @default(true) // "Kayıt Formuna Yönlendir" butonu
+  registrationFormId        String? // yönlendirme hedefi (edition FormDefinition, isPublic)
+  // §5.2 Görsel yapılandırma ve tema
+  portalLogoUrl String? @db.LongText // portal logosu (edition logoUrl'den BAĞIMSIZ)
+  portalBannerUrl String? @db.LongText // arka plan görseli (banner)
+  themeColor String? @db.Text // tema rengi hex (alt menü vurgusu)
+  headerEventsJson String? @db.LongText // ["editionId",…] — Top Header diğer-etkinlik carousel seçimi
+  bottomNavJson String? @db.LongText // {"program":true,"sponsors":true,"map":true} — ikon aç/kapat
+  // §5.3 Dinamik widget ve modül yönetimi (feature toggles)
+  widgetsJson String? @db.LongText // {key:{enabled,visibility,order}} — visibility ALL|AUTH
+  // §5.4 Bildirim yönetimi
+  notificationsEnabled      Boolean   @default(true)
+  notifyOffsetsJson String? @db.LongText // [60,30,10] — dakika cinsinden hatırlatma tetikleri
+  // §5.5 İçerik bağlama
+  sponsorIdsJson String? @db.LongText // ["organizationId",…] — boşsa tüm aktif sponsorlar
+  venueMapUrl String? @db.LongText // SVG/görsel kroki
+  venueMapEnabled           Boolean   @default(false)
+  // §5.2+ Mobil Portal TAM TASARIM KONTROLÜ (kullanıcı isteği):
+  // tipografi + alan-renkleri + alan-arka plan görselleri (SVG/PNG/JPEG dataURL)
+  // + ikon SVG logo desteği + alt-menü ikonlarının grid (kanvas) konum düzeni.
+  fontFamily String? @db.Text // system|serif|rounded|mono|condensed — portal yazı tipi
+  fontScale                 Int? // 90..120 (%100 = varsayılan ölçek)
+  headerBgColor String? @db.Text // üst bant (top+event header) arka plan rengi hex
+  footerBgColor String? @db.Text // sabit alt menü arka plan rengi hex
+  contentBgColor String? @db.Text // orta (içerik) arka plan rengi hex
+  headerBgImage String? @db.LongText // üst bant arka plan görseli (≤600KB)
+  footerBgImage String? @db.LongText // alt menü arka plan görseli (≤600KB)
+  contentBgImage String? @db.LongText // içerik alanı arka plan görseli (≤600KB)
+  // Mobil Portal Sponsoru — portala maddi destek veren kurum (footer şeridi)
+  portalSponsorLogoUrl String? @db.LongText // sponsor logosu (dataURL/URL)
+  portalSponsorName String? @db.Text // sponsor adı
+  portalSponsorUrl String? @db.LongText // sponsor web adresi (tıklanınca açılır)
+  // İkon özelleştirme: lucide ikon yerine SVG logo + grid konum düzeni
+  iconOverridesJson String? @db.LongText // {navKey: {svg?: string, color?: string}} — SVG logo desteği
+  iconLayoutJson String? @db.LongText // {navKey: order} — kanvas grid mantığıyla konum/sıra
+  // PWA
+  pwaEnabled                Boolean   @default(true)
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+}
+
+// Portal oturumu — GUEST (anonim katılımcı) veya AUTH (doğrulanmış katılımcı).
+// OWASP çizgisi (TASK-A F1 ile uyumlu): ham anahtar ps_<hex> yalnız giriş anında
+// döner; DB'de yalnız sha256 hash yaşar. Kimlikli oturum kişiye bağlanır.
+model PortalSession {
+  id         String    @id @default(cuid())
+  editionId  String
+  kind String @db.Text // GUEST | AUTH
+  personId   String? // AUTH — kimlikli katılımcı
+  tokenHash  String    @unique // sha256 hex — ham anahtar saklanmaz
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+
+  edition   EventEdition         @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  person    Person?              @relation(fields: [personId], references: [id], onDelete: Cascade)
+  logs      PortalAnalyticsLog[]
+  questions PortalQuestion[]
+
+  @@index([editionId])
+  @@index([personId])
+}
+
+// §4.3 İstatistik ve analitik: tekil erişim, widget tıklama, PWA kurulum,
+// form/quiz katılımı ve B2B aksiyon izleri — raporlama tabanı.
+model PortalAnalyticsLog {
+  id        String   @id @default(cuid())
+  editionId String
+  sessionId String?
+  kind      String // VISIT|WIDGET_CLICK|PWA_INSTALL|FORM_OPEN|B2B_ACTION|QA_SUBMIT|REMINDER_SET
+  widgetKey String? @db.Text // agenda|forms|qa|map|b2b|speakers|sponsors|profile|program
+  meta String? @db.Text // kısa yapılandırılmış özet (PII yok)
+  createdAt DateTime @default(now())
+
+  edition EventEdition   @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  session PortalSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([editionId, kind])
+  @@index([createdAt])
+}
+
+// §5.4 Canlı Duyuru Paneli: yöneticinin anlık duyurusu ("Ana salonda kahve…").
+// Portal istemcileri polling ile yeni duyuruları alır; hedef kitle filtrelenebilir.
+model PortalAnnouncement {
+  id        String   @id @default(cuid())
+  editionId String
+  title String @db.Text
+  message String @db.LongText
+  level     String   @default("INFO") // INFO|WARNING|URGENT
+  target    String   @default("ALL") // ALL|AUTH|GUEST
+  sentBy    String   @default("ADMIN") // ADMIN|AUTO
+  createdAt DateTime @default(now())
+
+  edition EventEdition @relation(fields: [editionId], references: [id], onDelete: Cascade)
+
+  @@index([editionId, createdAt])
+}
+
+// §3.2 Soru-Cevap (Q&A): konuşmacılara/oturumlara soru gönderme — anonim veya
+// kimlikli; moderasyon durumu düzenleyicide.
+model PortalQuestion {
+  id               String   @id @default(cuid())
+  editionId        String
+  sessionId        String? // hangi portal oturumu sordu
+  programSessionId String? // hedef oturum
+  body String @db.LongText
+  displayName String? @db.Text // anonim değilse görünen ad
+  isAnonymous      Boolean  @default(false)
+  status           String   @default("PENDING") // PENDING|ANSWERED|HIDDEN
+  createdAt        DateTime @default(now())
+
+  edition        EventEdition    @relation(fields: [editionId], references: [id], onDelete: Cascade)
+  session        PortalSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  programSession ProgramSession? @relation(fields: [programSessionId], references: [id], onDelete: SetNull)
+
+  @@index([editionId, status])
+}
+

@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -21,7 +21,9 @@ import {
 import { cn } from "@/lib/utils";
 import { toMinor } from "@/lib/money";
 import { fmtMoney } from "@/lib/constants";
-import { apiSend } from "@/lib/client";
+import { apiGet, apiSend } from "@/lib/client";
+import { useApp } from "@/lib/store";
+import { useLang } from "@/lib/i18n";
 import { canProceed } from "@/lib/sponsorship/wizard";
 
 export interface KanbanAgreement {
@@ -59,6 +61,23 @@ export interface PackageOption {
 export interface TierUsage {
   used: number;
   capacity: number | null;
+}
+
+interface B2bPlanRow {
+  id: string;
+  subject: string;
+  status: string;
+  startsAt: string | null;
+  endsAt: string | null;
+  venue: string | null;
+  location: string | null;
+  assignments: {
+    id: string;
+    status: string;
+    organizerApproved: boolean;
+    personApproved: boolean;
+    person: { id: string; firstName: string; lastName: string; company: string | null };
+  }[];
 }
 
 export interface SponsorshipKanbanProps {
@@ -314,7 +333,13 @@ export function SponsorshipKanban({
   onNewDeal,
   onOrganizationsChanged,
 }: SponsorshipKanbanProps) {
+  const { t } = useLang();
+  const { currentEditionId, setModule } = useApp();
   const [b2bOpen, setB2bOpen] = useState(false);
+  // H-18: B2B diyaloğu mock matris değil CANLI veri gösterir (b2b-plans + atamalar).
+  const [b2bPlans, setB2bPlans] = useState<B2bPlanRow[] | null>(null);
+  const [b2bError, setB2bError] = useState<string | null>(null);
+  const [b2bRetry, setB2bRetry] = useState(0);
   const [newDealOpen, setNewDealOpen] = useState(false);
   const [newOrgId, setNewOrgId] = useState("");
   const [newAmount, setNewAmount] = useState("");
@@ -331,6 +356,39 @@ export function SponsorshipKanban({
   const [newOrgName, setNewOrgName] = useState("");
   const [newOrgSaving, setNewOrgSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // H-18: diyalog açılışında seçili edisyonun B2B planları çekilir.
+  useEffect(() => {
+    if (!b2bOpen || !currentEditionId) return;
+    let cancelled = false;
+    apiGet<{ items: B2bPlanRow[] }>(`/api/b2b-plans?editionId=${currentEditionId}&limit=200`)
+      .then((res) => {
+        if (cancelled) return;
+        setB2bPlans(res.items ?? []);
+        setB2bError(null);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setB2bError(e instanceof Error ? e.message : "load");
+        setB2bPlans([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [b2bOpen, currentEditionId, b2bRetry]);
+
+  const openB2b = () => {
+    setB2bPlans(null);
+    setB2bError(null);
+    setB2bOpen(true);
+  };
+
+  const fmtSlot = (iso: string | null) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  };
 
   // Kanonik durumları kolonlara grupla; CANCELLED ayrı listede, bilinmeyen
   // durumlar ASLA sessizce PROSPECT'e düşmez (ayrı uyarı satırı).
@@ -384,7 +442,7 @@ export function SponsorshipKanban({
       setNewOrgOpen(false);
       setNewOrgName("");
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : "Kurum oluşturulamadı");
+      setFormError(e instanceof Error ? e.message : t("sponsorship.orgCreateFailed"));
     } finally {
       setNewOrgSaving(false);
     }
@@ -468,8 +526,8 @@ export function SponsorshipKanban({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setB2bOpen(true)}>
-            <Users className="size-3.5 text-primary" /> B2B Matchmaking Matrisi
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={openB2b}>
+            <Users className="size-3.5 text-primary" /> {t("sponsorship.b2bLive.button")}
           </Button>
           <Button size="sm" className="gap-1.5" onClick={() => setNewDealOpen(true)}>
             <Plus className="size-3.5" /> Yeni Sponsor Anlaşması
@@ -542,67 +600,81 @@ export function SponsorshipKanban({
         </div>
       )}
 
-      {/* B2B Matchmaking Masa x Zaman Randevu Matrisi Modalı */}
+      {/* H-18: B2B canlı randevu listesi (mock matris kaldırıldı) */}
       <Dialog open={b2bOpen} onOpenChange={setB2bOpen}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto text-xs">
           <DialogHeader>
             <DialogTitle className="text-sm font-semibold flex items-center gap-2">
               <Users className="size-4 text-primary" />
-              B2B Matchmaking — Masa × Zaman Randevu Matrisi (Swapcard / Brella Prototipi)
+              {t("sponsorship.b2bLive.title")}
             </DialogTitle>
+            <p className="text-[11px] text-muted-foreground">{t("sponsorship.b2bLive.subtitle")}</p>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            <div className="rounded-lg border bg-muted/40 p-3 flex items-center justify-between">
-              <div>
-                <p className="font-medium text-foreground">İkili İş Görüşmeleri (B2B Area)</p>
-                <p className="text-[11px] text-muted-foreground">15 dakikalık oturumlar, 10 B2B Masası</p>
+          <div className="space-y-2 py-2">
+            {!currentEditionId && (
+              <p className="rounded-lg border bg-muted/40 p-3 text-center text-muted-foreground">
+                {t("sponsorship.b2bLive.noEdition")}
+              </p>
+            )}
+            {currentEditionId && b2bPlans === null && !b2bError && (
+              <p className="rounded-lg border bg-muted/40 p-3 text-center text-muted-foreground">
+                {t("sponsorship.b2bLive.loading")}
+              </p>
+            )}
+            {b2bError && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-center">
+                <p className="text-destructive">{t("sponsorship.b2bLive.loadError")}: {b2bError}</p>
+                <Button size="sm" variant="outline" className="mt-2" onClick={() => { setB2bError(null); setB2bPlans(null); setB2bRetry((n) => n + 1); }}>
+                  {t("sponsorship.b2bLive.retry")}
+                </Button>
               </div>
-              <Badge className="bg-primary text-primary-foreground">AI Algoritmik Eşleştirme Aktif</Badge>
-            </div>
-
-            {/* Masa x Saat Matrisi */}
-            <div className="overflow-x-auto rounded-lg border">
-              <table className="w-full border-collapse text-left text-xs">
-                <thead>
-                  <tr className="border-b bg-muted/60 text-muted-foreground">
-                    <th className="p-2.5 font-medium border-r w-20 text-center">Saat</th>
-                    {["Masa 1 (İlaç)", "Masa 2 (Cihaz)", "Masa 3 (Biyotek)", "Masa 4 (Yazılım)"].map((m) => (
-                      <th key={m} className="p-2.5 font-semibold text-foreground border-r last:border-r-0">
-                        {m}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {[
-                    { time: "10:00", t1: "Novartis ↔ Prof. Kaya", t2: "Boş", t3: "Roche ↔ Dr. Akın", t4: "Siemens ↔ Başhekimlik" },
-                    { time: "10:30", t1: "Pfizer ↔ Doç. Demir", t2: "Philips ↔ Klinik", t3: "Boş", t4: "GE Health ↔ Satınalma" },
-                    { time: "11:00", t1: "Bayer ↔ Onkoloji D.", t2: "Sanofi ↔ Heyet", t3: "AstraZeneca ↔ Ar-Ge", t4: "Boş" },
-                    { time: "11:30", t1: "Boş", t2: "Tıbbi Cihazlar ↔ Komite", t3: "Boş", t4: "Klinik Yazılım ↔ IT" },
-                  ].map((row) => (
-                    <tr key={row.time} className="hover:bg-muted/10">
-                      <td className="p-2 border-r text-center font-mono text-muted-foreground bg-muted/20">{row.time}</td>
-                      {[row.t1, row.t2, row.t3, row.t4].map((slot, i) => (
-                        <td key={i} className="p-2 border-r last:border-r-0">
-                          {slot === "Boş" ? (
-                            <span className="text-[10px] text-muted-foreground italic">Uygun Slot</span>
-                          ) : (
-                            <div className="rounded bg-primary/10 border border-primary/20 p-1 font-medium text-foreground text-[11px]">
-                              {slot}
-                            </div>
-                          )}
-                        </td>
-                      ))}
-                    </tr>
+            )}
+            {b2bPlans !== null && b2bPlans.length === 0 && !b2bError && (
+              <div className="rounded-lg border bg-muted/40 p-4 text-center">
+                <p className="font-medium text-foreground">{t("sponsorship.b2bLive.empty")}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">{t("sponsorship.b2bLive.emptyHint")}</p>
+              </div>
+            )}
+            {(b2bPlans ?? []).map((plan) => (
+              <div key={plan.id} className="rounded-lg border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium text-foreground">{plan.subject}</p>
+                  <Badge variant="outline" className="font-mono">{plan.status}</Badge>
+                </div>
+                <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                  {fmtSlot(plan.startsAt)}{plan.endsAt ? ` → ${fmtSlot(plan.endsAt)}` : ""}
+                  {plan.location ? ` · ${plan.location}` : ""}{plan.venue ? ` · ${plan.venue}` : ""}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {plan.assignments.length === 0 && (
+                    <span className="text-[11px] italic text-muted-foreground">{t("sponsorship.b2bLive.unassigned")}</span>
+                  )}
+                  {plan.assignments.map((a) => (
+                    <span
+                      key={a.id}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
+                        a.status === "ACCEPTED" ? "border-teal-300 bg-teal-50 text-teal-700 dark:bg-teal-950/30"
+                          : a.status === "DECLINED" ? "border-red-300 bg-red-50 text-red-700 dark:bg-red-950/30"
+                          : "border-muted bg-muted/40 text-muted-foreground",
+                      )}
+                    >
+                      {a.person.firstName} {a.person.lastName}
+                      {a.person.company ? ` · ${a.person.company}` : ""}
+                      <span className="font-mono opacity-70">{a.status}</span>
+                    </span>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              </div>
+            ))}
           </div>
 
-          <DialogFooter>
-            <Button onClick={() => setB2bOpen(false)}>Kapat</Button>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setB2bOpen(false); setModule("b2b"); }}>
+              {t("sponsorship.b2bLive.openModule")}
+            </Button>
+            <Button onClick={() => setB2bOpen(false)}>{t("sponsorship.b2bLive.close")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -636,7 +708,7 @@ export function SponsorshipKanban({
               <Label>Sponsor Kurum</Label>
               <div className="flex gap-2">
                 <Select value={newOrgId} onValueChange={setNewOrgId}>
-                  <SelectTrigger className="flex-1"><SelectValue placeholder="Kurum seçin" /></SelectTrigger>
+                  <SelectTrigger className="flex-1"><SelectValue placeholder={t("sponsorship.selectOrgPh")} /></SelectTrigger>
                   <SelectContent>
                     {organizations.length === 0 && (
                       <div className="px-2 py-1.5 text-[11px] text-muted-foreground">Kayıtlı kurum yok — önce kurum oluşturun</div>
@@ -665,7 +737,7 @@ export function SponsorshipKanban({
                   <div className="flex justify-end gap-2">
                     <Button type="button" size="sm" variant="ghost" onClick={() => { setNewOrgOpen(false); setNewOrgName(""); }}>Vazgeç</Button>
                     <Button type="button" size="sm" onClick={handleCreateOrg} disabled={newOrgSaving || !newOrgName.trim()}>
-                      {newOrgSaving ? "Kaydediliyor..." : duplicateOrg ? "Mevcut Kaydı Seç" : "Kurumu Oluştur"}
+                      {newOrgSaving ? t("common.saving") : duplicateOrg ? t("sponsorship.useExistingOrg") : t("sponsorship.createOrg")}
                     </Button>
                   </div>
                 </div>
@@ -835,7 +907,7 @@ export function SponsorshipKanban({
               </Button>
             ) : (
               <Button onClick={handleCreateDeal} disabled={saving || submittedRef.current || !newOrgId || draftAmountMinor == null}>
-                {saving ? "Kaydediliyor..." : "Anlaşmayı Kaydet"}
+                {saving ? t("common.saving") : t("sponsorship.saveDeal")}
               </Button>
             )}
           </DialogFooter>

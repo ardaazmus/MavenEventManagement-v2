@@ -19,12 +19,15 @@ export function InlineEditableCell({
 }: InlineEditableCellProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [currentVal, setCurrentVal] = useState(value?.toString() ?? "");
+  const [prevValue, setPrevValue] = useState(value);
   const [saving, setSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
+  // H-13: prop→state eşitleme render sırasında (effect içinde senkron setState yok).
+  if (value !== prevValue) {
+    setPrevValue(value);
     setCurrentVal(value?.toString() ?? "");
-  }, [value]);
+  }
 
   useEffect(() => {
     if (isEditing && inputRef.current) {

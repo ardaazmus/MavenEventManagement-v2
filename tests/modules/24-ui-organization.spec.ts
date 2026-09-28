@@ -1,10 +1,10 @@
 // Modül 24 — UI ORGANİZASYONU & HAK YÖNETİMİ (UI-AKIS 2026)
-// Kullanıcı ilkesi: özellik kaybı YOK — 26 modülün tamamı yeni 7-sektör-grubu
+// Kullanıcı ilkesi: özellik kaybı YOK — 27 modülün tamamı yeni 7-sektör-grubu
 // düzeninde ulaşılabilir olmalı; rol matrisi (§48) saf mantık olarak doğrulanmalı.
 // Bu spec bağımsız doğrular:
 //   KAYIPSIZLIK: MODULES ↔ bileşen haritası (module-components.tsx) ↔ i18n (modules.*)
 //                üçlü kapsama; her modülün geçerli grubu + rol tanımı.
-//   UI:          sidebar'da 7 grup başlığı + 26 modül etiketinin tamamı görünür;
+//   UI:          sidebar'da 7 grup başlığı + 27 modül etiketinin tamamı görünür;
 //                grup geçişlerinde modüller gerçekten açılır.
 //   HAK:         roleCanSee — OWNER/ADMIN her şey; FINANCE/ONSITE/SCIENTIFIC kendi
 //                alanları; rol=null (auth-off) → her şey görünür (geriye-uyum).
@@ -20,13 +20,14 @@ const en = JSON.parse(fs.readFileSync(path.join(process.cwd(), "src/i18n/en.json
 const moduleComponentsSrc = fs.readFileSync(path.join(process.cwd(), "src/lib/module-components.tsx"), "utf8");
 
 test.describe.serial("M24 — UI organizasyonu & hak yönetimi", () => {
-  test("kayıpsızlık — 26 modül: registry ↔ bileşen haritası ↔ i18n üçlü kapsama", () => {
-    expect(MODULES).toHaveLength(26);
+  test("kayıpsızlık — 27 modül: registry ↔ bileşen haritası ↔ i18n üçlü kapsama", () => {
+    expect(MODULES).toHaveLength(27);
     expect(MODULE_GROUPS).toHaveLength(7);
     const groupIds = MODULE_GROUPS.map((g) => g.id);
     for (const m of MODULES) {
       // her modülün bileşen girdisi var (yeni modül eklerken unutulmayı engelleyen yapısal garanti)
-      expect(new RegExp(`\\b${m.id}\\s*:`).test(moduleComponentsSrc), `bileşen haritasında yok: ${m.id}`).toBe(true);
+      // tireli id'ler haritada tırnaklı yazılır ("company-communications":) — desen ikisini de tutar
+      expect(new RegExp(`["']?\\b${m.id}\\b["']?\\s*:`).test(moduleComponentsSrc), `bileşen haritasında yok: ${m.id}`).toBe(true);
       // her modülün TR + EN görünen adı var
       expect(tr.modules?.[m.id], `tr modules.${m.id} eksik`).toBeTruthy();
       expect(en.modules?.[m.id], `en modules.${m.id} eksik`).toBeTruthy();
@@ -66,13 +67,18 @@ test.describe.serial("M24 — UI organizasyonu & hak yönetimi", () => {
     expect(roleCanSee(mod("badges"), "ONSITE_MANAGER")).toBe(true);
     expect(roleCanSee(mod("accommodation"), "ONSITE_MANAGER")).toBe(true);
     expect(roleCanSee(mod("communications"), "ONSITE_MANAGER")).toBe(false);
+    // H-08: şirket iletişimi communications rol aynasıdır (yetenek kapısı yok)
+    expect(roleCanSee(mod("company-communications"), "ONSITE_MANAGER")).toBe(false);
+    expect(roleCanSee(mod("company-communications"), "REGISTRATION_MANAGER")).toBe(true);
+    expect(mod("company-communications").capability).toBeNull();
+    expect(mod("company-communications").group).toBe("crm");
     // SCIENTIFIC_MANAGER: bilimsel + belgeler EVET, muhasebe HAYIR
     expect(roleCanSee(mod("scientific"), "SCIENTIFIC_MANAGER")).toBe(true);
     expect(roleCanSee(mod("certificates"), "SCIENTIFIC_MANAGER")).toBe(true);
     expect(roleCanSee(mod("accounting"), "SCIENTIFIC_MANAGER")).toBe(false);
   });
 
-  test("UI — sidebar'da 7 grup + 26 modül etiketinin tamamı görünür", async ({ page }) => {
+  test("UI — sidebar'da 7 grup + 27 modül etiketinin tamamı görünür", async ({ page }) => {
     await page.goto("/");
     await removeDevtoolsOverlay(page);
     await page.waitForLoadState("networkidle");

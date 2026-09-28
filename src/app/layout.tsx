@@ -1,20 +1,16 @@
 import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
-import { Geist, Geist_Mono } from "next/font/google";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { AppThemeProvider } from "@/components/theme-provider";
 import { THEME_COOKIE, sanitizeThemeChoice } from "@/lib/theme/preferences";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+// H-16: next/font/google derleme-anında ağ ister (offline derleme ölür).
+// `geist` paketi yerel woff2 kullanır — ağ gerektirmez, değişken aynı kalır.
+const geistSans = GeistSans;
+const geistMono = GeistMono;
 
 export const metadata: Metadata = {
   title: "Maven Event Management — Ortak Organizasyonel Mimari",

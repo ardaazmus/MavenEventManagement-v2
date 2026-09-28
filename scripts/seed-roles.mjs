@@ -35,7 +35,7 @@ export const SYSTEM_ROLE_DEFINITIONS = [
     name: "Etkinlik Yöneticisi",
     description: "Etkinlik ve edisyon operasyonlarının genel yöneticisi",
     permissions: [
-      ...["dashboard", "operations", "editions", "archive", "portals", "communications", "registrations", "forms", "finance", "accounting", "scientific", "program", "social", "sponsorship", "b2b", "floors", "media", "accommodation", "onsite", "badges", "certificates"].flatMap((module) =>
+      ...["dashboard", "operations", "editions", "archive", "portals", "people", "organizations", "communications", "registrations", "forms", "finance", "accounting", "scientific", "program", "social", "sponsorship", "b2b", "floors", "media", "accommodation", "onsite", "badges", "certificates"].flatMap((module) =>
         ACTIONS.map((action) => ({
           module,
           action,
@@ -68,6 +68,7 @@ export const SYSTEM_ROLE_DEFINITIONS = [
       { module: "registrations", action: "VIEW", scopeType: "EDITION" },
       { module: "registrations", action: "UPDATE", scopeType: "EDITION" },
       { module: "registrations", action: "EXPORT", scopeType: "EDITION" },
+      { module: "organizations", action: "VIEW", scopeType: "EDITION" },
       { module: "dashboard", action: "VIEW", scopeType: "EDITION" },
     ],
   },
@@ -76,7 +77,7 @@ export const SYSTEM_ROLE_DEFINITIONS = [
     name: "Kayıt Yöneticisi",
     description: "Katılımcı kayıt, form, konaklama ve yaka kartı yöneticisi",
     permissions: [
-      ...["registrations", "forms", "accommodation", "badges"].flatMap((module) =>
+      ...["registrations", "forms", "accommodation", "badges", "people", "organizations"].flatMap((module) =>
         ACTIONS.map((action) => ({
           module,
           action,
@@ -164,6 +165,8 @@ export const SYSTEM_ROLE_DEFINITIONS = [
       ),
       { module: "registrations", action: "VIEW", scopeType: "EDITION" },
       { module: "registrations", action: "UPDATE", scopeType: "EDITION" },
+      { module: "people", action: "VIEW", scopeType: "EDITION" },
+      { module: "people", action: "UPDATE", scopeType: "EDITION" },
       { module: "floors", action: "VIEW", scopeType: "EDITION" },
       { module: "floors", action: "UPDATE", scopeType: "EDITION" },
       { module: "dashboard", action: "VIEW", scopeType: "EDITION" },

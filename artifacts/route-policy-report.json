@@ -1,11 +1,11 @@
 {
-  "totalDiscovered": 156,
-  "totalClassified": 156,
+  "totalDiscovered": 160,
+  "totalClassified": 160,
   "unclassifiedCount": 0,
   "categoryCounts": {
     "PUBLIC": 45,
     "STAFF": 75,
-    "ADMIN": 32,
+    "ADMIN": 36,
     "DOMAIN_POLICY": 4
   },
   "unclassifiedRoutes": [],
@@ -142,6 +142,20 @@
       "authRequired": true,
       "enforcement": "requireStaff() + rate-limit + read-only",
       "description": "P21.4 BI SQL şablonları"
+    },
+    {
+      "path": "src/app/api/announcements/[id]/route.ts",
+      "category": "ADMIN",
+      "authRequired": true,
+      "enforcement": "requireAdmin() + owned tenant check + validation + rate-limit",
+      "description": "H-11 duyuru güncelle/sil"
+    },
+    {
+      "path": "src/app/api/announcements/route.ts",
+      "category": "ADMIN",
+      "authRequired": true,
+      "enforcement": "GET requireStaff() + POST requireAdmin() + server tenant + rate-limit",
+      "description": "H-11 şirket duyuruları listele/oluştur"
     },
     {
       "path": "src/app/api/auth/login/route.ts",
@@ -401,6 +415,13 @@
       "authRequired": true,
       "enforcement": "POST: requireAdmin() + blockers 409 + dryRun; GET: requireStaff() + tenant scope",
       "description": "P18.2 edisyon arşivleme + görüntü okuma"
+    },
+    {
+      "path": "src/app/api/export/company-snapshot/route.ts",
+      "category": "ADMIN",
+      "authRequired": true,
+      "enforcement": "requireAdmin() + resolveContext server tenant + rate-limit + export audit",
+      "description": "H-10 şirket snapshot indirme (JSON arşiv, sırsız)"
     },
     {
       "path": "src/app/api/exports/[id]/file/route.ts",
@@ -1087,6 +1108,13 @@
       "authRequired": true,
       "enforcement": "requireAdmin() + resolveContext server tenant + create rate-limit + one-time token",
       "description": "P06.2 davet oluşturma / yeniden gönderme"
+    },
+    {
+      "path": "src/app/api/users/roles/route.ts",
+      "category": "ADMIN",
+      "authRequired": true,
+      "enforcement": "requireAdmin() + resolveContext server tenant + read-only dictionary",
+      "description": "H-05 rol sözlüğü: davet ve atama açılır listeleri (GET yalnız)"
     },
     {
       "path": "src/app/api/users/route.ts",

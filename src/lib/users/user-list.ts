@@ -110,6 +110,7 @@ export const USER_SAFE_SELECT = {
   createdAt: true,
   roleAssignments: {
     select: {
+      id: true,
       scopeKey: true,
       role: { select: { key: true, name: true } },
     },
@@ -117,6 +118,7 @@ export const USER_SAFE_SELECT = {
 } as const;
 
 export interface UserRoleSummary {
+  id: string;
   roleKey: string;
   roleName: string;
   scopeKey: string;
@@ -148,6 +150,7 @@ type UserListRow = {
   lastLoginAt: Date | null;
   createdAt: Date;
   roleAssignments: Array<{
+    id: string;
     scopeKey: string;
     role?: { key: string; name: string } | null;
   }>;
@@ -166,6 +169,7 @@ export function toUserSummary(row: UserListRow): UserSummary {
     lastLoginAt: row.lastLoginAt,
     createdAt: row.createdAt,
     roleAssignments: row.roleAssignments.map((a) => ({
+      id: a.id,
       roleKey: a.role?.key ?? "UNKNOWN",
       roleName: a.role?.name ?? "Bilinmeyen rol",
       scopeKey: a.scopeKey,

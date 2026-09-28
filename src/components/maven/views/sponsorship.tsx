@@ -186,7 +186,7 @@ export function SponsorshipView() {
   };
 
   const handleNewDeal = async (deal: { organizationId: string; amountMinor: number; stage: string; tierId?: string | null; packageId?: string | null; notes?: string | null }) => {
-    if (!currentEditionId) throw new Error("Etkinlik seçili değil");
+    if (!currentEditionId) throw new Error(t("sponsorship.noEdition"));
     try {
       const created = await apiSend<{ id: string; amount: number; organization?: { name?: string } | null }>("/api/sponsor-agreements", "POST", {
         editionId: currentEditionId,

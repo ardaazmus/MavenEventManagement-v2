@@ -68,8 +68,8 @@ test("P06.1 - toUserSummary strips all secrets and keeps admin summary fields", 
     lastLoginAt: new Date("2026-09-01T10:00:00.000Z"),
     createdAt: new Date("2026-01-01T10:00:00.000Z"),
     roleAssignments: [
-      { scopeKey: "TENANT", role: { key: "ORG_ADMIN", name: "Kurum Yöneticisi" } },
-      { scopeKey: "ed_123", role: { key: "EVENT_MANAGER", name: "Etkinlik Yöneticisi" } },
+      { id: "asg_1", scopeKey: "TENANT", role: { key: "ORG_ADMIN", name: "Kurum Yöneticisi" } },
+      { id: "asg_2", scopeKey: "ed_123", role: { key: "EVENT_MANAGER", name: "Etkinlik Yöneticisi" } },
     ],
   };
 
@@ -97,8 +97,8 @@ test("P06.1 - toUserSummary strips all secrets and keeps admin summary fields", 
     "status",
   ]);
   assert.deepStrictEqual(summary.roleAssignments, [
-    { roleKey: "ORG_ADMIN", roleName: "Kurum Yöneticisi", scopeKey: "TENANT" },
-    { roleKey: "EVENT_MANAGER", roleName: "Etkinlik Yöneticisi", scopeKey: "ed_123" },
+    { id: "asg_1", roleKey: "ORG_ADMIN", roleName: "Kurum Yöneticisi", scopeKey: "TENANT" },
+    { id: "asg_2", roleKey: "EVENT_MANAGER", roleName: "Etkinlik Yöneticisi", scopeKey: "ed_123" },
   ]);
 });
 

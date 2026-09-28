@@ -25,7 +25,11 @@ type ThemeOption = "light" | "system" | "dark";
 function ThemeSwitcher() {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  // H-13: senkron setState yerine rAF geri-çağrısı (hidrasyon bekçisi, tek kare gecikmeli).
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
   const pick = (value: ThemeOption) => {
     setTheme(value);
     fetch("/api/account/theme", {

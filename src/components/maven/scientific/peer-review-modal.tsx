@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
+import { useLang } from "@/lib/i18n";
 import {
   calculateWeightedScore,
   recommendDecision,
@@ -49,6 +50,7 @@ export function PeerReviewModal({
     relevance: 7,
     clarity: 8,
   });
+  const { t } = useLang();
   const [comments, setComments] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -215,7 +217,7 @@ export function PeerReviewModal({
             Kapat
           </Button>
           <Button onClick={handleSubmit} disabled={submitting}>
-            {submitting ? "Kaydediliyor..." : "Puanı Onayla ve Gönder"}
+            {submitting ? t("common.saving") : t("peerReview.approveAndSend")}
           </Button>
         </DialogFooter>
       </DialogContent>

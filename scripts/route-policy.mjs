@@ -455,6 +455,18 @@ export const ROUTE_POLICY_DEFINITIONS = {
     enforcement: "requireAdmin() + rank/last-owner rules + sessionVersion bump + server tenant",
     description: "P06.4a kullanıcı devre dışı bırakma / etkinleştirme",
   },
+  "src/app/api/users/roles/route.ts": {
+    category: "ADMIN",
+    authRequired: true,
+    enforcement: "requireAdmin() + resolveContext server tenant + read-only dictionary",
+    description: "H-05 rol sözlüğü: davet ve atama açılır listeleri (GET yalnız)",
+  },
+  "src/app/api/export/company-snapshot/route.ts": {
+    category: "ADMIN",
+    authRequired: true,
+    enforcement: "requireAdmin() + resolveContext server tenant + rate-limit + export audit",
+    description: "H-10 şirket snapshot indirme (JSON arşiv, sırsız)",
+  },
   "src/app/api/exports/route.ts": {
     category: "STAFF",
     authRequired: true,
@@ -486,6 +498,18 @@ export const ROUTE_POLICY_DEFINITIONS = {
     authRequired: true,
     enforcement: "requireStaff() / FINANCE_MANAGER",
     description: "Muhasebe dışa aktarım dosyası",
+  },
+  "src/app/api/announcements/route.ts": {
+    category: "ADMIN",
+    authRequired: true,
+    enforcement: "GET requireStaff() + POST requireAdmin() + server tenant + rate-limit",
+    description: "H-11 şirket duyuruları listele/oluştur",
+  },
+  "src/app/api/announcements/[id]/route.ts": {
+    category: "ADMIN",
+    authRequired: true,
+    enforcement: "requireAdmin() + owned tenant check + validation + rate-limit",
+    description: "H-11 duyuru güncelle/sil",
   },
   "src/app/api/badges/print-queue/route.ts": {
     category: "STAFF",

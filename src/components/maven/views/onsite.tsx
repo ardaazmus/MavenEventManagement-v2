@@ -20,6 +20,9 @@ import { useLang, t, tLabel, exportI18nJson, importI18nJson } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DatabaseMigrationCard } from "./db-migration-card";
+import { UserAdminCard } from "./user-admin-card";
+import { ExportHubCard } from "./export-hub-card";
+import { AnnounceAdminCard } from "./announce-card";
 import { NotificationChannelsCard } from "./notification-channels-card";
 import { CustomerDataCard, InstantBroadcastDialog, ScheduleSendDialog, parseSendReport, BROADCAST_CHANNEL_LIST, type SendReportLite } from "./comms-crm";
 import { KioskTerminal } from "../onsite/kiosk-terminal";
@@ -2207,6 +2210,9 @@ export function SettingsView() {
       />
       <TenantIdentityCard />
       <LanguageCard />
+      <UserAdminCard />
+      <ExportHubCard />
+      <AnnounceAdminCard />
 
       {/* ── GRUP 2 · BU ETKİNLİK — yalnız seçili edisyonda geçerli ── */}
       <SettingsGroup

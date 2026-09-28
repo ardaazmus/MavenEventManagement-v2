@@ -544,6 +544,7 @@ interface DelegateItem {
 
 function AgencyGroupTab({ editionId, categories, onSuccess }: AgencyGroupTabProps) {
   const { toast } = useToast();
+  const { t } = useLang();
   const [agencies, setAgencies] = useState<{ id: string; name: string }[]>([]);
   const [selectedAgencyId, setSelectedAgencyId] = useState("");
   const [newAgencyName, setNewAgencyName] = useState("");
@@ -569,7 +570,7 @@ function AgencyGroupTab({ editionId, categories, onSuccess }: AgencyGroupTabProp
     { key: "lastName", label: "Soyad", synonyms: ["last name", "surname", "soyad"], required: true },
     { key: "email", label: "E-posta", synonyms: ["e-mail", "mail", "eposta"] },
     { key: "phone", label: "Telefon", synonyms: ["tel", "gsm", "phone"] },
-    { key: "company", label: "Kurum / Şirket", synonyms: ["company", "kurum", "firma"] },
+    { key: "company", label: t("regIo.agency.companyLabel"), synonyms: ["company", "kurum", "firma"] },
     { key: "title", label: "Ünvan", synonyms: ["title", "unvan"] },
   ];
 
@@ -626,7 +627,7 @@ function AgencyGroupTab({ editionId, categories, onSuccess }: AgencyGroupTabProp
   const handleSaveAndConfirm = async () => {
     if (!editionId) return;
     if (delegates.length === 0) {
-      toast({ title: "Delege Listesi Boş", description: "Lütfen en az 1 delege ekleyin.", variant: "destructive" });
+      toast({ title: t("regIo.agency.emptyTitle"), description: t("regIo.agency.emptyDesc"), variant: "destructive" });
       return;
     }
 
@@ -644,7 +645,7 @@ function AgencyGroupTab({ editionId, categories, onSuccess }: AgencyGroupTabProp
       }
 
       if (!targetAgencyOrgId) {
-        toast({ title: "Acente Seçilmedi", description: "Lütfen acente seçin veya yeni acente adı girin.", variant: "destructive" });
+        toast({ title: t("regIo.agency.noAgencyTitle"), description: t("regIo.agency.noAgencyDesc"), variant: "destructive" });
         return;
       }
 
@@ -700,7 +701,7 @@ function AgencyGroupTab({ editionId, categories, onSuccess }: AgencyGroupTabProp
 
       onSuccess();
     } catch (err: any) {
-      toast({ title: "Kayıt Hatası", description: err.message, variant: "destructive" });
+      toast({ title: t("regIo.agency.saveError"), description: err.message, variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -784,8 +785,8 @@ function AgencyGroupTab({ editionId, categories, onSuccess }: AgencyGroupTabProp
       </SectionCard>
 
       <SectionCard
-        title={`Grup Delegeleri (${delegates.length} Kişi)`}
-        desc="Excel'den toplu yapıştırın veya hızlı ekleme satırını kullanın"
+        title={t("regIo.agency.groupTitle", { count: delegates.length })}
+        desc={t("regIo.agency.groupDesc")}
         action={
           <div className="flex items-center gap-2">
             <Button
@@ -881,10 +882,10 @@ function AgencyGroupTab({ editionId, categories, onSuccess }: AgencyGroupTabProp
               { key: "lastName", placeholder: "Soyad *" },
               { key: "email", placeholder: "E-posta" },
               { key: "phone", placeholder: "Telefon" },
-              { key: "company", placeholder: "Kurum / Firma" },
+              { key: "company", placeholder: t("regIo.agency.companyPh") },
             ]}
             onAdd={handleQuickAdd}
-            buttonLabel="Hızlı Delege Ekle (Enter)"
+            buttonLabel={t("regIo.agency.quickAddDelegate")}
           />
         </div>
       </SectionCard>
@@ -1490,18 +1491,20 @@ function ImportRegistrationsDialog({ open, onOpenChange, editionId, categories, 
   const handleFile = async (file: File) => {
     if (!editionId) return;
     if (file.size > 5 * 1024 * 1024) {
-      toast({ title: t("regIo.import.failTitle"), description: "Dosya 5 MB sınırını aşıyor", variant: "destructive" });
+      toast({ title: t("regIo.import.failTitle"), description: t("regIo.import.fileTooBig"), variant: "destructive" });
       return;
     }
     setFileName(file.name); setPhase("parsing");
     try {
       const XLSX = await import("xlsx");
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
+      // N-05: sheetRows tavanı — bozuk/devasa dosyanın parse maliyetini sınırlar
+      // (CVE-2024-22363 ReDoS yüzeyini küçültür; tam çözüm exceljs göçüdür).
+      const wb = XLSX.read(buf, { type: "array", sheetRows: 1005 });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      if (!ws) throw new Error("Boş dosya");
+      if (!ws) throw new Error(t("regIo.import.fileEmpty"));
       const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "", raw: false });
-      if (parsed.length === 0) throw new Error("Dosyada satır bulunamadı");
+      if (parsed.length === 0) throw new Error(t("regIo.import.fileNoRows"));
       setRows(parsed);
       setPhase("previewing");
       const pv = await apiSend<ImportPreview>("/api/registrations/import", "POST", {
@@ -1509,7 +1512,7 @@ function ImportRegistrationsDialog({ open, onOpenChange, editionId, categories, 
       });
       setPreview(pv); setPhase("preview");
     } catch (e) {
-      toast({ title: t("regIo.import.failTitle"), description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("regIo.import.failTitle"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
       setPhase("idle");
     }
   };
@@ -1525,7 +1528,7 @@ function ImportRegistrationsDialog({ open, onOpenChange, editionId, categories, 
       toast({ title: t("regIo.import.doneTitle"), description: t("regIo.import.doneDesc", { imported: res.imported, skipped: res.skipped.length }) });
       onImported();
     } catch (e) {
-      toast({ title: t("regIo.import.failTitle"), description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+      toast({ title: t("regIo.import.failTitle"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
       setPhase("preview");
     }
   };

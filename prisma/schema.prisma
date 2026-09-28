@@ -19,7 +19,7 @@ datasource db {
 model Tenant {
   id           String   @id @default(cuid())
   name         String
-  slug         String   @unique
+  slug         String   @unique // N-04: BY-DESIGN global - public tenant cozumleme tenant-bagimsiz slug ister
   plan         String   @default("PRO") // FREE | PRO | ENTERPRISE
   status       String   @default("ACTIVE")
   country      String?
@@ -63,6 +63,26 @@ model Tenant {
   brandAssets         BrandAsset[] // P19.1: kurumsal varlık kütüphanesi
   utmTerms            UtmTerm[] // P19.4: UTM sözlüğü
   promoUsages         PromoUsage[] // P19.4: kullanım analitiği
+  announcements       TenantAnnouncement[] // H-11: sirket duyurulari
+}
+// H-11: sirket duyuru/tanitim alani (dashboard seridi + vitrin aday kaynagi)
+model TenantAnnouncement {
+  id        String    @id @default(cuid())
+  tenantId  String
+  title     String
+  body      String
+  imageUrl  String?
+  linkUrl   String?
+  startsAt  DateTime?
+  endsAt    DateTime?
+  isActive  Boolean   @default(true)
+  sortOrder Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  tenant    Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, isActive, sortOrder])
 }
 
 model User {
@@ -90,6 +110,10 @@ model User {
   passkeys            Passkey[]
   oauthAccounts       OAuthAccount[]
   roleAssignments     UserRoleAssignment[] // P05.1: Kalıcı rol atamaları
+
+  // N-03: ayni kiracida yinelenen e-posta DB duzeyinde yasak (kayit/davet yarisi kapanir).
+  // Kiracilar-arasi ayni e-posta SERBEST - giris parola-eslesme + tenantSlug ile cozulur.
+  @@unique([tenantId, email])
 }
 
 // A4: WebAuthn passkey — opaque userId (cuid) dışa ifşa edilmez; challenge tek kullanımlık;
@@ -266,7 +290,7 @@ model EventSeries {
   id          String   @id @default(cuid())
   tenantId    String
   name        String // örn. "No-Dig Turkey"
-  slug        String   @unique
+  slug        String   @unique // N-04: BY-DESIGN global - public cozumleme; cok-DB dagitimda tenant-once gerekir
   description String?
   template    String? // SCIENTIFIC_CONGRESS|TRADE_FAIR|CORPORATE|CUSTOM
   logoUrl     String?
@@ -281,7 +305,7 @@ model EventEdition {
   tenantId             String
   seriesId             String? // null → bağımsız tek seferlik etkinlik
   name                 String
-  slug                 String    @unique
+  slug                 String    @unique // N-04: BY-DESIGN global - portal/content+access slug-tekil cozer
   editionLabel         String? // örn. "2026"
   status               String    @default("PLANNING") // §7 yaşam döngüsü: OPPORTUNITY|BID|AWARDED|PLANNING|CONFIGURATION|SALES|REGISTRATION|LOGISTICS|PRE_EVENT|ONSITE|POST_EVENT|RECONCILIATION|ARCHIVED
   isPublished          Boolean   @default(false)

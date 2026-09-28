@@ -597,4 +597,208 @@ export async function authorizeDualRead({
   };
 }
 
+// ─── N-01: /api/flows aksiyon → yetki eşlemesi ─────────────────────────────────
+// Her flows aksiyonu ENTITY_POLICY_MAP'teki bir varlığa ve eyleme bağlanır; karar
+// merkezi generic CRUD ile AYNI (authorizeDualRead): DB RBAC birincil, DB ataması
+// yoksa legacy session-role fallback, auth-off'ta demo bypass. Eşleme
+// seed-kapsayıcı seçildi: tohum rollerin sahip olmadığı (module, action) çifti
+// YOK (flows-authorization testi kilitler).
+
+export interface FlowActionPolicy {
+  entity: string;
+  action: Action;
+}
+
+export const FLOW_ACTION_POLICY: Record<string, FlowActionPolicy> = {
+  // Kayıt kararları — UPDATE (seed'de FINANCE/ONSITE APPROVE'a sahip değil).
+  "registration.decide": { entity: "registrations", action: "UPDATE" },
+  "registration.cancel": { entity: "registrations", action: "UPDATE" },
+  // Sponsor misafiri havuzdan hak tüketir + kayıt üretir.
+  "sponsor.guest": { entity: "sponsor-agreements", action: "CREATE" },
+  // Finansal hareketler.
+  "finance.manualPayment": { entity: "payments", action: "CREATE" },
+  "finance.refund": { entity: "refunds", action: "CREATE" },
+  // Stant tahsisi.
+  "booth.allocate": { entity: "booth-allocations", action: "CREATE" },
+  // Konaklama durum geçişleri.
+  "reservation.confirm": { entity: "reservations", action: "UPDATE" },
+  "reservation.cancel": { entity: "reservations", action: "UPDATE" },
+  // Sertifika üretimi belge ıssı yaratır.
+  "certificate.generate": { entity: "certificate-issues", action: "CREATE" },
+  // Yayın + yetenek: edisyon yönetimi.
+  "edition.publish": { entity: "editions", action: "UPDATE" },
+  "capability.toggle": { entity: "capabilities", action: "UPDATE" },
+  // Kişi birleştirme kiracı-özel yıkıcı işlem (kapsam: TENANT).
+  "person.merge": { entity: "people", action: "UPDATE" },
+  // LCV yanıtı.
+  "invitation.respond": { entity: "invitations", action: "UPDATE" },
+  // B2B karşılıklı onay.
+  "b2b.respond": { entity: "b2b-assignments", action: "UPDATE" },
+  "b2b.approve": { entity: "b2b-assignments", action: "APPROVE" },
+};
+
+export const FLOW_ACTIONS = Object.freeze(Object.keys(FLOW_ACTION_POLICY));
+
+export function policyForFlowAction(action: unknown): FlowActionPolicy | null {
+  if (typeof action !== "string") return null;
+  return FLOW_ACTION_POLICY[action] ?? null;
+}
+
+// Eşleme bütünlüğü: her hedef entity POLICY'de kayıtlı, her eylem izinli olmalı.
+// Kayıt-dışı eşleme fail-closed 403 üretir (UNKNOWN_ENTITY).
+export function assertFlowPolicyIntegrity(): string[] {
+  const problems: string[] = [];
+  for (const [flowAction, policy] of Object.entries(FLOW_ACTION_POLICY)) {
+    const entityPolicy = getEntityPolicy(policy.entity);
+    if (!entityPolicy) {
+      problems.push(`${flowAction}: entity "${policy.entity}" POLICY'de yok`);
+      continue;
+    }
+    if (!entityPolicy.allowedActions.includes(policy.action)) {
+      problems.push(`${flowAction}: "${policy.action}" entity'de izinli değil`);
+    }
+  }
+  return problems;
+}
+
+// ─── Flows kapsam çözümleme ─────────────────────────────────────────────────
+// DB RBAC edition-kapsamlı atamaları (scopeKey=editionId) değerlendirebilmek için
+// aksiyonun hedef edisyonu bulunur. Çözülemezse "TENANT" döner — o durumda yalnız
+// TENANT atamaları + legacy fallback devreye girer (asla açık-geçiş yok).
+export interface FlowScopePrisma {
+  registration: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
+  invitation: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
+  entitlement: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
+  order: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
+  reservation: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
+  boothUnit: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
+  certificateDefinition: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
+  eventCapability: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
+  b2bAssignment: {
+    findUnique(args: unknown): Promise<{ plan: { editionId: string } } | null>;
+  };
+}
+
+type FlowBody = Record<string, unknown>;
+
+const flowIdOf = (body: FlowBody, key: string): string | null => {
+  const v = body[key];
+  return typeof v === "string" && v.length > 0 ? v : null;
+};
+
+export async function resolveFlowEdition(
+  action: string,
+  body: FlowBody,
+  prisma: FlowScopePrisma
+): Promise<string> {
+  // Açık edisyon (edition.publish, capability.toggle-b) — en güvenilir kaynak.
+  const direct = flowIdOf(body, "editionId");
+  if (direct) return direct;
+
+  try {
+    switch (action) {
+      case "registration.decide":
+      case "registration.cancel": {
+        const id = flowIdOf(body, "registrationId");
+        if (!id) return "TENANT";
+        const row = await prisma.registration.findUnique({ where: { id }, select: { editionId: true } });
+        return row?.editionId ?? "TENANT";
+      }
+      case "invitation.respond": {
+        const id = flowIdOf(body, "invitationId");
+        if (!id) return "TENANT";
+        const row = await prisma.invitation.findUnique({ where: { id }, select: { editionId: true } });
+        return row?.editionId ?? "TENANT";
+      }
+      case "sponsor.guest": {
+        const id = flowIdOf(body, "entitlementId");
+        if (!id) return "TENANT";
+        const row = await prisma.entitlement.findUnique({ where: { id }, select: { editionId: true } });
+        return row?.editionId ?? "TENANT";
+      }
+      case "finance.manualPayment":
+      case "finance.refund": {
+        const id = flowIdOf(body, "orderId");
+        if (!id) return "TENANT";
+        const row = await prisma.order.findUnique({ where: { id }, select: { editionId: true } });
+        return row?.editionId ?? "TENANT";
+      }
+      case "booth.allocate": {
+        const id = flowIdOf(body, "boothUnitId");
+        if (!id) return "TENANT";
+        const row = await prisma.boothUnit.findUnique({ where: { id }, select: { editionId: true } });
+        return row?.editionId ?? "TENANT";
+      }
+      case "reservation.confirm":
+      case "reservation.cancel": {
+        const id = flowIdOf(body, "reservationId");
+        if (!id) return "TENANT";
+        const row = await prisma.reservation.findUnique({ where: { id }, select: { editionId: true } });
+        return row?.editionId ?? "TENANT";
+      }
+      case "certificate.generate": {
+        const id = flowIdOf(body, "definitionId");
+        if (!id) return "TENANT";
+        const row = await prisma.certificateDefinition.findUnique({ where: { id }, select: { editionId: true } });
+        return row?.editionId ?? "TENANT";
+      }
+      case "capability.toggle": {
+        const id = flowIdOf(body, "capabilityId");
+        if (!id) return "TENANT";
+        const row = await prisma.eventCapability.findUnique({ where: { id }, select: { editionId: true } });
+        return row?.editionId ?? "TENANT";
+      }
+      case "b2b.respond":
+      case "b2b.approve": {
+        const id = flowIdOf(body, "assignmentId");
+        if (!id) return "TENANT";
+        const row = await prisma.b2bAssignment.findUnique({
+          where: { id },
+          select: { plan: { select: { editionId: true } } },
+        });
+        return row?.plan?.editionId ?? "TENANT";
+      }
+      case "edition.publish":
+      case "person.merge":
+      default:
+        return "TENANT";
+    }
+  } catch {
+    // Kapsam çözümleme hatası yetkiyi AÇMAZ — TENANT dar kapsamına düşer.
+    return "TENANT";
+  }
+}
+
+export interface FlowAuthOptions {
+  actor: { uid?: string; role?: string | null; tenantId?: string } | null;
+  action: unknown;
+  body: FlowBody;
+  prisma: unknown;
+}
+
+export interface FlowAuthResult extends DualReadResult {
+  unknownAction: boolean;
+}
+
+export async function authorizeFlowAction({
+  actor,
+  action,
+  body,
+  prisma,
+}: FlowAuthOptions): Promise<FlowAuthResult> {
+  const policy = policyForFlowAction(action);
+  if (!policy) {
+    return { authorized: false, source: "db_rbac", reason: "UNKNOWN_FLOW_ACTION", unknownAction: true };
+  }
+  const scopeKey = await resolveFlowEdition(action as string, body, prisma as FlowScopePrisma);
+  const result = await authorizeDualRead({
+    actor,
+    entity: policy.entity,
+    action: policy.action,
+    scopeKey,
+    prisma,
+  });
+  return { ...result, unknownAction: false };
+}
+
 

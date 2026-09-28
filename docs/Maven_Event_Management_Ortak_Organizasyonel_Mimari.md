@@ -1,8 +1,11 @@
 # Maven Event Management — Ortak Organizasyonel Mimari
 
-> **Sürüm:** 1.0 · **Durum:** Tek doğruluk kaynağı (Single Source of Truth)
-> Bu doküman, organizasyon yapısı ile veritabanı şemasının **birebir** uyduğu ortak mimarinin tanımıdır.
-> `prisma/schema.prisma` bu dokümandaki model tanımlarıyla 1:1 eşleşir. API katmanı ve UI modülleri bu modele göre türetilir.
+> **Sürüm:** 2.0 · **Durum:** Mimari genel bakış (bu dosya özet niteliğindedir)
+> Model düzeyinde tek doğruluk kaynağı `prisma/schema.prisma` dosyasıdır;
+> yetki sözlüğü `src/lib/api/permissions.ts`, modül listesi
+> `src/lib/constants.ts` (`MODULES`) içindedir. Bu doküman onlarla çelişirse
+> kod geçerlidir. (v1.0'daki "20 model / birebir" iddiası 2026-09-28'de
+> H-15 kapsamında düzeltilmiştir.)
 
 ---
 
@@ -11,113 +14,98 @@
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  UI KATMANI (SPA /)                                     │
-│  Dashboard · Etkinlikler · Organizasyon · Üyeler        │
-│  Görevler · Finans · Sponsorlar · Ajanda · Katılımcılar │
-│  Duyurular · Raporlar                                   │
+│  27 modül · 7 yaşam-döngüsü grubu · shell + modül       │
+│  kayıt noktası: src/lib/module-components.tsx           │
 ├─────────────────────────────────────────────────────────┤
-│  API KATMANI (App Router Route Handlers)                │
-│  /api/{entity} + /api/{entity}/[id] REST sözleşmesi     │
-│  /api/dashboard (agregasyon)  /api/seed (demo veri)     │
+│  API KATMANI (App Router Route Handlers — 156 route)    │
+│  /api/{entity} + /api/{entity}/[id] generic CRUD        │
+│  /api/flows (15 iş-aksiyonu) · /api/portal/* (jetonlu)  │
+│  /api/public-* (açık) · tenant-guard + dual-read RBAC   │
 ├─────────────────────────────────────────────────────────┤
 │  VERİ KATMANI (Prisma ORM + SQLite)                     │
-│  20 model — aşağıdaki §3 ile birebir aynı               │
+│  125 model — §3'te aggregate gruplarıyla özetlenir      │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ## 2. Organizasyon Yapısı (Hiyerarşi)
 
 ```
-Organization (Kök Varlık)
+Tenant (Üst Şirket / Kiracı)
 │
-├── Department (Birim — kendine referanslı ağaç)
-│     ├── Yönetim Kurulu
-│     ├── Etkinlik Birimi
-│     ├── Finans Birimi
-│     ├── PR & Pazarlama
-│     ├── Teknoloji Birimi
-│     └── İnsan Kaynakları
+├── User (personel) + RoleDefinition/RolePermission/UserRoleAssignment (RBAC)
+├── Person / Organization / CustomerContact (şirket CRM havuzu)
 │
-├── Role (Rol — yetki seviyeli: 1=Yönetici … 5=Gönüllü)
-│
-├── Member (Üye — Birim + Rol bağlantılı)
-│     └── Member ←→ Team (TeamMember: LIDER/KOORDINATOR/UYE)
-│
-└── Team (Ekip — daimi veya etkinliğe özel)
-      └── leaderId: Member
+└── EventSeries ── 1:N ── EventEdition (Etkinlik)
+        │                    │
+        │                    ├── EventCapability (modül yetenek anahtarları)
+        │                    ├── EventParticipation (kişi × etkinlik köprüsü)
+        │                    ├── Registration / Order / Payment / Refund
+        │                    ├── SponsorTierDefinition/Package/Agreement
+        │                    └── Program, Form, Campaign, Hotel, Booth, …
 ```
 
-## 3. Domain Modeli (20 Model — DB ile birebir)
+Temel ilke (§2): `Person ≠ Participation ≠ Registration ≠ Role ≠ Payment`.
 
-| # | Model | Amaç | Önemli Alanlar / İlişkiler |
-|---|-------|------|-----------------------------|
-| 1 | `Organization` | Kök kiralayıcı (tenant) | name, slug, mission, foundedYear |
-| 2 | `Department` | Hiyerarşik birim ağacı | parentId→Department (self), managerId→Member |
-| 3 | `Role` | Yetki seviyeli roller | code, level (1-5), color |
-| 4 | `Member` | Üyeler | departmentId, roleId, status: ACTIVE/PASSIVE/ALUMNI |
-| 5 | `Team` | Ekipler | eventId?, leaderId?, type: STANDING/EVENT |
-| 6 | `TeamMember` | Ekip-üye köprüsü | roleInTeam: LEADER/COORDINATOR/MEMBER |
-| 7 | `Event` | Ana varlık | venueId?, coordinatorId?, status, type |
-| 8 | `Venue` | Mekanlar | city, district, capacity, contact |
-| 9 | `Task` | Görevler (kanban) | eventId, teamId?, assigneeId?, status, priority, position |
-| 10 | `TaskChecklistItem` | Görev alt maddeleri | taskId, isDone, position |
-| 11 | `BudgetItem` | Bütçe kalemleri | eventId, category, plannedAmount, actualAmount |
-| 12 | `Expense` | Gider kayıtları | budgetItemId, status: PENDING/APPROVED/REJECTED/PAID |
-| 13 | `Sponsor` | Sponsorlar & ortaklar | eventId, tier, status, sponsorshipAmount |
-| 14 | `Speaker` | Konuşmacılar | company, bio, social linkler |
-| 15 | `Session` | Program oturumları | eventId, speakerId?, type, startTime/endTime, room |
-| 16 | `TicketType` | Bilet tipleri | eventId, price, quantity |
-| 17 | `Attendee` | Katılımcı kayıtları | eventId, ticketTypeId?, status, qrCode |
-| 18 | `Announcement` | Duyurular | eventId? (null=genel), priority, authorId? |
-| 19 | `ActivityLog` | Denetim/aktivite akışı | type, entityType, entityId, actorName |
-| 20 | `Feedback` | Etkinlik geri bildirimi | eventId, rating (1-5), category |
+## 3. Domain Modeli (125 Model — Aggregate Özeti)
 
-### 3.1 Enum Karşılıkları (SQLite: string + sabitler)
+Tam liste `prisma/schema.prisma` içindedir. Başlıca kümeler:
 
-- **EventStatus:** `DRAFT → PLANNING → PUBLISHED → ONGOING → COMPLETED` · yan kol: `CANCELLED`
-- **EventType:** CONFERENCE, WORKSHOP, SEMINAR, MEETUP, HACKATHON, FESTIVAL, WEBINAR, SPORTS, SOCIAL, OTHER
-- **TaskStatus:** BACKLOG, TODO, IN_PROGRESS, REVIEW, DONE, BLOCKED
-- **TaskPriority:** LOW, MEDIUM, HIGH, URGENT
-- **MemberStatus:** ACTIVE, PASSIVE, ALUMNI
-- **BudgetCategory:** VENUE, CATERING, MARKETING, EQUIPMENT, SPEAKERS, DECORATION, TRANSPORT, PRINTING, TECHNOLOGY, OTHER
-- **ExpenseStatus:** PENDING, APPROVED, REJECTED, PAID
-- **SponsorTier:** PLATINUM, GOLD, SILVER, BRONZE, MEDIA, PARTNER
-- **SponsorStatus:** PROSPECT, CONTACTED, NEGOTIATION, CONFIRMED, DECLINED
-- **SessionType:** KEYNOTE, TALK, PANEL, WORKSHOP, BREAK, NETWORKING
-- **AttendeeStatus:** REGISTERED, CONFIRMED, CHECKED_IN, CANCELLED, NO_SHOW
-- **AnnouncementPriority:** NORMAL, IMPORTANT, CRITICAL
-- **TeamType:** STANDING, EVENT · **RoleInTeam:** LEADER, COORDINATOR, MEMBER
+| Küme | Çekirdek Modeller |
+|------|-------------------|
+| Foundation/IAM | `Tenant`, `User`, `Passkey`, `OAuthAccount`, `RoleDefinition`, `RolePermission`, `UserRoleAssignment`, `UserInvite`, `ActivityLog` |
+| CRM | `Person`, `Organization`, `OrganizationContact`, `CustomerContact`, `CvEntry` |
+| Etkinlik İskeleti | `EventSeries`, `EventEdition`, `EventCapability`, `EventOrganizationAssignment` |
+| Kayıt | `EventParticipation`, `Registration`, `RegistrationCategory`, `Invitation`, `Entitlement`, `EntitlementClaim`, `WaitlistEntry` |
+| Finans | `Order`, `OrderLine`, `Payment`, `Refund`, `Expense`, `Income`, `CatalogItem` |
+| Sponsorluk/Fuar | `SponsorTierDefinition`, `SponsorPackage`, `SponsorAgreement`, `Deliverable`, `BoothUnit`, `BoothAllocation` |
+| Program/Bilim | `Session`, `Room`, `ProgramAssignment`, `Submission`, `Review`, `CertificateDefinition`, `CertificateIssue` |
+| Saha | `BadgeProfile`, `BadgeInstance`, `Credential`, `ScanEvent` |
+| İletişim | `Campaign`, `EmailTemplate`, `MailProviderConfig`, `MailSuppression`, `NotificationChannelConfig` |
+| Medya/Operasyon | `MediaFolder`, `MediaAsset`, `Task`, `ApiIntegration`, `IntegrationLog`, `DocumentRecord` |
+
+### 3.1 Sözlük Karşılıkları (SQLite: string + `src/lib/constants.ts` sabitleri)
+
+- **Kayıt/katılım:** `EventParticipation.source` — `PUBLIC_FORM|IMPORT|ADMIN_ENTRY|ONSITE_WALK_IN|SPONSOR_PORTAL|…` (`REG_SOURCES`)
+- **Sponsorluk durumu (kanonik):** `PROSPECT|NEGOTIATION|CONTRACTED|ACTIVE|COMPLETED|CANCELLED` (kanban bu sözlüğü kullanır)
+- **Sponsor tier:** sabit DEĞİL — her etkinlik kendi `SponsorTierDefinition` satırlarını tanımlar (ad, kapasite, fiyat, haklar)
+- **Yetki eylemleri:** `VIEW|CREATE|UPDATE|DELETE|EXPORT|APPROVE|MANAGE` (`permissions.ts`)
+- **Personel rolleri (§48):** `ORG_OWNER|ORG_ADMIN|EVENT_MANAGER|FINANCE_MANAGER|REGISTRATION_MANAGER|SPONSORSHIP_MANAGER|SCIENTIFIC_MANAGER|PROGRAM_MANAGER|ONSITE_MANAGER` (+ `VIEWER`, `AUDITOR`)
 
 ## 4. REST API Sözleşmesi
 
 | Desen | Metotlar | Not |
 |-------|----------|-----|
-| `/api/{entity}` | GET (liste+filtre), POST (oluştur) | `entity` ∈ §3 modelleri (çoğul isimler) |
+| `/api/{entity}` | GET (liste+filtre), POST (oluştur) | `entity` ∈ registry; GET→VIEW, POST→CREATE |
 | `/api/{entity}/[id]` | GET, PUT, DELETE | Next 16: `params` Promise — `await params` |
-| `/api/dashboard` | GET | Agregasyon: sayaçlar, dağılımlar, yaklaşan etkinlikler |
-| `/api/seed` | POST | Demo veri yükler (idempotent: önce temizler) |
+| `/api/flows` | POST `{ action, … }` | 15 iş-aksiyonu; aksiyon→(entity, action) kapısı (`FLOW_ACTION_POLICY`) |
+| `/api/portal/*` | GET/POST | Yetenek-jetonlu sponsor/katılımcı yüzeyi |
+| `/api/public-*` | GET/POST | Açık yüzey (kendi hız/önbellek kapılarıyla) |
+| `/api/seed` | POST | Yalnız prod-dışı demo verisi (404 prod'da) |
 
-Hata sözleşmesi: `{ error: string }` + uygun HTTP kodu (400/404/409/500).
+Kimlik/yetki: `MAVEN_AUTH=on` iken middleware oturumsuz API isteğine 401;
+route kapıları yetkisize 403. Hata sözleşmesi: `{ error: string }` + uygun
+HTTP kodu (400/401/403/404/409/413/500).
 
 ## 5. UI Modül Haritası (SPA `/`)
 
-| Modül | İçerik |
-|-------|--------|
-| Dashboard | KPI kartları, durum dağılımı (donut), etkinlik tipi grafiği, bütçe plan/gerçek, yaklaşan etkinlikler, aktivite akışı |
-| Etkinlikler | Filtre barı + kart ızgarası + CRUD dialogu; detay sekmeleri: Genel Bakış, Ekipler, Görevler, Bütçe, Sponsorlar, Ajanda, Katılımcılar |
-| Organizasyon | Organizasyon profili, birim ağacı (açı/kapa), roller tablosu |
-| Üyeler | Tablo + arama + birim/rol filtresi + CRUD |
-| Ekipler | Ekip kartları, üye yönetimi |
-| Görevler | Kanban (6 kolon), hızlı durum değişimi, checklist |
-| Finans | Etkinlik bazlı bütçe kalemleri, giderler, plan/gerçek barları |
-| Sponsorlar | Tier gruplu kartlar, durum pipeline'ı |
-| Ajanda | Konuşmacı galerisi + oturum zaman çizelgesi |
-| Katılımcılar | Tablo + check-in aksiyonu + bilet tipleri |
-| Duyurular | Öncelik etiketli duyuru listesi |
+27 modül (`MODULES`; RBAC `MODULE_IDS` 26 — `company-communications` UI-only):
+dashboard, operations, archive, editions, settings,
+portals, compliance, integrations, people, organizations, communications,
+company-communications, registrations, forms, finance, accounting, scientific, program, social,
+sponsorship, b2b, floors, media, accommodation, onsite, badges, certificates.
+
+Kayıpsızlık üçlüsü: yeni modül `constants.ts` + `module-components.tsx` +
+i18n sözlüklerine birlikte yazılır.
 
 ## 6. Kurallar
 
-1. **Organizasyon yapısı ⇄ DB yapısı birebir uyuşur** — hiçbir UI alanı modelsiz, hiçbir model uisiz kalmaz.
-2. Prisma şeması bu dokümanla eşleşmek zorundadır; değişiklik önce buraya işlenir.
+1. **Model kaynağı şemadır** — yeni alan/model önce `prisma/schema.prisma` +
+   `prisma/migrations` göçüyle gelir; doküman özetler, dayatmaz.
+2. **Kapsam (tenant) ile yetki (rol) ayrıdır** — `tenant-guard` kimliği/IDOR'u,
+   `permissions.ts` dual-read modül/eylem iznini kapatır.
 3. API istekleri istemciden **göreli yol** ile yapılır.
 4. SQLite kısıtı: enum yerine string + `src/lib/constants.ts` sabitleri.
-5. Tüm parasal değerler `Float` + `TRY` varsayılan para birimi ile tutulur.
+5. Tüm parasal değerler **`Int` kuruş (F6)** + `TRY` varsayılan para birimi ile
+   tutulur; UI major-birim gönderir, sunucu `toMinor` ile normalize eder.
+6. Mimari kapılar: `typecheck` + `lint` + `lint:arch` + `i18n:scan` + `test:unit`
+   CI'da zorunludur.

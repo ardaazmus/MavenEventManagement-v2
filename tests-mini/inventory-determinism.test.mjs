@@ -13,10 +13,10 @@ test("P00.1 - scripts/inventory.mjs exists and executes cleanly", () => {
   });
   const data = JSON.parse(stdout);
 
-  assert.strictEqual(data.baseSha, "28acc8c907c95b6c89ef09be27346811f4bca3b2", "baseSha matches roadmap commit");
+  assert.strictEqual(data.baseSha, "bf2f5eb8f305a189d44fdcb9d2a340dae340cc2a", "baseSha matches rebased main commit");
   assert.ok(data.counts.prismaModels >= 103, "Prisma models count must be at least 103 (103 baseline + additive models)");
   assert.ok(data.counts.apiRoutes >= 106, "API route count must be at least 106");
-  assert.strictEqual(data.counts.modules, 26, "Module count must be 26");
+  assert.strictEqual(data.counts.modules, 27, "Module count must be 27 (26 + H-08 company-communications)");
   assert.ok(data.counts.testSpecs >= 36, "Test spec files count must be at least 36");
   assert.ok(data.counts.playwrightTests >= 204, "Playwright listed tests must be at least 204");
   assert.ok(data.runtime.node, "Node version must be present");
@@ -38,11 +38,13 @@ test("P00.1 - docs/evidence/baseline.md exists and documents repository state", 
   assert.ok(fs.existsSync(docPath), "docs/evidence/baseline.md must exist");
 
   const content = fs.readFileSync(docPath, "utf8");
-  assert.ok(content.includes("28acc8c907c95b6c89ef09be27346811f4bca3b2"), "baseline.md must include baseSha");
-  assert.ok(content.includes("103"), "baseline.md must document 103 models");
-  assert.ok(content.includes("106"), "baseline.md must document 106 routes");
-  assert.ok(content.includes("26"), "baseline.md must document 26 modules");
-  assert.ok(content.includes("36"), "baseline.md must document 36 specs");
-  assert.ok(content.includes("204"), "baseline.md must document 204 tests");
-  assert.ok(content.includes("db/custom.db-wal") || content.includes("db/custom.db-shm"), "baseline.md must document tracked runtime DB files");
+  assert.ok(content.includes("bf2f5eb8f305a189d44fdcb9d2a340dae340cc2a"), "baseline.md must include baseSha");
+  assert.ok(content.includes("126"), "baseline.md must document 126 models");
+  assert.ok(content.includes("160"), "baseline.md must document 160 routes");
+  assert.ok(content.includes("27"), "baseline.md must document 27 modules");
+  assert.ok(content.includes("42"), "baseline.md must document 42 specs");
+  assert.ok(content.includes("714"), "baseline.md must document 714 tests");
+  assert.ok(content.includes("Takipteki Runtime"), "baseline.md must document the tracked-runtime section");
+  const trackedDb = execSync("git ls-files db/", { encoding: "utf8" }).trim();
+  assert.strictEqual(trackedDb, "", "db/ runtime dosyaları takip edilmemeli (P00.2 hijyen tamam)");
 });

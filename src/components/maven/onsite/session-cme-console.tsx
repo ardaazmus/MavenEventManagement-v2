@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, Chip, StatusBadge } from "../bits";
 import { calculateSessionCme, CmeEarnedResult } from "@/lib/onsite/cme-tracker";
 import { apiSend, listEntity } from "@/lib/client";
+import { useLang } from "@/lib/i18n";
 import { useToast } from "@/hooks/use-toast";
 import { useApp } from "@/lib/store";
 import { fmtDateTime } from "@/lib/constants";
@@ -38,6 +39,7 @@ interface SessionScanRow {
 export function SessionCmeConsole() {
   const { currentEditionId, refreshKey } = useApp();
   const { toast } = useToast();
+  const { t } = useLang();
 
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [scanAction, setScanAction] = useState<"SESSION_ENTRY" | "SESSION_EXIT">("SESSION_ENTRY");
@@ -131,7 +133,7 @@ export function SessionCmeConsole() {
       });
 
       toast({
-        title: scanAction === "SESSION_ENTRY" ? "Oturum Girişi Kaydedildi" : "Oturum Çıkışı Kaydedildi",
+        title: scanAction === "SESSION_ENTRY" ? t("cme.scanEntrySaved") : t("cme.scanExitSaved"),
         description: res.person ? `${res.person.name} (${activeSession.title.slice(0, 30)}...)` : "Tarama başarılı",
       });
       setScanCode("");
@@ -161,7 +163,7 @@ export function SessionCmeConsole() {
             </span>
             <Select value={selectedSessionId} onValueChange={setSelectedSessionId}>
               <SelectTrigger className="mt-1 h-9 font-medium">
-                <SelectValue placeholder="Oturum seçiniz..." />
+                <SelectValue placeholder={t("cme.selectSessionPh")} />
               </SelectTrigger>
               <SelectContent>
                 {(sessions ?? []).map((s) => (
@@ -189,7 +191,7 @@ export function SessionCmeConsole() {
       {/* Session Scanner Bar */}
       <div className="grid gap-4 lg:grid-cols-5">
         <SectionCard
-          title="Oturum Kapı Tarayıcısı"
+          title={t("cme.doorScanner")}
           desc="Salona giren ve çıkan katılımcıların yaka kartı / QR taraması"
           className="lg:col-span-2"
         >

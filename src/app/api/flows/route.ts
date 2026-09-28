@@ -8,6 +8,9 @@
 // kiracı kapsamlıdır. Tek kiracılı davranış değişmez (seed zincirleri yeşil kalır).
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { authorizeFlowAction, policyForFlowAction } from "@/lib/api/permissions";
+import { AUTH_ENABLED } from "@/lib/auth-flag";
+import { requestActor } from "@/lib/auth/request-context";
 import { resolveContext, verifyEditionTenant, GuardError } from "@/lib/api/tenant-guard";
 import { ActivityType } from "@/lib/api/activity";
 import { autoOfferForCategory } from "@/lib/api/waitlist-engine";
@@ -30,6 +33,20 @@ export async function POST(req: NextRequest) {
     const action = body.action;
     // G0-d: aksiyon bağlamı tek noktadan çözülür (bağlam yok → 400)
     const ctx = await resolveContext(null);
+
+    // N-01: rol/modül kapısı — generic CRUD ile AYNI karar merkezi (dual-read).
+    // Bilinmeyen aksiyon 400 davranışı korunur (aşağıdaki default ile aynı gövde).
+    if (!policyForFlowAction(action)) {
+      return NextResponse.json({ error: `Bilinmeyen aksiyon: ${action}` }, { status: 400 });
+    }
+    const actor = await requestActor();
+    if (AUTH_ENABLED && !actor) {
+      return NextResponse.json({ error: "Oturum gerekli" }, { status: 401 });
+    }
+    const flowAuth = await authorizeFlowAction({ actor, action, body, prisma: db });
+    if (!flowAuth.authorized) {
+      return NextResponse.json({ error: "Bu işlem için yetkiniz yok" }, { status: 403 });
+    }
 
     switch (action) {
       // ── Kayıt onay/red (Kayıt sorumlusu) ──

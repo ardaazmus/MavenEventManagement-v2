@@ -25,7 +25,8 @@
     "archive": "Arşiv",
     "integrations": "API Geçidi",
     "settings": "Ayarlar",
-    "compliance": "Uyumluluk"
+    "compliance": "Uyumluluk",
+    "company-communications": "Şirket İletişimi"
   },
   "shell": {
     "srMenu": "Ana menü",
@@ -287,7 +288,12 @@
     "spentByPrefix": "Sahada:",
     "reconDataEmpty": "Mutabakat verisi yok",
     "reconDataEmptyDesc": "Bir edisyon seçildiğinde mutabakat raporu otomatik oluşturulur.",
-    "selectOne": "Seçin"
+    "selectOne": "Seçin",
+    "spentByPh": "Harcayan Kişi",
+    "saveFailed": "Kayıt Başarısız",
+    "bulkImportDone": "Toplu Aktarım Başarılı",
+    "bulkImportRowError": "Toplu gider ekleme hatası:",
+    "bulkImportedDesc": "{count} adet gider kalemi deftere işlendi."
   },
   "settings": {
     "languageTitle": "Dil / Language",
@@ -863,7 +869,17 @@
       "deliverables": "Teslimler",
       "financeTitle": "Finansal",
       "financeDesc": "siparişler"
-    }
+    },
+    "companyLabel": "Kurum / Şirket",
+    "bulkImportDone": "Toplu İçe Aktarım Tamamlandı",
+    "bulkPeopleDesc": "{count} kişi başarıyla sisteme aktarıldı.",
+    "bulkOrgDesc": "{count} kurum aktarıldı.",
+    "scopeAria": "Kişi kapsamı",
+    "quickAddPerson": "Hızlı Kişi Ekle (Enter)",
+    "orgNameLabel": "Kurum Adı",
+    "orgNameRequired": "Kurum adı zorunludur",
+    "orgQuickAddPh": "Kurum / Şirket Adı *",
+    "quickAddOrg": "Hızlı Kurum Ekle (Enter)"
   },
   "onsite": {
     "toastAllowed": "Giriş izin verildi",
@@ -1531,7 +1547,10 @@
     "saveSession": "Oturumu Kaydet",
     "sessAccessOpen": "Açık — herkes girebilir",
     "sessAccessRegistrationRequired": "Kayıt gerekli",
-    "sessAccessScan": "Taramalı giriş"
+    "sessAccessScan": "Taramalı giriş",
+    "saveFailed": "Kayıt Başarısız",
+    "sessionMoved": "Oturum Taşındı",
+    "timetableUpdated": "Timetable başarıyla güncellendi."
   },
   "cme": {
     "tabCredits": "CME Kredi",
@@ -1579,7 +1598,11 @@
     "bulkAppliedDesc": "Yalnız kredisi olmayan oturumlar güncellendi.",
     "nothingToApply": "Atanacak kredisiz oturum yok",
     "nothingToApplyDesc": "Seçilen türlere ait tüm oturumlar zaten kredili.",
-    "bulkApplyFailed": "Toplu atama başarısız"
+    "bulkApplyFailed": "Toplu atama başarısız",
+    "scanEntrySaved": "Oturum Girişi Kaydedildi",
+    "scanExitSaved": "Oturum Çıkışı Kaydedildi",
+    "selectSessionPh": "Oturum seçiniz...",
+    "doorScanner": "Oturum Kapı Tarayıcısı"
   },
   "forms": {
     "actionFailed": "İşlem başarısız",
@@ -2848,7 +2871,27 @@
       "sessionAccess": "Oturum Erişimi",
       "hotel": "Konaklama",
       "custom": "Özel"
-    }
+    },
+    "b2bLive": {
+      "button": "B2B Randevular",
+      "title": "B2B Randevular — Bu Etkinlik",
+      "subtitle": "Canlı veri: B2B planları ve katılımları",
+      "loading": "Randevular yükleniyor…",
+      "loadError": "Randevular alınamadı",
+      "retry": "Tekrar Dene",
+      "empty": "Bu etkinlikte B2B randevusu yok",
+      "emptyHint": "Plan ve atamaları B2B modülünden oluşturun.",
+      "openModule": "B2B Modülünde Aç",
+      "close": "Kapat",
+      "noEdition": "Etkinlik seçili değil",
+      "unassigned": "Atama yok"
+    },
+    "orgCreateFailed": "Kurum oluşturulamadı",
+    "selectOrgPh": "Kurum seçin",
+    "createOrg": "Kurumu Oluştur",
+    "saveDeal": "Anlaşmayı Kaydet",
+    "noEdition": "Etkinlik seçili değil",
+    "useExistingOrg": "Mevcut Kaydı Seç"
   },
   "portalApp": {
     "loading": "Portal yükleniyor…",
@@ -3598,7 +3641,10 @@
       "headerName": "Ad Soyad",
       "headerEmail": "E-posta",
       "headerCompany": "Kurum",
-      "headerCategory": "Kategori"
+      "headerCategory": "Kategori",
+      "fileTooBig": "Dosya 5 MB sınırını aşıyor",
+      "fileEmpty": "Boş dosya",
+      "fileNoRows": "Dosyada satır bulunamadı"
     },
     "export": {
       "btn": "Dışa Aktar",
@@ -3617,6 +3663,18 @@
       "startedTitle": "Dışa aktarma başladı",
       "startedDesc": "Belge indirmelerinize kaydediliyor.",
       "failTitle": "Dışa aktarma başarısız"
+    },
+    "agency": {
+      "emptyTitle": "Delege Listesi Boş",
+      "emptyDesc": "Lütfen en az 1 delege ekleyin.",
+      "noAgencyTitle": "Acente Seçilmedi",
+      "noAgencyDesc": "Lütfen acente seçin veya yeni acente adı girin.",
+      "saveError": "Kayıt Hatası",
+      "groupTitle": "Grup Delegeleri ({count} Kişi)",
+      "groupDesc": "Excel'den toplu yapıştırın veya hızlı ekleme satırını kullanın",
+      "quickAddDelegate": "Hızlı Delege Ekle (Enter)",
+      "companyLabel": "Kurum / Şirket",
+      "companyPh": "Kurum / Firma"
     }
   },
   "accIo": {
@@ -4014,5 +4072,97 @@
     "resSent": "Gönderilen kurum",
     "resApproved": "Kapsanan kayıt",
     "resFailed": "Başarısız"
+  },
+  "customFields": {
+    "selectPh": "Seçiniz..."
+  },
+  "quickAdd": {
+    "add": "Hızlı Ekle"
+  },
+  "kiosk": {
+    "badgePrinting": "Yaka Kartınız Hazneden Çıkıyor — Lütfen Alınız",
+    "recordNotFound": "Kayıt bulunamadı veya bilet durumu aktif değil."
+  },
+  "peerReview": {
+    "approveAndSend": "Puanı Onayla ve Gönder"
+  },
+  "timetable": {
+    "confirmAndPlace": "Slotu Onayla & Yerleştir"
+  },
+  "userAdmin": {
+    "title": "Kullanıcılar & Roller",
+    "desc": "Personel listesi, davet, rol atama ve erişim durumu",
+    "invite": "Davet Et",
+    "empty": "Kullanıcı bulunamadı",
+    "colUser": "Kullanıcı",
+    "colLegacyRole": "Sistem Rolü",
+    "colStatus": "Durum",
+    "colAssignments": "Rol Atamaları",
+    "colActions": "İşlemler",
+    "noAssignments": "Atama yok",
+    "tenantScope": "Şirket geneli",
+    "revoke": "Atamayı kaldır",
+    "revokeDone": "Atama kaldırıldı",
+    "revokeFailed": "Atama kaldırılamadı",
+    "assign": "Rol Ata",
+    "assignDone": "Rol atandı",
+    "assignFailed": "Rol atanamadı",
+    "assignTitle": "{name} — rol ata",
+    "role": "Rol",
+    "rolePh": "Rol seçin",
+    "scope": "Kapsam",
+    "disable": "Devre Dışı",
+    "enable": "Etkinleştir",
+    "statusDone": "Durum güncellendi",
+    "statusFailed": "Durum değiştirilemedi",
+    "inviteTitle": "Kullanıcı davet et",
+    "email": "E-posta",
+    "sendInvite": "Davet Gönder",
+    "inviteFailed": "Davet oluşturulamadı",
+    "inviteOnce": "{email} için davet oluşturuldu. Belirteç bir kez gösterilir:",
+    "inviteToken": "Davet belirteci"
+  },
+  "companyComms": {
+    "title": "Şirket İletişimi",
+    "desc": "Etkinlikten bağımsız şirket iletişim havuzu: kişiler, içe/dışa aktarma",
+    "campaignsTitle": "Kampanyalar etkinlik kapsamındadır",
+    "campaignsDesc": "Toplu gönderim, zamanlama ve şablonlar seçili etkinliğin İletişim modülünden yönetilir.",
+    "openEditionComms": "Etkinlik İletişimine Git"
+  },
+  "exportHub": {
+    "title": "Dışa Aktarma Merkezi",
+    "desc": "Şirket snapshot arşivi ve etkinlik çıktılarına toplu erişim",
+    "snapshot": "Şirket Snapshot İndir",
+    "done": "Snapshot indirildi",
+    "failed": "Snapshot alınamadı",
+    "noEdition": "Etkinlik çıktıları için önce etkinlik seçin",
+    "regExport": "Katılımcı Excel",
+    "resExport": "Rezervasyon Excel",
+    "ccExport": "Müşteri Kişileri Excel",
+    "mediaExport": "Medya Arşivi"
+  },
+  "announce": {
+    "title": "Şirket Duyuruları",
+    "desc": "Dashboard şeridinde yayınlanan tanıtım ve duyurular",
+    "new": "Yeni Duyuru",
+    "empty": "Duyuru yok",
+    "active": "Yayında",
+    "passive": "Pasif",
+    "edit": "Düzenle",
+    "delete": "Sil",
+    "deleted": "Duyuru silindi",
+    "deleteFailed": "Duyuru silinemedi",
+    "saved": "Duyuru kaydedildi",
+    "saveFailed": "Duyuru kaydedilemedi",
+    "newTitle": "Yeni duyuru",
+    "editTitle": "Duyuru düzenle",
+    "fTitle": "Başlık",
+    "fBody": "Metin",
+    "fImage": "Görsel URL (opsiyonel)",
+    "fLink": "Bağlantı URL (opsiyonel)",
+    "fStart": "Başlangıç",
+    "fEnd": "Bitiş",
+    "fActive": "Yayında",
+    "more": "İncele"
   }
 }

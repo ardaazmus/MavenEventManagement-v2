@@ -487,7 +487,7 @@ export function ScientificView() {
               toast({ title: "Hakem Değerlendirmesi Kaydedildi", description: `Öneri: ${rec}` });
               reload();
             } catch (err: any) {
-              toast({ title: "Kayıt Başarısız", description: err.message, variant: "destructive" });
+              toast({ title: t("scientific.saveFailed"), description: err.message, variant: "destructive" });
             }
           }}
         />
@@ -557,7 +557,7 @@ export function ProgramView() {
         startTime: newStartTime,
         endTime: newEndTime,
       });
-      toast({ title: "Oturum Taşındı", description: "Timetable başarıyla güncellendi." });
+      toast({ title: t("scientific.sessionMoved"), description: t("scientific.timetableUpdated") });
       reload();
     } catch (e) {
       toast({ title: "Taşıma Başarısız", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });

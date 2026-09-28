@@ -13,7 +13,8 @@ export type ExportType =
   | "ACCOUNTING"
   | "MEDIA"
   | "LEADS"
-  | "ANALYTICS";
+  | "ANALYTICS"
+  | "COMPANY_SNAPSHOT";
 
 export interface ExportAuditPrisma {
   activityLog: {

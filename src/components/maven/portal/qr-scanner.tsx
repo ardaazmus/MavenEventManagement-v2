@@ -45,9 +45,12 @@ export function QrScanner({ onScan, onClose, active = true }: QrScannerProps) {
     }, 1200);
   }, [onScan]);
 
+  // H-13: tick kendini useCallback içinden doğrudan çağıramaz (TDZ kapanma riski);
+  // güncel sürüm ref üzerinden okunur.
+  const tickRef = useRef<() => void>(() => {});
   const tick = useCallback(() => {
     if (!videoRef.current || !canvasRef.current || !isScanningRef.current) {
-      animationFrameRef.current = requestAnimationFrame(tick);
+      animationFrameRef.current = requestAnimationFrame(() => tickRef.current());
       return;
     }
 
@@ -70,8 +73,12 @@ export function QrScanner({ onScan, onClose, active = true }: QrScannerProps) {
       }
     }
 
-    animationFrameRef.current = requestAnimationFrame(tick);
+    animationFrameRef.current = requestAnimationFrame(() => tickRef.current());
   }, [handleScanSuccess]);
+
+  useEffect(() => {
+    tickRef.current = tick;
+  }, [tick]);
 
   const startCamera = useCallback(async () => {
     try {
@@ -130,10 +137,16 @@ export function QrScanner({ onScan, onClose, active = true }: QrScannerProps) {
 
   useEffect(() => {
     if (active) {
-      startCamera();
-    } else {
-      stopCamera();
+      // H-13: kamera başlatma rAF geri-çağrısında (effect gövdesinde senkron setState yok).
+      const id = requestAnimationFrame(() => {
+        void startCamera();
+      });
+      return () => {
+        cancelAnimationFrame(id);
+        stopCamera();
+      };
     }
+    stopCamera();
     return () => {
       stopCamera();
     };

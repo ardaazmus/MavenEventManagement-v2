@@ -89,7 +89,10 @@ test("P06.4b - middleware forwards sv; edge + session payloads carry sv", async 
 
 test("P06.4b - login rejects DISABLED users and embeds sv in fresh cookies", async () => {
   const src = fs.readFileSync(path.resolve("src/app/api/auth/login/route.ts"), "utf8");
-  assert.ok(src.includes('status !== "ACTIVE"') || src.includes("status === "), "login must check user status");
+  // N-03: durum denetimi login-candidates.ts seçiminde (çok-kiracılı çözümleme)
+  const selector = fs.readFileSync(path.resolve("src/lib/auth/login-candidates.ts"), "utf8");
+  assert.ok(selector.includes('status !== "ACTIVE"'), "candidate selector must check user status");
+  assert.ok(src.includes("selectLoginCandidate"), "login must resolve via candidate selector");
   assert.ok(src.includes("403"), "disabled login must be 403");
   assert.ok(src.includes("sv:"), "fresh session cookie must embed sv");
   // Status gate must run before the cookie is issued

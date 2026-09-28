@@ -6,7 +6,17 @@ import crypto from "crypto";
 
 const DEV_FALLBACK = "maven-dev-only-secret-key-change-me";
 
+// N-02: üretimde fail-closed — anahtarsız prod kullanımı sabit DEV anahtarına
+// DÜŞMEZ (session.ts ile aynı sözleşme). decryptSecret içindeki try/catch'in
+// dışında çağrılır; yoksa guard yutulurdu.
+export function assertKeyAvailable(): void {
+  if (!process.env.MAVEN_SECRET_KEY && process.env.NODE_ENV === "production") {
+    throw new Error("MAVEN_SECRET_KEY tanımsız — üretimde sır anahtarı zorunludur.");
+  }
+}
+
 function derivedKey(): Buffer {
+  assertKeyAvailable();
   const secret = process.env.MAVEN_SECRET_KEY ?? DEV_FALLBACK;
   return crypto.scryptSync(secret, "maven-mail-secret-v1", 32);
 }
@@ -23,6 +33,7 @@ export function encryptSecret(plain: string): string {
 export function decryptSecret(value: string | null | undefined): string | null {
   if (!value) return null;
   if (!value.startsWith("enc:v1:")) return value.startsWith("enc:") ? null : value; // eski düz metin: geçiş döneminde döner (API'de yine maskelenir)
+  assertKeyAvailable();
   try {
     const [, , ivB64, tagB64, ctB64] = value.split(":");
     const decipher = crypto.createDecipheriv("aes-256-gcm", derivedKey(), Buffer.from(ivB64, "base64"));

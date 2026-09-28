@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { checkSessionConflicts, ConflictCheckResult } from "@/lib/scientific/conflict-detector";
 import { AlertTriangle, Clock, MapPin, Users, Plus, MoveRight, CheckCircle2, ShieldAlert } from "lucide-react";
+import { useLang } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export interface TimetableRoom {
@@ -45,6 +46,7 @@ const TIME_SLOTS = [
 ];
 
 export function TimetableGrid({ sessions, rooms, onSessionMove, onSessionClick }: TimetableGridProps) {
+  const { t } = useLang();
   const [selectedSession, setSelectedSession] = useState<TimetableSession | null>(null);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [targetRoomId, setTargetRoomId] = useState<string>("");
@@ -414,7 +416,7 @@ export function TimetableGrid({ sessions, rooms, onSessionMove, onSessionClick }
               disabled={saving || (previewConflict?.hasConflict ?? false)}
               className={cn(previewConflict?.hasConflict ? "opacity-50" : "")}
             >
-              {saving ? "Kaydediliyor..." : "Slotu Onayla & Yerleştir"}
+              {saving ? t("common.saving") : t("timetable.confirmAndPlace")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -948,7 +948,7 @@ export function PeopleView() {
     { key: "lastName", label: "Soyad", synonyms: ["last name", "surname", "soyad"], required: true },
     { key: "email", label: "E-posta", synonyms: ["e-mail", "mail", "eposta", "email address"] },
     { key: "phone", label: "Telefon", synonyms: ["tel", "gsm", "mobile", "phone"] },
-    { key: "company", label: "Kurum / Şirket", synonyms: ["company", "organization", "firma", "sirket", "kurum"] },
+    { key: "company", label: t("people.companyLabel"), synonyms: ["company", "organization", "firma", "sirket", "kurum"] },
     { key: "title", label: "Ünvan", synonyms: ["title", "unvan", "position", "gorev"] },
     { key: "city", label: "Şehir", synonyms: ["city", "sehir", "il"] },
     { key: "country", label: "Ülke", synonyms: ["country", "ulke"] },
@@ -1014,7 +1014,7 @@ export function PeopleView() {
         console.error("Bulk import row error:", err);
       }
     }
-    toast({ title: "Toplu İçe Aktarım Tamamlandı", description: `${successCount} kişi başarıyla sisteme aktarıldı.` });
+    toast({ title: t("people.bulkImportDone"), description: t("people.bulkPeopleDesc", { count: successCount }) });
     reload();
     bump();
   };
@@ -1210,7 +1210,7 @@ export function PeopleView() {
         >
           <Icons.ClipboardPaste className="size-3.5" /> Toplu Yapıştır
         </Button>
-        <div className="flex items-center gap-1 rounded-lg border bg-muted/40 p-1" role="tablist" aria-label="Kişi kapsamı">
+        <div className="flex items-center gap-1 rounded-lg border bg-muted/40 p-1" role="tablist" aria-label={t("people.scopeAria")}>
           <Button variant={peopleScope === "directory" ? "default" : "ghost"} size="sm" className="h-7 text-xs" onClick={() => setPeopleScope("directory")} role="tab" aria-selected={peopleScope === "directory"}><Icons.Building2 className="size-3.5" /> Şirket rehberi</Button>
           <Button variant={peopleScope === "event" ? "default" : "ghost"} size="sm" className="h-7 text-xs" onClick={() => setPeopleScope("event")} disabled={!currentEditionId} role="tab" aria-selected={peopleScope === "event"} title={!currentEditionId ? "Önce etkinlik seçin" : undefined}><Icons.CalendarCheck className="size-3.5" /> Bu etkinlik</Button>
         </div>
@@ -1454,11 +1454,11 @@ export function PeopleView() {
                       { key: "lastName", placeholder: "Soyad *" },
                       { key: "email", placeholder: "E-posta" },
                       { key: "phone", placeholder: "Telefon" },
-                      { key: "company", placeholder: "Kurum / Şirket" },
+                      { key: "company", placeholder: t("people.companyLabel") },
                       { key: "title", placeholder: "Ünvan" },
                     ]}
                     onAdd={handleQuickAdd}
-                    buttonLabel="Hızlı Kişi Ekle (Enter)"
+                    buttonLabel={t("people.quickAddPerson")}
                   />
                 </div>
               ) : (
@@ -2034,7 +2034,7 @@ export function OrganizationsView() {
   const [bulkPasteOpen, setBulkPasteOpen] = useState(false);
 
   const orgColumnsForPaste = [
-    { key: "name", label: "Kurum Adı", synonyms: ["company", "organization", "firma", "kurum", "ad"], required: true },
+    { key: "name", label: t("people.orgNameLabel"), synonyms: ["company", "organization", "firma", "kurum", "ad"], required: true },
     { key: "type", label: "Tür", synonyms: ["type", "tur", "kategori"] },
     { key: "city", label: "Şehir", synonyms: ["city", "sehir", "il"] },
     { key: "generalEmail", label: "Genel E-posta", synonyms: ["email", "e-posta", "eposta", "mail"] },
@@ -2043,7 +2043,7 @@ export function OrganizationsView() {
 
   const handleQuickAddOrg = async (rowData: Record<string, string>): Promise<boolean> => {
     if (!rowData.name?.trim()) {
-      toast({ title: t("common.error"), description: "Kurum adı zorunludur", variant: "destructive" });
+      toast({ title: t("common.error"), description: t("people.orgNameRequired"), variant: "destructive" });
       return false;
     }
     try {
@@ -2083,7 +2083,7 @@ export function OrganizationsView() {
         console.error("Org import error:", err);
       }
     }
-    toast({ title: "Toplu İçe Aktarım Tamamlandı", description: `${successCount} kurum aktarıldı.` });
+    toast({ title: t("people.bulkImportDone"), description: t("people.bulkOrgDesc", { count: successCount }) });
     reload();
     bump();
   };
@@ -2266,14 +2266,14 @@ export function OrganizationsView() {
           <div className="col-span-full mt-2">
             <QuickAddRow
               columns={[
-                { key: "name", placeholder: "Kurum / Şirket Adı *" },
+                { key: "name", placeholder: t("people.orgQuickAddPh") },
                 { key: "type", placeholder: "Tür (COMPANY, AGENCY, PCO...)" },
                 { key: "city", placeholder: "Şehir" },
                 { key: "generalEmail", placeholder: "Genel E-posta" },
                 { key: "website", placeholder: "Web Sitesi" },
               ]}
               onAdd={handleQuickAddOrg}
-              buttonLabel="Hızlı Kurum Ekle (Enter)"
+              buttonLabel={t("people.quickAddOrg")}
             />
           </div>
         </div>

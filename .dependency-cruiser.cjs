@@ -1,35 +1,44 @@
 /** @type {import('dependency-cruiser').IConfiguration} */
+// H-17: gerçek Maven katmanlarına göre mimari kapı.
+// Yön: src/app → src/components → src/lib (tersi yasak); src test ağaçlarına giremez.
 module.exports = {
   forbidden: [
     {
-      name: "no-cross-module-internal-imports",
-      comment: "Modules must only import from the public index.ts of sibling modules",
+      name: "lib-cannot-import-app-or-components",
+      comment: "Paylaşılan kütüphane katmanı route/view katmanlarına bağımlı olamaz",
       severity: "error",
-      from: { path: "^src/modules/([^/]+)/.+" },
-      to: {
-        path: "^src/modules/([^/]+)/.+",
-        pathNot: [
-          "^src/modules/$1/.+",
-          "^src/modules/[^/]+/index\\.ts$"
-        ]
-      }
+      from: {
+        path: "^src/lib",
+        // module-components.tsx BY-DESIGN kompozisyon köküdür (modül→bileşen
+        // tek kayıt noktası); katman kuralından muaftır.
+        pathNot: ["^src/lib/module-components\\.tsx$"],
+      },
+      to: { path: "^src/(app|components)" },
     },
     {
-      name: "domain-cannot-import-infrastructure",
+      name: "components-cannot-import-app",
+      comment: "View katmanı route handler'larına giremez (veri erişimi API istemcisiyle)",
       severity: "error",
-      from: { path: "^src/modules/[^/]+/domain" },
-      to: { path: "^src/modules/[^/]+/(infrastructure|ui|actions)" }
+      from: { path: "^src/components" },
+      to: { path: "^src/app" },
+    },
+    {
+      name: "src-cannot-import-tests",
+      comment: "Üretim kodu test ağaçlarına bağımlı olamaz",
+      severity: "error",
+      from: { path: "^src" },
+      to: { path: "^(tests|tests-mini)" },
     },
     {
       name: "no-circular-dependencies",
       severity: "error",
       from: {},
-      to: { circular: true }
-    }
+      to: { circular: true },
+    },
   ],
   options: {
     doNotFollow: { path: "node_modules" },
     tsPreCompilationDeps: true,
-    tsConfig: { fileName: "tsconfig.json" }
-  }
+    tsConfig: { fileName: "tsconfig.json" },
+  },
 };

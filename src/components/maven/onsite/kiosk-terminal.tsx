@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { QrScanner } from "@/components/maven/portal/qr-scanner";
 import { haptic } from "@/lib/haptic";
+import { useLang } from "@/lib/i18n";
 import { generateZplBadge, sendZplToThermalPrinter, PrintJobResult } from "@/lib/onsite/zpl-engine";
 import { apiSend, apiGet } from "@/lib/client";
 import { cn } from "@/lib/utils";
@@ -51,6 +52,7 @@ export function KioskTerminal({
   onClose,
   onScanComplete,
 }: KioskTerminalProps) {
+  const { t } = useLang();
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [manualCode, setManualCode] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -370,7 +372,7 @@ export function KioskTerminal({
                 <span className="text-sm font-semibold text-zinc-200">
                   {printResult?.method === "websocket"
                     ? "Zebra ZPL II Doğrudan Termal Yazdırıldı"
-                    : "Yaka Kartınız Hazneden Çıkıyor — Lütfen Alınız"}
+                    : t("kiosk.badgePrinting")}
                 </span>
               </div>
 
@@ -407,7 +409,7 @@ export function KioskTerminal({
             <div className="space-y-2">
               <h2 className="text-3xl font-extrabold text-white">Giriş Onaylanamadı</h2>
               <p className="text-rose-400 font-medium">
-                {lastResult.reason || "Kayıt bulunamadı veya bilet durumu aktif değil."}
+                {lastResult.reason || t("kiosk.recordNotFound")}
               </p>
               <p className="text-sm text-zinc-400 max-w-sm mx-auto">
                 Lütfen Danışma / Kayıt Deski görevlisine başvurunuz.

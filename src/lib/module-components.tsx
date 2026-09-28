@@ -49,6 +49,7 @@ export const MODULE_COMPONENTS: Record<string, ComponentType> = {
   badges: dyn(() => import("@/components/maven/views/badge-queue").then((m) => ({ default: m.BadgeQueueView }))),
   certificates: dyn(() => import("@/components/maven/views/onsite").then((m) => ({ default: m.CertificatesView }))),
   communications: dyn(() => import("@/components/maven/views/onsite").then((m) => ({ default: m.CommunicationsView }))),
+  "company-communications": dyn(() => import("@/components/maven/views/company-comms").then((m) => ({ default: m.CompanyCommsView }))),
   operations: dyn(() => import("@/components/maven/views/onsite").then((m) => ({ default: m.OperationsView }))),
   media: dyn(() => import("@/components/maven/views/media").then((m) => ({ default: m.MediaArchiveView }))),
   archive: dyn(() => import("@/components/maven/views/archive").then((m) => ({ default: m.ArchiveView }))),

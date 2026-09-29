@@ -215,6 +215,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     }
     return NextResponse.json(safeCreated, { status: 201 });
   } catch (e) {
+    const ge = guardError(e); // ONBOARD-1: withTenant GuardError'ı dış catch'e düşer — ileti korunur
+    if (ge) return ge;
     console.error(`POST /api/${entity}`, e);
     const msg = e instanceof Error && e.message.includes("Unique constraint") ? "Bu kayıt zaten mevcut (benzersiz alan çakışması)" : "Kayıt oluşturulamadı";
     return NextResponse.json({ error: msg }, { status: 400 });

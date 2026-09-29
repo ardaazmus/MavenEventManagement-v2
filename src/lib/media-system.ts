@@ -4,7 +4,7 @@
 // görseli, materyal, portal görseli — hepsi Medya klasöründe KENDİ klasöründe
 // toplanır. Yüklenen her dosya benzersiz adla kaydedilir.
 // ============================================================================
-import { db } from "@/lib/db";
+import { db, type DbTx } from "@/lib/db";
 
 export interface SystemFolderSpec {
   key: string;
@@ -29,22 +29,24 @@ export const SYSTEM_MEDIA_FOLDERS: SystemFolderSpec[] = [
 ];
 
 /** Bir edisyon için sistem klasörlerini garanti eder (idempotent), map döner. */
-export async function ensureSystemFolders(editionId: string): Promise<{
+export async function ensureSystemFolders(editionId: string, client?: DbTx): Promise<{
   root: { id: string; name: string };
   folders: Record<string, { id: string; name: string }>;
 }> {
+  // ONBOARD-2: seed atomikliği — tx verilirse ona katılır, yoksa varsayılan davranış
+  const c: DbTx = client ?? (db as unknown as DbTx);
   // 1) Kök klasör
-  let root = await db.mediaFolder.findFirst({
+  let root = await c.mediaFolder.findFirst({
     where: { editionId, systemKey: MEDIA_ROOT_KEY },
   });
   if (!root) {
-    root = await db.mediaFolder.create({
+    root = await c.mediaFolder.create({
       data: { editionId, name: "Medya", systemKey: MEDIA_ROOT_KEY, color: "#0f766e", description: "Maven merkezi medya arşivi kökü" },
     });
   }
 
   // 2) Kategori alt klasörleri
-  const existing = await db.mediaFolder.findMany({
+  const existing = await c.mediaFolder.findMany({
     where: { editionId, parentId: root.id, systemKey: { not: null } },
   });
   const folders: Record<string, { id: string; name: string }> = { [MEDIA_ROOT_KEY]: { id: root.id, name: root.name } };
@@ -53,7 +55,7 @@ export async function ensureSystemFolders(editionId: string): Promise<{
     if (found) {
       folders[spec.key] = { id: found.id, name: found.name };
     } else {
-      const created = await db.mediaFolder.create({
+      const created = await c.mediaFolder.create({
         data: {
           editionId,
           parentId: root.id,

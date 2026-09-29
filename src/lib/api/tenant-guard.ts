@@ -151,7 +151,7 @@ export async function resolveContext(explicitTenantId?: string | null): Promise<
   }
   const tenant = await db.tenant.findFirst({ select: { id: true } });
   if (!tenant) {
-    throw new GuardError("Kiracı bağlamı çözümlenemedi — önce demo verisini yükleyin", 400);
+    throw new GuardError("Kiracı bağlamı çözümlenemedi — önce kuruluş oluşturun veya demo verisini yükleyin", 400);
   }
   if (explicitTenantId && explicitTenantId !== tenant.id) {
     // istenen kiracı yok ya da bu çalışma alanına ait değil — varlığını ifşa etme

@@ -5,7 +5,7 @@
 // kayıt tutulmaz; kişi fotoğrafları, kurum logoları, otel görselleri medya
 // klasörüne BENZERSİZ adla eklenir.
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, type DbTx } from "@/lib/db";
 import type { Person } from "@prisma/client";
 import { createRegistrationFromSubmission } from "@/lib/api/registration-chain";
 import { ensureSystemFolders } from "@/lib/media-system";
@@ -48,11 +48,15 @@ export async function POST(req: NextRequest) {
   // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
   const adminGate = await requireAdmin();
   if (adminGate) return adminGate;
+  // ONBOARD-2: seed ATOMIK — wipe+create tek transaction'da; WAL okuyucular
+  // commit'e dek ESKI veriyi gorur (ara-bosluk penceresi yok), hata -> tam rollback.
+  // Not: reseed bakim islemidir — tx suresince (~sn) eszamanli yazimlar kuyruklanir.
   try {
-    await wipe();
+    return await db.$transaction(async (tx) => {
+    await wipe(tx as unknown as DbTx);
 
     // ── Tenant & Kullanıcılar (§48) ──
-    const tenant = await db.tenant.create({
+    const tenant = await tx.tenant.create({
       data: {
         name: "Maven Etkinlik Çözümleri", slug: "maven-demo", plan: "ENTERPRISE",
         country: "Türkiye", timezone: "Europe/Istanbul",
@@ -77,21 +81,21 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Sistem rolleri (11 standart rol + izin matrisi; idempotent upsert) ──
-    await seedSystemRoles(db);
+    await seedSystemRoles(tx);
 
     // ── Kurumlar (sponsor TÜRÜ değil — rol ataması §4) — TAM kimlik kartı girişli ──
     const [abcPharma, association, pco, icc, beta, media, uni, hotelOrg] = await Promise.all([
-      db.organization.create({ data: { tenantId: tenant.id, name: "ABC Pharma", type: "COMPANY", country: "Türkiye", city: "İstanbul", website: "https://abcpharma.example", taxNo: "1234567890", generalEmail: "info@abcpharma.example", address: "Maslak Mah. Büyükdere Cad. No:255 Sarıyer / İstanbul", description: "ABC Pharma — 1998'den beri endüstriyel çözümler; No-Dig serisinin kurumsal sponsoru.", locationNote: "Fuar Alanı · Stand A24 · Maslak Grand Otel lobisi karşısı", notes: "Gold sponsor — 2026 sözleşmesi aktif" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "No-Dig Türkiye Derneği", type: "ASSOCIATION", country: "Türkiye", city: "Ankara", website: "https://nodig.example", taxNo: "2345678901", generalEmail: "dernek@nodig.example", address: "Kızılay Meydanı No:7 Çankaya / Ankara", description: "Kazısız teknolojileri tanıtmak amacıyla kurulmuş meslek derneği; bilimsel sahibi.", locationNote: "Bilimsel Komite toplantıları: Dernek Merkezi Kat 3" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "Eventiva PCO", type: "AGENCY", country: "Türkiye", city: "İstanbul", website: "https://eventiva.example", taxNo: "3456789012", generalEmail: "projeler@eventiva.example", address: "Levent Mah. Yönetim Cad. No:12 Beşiktaş / İstanbul", description: "Profesyonel kongre organizatörü — saha ve kayıt operasyonlarını yürütür.", locationNote: "Organizasyon ofisi: ICC Kat 2 / Oda 214" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "İstanbul Kongre Merkezi", type: "VENUE", country: "Türkiye", city: "İstanbul", website: "https://icc.example", taxNo: "4567890123", generalEmail: "etkinlik@icc.example", address: "Taşkışla Caddesi No:1 Harbiye / Şişli İstanbul", description: "Ana mekan — Ana Salon (600), Salon B (120), Poster Alanı ve fuar salonu.", locationNote: "Yükleme boşaltma kapısı: arka blok B kapısı — 06:00-10:00" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "Beta Mühendislik", type: "COMPANY", country: "Türkiye", city: "Ankara", website: "https://beta.example", taxNo: "5678901234", generalEmail: "info@beta.example", address: "Çukurambar Mah. Mühendisler Sok. No:8 Çankaya / Ankara", description: "Tünel ve altyapı mühendisliği — Silver sponsor; Beta Sound markasıyla saha ekipmanları.", locationNote: "Fuar Alanı · Stand B02 (Beta Sound)" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "TeknoBasın Medya", type: "COMPANY", country: "Türkiye", city: "İstanbul", website: "https://teknobasin.example", taxNo: "6789012345", generalEmail: "haber@teknobasin.example", address: "Bomanti Mah. Medya Sok. No:4 Ümraniye / İstanbul", description: "Sektörel yayıncılık — baskı + dijital; medya sponsoru ve basın kitabı ortağı.", locationNote: "Basın odası akredite masası: ICC Fuaye" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "Delta Üniversitesi", type: "UNIVERSITY", country: "Türkiye", city: "İzmir", website: "https://delta.example", taxNo: "7890123456", generalEmail: "kongre@delta.example", address: "Üniversite Cad. No:35 Urla / İzmir", description: "Akademik partner — Jeoteknik Mühendislik bölümü ve CME akreditasyon ortağı.", locationNote: "Heyet odası talebi: ICC Kat 3 VIP lounge yanlı" } }),
-      db.organization.create({ data: { tenantId: tenant.id, name: "Maslak Grand Otel", type: "HOTEL", country: "Türkiye", city: "İstanbul", website: "https://maslakgrand.example", taxNo: "8901234567", generalEmail: "rezervasyon@maslakgrand.example", address: "Maslak Mah. Oteller Cad. No:19 Sarıyer / İstanbul", description: "Kongre anlaşmalı oteli — 4 yıldız; tek/çift blok sözleşmesi yapıldı.", locationNote: "Mekâna yürüme mesafesi 7 dk — servis 08:30" } }),
+      tx.organization.create({ data: { tenantId: tenant.id, name: "ABC Pharma", type: "COMPANY", country: "Türkiye", city: "İstanbul", website: "https://abcpharma.example", taxNo: "1234567890", generalEmail: "info@abcpharma.example", address: "Maslak Mah. Büyükdere Cad. No:255 Sarıyer / İstanbul", description: "ABC Pharma — 1998'den beri endüstriyel çözümler; No-Dig serisinin kurumsal sponsoru.", locationNote: "Fuar Alanı · Stand A24 · Maslak Grand Otel lobisi karşısı", notes: "Gold sponsor — 2026 sözleşmesi aktif" } }),
+      tx.organization.create({ data: { tenantId: tenant.id, name: "No-Dig Türkiye Derneği", type: "ASSOCIATION", country: "Türkiye", city: "Ankara", website: "https://nodig.example", taxNo: "2345678901", generalEmail: "dernek@nodig.example", address: "Kızılay Meydanı No:7 Çankaya / Ankara", description: "Kazısız teknolojileri tanıtmak amacıyla kurulmuş meslek derneği; bilimsel sahibi.", locationNote: "Bilimsel Komite toplantıları: Dernek Merkezi Kat 3" } }),
+      tx.organization.create({ data: { tenantId: tenant.id, name: "Eventiva PCO", type: "AGENCY", country: "Türkiye", city: "İstanbul", website: "https://eventiva.example", taxNo: "3456789012", generalEmail: "projeler@eventiva.example", address: "Levent Mah. Yönetim Cad. No:12 Beşiktaş / İstanbul", description: "Profesyonel kongre organizatörü — saha ve kayıt operasyonlarını yürütür.", locationNote: "Organizasyon ofisi: ICC Kat 2 / Oda 214" } }),
+      tx.organization.create({ data: { tenantId: tenant.id, name: "İstanbul Kongre Merkezi", type: "VENUE", country: "Türkiye", city: "İstanbul", website: "https://icc.example", taxNo: "4567890123", generalEmail: "etkinlik@icc.example", address: "Taşkışla Caddesi No:1 Harbiye / Şişli İstanbul", description: "Ana mekan — Ana Salon (600), Salon B (120), Poster Alanı ve fuar salonu.", locationNote: "Yükleme boşaltma kapısı: arka blok B kapısı — 06:00-10:00" } }),
+      tx.organization.create({ data: { tenantId: tenant.id, name: "Beta Mühendislik", type: "COMPANY", country: "Türkiye", city: "Ankara", website: "https://beta.example", taxNo: "5678901234", generalEmail: "info@beta.example", address: "Çukurambar Mah. Mühendisler Sok. No:8 Çankaya / Ankara", description: "Tünel ve altyapı mühendisliği — Silver sponsor; Beta Sound markasıyla saha ekipmanları.", locationNote: "Fuar Alanı · Stand B02 (Beta Sound)" } }),
+      tx.organization.create({ data: { tenantId: tenant.id, name: "TeknoBasın Medya", type: "COMPANY", country: "Türkiye", city: "İstanbul", website: "https://teknobasin.example", taxNo: "6789012345", generalEmail: "haber@teknobasin.example", address: "Bomanti Mah. Medya Sok. No:4 Ümraniye / İstanbul", description: "Sektörel yayıncılık — baskı + dijital; medya sponsoru ve basın kitabı ortağı.", locationNote: "Basın odası akredite masası: ICC Fuaye" } }),
+      tx.organization.create({ data: { tenantId: tenant.id, name: "Delta Üniversitesi", type: "UNIVERSITY", country: "Türkiye", city: "İzmir", website: "https://delta.example", taxNo: "7890123456", generalEmail: "kongre@delta.example", address: "Üniversite Cad. No:35 Urla / İzmir", description: "Akademik partner — Jeoteknik Mühendislik bölümü ve CME akreditasyon ortağı.", locationNote: "Heyet odası talebi: ICC Kat 3 VIP lounge yanlı" } }),
+      tx.organization.create({ data: { tenantId: tenant.id, name: "Maslak Grand Otel", type: "HOTEL", country: "Türkiye", city: "İstanbul", website: "https://maslakgrand.example", taxNo: "8901234567", generalEmail: "rezervasyon@maslakgrand.example", address: "Maslak Mah. Oteller Cad. No:19 Sarıyer / İstanbul", description: "Kongre anlaşmalı oteli — 4 yıldız; tek/çift blok sözleşmesi yapıldı.", locationNote: "Mekâna yürüme mesafesi 7 dk — servis 08:30" } }),
     ]);
 
-    await db.organizationContact.createMany({
+    await tx.organizationContact.createMany({
       data: [
         { organizationId: abcPharma.id, name: "Deniz Yalçın", title: "Pazarlama Direktörü", email: "deniz@abcpharma.example", isPrimary: true },
         { organizationId: pco.id, name: "Ceren Aksoy", title: "Proje Müdürü", email: "ceren@eventiva.example", isPrimary: true },
@@ -131,19 +135,19 @@ export async function POST(req: NextRequest) {
     const bioByFirst: Record<string, string> = Object.fromEntries(peopleData.map((r) => [r[0], r[7]]));
     const people: Person[] = [];
     for (const [firstName, lastName, email, company, title, phone, city] of peopleData) {
-      people.push(await db.person.create({ data: { tenantId: tenant.id, firstName, lastName, email, company, title, phone, city, country: "Türkiye", bio: bioByFirst[firstName] ?? null } }));
+      people.push(await tx.person.create({ data: { tenantId: tenant.id, firstName, lastName, email, company, title, phone, city, country: "Türkiye", bio: bioByFirst[firstName] ?? null } }));
     }
     const P = Object.fromEntries(people.map((p, i) => [peopleData[i][0], p])) as Record<string, Person>;
 
     // ── Seriler & Edisyonlar ──
-    const seriesNoDig = await db.eventSeries.create({
+    const seriesNoDig = await tx.eventSeries.create({
       data: { tenantId: tenant.id, name: "No-Dig Turkey", slug: "no-dig-turkey", template: "SCIENTIFIC_CONGRESS", description: "Kazısız teknolojiler ulusal kongresi — yıllık seri" },
     });
-    const seriesTech = await db.eventSeries.create({
+    const seriesTech = await tx.eventSeries.create({
       data: { tenantId: tenant.id, name: "Maven TechDays", slug: "maven-techdays", template: "TRADE_FAIR", description: "B2B teknoloji fuarı" },
     });
 
-    const edition1 = await db.eventEdition.create({
+    const edition1 = await tx.eventEdition.create({
       data: {
         tenantId: tenant.id, seriesId: seriesNoDig.id,
         name: "No-Dig Turkey 2026", slug: "no-dig-turkey-2026", editionLabel: "2026",
@@ -154,7 +158,7 @@ export async function POST(req: NextRequest) {
         coverColor: "teal", languages: "tr,en", isFeatured: true,
       },
     });
-    const edition2 = await db.eventEdition.create({
+    const edition2 = await tx.eventEdition.create({
       data: {
         tenantId: tenant.id, seriesId: seriesTech.id,
         name: "Maven TechDays 2027", slug: "maven-techdays-2027", editionLabel: "2027",
@@ -166,7 +170,7 @@ export async function POST(req: NextRequest) {
       },
     });
     // Faz C: arşiv modülü + firma vitrini için tamamlanmış geçmiş edisyon
-    const edition3 = await db.eventEdition.create({
+    const edition3 = await tx.eventEdition.create({
       data: {
         tenantId: tenant.id, seriesId: seriesNoDig.id,
         name: "No-Dig Turkey 2025", slug: "no-dig-turkey-2025", editionLabel: "2025",
@@ -178,7 +182,7 @@ export async function POST(req: NextRequest) {
       },
     });
     // arşiv edisyonuna birkaç katılım kaydı (tenant-içi isimler; vitrinde yalnız adet görünür)
-    await db.eventParticipation.createMany({
+    await tx.eventParticipation.createMany({
       data: [
         { editionId: edition3.id, personId: P.Ahmet.id, source: "SCIENTIFIC_PORTAL", attendance: "CHECKED_IN" },
         { editionId: edition3.id, personId: P.Ayşe.id, source: "PUBLIC_FORM", attendance: "CHECKED_IN" },
@@ -190,7 +194,7 @@ export async function POST(req: NextRequest) {
     // QA: wipe edisyonları cascade siler → portal config YOK OLUR; seed kurmazsa portal
     // DISABLED kalır ve tüm portal E2E düşer. Deterministik demo: portal AÇIK +
     // misafir kodu DEMO26 (tests/modules/_helpers.ts sözleşmesi).
-    await db.eventPortalConfig.upsert({
+    await tx.eventPortalConfig.upsert({
       where: { editionId: edition1.id },
       create: {
         editionId: edition1.id, portalEnabled: true, eventCode: "DEMO26",
@@ -207,7 +211,7 @@ export async function POST(req: NextRequest) {
       },
     });
     // QA: karşılama duyurusu (M12/M13) — hedef ALL: misafir + kimlikli görür.
-    await db.portalAnnouncement.upsert({
+    await tx.portalAnnouncement.upsert({
       where: { id: "seed-welcome-no-dig-2026" },
       create: {
         id: "seed-welcome-no-dig-2026", editionId: edition1.id, target: "ALL", level: "INFO",
@@ -221,15 +225,15 @@ export async function POST(req: NextRequest) {
     // ── Yetenekler (§6 şablonlar) ──
     const caps1 = ["REGISTRATION", "SCIENTIFIC", "PROGRAM", "SPONSORSHIP", "EXHIBITION", "FLOOR_PLAN", "ACCOMMODATION", "BADGING", "ACCESS_CONTROL", "CERTIFICATES", "COMMUNICATIONS", "OPERATIONS", "CME_CREDITS", "SOCIAL_EVENTS", "TOURS", "B2B_MEETINGS"];
     for (const key of caps1) {
-      await db.eventCapability.create({ data: { editionId: edition1.id, key, enabled: true, setupNote: key === "CME_CREDITS" ? "uyarı: kredi kuralı tanımlı değil" : key === "FLOOR_PLAN" ? "Floor Studio uygulamasıyla ortak kimlik (§20)" : "hazır" } });
+      await tx.eventCapability.create({ data: { editionId: edition1.id, key, enabled: true, setupNote: key === "CME_CREDITS" ? "uyarı: kredi kuralı tanımlı değil" : key === "FLOOR_PLAN" ? "Floor Studio uygulamasıyla ortak kimlik (§20)" : "hazır" } });
     }
     const caps2 = ["REGISTRATION", "PROGRAM", "SPONSORSHIP", "EXHIBITION", "FLOOR_PLAN", "BADGING", "ACCESS_CONTROL", "COMMUNICATIONS", "OPERATIONS"];
     for (const key of caps2) {
-      await db.eventCapability.create({ data: { editionId: edition2.id, key, enabled: key !== "PROGRAM" } });
+      await tx.eventCapability.create({ data: { editionId: edition2.id, key, enabled: key !== "PROGRAM" } });
     }
 
     // ── Kurum-atama (aynı kurum çok rol §4) ──
-    await db.eventOrganizationAssignment.createMany({
+    await tx.eventOrganizationAssignment.createMany({
       data: [
         { editionId: edition1.id, organizationId: association.id, role: "SCIENTIFIC_OWNER" },
         { editionId: edition1.id, organizationId: pco.id, role: "PCO" },
@@ -246,13 +250,13 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Kayıt kategorileri ──
-    const catRegular = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Kongre Katılımı", code: "REG", basePrice: toMinor(5000), capacity: 800, paymentInstruction: "Havale/EFT: Maven Etkinlik Çözümleri · TR33 0006 ... — açıklamaya kayıt no yazın", order: 0 } });
-    const catStudent = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Öğrenci", code: "STU", basePrice: toMinor(1500), requiresApproval: true, capacity: 200, paymentInstruction: "Öğrenci belgesi onayı sonrası ödeme bağlantısı e-posta ile gönderilir", order: 1 } });
-    const catSpeaker = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Davetli Konuşmacı", code: "SPK", basePrice: 0, order: 2 } });
-    const catExhibitor = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Fuarcı Personeli", code: "EXH", basePrice: 0, order: 3 } });
-    const catVip = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "VIP", code: "VIP", basePrice: 0, capacity: 1, order: 4 } });
-    const catPress = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Basın", code: "PRS", basePrice: 0, order: 5 } });
-    const catAccomp = await db.registrationCategory.create({ data: { editionId: edition1.id, name: "Refakatçi", code: "ACC", basePrice: toMinor(2000), paymentInstruction: "Refakatçi kayıtları ana katılımcı siparişine eklenir", order: 6 } });
+    const catRegular = await tx.registrationCategory.create({ data: { editionId: edition1.id, name: "Kongre Katılımı", code: "REG", basePrice: toMinor(5000), capacity: 800, paymentInstruction: "Havale/EFT: Maven Etkinlik Çözümleri · TR33 0006 ... — açıklamaya kayıt no yazın", order: 0 } });
+    const catStudent = await tx.registrationCategory.create({ data: { editionId: edition1.id, name: "Öğrenci", code: "STU", basePrice: toMinor(1500), requiresApproval: true, capacity: 200, paymentInstruction: "Öğrenci belgesi onayı sonrası ödeme bağlantısı e-posta ile gönderilir", order: 1 } });
+    const catSpeaker = await tx.registrationCategory.create({ data: { editionId: edition1.id, name: "Davetli Konuşmacı", code: "SPK", basePrice: 0, order: 2 } });
+    const catExhibitor = await tx.registrationCategory.create({ data: { editionId: edition1.id, name: "Fuarcı Personeli", code: "EXH", basePrice: 0, order: 3 } });
+    const catVip = await tx.registrationCategory.create({ data: { editionId: edition1.id, name: "VIP", code: "VIP", basePrice: 0, capacity: 1, order: 4 } });
+    const catPress = await tx.registrationCategory.create({ data: { editionId: edition1.id, name: "Basın", code: "PRS", basePrice: 0, order: 5 } });
+    const catAccomp = await tx.registrationCategory.create({ data: { editionId: edition1.id, name: "Refakatçi", code: "ACC", basePrice: toMinor(2000), paymentInstruction: "Refakatçi kayıtları ana katılımcı siparişine eklenir", order: 6 } });
 
     // ── Katılımlar & Kayıtlar (çok eksenli) ──
     type Row = [string, string, string, string, string, string, string | null, string | null];
@@ -290,13 +294,13 @@ export async function POST(req: NextRequest) {
     for (const [name, catCode, regStatus, source, funding, attendance, roles, snapCompany] of rows) {
       const person = P[name];
       const cat = [catRegular, catStudent, catSpeaker, catExhibitor, catVip, catPress, catAccomp].find((c) => c.code === catCode)!;
-      const participation = await db.eventParticipation.upsert({
+      const participation = await tx.eventParticipation.upsert({
         where: { editionId_personId: { editionId: edition1.id, personId: person.id } },
         create: { editionId: edition1.id, personId: person.id, source, attendance },
         update: { attendance },
       });
       // sponsor portal EXH kayıtlarında claim oluşur (2 ayrılmış + onaylılar tüketilmiş)
-      const registration = await db.registration.create({
+      const registration = await tx.registration.create({
         data: {
           editionId: edition1.id, participationId: participation.id, categoryId: cat.id,
           confirmationNo: `REG-2026-${String(regNo).padStart(4, "0")}`,
@@ -308,7 +312,7 @@ export async function POST(req: NextRequest) {
           notes: regStatus === "DRAFT" ? "Taslak — katılımcı göndermedi" : null,
         },
       });
-      await db.eventProfileSnapshot.create({
+      await tx.eventProfileSnapshot.create({
         data: {
           participationId: participation.id,
           badgeName: `${person.firstName} ${person.lastName}`,
@@ -317,7 +321,7 @@ export async function POST(req: NextRequest) {
       });
       if (roles) {
         for (const r of roles.split(",")) {
-          await db.eventRoleAssignment.create({ data: { participationId: participation.id, role: r, status: "ACTIVE" } });
+          await tx.eventRoleAssignment.create({ data: { participationId: participation.id, role: r, status: "ACTIVE" } });
         }
       }
       participationMap.set(name, { participationId: participation.id, registrationId: registration.id, editionId: edition1.id });
@@ -334,7 +338,7 @@ export async function POST(req: NextRequest) {
     ];
     for (const [name, cat, prio, note] of waitlistSeed) {
       const person = P[name];
-      const participation = await db.eventParticipation.upsert({
+      const participation = await tx.eventParticipation.upsert({
         where: { editionId_personId: { editionId: edition1.id, personId: person.id } },
         create: { editionId: edition1.id, personId: person.id, source: "ADMIN_ENTRY", attendance: "NOT_ARRIVED" },
         update: {},
@@ -343,7 +347,7 @@ export async function POST(req: NextRequest) {
       const isLiveOffer = name === "Ünsal";
       const expires = new Date();
       expires.setHours(expires.getHours() + 46);
-      await db.waitlistEntry.create({
+      await tx.waitlistEntry.create({
         data: {
           editionId: edition1.id, personId: person.id, participationId: participation.id,
           categoryId: cat.id, priority: prio, notes: note,
@@ -354,46 +358,46 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Sponsorluk (§13-15) ──
-    const tierGold = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Gold Sponsor", displayOrder: 1, capacity: 5, price: toMinor(500000), brandingRules: "Ana sahneye logo, program kitabı arka kapak" } });
-    const tierSilver = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Silver Sponsor", displayOrder: 2, capacity: 10, price: toMinor(250000) } });
-    const tierBronze = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Bronz Sponsor", displayOrder: 3, capacity: 15, price: toMinor(100000) } });
-    const tierMedia = await db.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Medya Sponsoru", displayOrder: 4, capacity: 2, price: 0 } });
+    const tierGold = await tx.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Gold Sponsor", displayOrder: 1, capacity: 5, price: toMinor(500000), brandingRules: "Ana sahneye logo, program kitabı arka kapak" } });
+    const tierSilver = await tx.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Silver Sponsor", displayOrder: 2, capacity: 10, price: toMinor(250000) } });
+    const tierBronze = await tx.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Bronz Sponsor", displayOrder: 3, capacity: 15, price: toMinor(100000) } });
+    const tierMedia = await tx.sponsorTierDefinition.create({ data: { editionId: edition1.id, name: "Medya Sponsoru", displayOrder: 4, capacity: 2, price: 0 } });
 
-    const pkgGold = await db.sponsorPackage.create({
+    const pkgGold = await tx.sponsorPackage.create({
       data: {
         editionId: edition1.id, tierId: tierGold.id, name: "Gold Sponsorship 2026", price: toMinor(500000),
         rightsSpec: "20× Ücretsiz Kayıt · 5× Fuarcı Personeli · 1× 12m² Stant · 1× Konuşma Slotu · 2× Gala Davetiyesi · Web Sitesi Logosu",
       },
     });
-    const pkgSilver = await db.sponsorPackage.create({ data: { editionId: edition1.id, tierId: tierSilver.id, name: "Silver Sponsorship 2026", price: toMinor(250000), rightsSpec: "10× Ücretsiz Kayıt · 1× Stant Opsiyonu · Program İlanı" } });
+    const pkgSilver = await tx.sponsorPackage.create({ data: { editionId: edition1.id, tierId: tierSilver.id, name: "Silver Sponsorship 2026", price: toMinor(250000), rightsSpec: "10× Ücretsiz Kayıt · 1× Stant Opsiyonu · Program İlanı" } });
 
-    const agrAbc = await db.sponsorAgreement.create({
+    const agrAbc = await tx.sponsorAgreement.create({
       data: { editionId: edition1.id, organizationId: abcPharma.id, packageId: pkgGold.id, tierId: tierGold.id, amount: toMinor(500000), status: "ACTIVE", signedAt: D(-90, 14) },
     });
-    const agrBeta = await db.sponsorAgreement.create({
+    const agrBeta = await tx.sponsorAgreement.create({
       data: { editionId: edition1.id, organizationId: beta.id, packageId: pkgSilver.id, tierId: tierSilver.id, amount: toMinor(250000), status: "CONTRACTED", signedAt: D(-60, 11) },
     });
-    await db.sponsorAgreement.create({ data: { editionId: edition1.id, organizationId: media.id, tierId: tierMedia.id, amount: 0, status: "PROSPECT" } });
+    await tx.sponsorAgreement.create({ data: { editionId: edition1.id, organizationId: media.id, tierId: tierMedia.id, amount: 0, status: "PROSPECT" } });
 
     // Entitlement havuzları — 09-C örneği: 20 granted / 14 consumed / 2 reserved / 4 kalan
-    const entReg = await db.entitlement.create({
+    const entReg = await tx.entitlement.create({
       data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "SPONSOR_PACKAGE", type: "COMPLIMENTARY_REGISTRATION", label: "Gold Sponsor Ücretsiz Katılım Hakkı", quantityGranted: 20, quantityConsumed: 0, quantityReserved: 0, restrictions: "Yalnız Fuarcı Personeli veya misafir kategorisi" },
     });
-    await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "SPONSOR_PACKAGE", type: "GALA_TICKET", label: "Gala Davetiyesi Hakkı", quantityGranted: 10, quantityConsumed: 6 } });
-    await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "SPONSOR_PACKAGE", type: "BOOTH", label: "12m² Stant Hakkı", quantityGranted: 1, quantityConsumed: 1 } });
-    await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "SPONSOR_PACKAGE", type: "SESSION_ACCESS", label: "Workshop Salonu Erişimi", quantityGranted: 30, quantityConsumed: 11 } });
-    const entBadge = await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: beta.id, source: "SPONSOR_PACKAGE", type: "BADGE", label: "Fuarcı Personeli Yaka Kartı", quantityGranted: 5, quantityConsumed: 5 } });
-    await db.entitlement.create({ data: { editionId: edition1.id, ownerPersonId: P.Mehmet.id, source: "SPEAKER", type: "COMPLIMENTARY_REGISTRATION", label: "Konuşmacı Ücretsiz Kayıt", quantityGranted: 1, quantityConsumed: 1 } });
+    await tx.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "SPONSOR_PACKAGE", type: "GALA_TICKET", label: "Gala Davetiyesi Hakkı", quantityGranted: 10, quantityConsumed: 6 } });
+    await tx.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "SPONSOR_PACKAGE", type: "BOOTH", label: "12m² Stant Hakkı", quantityGranted: 1, quantityConsumed: 1 } });
+    await tx.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "SPONSOR_PACKAGE", type: "SESSION_ACCESS", label: "Workshop Salonu Erişimi", quantityGranted: 30, quantityConsumed: 11 } });
+    const entBadge = await tx.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: beta.id, source: "SPONSOR_PACKAGE", type: "BADGE", label: "Fuarcı Personeli Yaka Kartı", quantityGranted: 5, quantityConsumed: 5 } });
+    await tx.entitlement.create({ data: { editionId: edition1.id, ownerPersonId: P.Mehmet.id, source: "SPEAKER", type: "COMPLIMENTARY_REGISTRATION", label: "Konuşmacı Ücretsiz Kayıt", quantityGranted: 1, quantityConsumed: 1 } });
 
     // claimleri gerçek havuza bağla + consumed/reserved say (12+2 = 14 tüketim görünümü)
     const exhNames = ["Fatma", "Deniz", "Tolga", "Hande", "Murat"];
     let consumedCount = 0; let reservedCount = 0;
     for (const [name, rec] of participationMap) {
       if (!exhNames.includes(name)) continue;
-      const reg = await db.registration.findUnique({ where: { id: rec.registrationId } });
+      const reg = await tx.registration.findUnique({ where: { id: rec.registrationId } });
       if (!reg) continue;
       const isBeta = name === "Tolga"; // Beta badge hakkı
-      const claim = await db.entitlementClaim.create({
+      const claim = await tx.entitlementClaim.create({
         data: {
           entitlementId: isBeta ? entBadge.id : entReg.id,
           participationId: rec.participationId, registrationId: rec.registrationId,
@@ -409,17 +413,17 @@ export async function POST(req: NextRequest) {
     // 14 tüketim görünümü: havuza ek "misafir" claimler (portaldan eklenen, kayıt tamamlanmış 12 kişi daha)
     const extraGuests = ["Nihan Ergün", "Kemal Tuna", "Aslı Bakır", "Sinan Toprak", "Merve Kılıçdağ", "Ferhat Aksu", "Berrin Yücel", "Okan Turan", "Ahmet Yılmaz Jr.", "Selin Topcu", "Rana Efe", "Cem Kuray"];
     for (const guest of extraGuests) {
-      await db.entitlementClaim.create({ data: { entitlementId: entReg.id, status: "CONSUMED", consumedAt: D(-9, 10), guestName: guest, notes: "Sponsor portal misafiri — kayıt tamamlandı" } });
+      await tx.entitlementClaim.create({ data: { entitlementId: entReg.id, status: "CONSUMED", consumedAt: D(-9, 10), guestName: guest, notes: "Sponsor portal misafiri — kayıt tamamlandı" } });
       consumedCount++;
     }
     // ikinci ayrılmış hak (onay bekleyen misafir)
-    await db.entitlementClaim.create({ data: { entitlementId: entReg.id, status: "RESERVED", guestName: "Yasemin Aldat", notes: "Sponsor portal misafiri — onay bekliyor" } });
+    await tx.entitlementClaim.create({ data: { entitlementId: entReg.id, status: "RESERVED", guestName: "Yasemin Aldat", notes: "Sponsor portal misafiri — onay bekliyor" } });
     reservedCount++;
-    await db.entitlement.update({ where: { id: entReg.id }, data: { quantityConsumed: consumedCount, quantityReserved: reservedCount } });
-    await db.entitlement.update({ where: { id: entBadge.id }, data: { quantityConsumed: 5, quantityReserved: 0 } });
+    await tx.entitlement.update({ where: { id: entReg.id }, data: { quantityConsumed: consumedCount, quantityReserved: reservedCount } });
+    await tx.entitlement.update({ where: { id: entBadge.id }, data: { quantityConsumed: 5, quantityReserved: 0 } });
 
     // teslimler (§51)
-    await db.deliverable.createMany({
+    await tx.deliverable.createMany({
       data: [
         { agreementId: agrAbc.id, name: "Logo", type: "LOGO", status: "APPROVED", dueDate: D(-30) },
         { agreementId: agrAbc.id, name: "Banner Tasarımı", type: "BANNER", status: "WAITING_SPONSOR", dueDate: D(3), responsible: "Deniz Yalçın" },
@@ -442,19 +446,19 @@ export async function POST(req: NextRequest) {
       ["C04", 12, "SHELL_SCHEME", 55000], ["C05", 12, "SHELL_SCHEME", 55000],
     ];
     for (const [code, size, type, price] of boothRows) {
-      await db.boothUnit.create({ data: { editionId: edition1.id, code, sizeSqm: size, type, price } });
+      await tx.boothUnit.create({ data: { editionId: edition1.id, code, sizeSqm: size, type, price } });
     }
-    const boothByCode = async (code: string) => (await db.boothUnit.findFirst({ where: { editionId: edition1.id, code } }))!;
+    const boothByCode = async (code: string) => (await tx.boothUnit.findFirst({ where: { editionId: edition1.id, code } }))!;
     const boothA24 = await boothByCode("A24");
     const boothB01 = await boothByCode("B01");
-    await db.boothAllocation.create({ data: { boothUnitId: boothA24!.id, agreementId: agrAbc.id, organizationId: abcPharma.id, status: "CONTRACTED" } });
-    await db.boothUnit.update({ where: { id: boothA24!.id }, data: { status: "CONTRACTED" } });
-    await db.boothAllocation.create({ data: { boothUnitId: boothB01!.id, organizationId: beta.id, status: "OPTION" } });
-    await db.boothUnit.update({ where: { id: boothB01!.id }, data: { status: "OPTION", optionExpiresAt: D(4, 17) } });
+    await tx.boothAllocation.create({ data: { boothUnitId: boothA24!.id, agreementId: agrAbc.id, organizationId: abcPharma.id, status: "CONTRACTED" } });
+    await tx.boothUnit.update({ where: { id: boothA24!.id }, data: { status: "CONTRACTED" } });
+    await tx.boothAllocation.create({ data: { boothUnitId: boothB01!.id, organizationId: beta.id, status: "OPTION" } });
+    await tx.boothUnit.update({ where: { id: boothB01!.id }, data: { status: "OPTION", optionExpiresAt: D(4, 17) } });
     // durum çeşitliliği (plan renk paleti için): A25 HOLD, B03 BLOCKED, C02 RELEASED
-    await db.boothUnit.update({ where: { id: (await boothByCode("A25")).id }, data: { status: "HELD" } });
-    await db.boothUnit.update({ where: { id: (await boothByCode("B03")).id }, data: { status: "BLOCKED" } });
-    await db.boothUnit.update({ where: { id: (await boothByCode("C02")).id }, data: { status: "RELEASED" } });
+    await tx.boothUnit.update({ where: { id: (await boothByCode("A25")).id }, data: { status: "HELD" } });
+    await tx.boothUnit.update({ where: { id: (await boothByCode("B03")).id }, data: { status: "BLOCKED" } });
+    await tx.boothUnit.update({ where: { id: (await boothByCode("C02")).id }, data: { status: "RELEASED" } });
 
     // ── Floor Studio geometrisi: A sırası (4×3), B sırası (6×4), C sırası (4×3) + dekor ──
     // A24 ABC Pharma sözleşmeli — etiketi kuruluş adıyla
@@ -466,10 +470,10 @@ export async function POST(req: NextRequest) {
     ];
     for (const [code, x, y, width, height, label] of geoRows) {
       const bu = await boothByCode(code);
-      await db.floorPlanObject.create({ data: { boothUnitId: bu.id, label: label ?? code, x, y, width, height } });
+      await tx.floorPlanObject.create({ data: { boothUnitId: bu.id, label: label ?? code, x, y, width, height } });
     }
     // dekor/servis objeleri — Floor Studio sahipli (boothUnitId null)
-    await db.floorPlanObject.createMany({
+    await tx.floorPlanObject.createMany({
       data: [
         { label: "ANA GİRİŞ", x: 18, y: 22.5, width: 8, height: 2 },
         { label: "KAYIT MASASI", x: 30, y: 22.5, width: 7, height: 2 },
@@ -478,21 +482,21 @@ export async function POST(req: NextRequest) {
     });
     // B02 Beta Sound CONTRACTED örneği (tahsis + geometri etiketi)
     const boothB02 = await boothByCode("B02");
-    await db.boothAllocation.create({ data: { boothUnitId: boothB02!.id, agreementId: agrBeta.id, organizationId: beta.id, status: "CONTRACTED" } });
-    await db.boothUnit.update({ where: { id: boothB02!.id }, data: { status: "CONTRACTED" } });
-    await db.floorPlanObject.update({ where: { boothUnitId: boothB02!.id }, data: { label: "Beta Sound — B02" } });
+    await tx.boothAllocation.create({ data: { boothUnitId: boothB02!.id, agreementId: agrBeta.id, organizationId: beta.id, status: "CONTRACTED" } });
+    await tx.boothUnit.update({ where: { id: boothB02!.id }, data: { status: "CONTRACTED" } });
+    await tx.floorPlanObject.update({ where: { boothUnitId: boothB02!.id }, data: { label: "Beta Sound — B02" } });
 
     // ── Bilimsel (§24-28) ──
-    await db.scientificSetup.create({
+    await tx.scientificSetup.create({
       data: {
         editionId: edition1.id, callTitle: "No-Dig Turkey 2026 Bildiri Çağrısı",
         callDescription: "Kazısız teknolojiler, tünel mühendisliği ve geoteknik konularında özgün çalışmalar bekleniyor.",
         reviewMode: "SINGLE_BLIND", submissionDeadline: D(-45), reviewDeadline: D(-20), wordLimit: 500, isVisible: true,
       },
     });
-    const tr1 = await db.track.create({ data: { editionId: edition1.id, name: "Kazı Teknolojileri", description: "TBM, mikro tünel, HDD" } });
-    const tr2 = await db.track.create({ data: { editionId: edition1.id, name: "Tünel Mühendisliği", description: "Tasarım, işletme, bakım" } });
-    const tr3 = await db.track.create({ data: { editionId: edition1.id, name: "Geoteknik", description: "Zemin iyileştirme, enjeksiyon" } });
+    const tr1 = await tx.track.create({ data: { editionId: edition1.id, name: "Kazı Teknolojileri", description: "TBM, mikro tünel, HDD" } });
+    const tr2 = await tx.track.create({ data: { editionId: edition1.id, name: "Tünel Mühendisliği", description: "Tasarım, işletme, bakım" } });
+    const tr3 = await tx.track.create({ data: { editionId: edition1.id, name: "Geoteknik", description: "Zemin iyileştirme, enjeksiyon" } });
 
     const subData: [string, string, string, string, string, string | null, string | null, string, string][] = [
       // title, track, type, status, presenting, decision, fileStatus, abstract, keywords
@@ -545,7 +549,7 @@ export async function POST(req: NextRequest) {
       const track = [tr1, tr2, tr3].find((t) => t.name === trackName)!;
       const [pFirst, ...rest] = presenting.split(" ");
       const person = people.find((p) => p.firstName === pFirst && p.lastName === rest.join(" "));
-      const sub = await db.submission.create({
+      const sub = await tx.submission.create({
         data: {
           editionId: edition1.id, trackId: track.id, submitterId: person?.id,
           code: `SUB-${subNo}`, title, type, status, presentingAuthorName: presenting,
@@ -555,17 +559,17 @@ export async function POST(req: NextRequest) {
           posterNo: type === "POSTER" && status === "ACCEPTED" ? `P-${subNo - 99}` : null,
         },
       });
-      await db.authorship.create({ data: { submissionId: sub.id, personId: person?.id, name: presenting, organizationName: person?.company, isPresenting: true, isCorresponding: true, position: 1 } });
+      await tx.authorship.create({ data: { submissionId: sub.id, personId: person?.id, name: presenting, organizationName: person?.company, isPresenting: true, isCorresponding: true, position: 1 } });
       if (decision) {
-        await db.decision.create({ data: { submissionId: sub.id, decision, rationale: decision === "REJECT" ? "Özgünlük yetersiz bulundu" : decision === "REVISION_REQUIRED" ? "Metodoloji bölümü netleştirilmeli" : "Komite oybirliğiyle uygun buldu", decidedBy: "Bilimsel Komite", decidedAt: D(-18, 12) } });
+        await tx.decision.create({ data: { submissionId: sub.id, decision, rationale: decision === "REJECT" ? "Özgünlük yetersiz bulundu" : decision === "REVISION_REQUIRED" ? "Metodoloji bölümü netleştirilmeli" : "Komite oybirliğiyle uygun buldu", decidedBy: "Bilimsel Komite", decidedAt: D(-18, 12) } });
       }
       if (status === "UNDER_REVIEW") {
         const reviewers = [P.Mehmet, P.Ayşe, P.Seda];
         for (const [i, rv] of reviewers.entries()) {
           const st = ["ASSIGNED", "IN_PROGRESS", "OVERDUE"][i];
-          const ra = await db.reviewAssignment.create({ data: { submissionId: sub.id, reviewerId: rv.id, status: st, dueDate: D(i === 2 ? -3 : 5), invitedAt: D(-15) } });
+          const ra = await tx.reviewAssignment.create({ data: { submissionId: sub.id, reviewerId: rv.id, status: st, dueDate: D(i === 2 ? -3 : 5), invitedAt: D(-15) } });
           if (st === "ASSIGNED") {
-            await db.review.create({ data: { assignmentId: ra.id, score: 4, recommendation: "ACCEPT_ORAL", comment: "Metodoloji sağlam, saha verisi değerli." } });
+            await tx.review.create({ data: { assignmentId: ra.id, score: 4, recommendation: "ACCEPT_ORAL", comment: "Metodoloji sağlam, saha verisi değerli." } });
           }
         }
       }
@@ -574,19 +578,19 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Program (§28: kabul ≠ otomatik slot) ──
-    const roomMain = await db.programRoom.create({ data: { editionId: edition1.id, name: "Ana Salon", capacity: 600, floor: "Kat 1" } });
-    const roomB = await db.programRoom.create({ data: { editionId: edition1.id, name: "Salon B", capacity: 120, floor: "Kat 2" } });
-    const roomPoster = await db.programRoom.create({ data: { editionId: edition1.id, name: "Poster Alanı", capacity: 300, floor: "Kat 1" } });
+    const roomMain = await tx.programRoom.create({ data: { editionId: edition1.id, name: "Ana Salon", capacity: 600, floor: "Kat 1" } });
+    const roomB = await tx.programRoom.create({ data: { editionId: edition1.id, name: "Salon B", capacity: 120, floor: "Kat 2" } });
+    const roomPoster = await tx.programRoom.create({ data: { editionId: edition1.id, name: "Poster Alanı", capacity: 300, floor: "Kat 1" } });
 
-    const sesKeynote = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Açılış Konuşması: Türkiye'de Kazısız Gelecek", description: "Kongre başkanı Prof. Dr. Mehmet Demir'in açılış konuşması: ulusal altyapı yatırımlarında kazısız teknolojilerin 10 yıllık görünümü ve 2026 yol haritası.", type: "KEYNOTE", startTime: D(0, 9, 30), endTime: D(0, 10, 30), status: "PUBLISHED", isVisible: true, accessRule: "OPEN", cmeCredits: 2 } });
-    const ses1 = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, trackId: tr1.id, submissionId: subByName.get("TBM Kesici Kafa Aşınmasının Makine Öğrenmesi ile Tahmini"), title: "TBM Kesici Kafa Aşınması — ML Tahmini", description: "Kabul edilen bildiri SUB-100 sunumu; 1.240 saha verisiyle eğitilen aşınma tahmin modelleri ve erken uyarı eşikleri.", type: "TALK", startTime: D(0, 11, 0), endTime: D(0, 11, 30), status: "PUBLISHED", isVisible: true, cmeCredits: 1.5 } });
-    const ses2 = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomB.id, title: "HDD Risk Yönetimi Atölyesi", description: "Sınırlı kontenjanlı uygulamalı atölye: FMEA tabanlı risk matrisi kurulumu, çamur kaçığı senaryoları ve saha vaka analizleri. Katılım kayıt gerektirir.", type: "WORKSHOP", startTime: D(0, 14, 0), endTime: D(0, 16, 0), capacity: 40, status: "APPROVED", accessRule: "REGISTRATION_REQUIRED", cmeCredits: 3 } });
-    const sesPanel = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Büyük Projelerde Paydaş Paneli", description: "Kamu, yüklenici ve akademi temsilcileriyle büyük ölçekli tünelleme projelerinde paydaş uyumu, periyot ve maliyet gerçekleri.", type: "PANEL", startTime: D(1, 10, 0), endTime: D(1, 11, 30), status: "ASSIGNED" } });
-    const sesPoster = await db.programSession.create({ data: { editionId: edition1.id, roomId: roomPoster.id, title: "Poster Oturumu I", description: "Kabul edilen posterlerin yazarları panolarında; jüri dolaşımı 13:45'te başlar. Poster numaraları kabul kararındaki P- önekli sıradır.", type: "POSTER_SESSION", startTime: D(1, 13, 0), endTime: D(1, 14, 30), status: "DRAFT" } });
-    await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Öğle Arası", description: "Ara ikram — fuar alanında stantlar ziyarete açık. Cuma namını için ICC mescit katı kullanılabilir.", type: "BREAK", startTime: D(0, 12, 30), endTime: D(0, 14, 0), status: "PUBLISHED", isVisible: true } });
-    await db.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Kapanış & Sertifika Töreni", description: "Değerlendirme sonuçları, en iyi bildiri ödülleri ve katılımcı sertifikalarının törenle teslimi. Gala yemeği öncesi hatıra fotoğrafı.", type: "NETWORKING", startTime: D(2, 16, 0), endTime: D(2, 17, 30), status: "DRAFT" } });
+    const sesKeynote = await tx.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Açılış Konuşması: Türkiye'de Kazısız Gelecek", description: "Kongre başkanı Prof. Dr. Mehmet Demir'in açılış konuşması: ulusal altyapı yatırımlarında kazısız teknolojilerin 10 yıllık görünümü ve 2026 yol haritası.", type: "KEYNOTE", startTime: D(0, 9, 30), endTime: D(0, 10, 30), status: "PUBLISHED", isVisible: true, accessRule: "OPEN", cmeCredits: 2 } });
+    const ses1 = await tx.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, trackId: tr1.id, submissionId: subByName.get("TBM Kesici Kafa Aşınmasının Makine Öğrenmesi ile Tahmini"), title: "TBM Kesici Kafa Aşınması — ML Tahmini", description: "Kabul edilen bildiri SUB-100 sunumu; 1.240 saha verisiyle eğitilen aşınma tahmin modelleri ve erken uyarı eşikleri.", type: "TALK", startTime: D(0, 11, 0), endTime: D(0, 11, 30), status: "PUBLISHED", isVisible: true, cmeCredits: 1.5 } });
+    const ses2 = await tx.programSession.create({ data: { editionId: edition1.id, roomId: roomB.id, title: "HDD Risk Yönetimi Atölyesi", description: "Sınırlı kontenjanlı uygulamalı atölye: FMEA tabanlı risk matrisi kurulumu, çamur kaçığı senaryoları ve saha vaka analizleri. Katılım kayıt gerektirir.", type: "WORKSHOP", startTime: D(0, 14, 0), endTime: D(0, 16, 0), capacity: 40, status: "APPROVED", accessRule: "REGISTRATION_REQUIRED", cmeCredits: 3 } });
+    const sesPanel = await tx.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Büyük Projelerde Paydaş Paneli", description: "Kamu, yüklenici ve akademi temsilcileriyle büyük ölçekli tünelleme projelerinde paydaş uyumu, periyot ve maliyet gerçekleri.", type: "PANEL", startTime: D(1, 10, 0), endTime: D(1, 11, 30), status: "ASSIGNED" } });
+    const sesPoster = await tx.programSession.create({ data: { editionId: edition1.id, roomId: roomPoster.id, title: "Poster Oturumu I", description: "Kabul edilen posterlerin yazarları panolarında; jüri dolaşımı 13:45'te başlar. Poster numaraları kabul kararındaki P- önekli sıradır.", type: "POSTER_SESSION", startTime: D(1, 13, 0), endTime: D(1, 14, 30), status: "DRAFT" } });
+    await tx.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Öğle Arası", description: "Ara ikram — fuar alanında stantlar ziyarete açık. Cuma namını için ICC mescit katı kullanılabilir.", type: "BREAK", startTime: D(0, 12, 30), endTime: D(0, 14, 0), status: "PUBLISHED", isVisible: true } });
+    await tx.programSession.create({ data: { editionId: edition1.id, roomId: roomMain.id, title: "Kapanış & Sertifika Töreni", description: "Değerlendirme sonuçları, en iyi bildiri ödülleri ve katılımcı sertifikalarının törenle teslimi. Gala yemeği öncesi hatıra fotoğrafı.", type: "NETWORKING", startTime: D(2, 16, 0), endTime: D(2, 17, 30), status: "DRAFT" } });
 
-    await db.programAssignment.createMany({
+    await tx.programAssignment.createMany({
       data: [
         { sessionId: sesKeynote.id, participationId: participationMap.get("Mehmet")!.participationId, personId: P.Mehmet.id, role: "SPEAKER", status: "CONFIRMED" },
         { sessionId: sesKeynote.id, participationId: participationMap.get("Ayşe")!.participationId, personId: P.Ayşe.id, role: "SESSION_CHAIR", status: "CONFIRMED" },
@@ -598,7 +602,7 @@ export async function POST(req: NextRequest) {
     // program bekleyen: kabul edilmiş ama oturumsuz (ses2/ses1 bağlandı; 3. kabul ve posterler bağlanmadı)
 
     // ── Konaklama (§31-35) — DETAYLI otel girişi: logo, kapak, adres, iletişim, yıldız ──
-    const hotel = await db.hotelProperty.create({
+    const hotel = await tx.hotelProperty.create({
       data: {
         editionId: edition1.id, name: "Maslak Grand Otel", city: "İstanbul", district: "Maslak",
         address: "Maslak Mah. Oteller Cad. No:19 Sarıyer / İstanbul — metro Maslak çıkışına 3 dk",
@@ -608,7 +612,7 @@ export async function POST(req: NextRequest) {
         notes: "Maven blok sözleşmesi: 30 tek + 20 çift oda. Kongre servisi lobiden 08:30 kalkış. Fatura kuruma düzenlenebilir (payerPolicy SELF olanlar hariç).",
       },
     });
-    const hotel2 = await db.hotelProperty.create({
+    const hotel2 = await tx.hotelProperty.create({
       data: {
         editionId: edition1.id, name: "Boğaz Suit Otel", city: "İstanbul", district: "Etiler",
         address: "Nispetiye Cad. No:42 Etiler / Beşiktaş İstanbul — sağ kol senaryosu (yedek otel)",
@@ -618,22 +622,22 @@ export async function POST(req: NextRequest) {
         notes: "Yedek/kalite yükseltme oteli — Maslak Grand dolulukta taşırma planı. 10 suit + 15 deluxe oda opsiyonu 05.05 tarihine kadar serbest.",
       },
     });
-    const rtSingle = await db.roomType.create({ data: { hotelId: hotel.id, name: "Standard Single", capacity: 1, pricePerNight: 3500 } });
-    const rtDouble = await db.roomType.create({ data: { hotelId: hotel.id, name: "Standard Double", capacity: 2, pricePerNight: 4200 } });
-    const blockSingle = await db.roomBlock.create({ data: { hotelId: hotel.id, roomTypeId: rtSingle.id, name: "Maven Tek Kişilik Blok", releaseDate: D(7), cancellationPolicy: "Girişten 72 saat öncesine kadar ücretsiz", payerPolicy: "Rezervasyon bazında" } });
-    const blockDouble = await db.roomBlock.create({ data: { hotelId: hotel.id, roomTypeId: rtDouble.id, name: "Maven Çift Kişilik Blok", releaseDate: D(7), cancellationPolicy: "Girişten 72 saat öncesine kadar ücretsiz", payerPolicy: "SELF" } });
+    const rtSingle = await tx.roomType.create({ data: { hotelId: hotel.id, name: "Standard Single", capacity: 1, pricePerNight: 3500 } });
+    const rtDouble = await tx.roomType.create({ data: { hotelId: hotel.id, name: "Standard Double", capacity: 2, pricePerNight: 4200 } });
+    const blockSingle = await tx.roomBlock.create({ data: { hotelId: hotel.id, roomTypeId: rtSingle.id, name: "Maven Tek Kişilik Blok", releaseDate: D(7), cancellationPolicy: "Girişten 72 saat öncesine kadar ücretsiz", payerPolicy: "Rezervasyon bazında" } });
+    const blockDouble = await tx.roomBlock.create({ data: { hotelId: hotel.id, roomTypeId: rtDouble.id, name: "Maven Çift Kişilik Blok", releaseDate: D(7), cancellationPolicy: "Girişten 72 saat öncesine kadar ücretsiz", payerPolicy: "SELF" } });
     // Yedek otel: suite blok (doluluk taşırma senaryosu)
-    const rtSuite = await db.roomType.create({ data: { hotelId: hotel2.id, name: "Deluxe Suite", capacity: 2, pricePerNight: 6800 } });
-    const blockSuite = await db.roomBlock.create({ data: { hotelId: hotel2.id, roomTypeId: rtSuite.id, name: "Maven Suite Yedek Blok", releaseDate: D(5), cancellationPolicy: "Girişten 48 saat öncesine kadar ücretsiz", payerPolicy: "Rezervasyon bazında" } });
+    const rtSuite = await tx.roomType.create({ data: { hotelId: hotel2.id, name: "Deluxe Suite", capacity: 2, pricePerNight: 6800 } });
+    const blockSuite = await tx.roomBlock.create({ data: { hotelId: hotel2.id, roomTypeId: rtSuite.id, name: "Maven Suite Yedek Blok", releaseDate: D(5), cancellationPolicy: "Girişten 48 saat öncesine kadar ücretsiz", payerPolicy: "Rezervasyon bazında" } });
     for (let i = -1; i <= 2; i++) {
-      await db.inventoryNight.create({ data: { blockId: blockSingle.id, date: D(i), totalRooms: 30, reservedRooms: 12 } });
-      await db.inventoryNight.create({ data: { blockId: blockDouble.id, date: D(i), totalRooms: 20, reservedRooms: i === 0 ? 18 : 11 } });
-      await db.inventoryNight.create({ data: { blockId: blockSuite.id, date: D(i), totalRooms: 10, reservedRooms: 0 } });
+      await tx.inventoryNight.create({ data: { blockId: blockSingle.id, date: D(i), totalRooms: 30, reservedRooms: 12 } });
+      await tx.inventoryNight.create({ data: { blockId: blockDouble.id, date: D(i), totalRooms: 20, reservedRooms: i === 0 ? 18 : 11 } });
+      await tx.inventoryNight.create({ data: { blockId: blockSuite.id, date: D(i), totalRooms: 10, reservedRooms: 0 } });
     }
-    const res1 = await db.reservation.create({ data: { editionId: edition1.id, blockId: blockDouble.id, roomTypeId: rtDouble.id, primaryGuestParticipationId: participationMap.get("Mehmet")!.participationId, guestName: "Mehmet Demir", checkIn: D(-1), checkOut: D(2), payerType: "ORGANIZATION", payerName: "Delta Üniversitesi", status: "CONFIRMED" } });
-    await db.occupancySlot.createMany({ data: [{ reservationId: res1.id, participationId: participationMap.get("Mehmet")!.participationId, guestName: "Mehmet Demir", position: 1 }] });
-    await db.roommateRequest.create({ data: { requesterParticipationId: participationMap.get("Ahmet")!.participationId, targetParticipationId: participationMap.get("Onur")!.participationId, targetName: "Onur Erdem", status: "ACCEPTED" } });
-    await db.reservation.createMany({
+    const res1 = await tx.reservation.create({ data: { editionId: edition1.id, blockId: blockDouble.id, roomTypeId: rtDouble.id, primaryGuestParticipationId: participationMap.get("Mehmet")!.participationId, guestName: "Mehmet Demir", checkIn: D(-1), checkOut: D(2), payerType: "ORGANIZATION", payerName: "Delta Üniversitesi", status: "CONFIRMED" } });
+    await tx.occupancySlot.createMany({ data: [{ reservationId: res1.id, participationId: participationMap.get("Mehmet")!.participationId, guestName: "Mehmet Demir", position: 1 }] });
+    await tx.roommateRequest.create({ data: { requesterParticipationId: participationMap.get("Ahmet")!.participationId, targetParticipationId: participationMap.get("Onur")!.participationId, targetName: "Onur Erdem", status: "ACCEPTED" } });
+    await tx.reservation.createMany({
       data: [
         { editionId: edition1.id, blockId: blockSingle.id, roomTypeId: rtSingle.id, primaryGuestParticipationId: participationMap.get("Seda")!.participationId, guestName: "Seda Polat", checkIn: D(-1), checkOut: D(1), payerType: "SELF", status: "CONFIRMED" },
         { editionId: edition1.id, blockId: blockSingle.id, roomTypeId: rtSingle.id, primaryGuestParticipationId: participationMap.get("Can")!.participationId, guestName: "Can Arslan", checkIn: D(0), checkOut: D(2), payerType: "SELF", status: "REQUESTED" },
@@ -643,7 +647,7 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Form Merkezi (§44 + kullanıcı isteği: kayıt/anket/mobil QA + spam koruması) ──
-    const form = await db.formDefinition.create({
+    const form = await tx.formDefinition.create({
       data: {
         editionId: edition1.id, name: "Online Kayıt Formu", type: "REGISTRATION",
         audience: "PARTICIPANT", status: "PUBLISHED", version: 3, isPublic: true,
@@ -654,16 +658,16 @@ export async function POST(req: NextRequest) {
         successMessage: "Kayıt başvurunuz alındı! Ödeme bağlantısı e-posta ile de gönderilir.",
       },
     });
-    const f1 = await db.formField.create({ data: { formId: form.id, label: "Kurum / Şirket", type: "TEXT", required: "ALWAYS", placeholder: "Örn. ABC Pharma", order: 1 } });
-    const f2 = await db.formField.create({ data: { formId: form.id, label: "Unvan", type: "TEXT", order: 2 } });
-    const f3 = await db.formField.create({ data: { formId: form.id, label: "Beslenme tercihi", type: "SINGLE_CHOICE", options: "Standart\nVejetaryen\nHelal\nGlutensiz", sensitivity: "OPERATIONAL_SENSITIVE", order: 3 } });
-    const f4 = await db.formField.create({ data: { formId: form.id, label: "Erişim ihtiyacı var mı?", type: "CHECKBOX", sensitivity: "TEAM_ONLY", order: 4 } });
-    const f5 = await db.formField.create({ data: { formId: form.id, label: "Konaklama istiyor musunuz?", type: "CHECKBOX", conditionField: "Kayıt kategorisi", conditionValue: "REG", order: 5 } });
-    const f6 = await db.formField.create({ data: { formId: form.id, label: "Varış tarihi", type: "DATE", conditionField: "Konaklama istiyor musunuz?", conditionValue: "true", order: 6 } });
-    const f7 = await db.formField.create({ data: { formId: form.id, label: "Ödeme yöntemi", type: "SINGLE_CHOICE", options: "Online Kart\nHavale / EFT\nÖdeme Linki", required: "ALWAYS", order: 7, helpText: "Online Kart seçiminde sanal POS üzerinden anında ödeme yapabilirsiniz." } });
+    const f1 = await tx.formField.create({ data: { formId: form.id, label: "Kurum / Şirket", type: "TEXT", required: "ALWAYS", placeholder: "Örn. ABC Pharma", order: 1 } });
+    const f2 = await tx.formField.create({ data: { formId: form.id, label: "Unvan", type: "TEXT", order: 2 } });
+    const f3 = await tx.formField.create({ data: { formId: form.id, label: "Beslenme tercihi", type: "SINGLE_CHOICE", options: "Standart\nVejetaryen\nHelal\nGlutensiz", sensitivity: "OPERATIONAL_SENSITIVE", order: 3 } });
+    const f4 = await tx.formField.create({ data: { formId: form.id, label: "Erişim ihtiyacı var mı?", type: "CHECKBOX", sensitivity: "TEAM_ONLY", order: 4 } });
+    const f5 = await tx.formField.create({ data: { formId: form.id, label: "Konaklama istiyor musunuz?", type: "CHECKBOX", conditionField: "Kayıt kategorisi", conditionValue: "REG", order: 5 } });
+    const f6 = await tx.formField.create({ data: { formId: form.id, label: "Varış tarihi", type: "DATE", conditionField: "Konaklama istiyor musunuz?", conditionValue: "true", order: 6 } });
+    const f7 = await tx.formField.create({ data: { formId: form.id, label: "Ödeme yöntemi", type: "SINGLE_CHOICE", options: "Online Kart\nHavale / EFT\nÖdeme Linki", required: "ALWAYS", order: 7, helpText: "Online Kart seçiminde sanal POS üzerinden anında ödeme yapabilirsiniz." } });
     for (const [name, rec] of [...participationMap].slice(0, 10)) {
       const person = P[name];
-      await db.formAnswer.createMany({
+      await tx.formAnswer.createMany({
         data: [
           { formId: form.id, fieldId: f1.id, participationId: rec.participationId, answer: person.company },
           { formId: form.id, fieldId: f2.id, participationId: rec.participationId, answer: person.title },
@@ -673,7 +677,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Anket formu — mobil interaktif alanlar (NPS/RATING/QA) + dağılım istatistiği demesi
-    const survey = await db.formDefinition.create({
+    const survey = await tx.formDefinition.create({
       data: {
         editionId: edition1.id, name: "Kongre Memnuniyet Anketi", type: "SURVEY",
         status: "PUBLISHED", isPublic: true, autoApprove: true,
@@ -682,11 +686,11 @@ export async function POST(req: NextRequest) {
         successMessage: "Görüşünüz için teşekkürler!",
       },
     });
-    const sv1 = await db.formField.create({ data: { formId: survey.id, label: "Kongreyi nereden duydunuz?", type: "SINGLE_CHOICE", options: "E-posta\nSosyal Medya\nArkadaş Önerisi\nDernek Duyurusu", order: 1 } });
-    const sv2 = await db.formField.create({ data: { formId: survey.id, label: "Oturum kalitesi (1-5)", type: "RATING", mobileInteractive: true, order: 2 } });
-    const sv3 = await db.formField.create({ data: { formId: survey.id, label: "Bizi bir meslektaşınıza önerme olasılığınız (0-10)", type: "NPS", mobileInteractive: true, order: 3 } });
-    const sv4 = await db.formField.create({ data: { formId: survey.id, label: "No-Dig teknolojisi hangi alanda kullanılır?", type: "QA_QUIZ", options: "Kazısız altyapı\nAçık ocak madenciliği\nZiraat", correctAnswer: "Kazısız altyapı", mobileInteractive: true, order: 4 } });
-    const sv5 = await db.formField.create({ data: { formId: survey.id, label: "Önerileriniz", type: "LONGTEXT", order: 5 } });
+    const sv1 = await tx.formField.create({ data: { formId: survey.id, label: "Kongreyi nereden duydunuz?", type: "SINGLE_CHOICE", options: "E-posta\nSosyal Medya\nArkadaş Önerisi\nDernek Duyurusu", order: 1 } });
+    const sv2 = await tx.formField.create({ data: { formId: survey.id, label: "Oturum kalitesi (1-5)", type: "RATING", mobileInteractive: true, order: 2 } });
+    const sv3 = await tx.formField.create({ data: { formId: survey.id, label: "Bizi bir meslektaşınıza önerme olasılığınız (0-10)", type: "NPS", mobileInteractive: true, order: 3 } });
+    const sv4 = await tx.formField.create({ data: { formId: survey.id, label: "No-Dig teknolojisi hangi alanda kullanılır?", type: "QA_QUIZ", options: "Kazısız altyapı\nAçık ocak madenciliği\nZiraat", correctAnswer: "Kazısız altyapı", mobileInteractive: true, order: 4 } });
+    const sv5 = await tx.formField.create({ data: { formId: survey.id, label: "Önerileriniz", type: "LONGTEXT", order: 5 } });
     const surveyRespondents = [
       ["İlkay Tan", "ilkay.tan@example.com", "E-posta", 4, 9, "Kazısız altyapı", "Program çok akıcıydı."],
       ["Sercan Uz", "sercan.uz@example.com", "Sosyal Medya", 5, 10, "Kazısız altyapı", "Tebrikler!"],
@@ -700,7 +704,7 @@ export async function POST(req: NextRequest) {
     for (const [i, s] of surveyRespondents.entries()) {
       // QA_QUIZ scoring — doğru cevap: Kazısız altyapı (mobil QA motoru)
       const quizCorrect = s[5] === "Kazısız altyapı" ? 1 : 0;
-      const sub = await db.formSubmission.create({
+      const sub = await tx.formSubmission.create({
         data: {
           formId: survey.id, editionId: edition1.id,
           respondentName: s[0], respondentEmail: s[1],
@@ -710,7 +714,7 @@ export async function POST(req: NextRequest) {
           createdAt: D(-i, 12),
         },
       });
-      await db.formAnswer.createMany({
+      await tx.formAnswer.createMany({
         data: [
           { formId: survey.id, fieldId: sv1.id, submissionId: sub.id, answer: s[2] },
           { formId: survey.id, fieldId: sv2.id, submissionId: sub.id, answer: String(s[3]) },
@@ -722,7 +726,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Kayıt formu gönderileri — spam örnekleri + bekleyenler + onaylı zincir örneği
-    const spamSub1 = await db.formSubmission.create({
+    const spamSub1 = await tx.formSubmission.create({
       data: {
         formId: form.id, editionId: edition1.id,
         respondentName: "SEO Robot", respondentEmail: "promobot@spam.xyz",
@@ -732,7 +736,7 @@ export async function POST(req: NextRequest) {
         createdAt: D(0, 7, 41),
       },
     });
-    const spamSub2 = await db.formSubmission.create({
+    const spamSub2 = await tx.formSubmission.create({
       data: {
         formId: form.id, editionId: edition1.id,
         respondentName: "Bulk Mail", respondentEmail: "kazanc@tempmail.xyz",
@@ -741,7 +745,7 @@ export async function POST(req: NextRequest) {
         createdAt: D(0, 8, 3),
       },
     });
-    const spamSub3 = await db.formSubmission.create({
+    const spamSub3 = await tx.formSubmission.create({
       data: {
         formId: form.id, editionId: edition1.id,
         respondentName: "Hızlı Bot", respondentEmail: "hizli@hizlibot.net",
@@ -750,7 +754,7 @@ export async function POST(req: NextRequest) {
         createdAt: D(0, 8, 11),
       },
     });
-    const pendSub1 = await db.formSubmission.create({
+    const pendSub1 = await tx.formSubmission.create({
       data: {
         formId: form.id, editionId: edition1.id,
         respondentName: "Zafer Kaya", respondentEmail: "zafer.kaya@example.com",
@@ -759,7 +763,7 @@ export async function POST(req: NextRequest) {
         spamReasons: null, createdAt: D(0, 9, 15),
       },
     });
-    await db.formAnswer.createMany({
+    await tx.formAnswer.createMany({
       data: [
         { formId: form.id, fieldId: f1.id, submissionId: pendSub1.id, answer: "Kaya İnşaat" },
         { formId: form.id, fieldId: f2.id, submissionId: pendSub1.id, answer: "Saha Müdürü" },
@@ -767,7 +771,7 @@ export async function POST(req: NextRequest) {
         { formId: form.id, fieldId: f7.id, submissionId: pendSub1.id, answer: "Online Kart" },
       ],
     });
-    const pendSub2 = await db.formSubmission.create({
+    const pendSub2 = await tx.formSubmission.create({
       data: {
         formId: form.id, editionId: edition1.id,
         respondentName: "Nil Aksu", respondentEmail: "nil.aksu@example.com",
@@ -775,13 +779,13 @@ export async function POST(req: NextRequest) {
         elapsedSeconds: 52, submitIp: "78.163.44.9", createdAt: D(0, 10, 2),
       },
     });
-    await db.formAnswer.createMany({
+    await tx.formAnswer.createMany({
       data: [
         { formId: form.id, fieldId: f1.id, submissionId: pendSub2.id, answer: "GeoLab Danışmanlık" },
         { formId: form.id, fieldId: f7.id, submissionId: pendSub2.id, answer: "Havale / EFT" },
       ],
     });
-    const apprSub1 = await db.formSubmission.create({
+    const apprSub1 = await tx.formSubmission.create({
       data: {
         formId: form.id, editionId: edition1.id,
         respondentName: "Tuna Meriç", respondentEmail: "tuna.meric@example.com",
@@ -789,7 +793,7 @@ export async function POST(req: NextRequest) {
         elapsedSeconds: 44, submitIp: "85.99.71.2", createdAt: D(-1, 15, 40),
       },
     });
-    await db.formAnswer.createMany({
+    await tx.formAnswer.createMany({
       data: [
         { formId: form.id, fieldId: f1.id, submissionId: apprSub1.id, answer: "Meriç Zemin Sistemleri" },
         { formId: form.id, fieldId: f3.id, submissionId: apprSub1.id, answer: "Helal" },
@@ -798,18 +802,18 @@ export async function POST(req: NextRequest) {
     });
     // Onaylı gönderi → kayıt zinciri + ödemesi tahsil edilmiş sipariş (muhasebe demesi)
     const { registration: apprReg, order: apprOrder, payment: apprPay } =
-      await createRegistrationFromSubmission(apprSub1.id, { paymentSource: "ONLINE_CARD" });
+      await createRegistrationFromSubmission(apprSub1.id, { paymentSource: "ONLINE_CARD", client: tx as unknown as DbTx });
     if (apprReg && apprOrder && apprPay) {
-      await db.payment.update({
+      await tx.payment.update({
         where: { id: (apprPay as { id: string }).id },
         data: { status: "SUCCEEDED", paidAt: D(-1, 16, 2), reference: "TR-SEED-0981" },
       });
-      await db.order.update({ where: { id: (apprOrder as { id: string }).id }, data: { status: "PAID" } });
+      await tx.order.update({ where: { id: (apprOrder as { id: string }).id }, data: { status: "PAID" } });
     }
-    await db.formSubmission.update({ where: { id: apprSub1.id }, data: { registrationId: (apprReg as { id: string }).id } });
+    await tx.formSubmission.update({ where: { id: apprSub1.id }, data: { registrationId: (apprReg as { id: string }).id } });
 
     // Bağlantı cevapları: mevcut katılımcıların form yanıtlarını gönderiye bağla (geçmiş veri bütünlüğü görünümü)
-    await db.formSubmission.create({
+    await tx.formSubmission.create({
       data: {
         formId: form.id, editionId: edition1.id,
         respondentName: "Gizem Bulut", respondentEmail: "gizem.bulut@example.com",
@@ -819,7 +823,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Geri bildirim formu — kapalı durum örneği
-    await db.formDefinition.create({
+    await tx.formDefinition.create({
       data: {
         editionId: edition1.id, name: "Oturum Geri Bildirimi (Salon B)", type: "FEEDBACK",
         status: "CLOSED", description: "Salon B oturumları için anlık memnuniyet — oturum sonunda kapatıldı.",
@@ -827,7 +831,7 @@ export async function POST(req: NextRequest) {
       },
     });
     // Taslak özel form — TechDays fuarcı ihtiyaç formu
-    await db.formDefinition.create({
+    await tx.formDefinition.create({
       data: {
         editionId: edition2.id, name: "TechDays Fuarcı İhtiyaç Formu", type: "CUSTOM",
         audience: "ORGANIZATION", status: "DRAFT",
@@ -836,7 +840,7 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Muhasebe: ek/saha harcamaları (kullanıcı isteği: kayıt muhasebesiyle entegre) ──
-    await db.expense.createMany({
+    await tx.expense.createMany({
       data: [
         { editionId: edition1.id, code: "GSN-2026-001", category: "FIELD_EXPENSE", title: "Kapı A yedek barkod okuyucu (acil alım)", description: "Tarama cihazı arızası — fuar günü sabah acil satın alma", amount: toMinor(4200), vendor: "Nokta Bilişim", incurredAt: D(0, 8, 30), spentBy: "Mert Şahin", paymentMethod: "CASH", status: "APPROVED", receiptNo: "FTR-1181", approvedBy: "Burak Demir" },
         { editionId: edition1.id, code: "GSN-2026-002", category: "CATERING", title: "Ek kahve molası — Salon B", description: "Oturum yoğunluğu nedeniyle ikram sifarişi artırıldı", amount: toMinor(6800), vendor: "Lezzet Catering", incurredAt: D(-1, 14), spentBy: "Kerem Aksoy", paymentMethod: "COMPANY_CARD", status: "PENDING_RECEIPT" },
@@ -850,7 +854,7 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Muhasebe: manuel gelir kalemleri (Faz B — Expense aynası) ──
-    await db.income.createMany({
+    await tx.income.createMany({
       data: [
         { editionId: edition1.id, code: "GLR-2026-001", category: "SPONSORLUK", title: "Ana sponsorluk paketi — 1. taksit", description: "Platinum paket sözleşme bedelinin ilk yarısı", amount: toMinor(150000), method: "BANK_TRANSFER", payer: "ABC Pharma", incomeDate: D(-10), status: "RECEIVED", receiptNo: "HV-77240", approvedBy: "Burak Demir" },
         { editionId: edition1.id, code: "GLR-2026-002", category: "SPONSORLUK", title: "Lansman alanı sponsorluğu", description: "Fuaye lansman ekranı — tek seferlik", amount: toMinor(45000), method: "BANK_TRANSFER", payer: "Nokta Bilişim", incomeDate: D(-6), status: "RECEIVED", receiptNo: "HV-77301", approvedBy: "Burak Demir" },
@@ -863,7 +867,7 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Katalog / ek hizmetler ──
-    await db.catalogItem.createMany({
+    await tx.catalogItem.createMany({
       data: [
         { editionId: edition1.id, category: "GALA", name: "Gala Yemeği", description: "3. gün akşam gala yemeği", price: toMinor(2500), quantity: 300 },
         { editionId: edition1.id, category: "TOUR", name: "Teknik Gezi — Marmaray", price: toMinor(1000), quantity: 60, availableFor: "ALL" },
@@ -873,39 +877,39 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Sipariş & Ödeme (§36-39) ──
-    const o1 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0001", buyerPersonId: P.Mustafa.id, payerName: "Mustafa Koç", totalAmount: toMinor(5000), status: "PAID" } });
-    await db.orderLine.create({ data: { orderId: o1.id, participationId: participationMap.get("Mustafa")!.participationId, registrationId: participationMap.get("Mustafa")!.registrationId, description: "Kongre Katılımı — Erken Kayıt", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
-    await db.payment.create({ data: { orderId: o1.id, amount: toMinor(5000), source: "ONLINE_CARD", status: "SUCCEEDED", reference: "PAY-99112", paidAt: D(-12, 14) } });
+    const o1 = await tx.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0001", buyerPersonId: P.Mustafa.id, payerName: "Mustafa Koç", totalAmount: toMinor(5000), status: "PAID" } });
+    await tx.orderLine.create({ data: { orderId: o1.id, participationId: participationMap.get("Mustafa")!.participationId, registrationId: participationMap.get("Mustafa")!.registrationId, description: "Kongre Katılımı — Erken Kayıt", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
+    await tx.payment.create({ data: { orderId: o1.id, amount: toMinor(5000), source: "ONLINE_CARD", status: "SUCCEEDED", reference: "PAY-99112", paidAt: D(-12, 14) } });
 
-    const o2 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0002", buyerOrganizationId: uni.id, payerName: "Delta Üniversitesi", totalAmount: toMinor(20000), status: "PARTIALLY_PAID" } });
-    await db.orderLine.create({ data: { orderId: o2.id, participationId: participationMap.get("Ayşe")!.participationId, registrationId: participationMap.get("Ayşe")!.registrationId, description: "Kongre Katılımı × 3 (kurumsal)", quantity: 3, unitPrice: toMinor(5000), total: toMinor(15000) } });
-    await db.orderLine.create({ data: { orderId: o2.id, participationId: participationMap.get("Vildan")!.participationId, registrationId: participationMap.get("Vildan")!.registrationId, description: "Refakatçi Kaydı", quantity: 1, unitPrice: toMinor(2000), total: toMinor(2000) } });
-    await db.orderLine.create({ data: { orderId: o2.id, description: "Gala Yemeği × 3", catalogItemId: null, quantity: 3, unitPrice: toMinor(1000), total: toMinor(3000) } });
-    await db.payment.create({ data: { orderId: o2.id, amount: toMinor(12000), source: "BANK_TRANSFER", status: "SUCCEEDED", reference: "HV-77231", paidAt: D(-8) } });
+    const o2 = await tx.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0002", buyerOrganizationId: uni.id, payerName: "Delta Üniversitesi", totalAmount: toMinor(20000), status: "PARTIALLY_PAID" } });
+    await tx.orderLine.create({ data: { orderId: o2.id, participationId: participationMap.get("Ayşe")!.participationId, registrationId: participationMap.get("Ayşe")!.registrationId, description: "Kongre Katılımı × 3 (kurumsal)", quantity: 3, unitPrice: toMinor(5000), total: toMinor(15000) } });
+    await tx.orderLine.create({ data: { orderId: o2.id, participationId: participationMap.get("Vildan")!.participationId, registrationId: participationMap.get("Vildan")!.registrationId, description: "Refakatçi Kaydı", quantity: 1, unitPrice: toMinor(2000), total: toMinor(2000) } });
+    await tx.orderLine.create({ data: { orderId: o2.id, description: "Gala Yemeği × 3", catalogItemId: null, quantity: 3, unitPrice: toMinor(1000), total: toMinor(3000) } });
+    await tx.payment.create({ data: { orderId: o2.id, amount: toMinor(12000), source: "BANK_TRANSFER", status: "SUCCEEDED", reference: "HV-77231", paidAt: D(-8) } });
 
-    const o3 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0003", buyerPersonId: P.Barış.id, payerName: "Barış Tekin", totalAmount: toMinor(5000), status: "OPEN" } });
-    await db.orderLine.create({ data: { orderId: o3.id, participationId: participationMap.get("Barış")!.participationId, registrationId: participationMap.get("Barış")!.registrationId, description: "Kongre Katılımı", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
+    const o3 = await tx.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0003", buyerPersonId: P.Barış.id, payerName: "Barış Tekin", totalAmount: toMinor(5000), status: "OPEN" } });
+    await tx.orderLine.create({ data: { orderId: o3.id, participationId: participationMap.get("Barış")!.participationId, registrationId: participationMap.get("Barış")!.registrationId, description: "Kongre Katılımı", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
 
-    const o4 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0004", buyerOrganizationId: abcPharma.id, payerName: "ABC Pharma", totalAmount: toMinor(12000), status: "PARTIALLY_PAID" } });
-    await db.orderLine.create({ data: { orderId: o4.id, description: "Stand Ekstra Elektrik × 2", quantity: 2, unitPrice: toMinor(1500), total: toMinor(3000) } });
-    await db.orderLine.create({ data: { orderId: o4.id, description: "Gala Davetiyesi (hak dışı) × 6", quantity: 6, unitPrice: toMinor(1500), total: toMinor(9000) } });
-    await db.payment.create({ data: { orderId: o4.id, amount: toMinor(8000), source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference: "SF-2231", enteredBy: "Zeynep Arslan", reason: "Kurum faturası havale ile ödendi", paidAt: D(-6) } });
-    await db.refund.create({ data: { orderId: o4.id, amount: toMinor(2000), reason: "İptal edilen gala davetiyesi × 2", status: "PROCESSED", requestedBy: "Zeynep Arslan", processedAt: D(-4) } });
-    await db.refund.create({ data: { orderId: o4.id, amount: toMinor(500), reason: "Kalem düzeltme bekliyor", status: "REQUESTED" } });
+    const o4 = await tx.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0004", buyerOrganizationId: abcPharma.id, payerName: "ABC Pharma", totalAmount: toMinor(12000), status: "PARTIALLY_PAID" } });
+    await tx.orderLine.create({ data: { orderId: o4.id, description: "Stand Ekstra Elektrik × 2", quantity: 2, unitPrice: toMinor(1500), total: toMinor(3000) } });
+    await tx.orderLine.create({ data: { orderId: o4.id, description: "Gala Davetiyesi (hak dışı) × 6", quantity: 6, unitPrice: toMinor(1500), total: toMinor(9000) } });
+    await tx.payment.create({ data: { orderId: o4.id, amount: toMinor(8000), source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference: "SF-2231", enteredBy: "Zeynep Arslan", reason: "Kurum faturası havale ile ödendi", paidAt: D(-6) } });
+    await tx.refund.create({ data: { orderId: o4.id, amount: toMinor(2000), reason: "İptal edilen gala davetiyesi × 2", status: "PROCESSED", requestedBy: "Zeynep Arslan", processedAt: D(-4) } });
+    await tx.refund.create({ data: { orderId: o4.id, amount: toMinor(500), reason: "Kalem düzeltme bekliyor", status: "REQUESTED" } });
 
-    const o5 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0005", buyerPersonId: P.Onur.id, payerName: "Onur Erdem", totalAmount: toMinor(6000), status: "PAID" } });
-    await db.orderLine.create({ data: { orderId: o5.id, participationId: participationMap.get("Onur")!.participationId, registrationId: participationMap.get("Onur")!.registrationId, description: "Kongre Katılımı", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
-    await db.orderLine.create({ data: { orderId: o5.id, description: "Teknik Gezi — Marmaray", quantity: 1, unitPrice: toMinor(1000), total: toMinor(1000) } });
-    await db.payment.create({ data: { orderId: o5.id, amount: toMinor(6000), source: "POS", status: "SUCCEEDED", paidAt: D(-2, 10) } });
+    const o5 = await tx.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0005", buyerPersonId: P.Onur.id, payerName: "Onur Erdem", totalAmount: toMinor(6000), status: "PAID" } });
+    await tx.orderLine.create({ data: { orderId: o5.id, participationId: participationMap.get("Onur")!.participationId, registrationId: participationMap.get("Onur")!.registrationId, description: "Kongre Katılımı", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
+    await tx.orderLine.create({ data: { orderId: o5.id, description: "Teknik Gezi — Marmaray", quantity: 1, unitPrice: toMinor(1000), total: toMinor(1000) } });
+    await tx.payment.create({ data: { orderId: o5.id, amount: toMinor(6000), source: "POS", status: "SUCCEEDED", paidAt: D(-2, 10) } });
 
-    const o6 = await db.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0006", buyerPersonId: P.Gizem.id, payerName: "Gizem Bulut", totalAmount: toMinor(5000), status: "PARTIALLY_PAID" } });
-    await db.orderLine.create({ data: { orderId: o6.id, participationId: participationMap.get("Gizem")!.participationId, registrationId: participationMap.get("Gizem")!.registrationId, description: "Kongre Katılımı — grup", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
-    await db.payment.create({ data: { orderId: o6.id, amount: toMinor(2000), source: "PAYMENT_LINK", status: "SUCCEEDED", paidAt: D(-1, 9) } });
-    await db.payment.create({ data: { orderId: o2.id, amount: toMinor(2000), source: "MANUAL_EXTERNAL", status: "PENDING", enteredBy: "Kaan Yıldız", reason: "Muhasebe ekstresi beklemede" } });
-    await db.payment.create({ data: { orderId: o3.id, amount: toMinor(5000), source: "ONLINE_CARD", status: "FAILED", reference: "PAY-99377" } });
+    const o6 = await tx.order.create({ data: { editionId: edition1.id, orderNo: "ORD-2026-0006", buyerPersonId: P.Gizem.id, payerName: "Gizem Bulut", totalAmount: toMinor(5000), status: "PARTIALLY_PAID" } });
+    await tx.orderLine.create({ data: { orderId: o6.id, participationId: participationMap.get("Gizem")!.participationId, registrationId: participationMap.get("Gizem")!.registrationId, description: "Kongre Katılımı — grup", quantity: 1, unitPrice: toMinor(5000), total: toMinor(5000) } });
+    await tx.payment.create({ data: { orderId: o6.id, amount: toMinor(2000), source: "PAYMENT_LINK", status: "SUCCEEDED", paidAt: D(-1, 9) } });
+    await tx.payment.create({ data: { orderId: o2.id, amount: toMinor(2000), source: "MANUAL_EXTERNAL", status: "PENDING", enteredBy: "Kaan Yıldız", reason: "Muhasebe ekstresi beklemede" } });
+    await tx.payment.create({ data: { orderId: o3.id, amount: toMinor(5000), source: "ONLINE_CARD", status: "FAILED", reference: "PAY-99377" } });
 
     // ── LCV (davetler) ──
-    await db.invitation.createMany({
+    await tx.invitation.createMany({
       data: [
         { editionId: edition1.id, organizationId: abcPharma.id, email: "nihan.ergun@example.com", fullName: "Nihan Ergün", suggestedCategoryId: catExhibitor.code, status: "COMING", sentAt: D(-20), respondedAt: D(-15) },
         { editionId: edition1.id, organizationId: abcPharma.id, email: "kemal.tuna@example.com", fullName: "Kemal Tuna", suggestedCategoryId: catExhibitor.code, status: "COMING", sentAt: D(-20), respondedAt: D(-14) },
@@ -923,25 +927,25 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Yaka Kartı & Credential & Taramalar (§40-42) ──
-    const bpDelegate = await db.badgeProfile.create({ data: { editionId: edition1.id, name: "Delegate", accessAreas: "Ana Salon, Poster Alanı", color: "teal" } });
-    const bpSpeaker = await db.badgeProfile.create({ data: { editionId: edition1.id, name: "Speaker", accessAreas: "Ana Salon, Salon B, Backstage", color: "amber" } });
-    const bpExhibitor = await db.badgeProfile.create({ data: { editionId: edition1.id, name: "Exhibitor", accessAreas: "Fuar Alanı, Kurulum Saatleri", color: "violet" } });
-    const bpVip = await db.badgeProfile.create({ data: { editionId: edition1.id, name: "VIP", accessAreas: "Ana Salon, VIP Lounge, Gala", color: "rose" } });
-    const bpStaff = await db.badgeProfile.create({ data: { editionId: edition1.id, name: "Staff", accessAreas: "Tüm alanlar", color: "neutral" } });
-    const bpPress = await db.badgeProfile.create({ data: { editionId: edition1.id, name: "Press", accessAreas: "Ana Salon, Basın Odası", color: "sky" } });
+    const bpDelegate = await tx.badgeProfile.create({ data: { editionId: edition1.id, name: "Delegate", accessAreas: "Ana Salon, Poster Alanı", color: "teal" } });
+    const bpSpeaker = await tx.badgeProfile.create({ data: { editionId: edition1.id, name: "Speaker", accessAreas: "Ana Salon, Salon B, Backstage", color: "amber" } });
+    const bpExhibitor = await tx.badgeProfile.create({ data: { editionId: edition1.id, name: "Exhibitor", accessAreas: "Fuar Alanı, Kurulum Saatleri", color: "violet" } });
+    const bpVip = await tx.badgeProfile.create({ data: { editionId: edition1.id, name: "VIP", accessAreas: "Ana Salon, VIP Lounge, Gala", color: "rose" } });
+    const bpStaff = await tx.badgeProfile.create({ data: { editionId: edition1.id, name: "Staff", accessAreas: "Tüm alanlar", color: "neutral" } });
+    const bpPress = await tx.badgeProfile.create({ data: { editionId: edition1.id, name: "Press", accessAreas: "Ana Salon, Basın Odası", color: "sky" } });
 
     let badgeNo = 1;
     for (const [name, rec] of participationMap) {
-      const roles = await db.eventRoleAssignment.findMany({ where: { participationId: rec.participationId } });
+      const roles = await tx.eventRoleAssignment.findMany({ where: { participationId: rec.participationId } });
       const roleSet = new Set(roles.map((r) => r.role));
       const profile = roleSet.has("SPEAKER") ? bpSpeaker : roleSet.has("STAFF") ? bpStaff : roleSet.has("VIP") ? bpVip : roleSet.has("PRESS") ? bpPress : roleSet.has("EXHIBITOR_STAFF") ? bpExhibitor : bpDelegate;
-      const reg = await db.registration.findUnique({ where: { id: rec.registrationId } });
+      const reg = await tx.registration.findUnique({ where: { id: rec.registrationId } });
       const badgeStatus = reg?.status === "CONFIRMED" ? "PRINTED" : reg?.status === "PENDING_APPROVAL" ? "READY" : "NOT_ELIGIBLE";
-      const bi = await db.badgeInstance.create({
+      const bi = await tx.badgeInstance.create({
         data: { participationId: rec.participationId, profileId: profile.id, badgeNo: `BDG-2026-${String(badgeNo).padStart(4, "0")}`, status: badgeStatus, issuedAt: ["PRINTED", "READY"].includes(badgeStatus) ? D(-3) : null, printedAt: badgeStatus === "PRINTED" ? D(-2) : null },
       });
       if (badgeStatus !== "NOT_ELIGIBLE") {
-        await db.credential.create({ data: { participationId: rec.participationId, badgeId: bi.id, code: `QR-${String(badgeNo).padStart(4, "0")}`, type: "QR", accessProfile: profile.accessAreas, validFrom: D(-1), validUntil: D(3) } });
+        await tx.credential.create({ data: { participationId: rec.participationId, badgeId: bi.id, code: `QR-${String(badgeNo).padStart(4, "0")}`, type: "QR", accessProfile: profile.accessAreas, validFrom: D(-1), validUntil: D(3) } });
       }
       badgeNo++;
     }
@@ -949,16 +953,16 @@ export async function POST(req: NextRequest) {
     // ── Mükerrer kişi senaryosu (R7): aynı e-posta + aynı edisyonda İKİ katılım ──
     // Defne Kaya (eski kayıt — hedef adayı): onaylı kongre kaydı + basılmış yaka kartı + tarama
     // Defne Kaya (yeni kayıt — kaynak adayı): öğrenci kategorisinde onay bekleyen + yaka kartı yok
-    const defne2 = await db.person.create({
+    const defne2 = await tx.person.create({
       data: { tenantId: tenant.id, firstName: "Defne", lastName: "Kaya", email: "defne.kaya@example.com", phone: "+90 532 111 22 33", company: "Yol Yapım A.Ş.", title: "Saha Mühendisi", country: "Türkiye" },
     });
     const defne1 = P["Defne"];
-    const partDefne1 = await db.eventParticipation.upsert({
+    const partDefne1 = await tx.eventParticipation.upsert({
       where: { editionId_personId: { editionId: edition1.id, personId: defne1.id } },
       create: { editionId: edition1.id, personId: defne1.id, source: "PUBLIC_FORM", attendance: "CHECKED_IN" },
       update: {},
     });
-    await db.registration.create({
+    await tx.registration.create({
       data: {
         editionId: edition1.id, participationId: partDefne1.id, categoryId: catRegular.id,
         confirmationNo: `REG-2026-${String(regNo).padStart(4, "0")}`,
@@ -967,19 +971,19 @@ export async function POST(req: NextRequest) {
       },
     });
     regNo++;
-    await db.eventProfileSnapshot.create({ data: { participationId: partDefne1.id, badgeName: "Defne Kaya", company: "Delta Üniversitesi", title: "Öğretim Üyesi", country: "Türkiye" } });
-    await db.eventRoleAssignment.create({ data: { participationId: partDefne1.id, role: "ATTENDEE", status: "ACTIVE" } });
-    const badgeDefne1 = await db.badgeInstance.create({
+    await tx.eventProfileSnapshot.create({ data: { participationId: partDefne1.id, badgeName: "Defne Kaya", company: "Delta Üniversitesi", title: "Öğretim Üyesi", country: "Türkiye" } });
+    await tx.eventRoleAssignment.create({ data: { participationId: partDefne1.id, role: "ATTENDEE", status: "ACTIVE" } });
+    const badgeDefne1 = await tx.badgeInstance.create({
       data: { participationId: partDefne1.id, profileId: bpDelegate.id, badgeNo: `BDG-2026-${String(badgeNo).padStart(4, "0")}`, status: "PRINTED", issuedAt: D(-3), printedAt: D(-2) },
     });
-    await db.credential.create({ data: { participationId: partDefne1.id, badgeId: badgeDefne1.id, code: `QR-${String(badgeNo).padStart(4, "0")}`, type: "QR", accessProfile: bpDelegate.accessAreas, validFrom: D(-1), validUntil: D(3) } });
-    await db.scanEvent.create({ data: { editionId: edition1.id, participationId: partDefne1.id, personId: defne1.id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(0, 9, 5) } });
+    await tx.credential.create({ data: { participationId: partDefne1.id, badgeId: badgeDefne1.id, code: `QR-${String(badgeNo).padStart(4, "0")}`, type: "QR", accessProfile: bpDelegate.accessAreas, validFrom: D(-1), validUntil: D(3) } });
+    await tx.scanEvent.create({ data: { editionId: edition1.id, participationId: partDefne1.id, personId: defne1.id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(0, 9, 5) } });
     badgeNo++;
 
-    const partDefne2 = await db.eventParticipation.create({
+    const partDefne2 = await tx.eventParticipation.create({
       data: { editionId: edition1.id, personId: defne2.id, source: "PUBLIC_FORM", attendance: "NOT_ARRIVED" },
     });
-    await db.registration.create({
+    await tx.registration.create({
       data: {
         editionId: edition1.id, participationId: partDefne2.id, categoryId: catStudent.id,
         confirmationNo: `REG-2026-${String(regNo).padStart(4, "0")}`,
@@ -987,8 +991,8 @@ export async function POST(req: NextRequest) {
       },
     });
     regNo++;
-    await db.eventProfileSnapshot.create({ data: { participationId: partDefne2.id, badgeName: "Defne Kaya", company: "Yol Yapım A.Ş.", title: "Saha Mühendisi", country: "Türkiye" } });
-    await db.badgeInstance.create({
+    await tx.eventProfileSnapshot.create({ data: { participationId: partDefne2.id, badgeName: "Defne Kaya", company: "Yol Yapım A.Ş.", title: "Saha Mühendisi", country: "Türkiye" } });
+    await tx.badgeInstance.create({
       data: { participationId: partDefne2.id, profileId: bpDelegate.id, badgeNo: `BDG-2026-${String(badgeNo).padStart(4, "0")}`, status: "NOT_ELIGIBLE" },
     });
     badgeNo++;
@@ -997,42 +1001,42 @@ export async function POST(req: NextRequest) {
     const scanNames = ["Ahmet", "Mehmet", "Ayşe", "Fatma", "Mustafa", "Zeynep", "Emre", "Seda", "Deniz", "Ece", "Kerem", "Leyla", "Onur", "Serpil", "Tolga", "Vildan", "Yusuf"];
     for (const [i, name] of scanNames.entries()) {
       const rec = participationMap.get(name)!;
-      const cred = await db.credential.findFirst({ where: { participationId: rec.participationId } });
-      await db.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(0, 8 + Math.floor(i / 4), (i * 7) % 60) } });
+      const cred = await tx.credential.findFirst({ where: { participationId: rec.participationId } });
+      await tx.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(0, 8 + Math.floor(i / 4), (i * 7) % 60) } });
     }
     for (const name of ["Ahmet", "Mustafa", "Deniz"]) {
       const rec = participationMap.get(name)!;
-      const cred = await db.credential.findFirst({ where: { participationId: rec.participationId } });
-      await db.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "RESCAN", result: "RESCAN_WARNING", reason: "Bu yaka kartı bugün daha önce okutuldu", device: "kapi-b-2", operator: "Leyla Güneş", scannedAt: D(0, 12, 15) } });
+      const cred = await tx.credential.findFirst({ where: { participationId: rec.participationId } });
+      await tx.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "RESCAN", result: "RESCAN_WARNING", reason: "Bu yaka kartı bugün daha önce okutuldu", device: "kapi-b-2", operator: "Leyla Güneş", scannedAt: D(0, 12, 15) } });
     }
     // reddedilen: Murat (kayıt REJECTED, yaka kartı yok) — personId ile
     // walk-in reddi: participation YOK — editionId atanmaz (sayım semantiği yalnız katılımlı taramalar, eski davranış korunur)
-    await db.scanEvent.create({ data: { personId: P.Murat.id, location: "MAIN_DOOR", doorName: "Kapı B", action: "ENTRY", result: "DENIED", reason: "Kayıt durumu: REJECTED", device: "kapi-b-2", operator: "Leyla Güneş", scannedAt: D(0, 10, 5) } });
+    await tx.scanEvent.create({ data: { personId: P.Murat.id, location: "MAIN_DOOR", doorName: "Kapı B", action: "ENTRY", result: "DENIED", reason: "Kayıt durumu: REJECTED", device: "kapi-b-2", operator: "Leyla Güneş", scannedAt: D(0, 10, 5) } });
     // oturum girişleri (ayrı tarama listesi)
     for (const name of ["Mehmet", "Ahmet", "Ayşe", "Seda", "Fatma"]) {
       const rec = participationMap.get(name)!;
-      const cred = await db.credential.findFirst({ where: { participationId: rec.participationId } });
-      await db.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, sessionId: ses1.id, location: "SESSION", action: "SESSION_ENTRY", result: "ALLOWED", device: "salon-a", operator: "Oturum Görevlisi", scannedAt: D(0, 11, 2) } });
+      const cred = await tx.credential.findFirst({ where: { participationId: rec.participationId } });
+      await tx.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, sessionId: ses1.id, location: "SESSION", action: "SESSION_ENTRY", result: "ALLOWED", device: "salon-a", operator: "Oturum Görevlisi", scannedAt: D(0, 11, 2) } });
     }
     // dünkü girişler
     for (const name of ["Mehmet", "Ayşe", "Fatma", "Kerem"]) {
       const rec = participationMap.get(name)!;
-      const cred = await db.credential.findFirst({ where: { participationId: rec.participationId } });
-      await db.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(-1, 9, 0) } });
+      const cred = await tx.credential.findFirst({ where: { participationId: rec.participationId } });
+      await tx.scanEvent.create({ data: { editionId: edition1.id, participationId: rec.participationId, credentialId: cred?.id, personId: P[name].id, location: "MAIN_DOOR", doorName: "Kapı A", action: "ENTRY", result: "ALLOWED", device: "kapi-a-1", operator: "Yusuf Bilgin", scannedAt: D(-1, 9, 0) } });
     }
 
     // ── Sertifikalar (§43) ──
-    const certPart = await db.certificateDefinition.create({ data: { editionId: edition1.id, name: "Katılımcı Sertifikası", type: "PARTICIPANT", eligibilityRule: "registration=CONFIRMED AND etkinlik girişi var", signerName: "Prof. Dr. Mehmet Demir" } });
-    const certSpeaker = await db.certificateDefinition.create({ data: { editionId: edition1.id, name: "Konuşmacı Sertifikası", type: "SPEAKER", eligibilityRule: "program assignment=CONFIRMED AND oturum gerçekleştirildi", signerName: "Prof. Dr. Mehmet Demir" } });
-    await db.certificateDefinition.create({ data: { editionId: edition1.id, name: "Hakem Sertifikası", type: "REVIEWER", eligibilityRule: "tamamlanan inceleme >= 2", signerName: "Bilimsel Komite" } });
-    await db.certificateIssue.create({ data: { definitionId: certPart.id, participationId: participationMap.get("Mehmet")!.participationId, status: "DELIVERED", generatedAt: D(-1), deliveredAt: D(-1), eligibilityNote: "Uygunluk koşulları sağlandı" } });
-    await db.certificateIssue.create({ data: { definitionId: certPart.id, participationId: participationMap.get("Ayşe")!.participationId, status: "GENERATED", generatedAt: D(0, 8), eligibilityNote: "Uygunluk koşulları sağlandı" } });
-    await db.certificateIssue.create({ data: { definitionId: certPart.id, participationId: participationMap.get("Mustafa")!.participationId, status: "GENERATED", generatedAt: D(0, 8), eligibilityNote: "Uygunluk koşulları sağlandı" } });
-    await db.certificateIssue.create({ data: { definitionId: certPart.id, participationId: participationMap.get("Can")!.participationId, status: "NOT_ELIGIBLE", eligibilityNote: "Eksik: geçerli giriş yok" } });
-    await db.certificateIssue.create({ data: { definitionId: certSpeaker.id, participationId: participationMap.get("Ahmet")!.participationId, status: "ELIGIBLE", eligibilityNote: "Oturum bekleniyor" } });
+    const certPart = await tx.certificateDefinition.create({ data: { editionId: edition1.id, name: "Katılımcı Sertifikası", type: "PARTICIPANT", eligibilityRule: "registration=CONFIRMED AND etkinlik girişi var", signerName: "Prof. Dr. Mehmet Demir" } });
+    const certSpeaker = await tx.certificateDefinition.create({ data: { editionId: edition1.id, name: "Konuşmacı Sertifikası", type: "SPEAKER", eligibilityRule: "program assignment=CONFIRMED AND oturum gerçekleştirildi", signerName: "Prof. Dr. Mehmet Demir" } });
+    await tx.certificateDefinition.create({ data: { editionId: edition1.id, name: "Hakem Sertifikası", type: "REVIEWER", eligibilityRule: "tamamlanan inceleme >= 2", signerName: "Bilimsel Komite" } });
+    await tx.certificateIssue.create({ data: { definitionId: certPart.id, participationId: participationMap.get("Mehmet")!.participationId, status: "DELIVERED", generatedAt: D(-1), deliveredAt: D(-1), eligibilityNote: "Uygunluk koşulları sağlandı" } });
+    await tx.certificateIssue.create({ data: { definitionId: certPart.id, participationId: participationMap.get("Ayşe")!.participationId, status: "GENERATED", generatedAt: D(0, 8), eligibilityNote: "Uygunluk koşulları sağlandı" } });
+    await tx.certificateIssue.create({ data: { definitionId: certPart.id, participationId: participationMap.get("Mustafa")!.participationId, status: "GENERATED", generatedAt: D(0, 8), eligibilityNote: "Uygunluk koşulları sağlandı" } });
+    await tx.certificateIssue.create({ data: { definitionId: certPart.id, participationId: participationMap.get("Can")!.participationId, status: "NOT_ELIGIBLE", eligibilityNote: "Eksik: geçerli giriş yok" } });
+    await tx.certificateIssue.create({ data: { definitionId: certSpeaker.id, participationId: participationMap.get("Ahmet")!.participationId, status: "ELIGIBLE", eligibilityNote: "Oturum bekleniyor" } });
 
     // ── Kampanyalar ──
-    await db.campaign.createMany({
+    await tx.campaign.createMany({
       data: [
         { editionId: edition1.id, name: "Ödeme Hatırlatma", segmentRule: "kayıt onaylı + açık bakiye > 0", audienceCount: 26, status: "SENT", subject: "Kayıt onayınız hazır — ödeme hatırlatması", body: "Sayın katılımcımız, kaydınız onaylandı. Ödemenizi {deadline} tarihine kadar tamamlayabilirsiniz.", sentAt: D(-2, 10), sentCount: 26, deliveredCount: 25, openCount: 17, clickCount: 8 },
         { editionId: edition1.id, name: "Bilimsel Çağrı Duyurusu", segmentRule: "tüm person", audienceCount: 240, status: "SENT", isSegmentFixed: false, subject: "Bildiri çağrısı — son 10 gün", sentAt: D(-40, 9), sentCount: 240, deliveredCount: 236, openCount: 141, clickCount: 63 },
@@ -1042,7 +1046,7 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Operasyon görevleri ──
-    await db.task.createMany({
+    await tx.task.createMany({
       data: [
         { editionId: edition1.id, title: "Gala oturma planını onaylat", module: "SOCIAL_EVENTS", status: "IN_PROGRESS", priority: "HIGH", assigneeId: P.Kerem.id, dueDate: D(1) },
         { editionId: edition1.id, title: "Banner teslimini takip et (ABC Pharma)", module: "SPONSORSHIP", status: "TODO", priority: "HIGH", assigneeId: P.Kerem.id, dueDate: D(3) },
@@ -1058,13 +1062,13 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Delegasyon & refakatçi ──
-    const del = await db.delegation.create({ data: { editionId: edition1.id, name: "ABC Pharma Heyeti", type: "SPONSOR_GROUP", billingOrganizationId: abcPharma.id, paymentAccount: "ABC Merkez Hesap", rules: "Kayıtlar sponsor hakkından düşülür; değişiklik portal onayı ister" } });
-    await db.delegationMember.createMany({ data: [{ delegationId: del.id, participationId: participationMap.get("Fatma")!.participationId, role: "LEADER" }, { delegationId: del.id, participationId: participationMap.get("Deniz")!.participationId }] });
-    await db.companion.create({ data: { participationId: participationMap.get("Mustafa")!.participationId, name: "Elif Koç", type: "ADULT", notes: "Gala + tur hakları var" } });
+    const del = await tx.delegation.create({ data: { editionId: edition1.id, name: "ABC Pharma Heyeti", type: "SPONSOR_GROUP", billingOrganizationId: abcPharma.id, paymentAccount: "ABC Merkez Hesap", rules: "Kayıtlar sponsor hakkından düşülür; değişiklik portal onayı ister" } });
+    await tx.delegationMember.createMany({ data: [{ delegationId: del.id, participationId: participationMap.get("Fatma")!.participationId, role: "LEADER" }, { delegationId: del.id, participationId: participationMap.get("Deniz")!.participationId }] });
+    await tx.companion.create({ data: { participationId: participationMap.get("Mustafa")!.participationId, name: "Elif Koç", type: "ADULT", notes: "Gala + tur hakları var" } });
 
     // ── GENİŞLETME DALGASI: düşünce bulutu 1-9 demo verisi ──
     // (1) Custom rol motoru + CV + QR VCard zaten kişiden üretiliyor
-    await db.customRole.createMany({
+    await tx.customRole.createMany({
       data: [
         { editionId: edition1.id, key: "cme_auditor", name: "Akreditasyon Denetçisi", color: "violet", hierarchyLevel: 10, permissions: JSON.stringify(["CME_CREDITS", "CERTIFICATES"]), description: "CME kredi kayıtlarını denetler, resmî raporu imzalar" },
         { editionId: edition1.id, key: "gala_host", name: "Gala Host", color: "amber", hierarchyLevel: 30, permissions: JSON.stringify(["SOCIAL_EVENTS", "ACCESS_CONTROL"]), description: "Gala girişi ve VIP refakat operasyonu" },
@@ -1072,7 +1076,7 @@ export async function POST(req: NextRequest) {
       ],
     });
     // CV örnekleri — konuşmacı/profil verisi zenginleştirme (elle giriş senaryosu)
-    await db.cvEntry.createMany({
+    await tx.cvEntry.createMany({
       data: [
         { personId: P.Kerem.id, editionId: edition1.id, kind: "EXPERIENCE", title: "Kıdemli Organizasyon Direktörü", organization: "Maven Etkinlik Çözümleri", city: "İstanbul", startDate: D(-2200), isCurrent: true, order: 1 },
         { personId: P.Kerem.id, editionId: edition1.id, kind: "EDUCATION", title: "İşletme Yüksek Lisansı (MBA)", organization: "Boğaziçi Üniversitesi", city: "İstanbul", startDate: D(-4200), endDate: D(-3300), order: 2 },
@@ -1084,7 +1088,7 @@ export async function POST(req: NextRequest) {
     });
 
     // (2) Oturum materyalleri — bildiri/sunum/video/speaker metni bağlantıları
-    await db.sessionMaterial.createMany({
+    await tx.sessionMaterial.createMany({
       data: [
         { sessionId: sesKeynote.id, editionId: edition1.id, type: "SLIDES", title: "Açılış Sunumu — Kazısız Gelecek 2026", url: "https://assets.maven.demo/keynote-slides.pdf", mimeType: "application/pdf", sizeKb: 8400, status: "READY", order: 1 },
         { sessionId: sesKeynote.id, editionId: edition1.id, type: "SPEAKER_TEXT", title: "Konuşmacı Açılış Metni", url: "https://assets.maven.demo/keynote-script.docx", mimeType: "application/msword", sizeKb: 42, status: "READY", order: 2 },
@@ -1098,7 +1102,7 @@ export async function POST(req: NextRequest) {
     // (3) Merkezi medya arşivi — SİSTEM klasörleri (kullanıcı kuralı: yaka kartı,
     // sertifika, kişi fotoğrafı, kurum logosu, otel, materyal, portal KENDİ klasöründe;
     // her yükleme BENZERSİZ adla) + kullanıcı klasörü örneği
-    const sysFolders = await ensureSystemFolders(edition1.id);
+    const sysFolders = await ensureSystemFolders(edition1.id, tx as unknown as DbTx);
     const F = sysFolders.folders;
     const uniq = () => Date.now().toString(36).slice(-4) + Math.random().toString(36).slice(2, 6);
 
@@ -1107,7 +1111,7 @@ export async function POST(req: NextRequest) {
       const initials = (p.firstName[0] + (p.lastName[0] ?? "")).toUpperCase();
       const name = `kisi-${p.firstName}-${p.lastName}-fotografi-${uniq()}.svg`
         .toLowerCase().replace(/[^a-z0-9.\-]+/g, "-");
-      const asset = await db.mediaAsset.create({
+      const asset = await tx.mediaAsset.create({
         data: {
           editionId: edition1.id, folderId: F.KISI_FOTOGRAF.id, name,
           kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 1,
@@ -1115,7 +1119,7 @@ export async function POST(req: NextRequest) {
           linkedType: "PERSON", linkedId: p.id, uploadedBy: "Kayıt Görevlisi",
         },
       });
-      await db.person.update({ where: { id: p.id }, data: { photoUrl: asset.dataUrl } });
+      await tx.person.update({ where: { id: p.id }, data: { photoUrl: asset.dataUrl } });
     }
 
     // Kurum/Kuruluş logoları — her kuruma marka rengiyle logo; benzersiz ad + medya bağlantısı
@@ -1126,7 +1130,7 @@ export async function POST(req: NextRequest) {
     ];
     for (const [org, name, color] of orgLogos) {
       const name2 = `kurum-${name}-logosu-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-");
-      const asset = await db.mediaAsset.create({
+      const asset = await tx.mediaAsset.create({
         data: {
           editionId: edition1.id, folderId: F.KURUM_LOGO.id, name: name2,
           kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 2,
@@ -1134,22 +1138,22 @@ export async function POST(req: NextRequest) {
           linkedType: "ORGANIZATION", linkedId: org.id, uploadedBy: "Elif Kaya",
         },
       });
-      await db.organization.update({ where: { id: org.id }, data: { logoUrl: asset.dataUrl } });
+      await tx.organization.update({ where: { id: org.id }, data: { logoUrl: asset.dataUrl } });
     }
     // Basın kiti — kurum logoları klasörünün altında kullanıcı klasörü
-    const mfPress = await db.mediaFolder.create({ data: { editionId: edition1.id, parentId: F.KURUM_LOGO.id, name: "2026 Basın Kiti", description: "Medya sponsoru ile paylaşılan baskı hazır materyaller" } });
-    await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: mfPress.id, name: `basin-kiti-2026-${uniq()}.pdf`, kind: "DOCUMENT", mimeType: "application/pdf", sizeKb: 15400, externalUrl: "https://assets.maven.demo/press2026.pdf", tags: "basın,kitapçık", uploadedBy: "Elif Kaya" } });
+    const mfPress = await tx.mediaFolder.create({ data: { editionId: edition1.id, parentId: F.KURUM_LOGO.id, name: "2026 Basın Kiti", description: "Medya sponsoru ile paylaşılan baskı hazır materyaller" } });
+    await tx.mediaAsset.create({ data: { editionId: edition1.id, folderId: mfPress.id, name: `basin-kiti-2026-${uniq()}.pdf`, kind: "DOCUMENT", mimeType: "application/pdf", sizeKb: 15400, externalUrl: "https://assets.maven.demo/press2026.pdf", tags: "basın,kitapçık", uploadedBy: "Elif Kaya" } });
 
     // Otel görselleri — logo + kapak (her otel için; OTEL klasörü)
     for (const [h, color] of [[hotel, "92400e"], [hotel2, "0e7490"]] as [typeof hotel, string][]) {
-      const logoA = await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.OTEL.id, name: `otel-${h.name}-logosu-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 2, dataUrl: logoSvg(h.name, color), tags: "otel,logo", linkedType: "HOTEL", linkedId: h.id, uploadedBy: "Burak Demir" } });
-      const coverA = await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.OTEL.id, name: `otel-${h.name}-kapak-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 3, dataUrl: coverSvg(h.name, color, "0f172a"), tags: "otel,kapak", linkedType: "HOTEL", linkedId: h.id, uploadedBy: "Burak Demir" } });
-      await db.hotelProperty.update({ where: { id: h.id }, data: { logoUrl: logoA.dataUrl, imageUrl: coverA.dataUrl } });
+      const logoA = await tx.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.OTEL.id, name: `otel-${h.name}-logosu-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 2, dataUrl: logoSvg(h.name, color), tags: "otel,logo", linkedType: "HOTEL", linkedId: h.id, uploadedBy: "Burak Demir" } });
+      const coverA = await tx.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.OTEL.id, name: `otel-${h.name}-kapak-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 3, dataUrl: coverSvg(h.name, color, "0f172a"), tags: "otel,kapak", linkedType: "HOTEL", linkedId: h.id, uploadedBy: "Burak Demir" } });
+      await tx.hotelProperty.update({ where: { id: h.id }, data: { logoUrl: logoA.dataUrl, imageUrl: coverA.dataUrl } });
     }
 
     // Portal görselleri — dış portal header arka planı + edisyon tasarım alanları
-    const portalBg = await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.PORTAL.id, name: `portal-header-arkaplan-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 4, dataUrl: coverSvg("No-Dig Turkey 2026 — Kayısız Gelecek", "134e4a", "0f172a"), tags: "portal,header", linkedType: "PORTAL", uploadedBy: "Burak Demir" } });
-    await db.eventEdition.update({
+    const portalBg = await tx.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.PORTAL.id, name: `portal-header-arkaplan-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 4, dataUrl: coverSvg("No-Dig Turkey 2026 — Kayısız Gelecek", "134e4a", "0f172a"), tags: "portal,header", linkedType: "PORTAL", uploadedBy: "Burak Demir" } });
+    await tx.eventEdition.update({
       where: { id: edition1.id },
       data: {
         portalHeaderTitle: "No-Dig Turkey 2026",
@@ -1160,18 +1164,18 @@ export async function POST(req: NextRequest) {
     });
 
     // Materyaller — oturum dosyalarının medya klasörü kopyaları (MATERYAL klasörü)
-    const allMaterials = await db.sessionMaterial.findMany({ where: { editionId: edition1.id } });
+    const allMaterials = await tx.sessionMaterial.findMany({ where: { editionId: edition1.id } });
     for (const m of allMaterials) {
       const name = `materyal-${m.title}-${uniq()}.pdf`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-");
-      const asset = await db.mediaAsset.create({
+      const asset = await tx.mediaAsset.create({
         data: { editionId: edition1.id, folderId: F.MATERYAL.id, name, kind: "DOCUMENT", mimeType: m.mimeType ?? "application/pdf", sizeKb: m.sizeKb, externalUrl: m.url, tags: "materyal,oturum", linkedType: "SESSION", linkedId: m.sessionId, uploadedBy: "Selin Öztürk" },
       });
-      await db.sessionMaterial.update({ where: { id: m.id }, data: { notes: `Medya: ${asset.name} (Materyaller klasörü)` } });
+      await tx.sessionMaterial.update({ where: { id: m.id }, data: { notes: `Medya: ${asset.name} (Materyaller klasörü)` } });
     }
 
     // Etkinlik fotoğrafları — kullanıcı klasörü örneği (sistem klasörü değil)
-    const mfPhotos = await db.mediaFolder.create({ data: { editionId: edition1.id, name: "Etkinlik Fotoğrafları", description: "Gün sıralı saha fotoğraf arşivi — görevliler yükler" } });
-    await db.mediaAsset.createMany({
+    const mfPhotos = await tx.mediaFolder.create({ data: { editionId: edition1.id, name: "Etkinlik Fotoğrafları", description: "Gün sıralı saha fotoğraf arşivi — görevliler yükler" } });
+    await tx.mediaAsset.createMany({
       data: [
         { editionId: edition1.id, folderId: mfPhotos.id, name: `acilis-genel-gorunum-${uniq()}.jpg`, kind: "IMAGE", mimeType: "image/jpeg", sizeKb: 6200, externalUrl: "https://assets.maven.demo/opening.jpg", tags: "açılış,ana salon", uploadedBy: "Yusuf Bilgin" },
         { editionId: edition1.id, folderId: mfPhotos.id, name: `kayit-masasi-sabah-${uniq()}.jpg`, kind: "IMAGE", mimeType: "image/jpeg", sizeKb: 4300, externalUrl: "https://assets.maven.demo/reg-desk.jpg", tags: "kayıt masası,1. gün", uploadedBy: "Leyla Güneş" },
@@ -1180,7 +1184,7 @@ export async function POST(req: NextRequest) {
     });
 
     // (4) API Geçidi — çift yönlü entegrasyon örnekleri + log dili
-    await db.apiIntegration.createMany({
+    await tx.apiIntegration.createMany({
       data: [
         { tenantId: tenant.id, editionId: edition1.id, name: "CRM Kişi Eşitleme", direction: "OUTBOUND", kind: "REST", baseUrl: "https://crm.maven-demo.example/api/v1/participants", authType: "API_KEY", authConfig: JSON.stringify({ key: "demo-crm-***" }), status: "DRAFT", notes: "Onaylı kayıtlar gecelik CRM'e aktarılır" },
         { tenantId: tenant.id, name: "Iyzico Sanal POS", direction: "OUTBOUND", kind: "PAYMENT", provider: "IYZICO", baseUrl: "https://api.iyzico.example/payment/pos/auth", authType: "BASIC", authConfig: JSON.stringify({ user: "maven-api", pass: "***" }), status: "ACTIVE", notes: "Form Merkezi online ödemeleri bu kanaldan akar" },
@@ -1188,8 +1192,8 @@ export async function POST(req: NextRequest) {
         { tenantId: tenant.id, editionId: edition1.id, name: "Mailjet Kampanya Kanalı", direction: "OUTBOUND", kind: "MAIL", provider: "MAILJET", authType: "API_KEY", authConfig: JSON.stringify({ key: "mj-***" }), status: "DRAFT", notes: "Toplu gönderimler spam'e düşmemesi için" },
       ],
     });
-    const apiIntegrationDemo = await db.apiIntegration.findFirst({ where: { name: "CRM Kişi Eşitleme" } });
-    await db.integrationLog.createMany({
+    const apiIntegrationDemo = await tx.apiIntegration.findFirst({ where: { name: "CRM Kişi Eşitleme" } });
+    await tx.integrationLog.createMany({
       data: [
         { integrationId: apiIntegrationDemo!.id, editionId: edition1.id, direction: "OUTBOUND", method: "POST", endpoint: "https://crm.maven-demo.example/api/v1/participants", statusCode: 200, ok: true, durationMs: 412, summary: "200 OK — 148 kayıt eşitlendi", createdAt: D(-1) },
         { integrationId: apiIntegrationDemo!.id, editionId: edition1.id, direction: "OUTBOUND", method: "POST", endpoint: "https://crm.maven-demo.example/api/v1/participants", statusCode: 502, ok: false, durationMs: 8000, summary: "HATA: 502 Bad Gateway — tekrar denendi", createdAt: D(-2) },
@@ -1198,7 +1202,7 @@ export async function POST(req: NextRequest) {
     });
 
     // (5) 360 Branding — e-posta şablonları + mail sağlayıcılar + kampanya fazları
-    await db.emailTemplate.createMany({
+    await tx.emailTemplate.createMany({
       data: [
         { editionId: edition1.id, name: "Davet — Erken Kayıt", category: "INVITATION", phase: "PRE_EVENT", subject: "{{series}} {{editionLabel}} davetiniz hazır", htmlBody: "<div style=\"font-family:Arial\"><h2 style=\"color:#0f766e\">{{series}} {{editionLabel}}</h2><p>Sayın {{fullName}}, <b>{{edition}}</b> etkinliğine davetlisiniz.</p><p><a href=\"{{registerUrl}}\" style=\"background:#0f766e;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none\">Kaydınızı oluşturun</a></p><p style=\"color:#6b7280;font-size:12px\">{{venue}} · {{date}}</p></div>", usageCount: 2 },
         { editionId: edition1.id, name: "Kayıt Onayı + Ödeme Bağlantısı", category: "CONFIRMATION", phase: "PRE_EVENT", subject: "Kayıt onayınız — {{confirmationNo}}", htmlBody: "<div style=\"font-family:Arial\"><h3>Kaydınız onaylandı 🎉</h3><p>Teyit numaranız: <b>{{confirmationNo}}</b></p><p>Kalan bakiye: <b>{{remaining}}</b> — <a href=\"{{payUrl}}\">Online ödeyin</a></p></div>", usageCount: 5 },
@@ -1206,19 +1210,19 @@ export async function POST(req: NextRequest) {
         { editionId: edition1.id, name: "Teşekkür + Sertifika Teslimi", category: "THANK_YOU", phase: "POST_EVENT", subject: "Teşekkürler — sertifikanız ekte", htmlBody: "<div style=\"font-family:Arial\"><h2>Teşekkür ederiz!</h2><p>Sertifikanız ekte: <b>{{certificateSerial}}</b></p><p>Gelecek edisyon için erken kayıt avantajı: {{earlyBirdUrl}}</p></div>" },
       ],
     });
-    await db.mailProviderConfig.createMany({
+    await tx.mailProviderConfig.createMany({
       data: [
         { tenantId: tenant.id, name: "Şirket SMTP (Firma Sunucu)", kind: "SMTP", host: "smtp.maven-demo.example", port: 587, username: "etkinlik@maven-demo.example", passwordCipher: encryptSecret("***"), fromEmail: "etkinlik@maven-demo.example", fromName: "Maven Etkinlik", replyTo: "destek@maven-demo.example", dailyLimit: 2000, isDefault: true, status: "ACTIVE" },
         { tenantId: tenant.id, name: "Mailjet — Toplu Gönderim", kind: "MAILJET", fromEmail: "bulten@maven-demo.example", fromName: "Maven Bülten", dailyLimit: 12000, status: "ACTIVE" },
       ],
     });
-    const tplConfirm = await db.emailTemplate.findFirst({ where: { category: "CONFIRMATION" } });
-    const providerSmtp = await db.mailProviderConfig.findFirst({ where: { kind: "SMTP" } });
-    await db.campaign.updateMany({ where: { editionId: edition1.id, name: "Ödeme Hatırlatma" }, data: { phase: "PRE_EVENT", audienceMode: "SEGMENT", templateId: tplConfirm?.id ?? null, providerId: providerSmtp?.id ?? null } });
-    await db.campaign.updateMany({ where: { editionId: edition1.id, name: "Program Yayınlandı" }, data: { phase: "DURING_EVENT", audienceMode: "BOTH", customRecipients: "basin@maven-demo.example, vip@guestlist.example", providerId: (await db.mailProviderConfig.findFirst({ where: { kind: "MAILJET" } }))?.id ?? null } });
+    const tplConfirm = await tx.emailTemplate.findFirst({ where: { category: "CONFIRMATION" } });
+    const providerSmtp = await tx.mailProviderConfig.findFirst({ where: { kind: "SMTP" } });
+    await tx.campaign.updateMany({ where: { editionId: edition1.id, name: "Ödeme Hatırlatma" }, data: { phase: "PRE_EVENT", audienceMode: "SEGMENT", templateId: tplConfirm?.id ?? null, providerId: providerSmtp?.id ?? null } });
+    await tx.campaign.updateMany({ where: { editionId: edition1.id, name: "Program Yayınlandı" }, data: { phase: "DURING_EVENT", audienceMode: "BOTH", customRecipients: "basin@maven-demo.example, vip@guestlist.example", providerId: (await tx.mailProviderConfig.findFirst({ where: { kind: "MAILJET" } }))?.id ?? null } });
 
     // (6) Kurum kimlik kartı + çoklu kontak + konum QR notu
-    await db.organization.update({
+    await tx.organization.update({
       where: { id: abcPharma.id },
       data: {
         generalEmail: "info@abcpharma.example",
@@ -1227,7 +1231,7 @@ export async function POST(req: NextRequest) {
         locationNote: "Fuar Alanı · Stand A24 · Maslak Grand Otel lobisi karşısı",
       },
     });
-    await db.organizationContact.createMany({
+    await tx.organizationContact.createMany({
       data: [
         { organizationId: abcPharma.id, name: "Sibel Aksu", title: "Finans Müdürü", email: "finans@abcpharma.example", phone: "+90 212 555 01 90", role: "PAYMENT", department: "Finans" },
         { organizationId: abcPharma.id, name: "Cem Tekin", title: "Teknik Operasyon", email: "teknik@abcpharma.example", role: "TECHNICAL", department: "Operasyon" },
@@ -1235,26 +1239,26 @@ export async function POST(req: NextRequest) {
     });
 
     // (7) Sponsorluk — paket dışı custom hak + onay akışı örneği
-    await db.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "PROMO", type: "CUSTOM", label: "VIP Lounge Kahve Servisi (sponsor ayrıcalığı)", quantityGranted: 4, approvalStatus: "PROPOSED", restrictions: "Etkinlik komitesi onayı sonrası geçerli" } });
+    await tx.entitlement.create({ data: { editionId: edition1.id, ownerOrganizationId: abcPharma.id, source: "PROMO", type: "CUSTOM", label: "VIP Lounge Kahve Servisi (sponsor ayrıcalığı)", quantityGranted: 4, approvalStatus: "PROPOSED", restrictions: "Etkinlik komitesi onayı sonrası geçerli" } });
 
     // (8) Konaklama — occupancy/rate/no-show örneği + aile misafiri (Person self-ref)
-    await db.reservation.update({
+    await tx.reservation.update({
       where: { id: res1.id },
       data: { occupancyType: "DOUBLE", ratePerNight: toMinor(4200), nights: 3 },
     });
-    const resCancel = await db.reservation.findFirst({ where: { editionId: edition1.id, status: "CANCELLED" } });
-    if (resCancel) await db.reservation.update({ where: { id: resCancel.id }, data: { noShow: true, noShowFee: toMinor(1500) } });
+    const resCancel = await tx.reservation.findFirst({ where: { editionId: edition1.id, status: "CANCELLED" } });
+    if (resCancel) await tx.reservation.update({ where: { id: resCancel.id }, data: { noShow: true, noShowFee: toMinor(1500) } });
     const parentMustafa = participationMap.get("Mustafa");
     if (parentMustafa) {
-      const parent = await db.eventParticipation.findUnique({ where: { id: parentMustafa.participationId }, include: { person: true } });
+      const parent = await tx.eventParticipation.findUnique({ where: { id: parentMustafa.participationId }, include: { person: true } });
       if (parent) {
-        const child = await db.person.create({ data: { tenantId: tenant.id, firstName: "Elif", lastName: parent.person.lastName, relationType: "SPOUSE", parentPersonId: parent.personId, email: null } });
-        await db.eventParticipation.create({ data: { editionId: edition1.id, personId: child.id, source: "ADMIN_ENTRY", notes: "Refakatçi — Mustafa'ya bağlı aile misafiri" } });
+        const child = await tx.person.create({ data: { tenantId: tenant.id, firstName: "Elif", lastName: parent.person.lastName, relationType: "SPOUSE", parentPersonId: parent.personId, email: null } });
+        await tx.eventParticipation.create({ data: { editionId: edition1.id, personId: child.id, source: "ADMIN_ENTRY", notes: "Refakatçi — Mustafa'ya bağlı aile misafiri" } });
       }
     }
 
     // (8-bis) Yaka kartı tasarımcısı — varsayılan tasarım + profillere bağla
-    const badgeDesignMain = await db.badgeDesign.create({
+    const badgeDesignMain = await tx.badgeDesign.create({
       data: {
         editionId: edition1.id, name: "Standart Konferans — Dikey", widthMm: 105, heightMm: 148, bleedMm: 3, cornerMm: 5,
         sideCount: 2, fontKey: "montserrat", qrSource: "CREDENTIAL", sponsorHierarchyKey: "Gold Sponsor",
@@ -1280,16 +1284,16 @@ export async function POST(req: NextRequest) {
     });
     // (8-bis) Yaka kartı tasarımcısı — varsayılan tasarım + profillere bağla + arka plan (YAKA_KARTI klasörü)
     const badgeBg = coverSvg("MAVEN", "134e4a", "0f766e");
-    const badgeBgAsset = await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.YAKA_KARTI.id, name: `yaka-karti-arkaplan-standart-dikey-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 3, dataUrl: badgeBg, tags: "yaka kartı,arka plan", linkedType: "BADGE_DESIGN", linkedId: badgeDesignMain.id, uploadedBy: "Burak Demir" } });
-    await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.YAKA_KARTI.id, name: `yaka-karti-tasarim-standart-dikey-${uniq()}.json`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "DOCUMENT", mimeType: "application/json", sizeKb: 4, externalUrl: "https://assets.maven.demo/badge-design-main.json", tags: "yaka kartı,tasarım", linkedType: "BADGE_DESIGN", linkedId: badgeDesignMain.id, uploadedBy: "Burak Demir" } });
-    await db.badgeDesign.update({ where: { id: badgeDesignMain.id }, data: { frontBackgroundDataUrl: badgeBgAsset.dataUrl } });
-    await db.badgeProfile.update({ where: { id: bpDelegate.id }, data: { designId: badgeDesignMain.id } });
-    await db.badgeProfile.update({ where: { id: bpSpeaker.id }, data: { designId: badgeDesignMain.id } });
+    const badgeBgAsset = await tx.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.YAKA_KARTI.id, name: `yaka-karti-arkaplan-standart-dikey-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 3, dataUrl: badgeBg, tags: "yaka kartı,arka plan", linkedType: "BADGE_DESIGN", linkedId: badgeDesignMain.id, uploadedBy: "Burak Demir" } });
+    await tx.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.YAKA_KARTI.id, name: `yaka-karti-tasarim-standart-dikey-${uniq()}.json`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "DOCUMENT", mimeType: "application/json", sizeKb: 4, externalUrl: "https://assets.maven.demo/badge-design-main.json", tags: "yaka kartı,tasarım", linkedType: "BADGE_DESIGN", linkedId: badgeDesignMain.id, uploadedBy: "Burak Demir" } });
+    await tx.badgeDesign.update({ where: { id: badgeDesignMain.id }, data: { frontBackgroundDataUrl: badgeBgAsset.dataUrl } });
+    await tx.badgeProfile.update({ where: { id: bpDelegate.id }, data: { designId: badgeDesignMain.id } });
+    await tx.badgeProfile.update({ where: { id: bpSpeaker.id }, data: { designId: badgeDesignMain.id } });
 
     // (9) Sertifika tasarımcısı — KANVAS yerleşimi (designJson) + arka plan (SERTIFIKA klasörü)
     const certBg = coverSvg("", "fffdf6", "f1ead4");
-    const certBgAsset = await db.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.SERTIFIKA.id, name: `sertifika-arkaplan-katilimci-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 2, dataUrl: certBg, tags: "sertifika,arka plan", linkedType: "CERTIFICATE", linkedId: certPart.id, uploadedBy: "Selin Öztürk" } });
-    await db.certificateDefinition.updateMany({
+    const certBgAsset = await tx.mediaAsset.create({ data: { editionId: edition1.id, folderId: F.SERTIFIKA.id, name: `sertifika-arkaplan-katilimci-${uniq()}.svg`.toLowerCase().replace(/[^a-z0-9.\-]+/g, "-"), kind: "IMAGE", mimeType: "image/svg+xml", sizeKb: 2, dataUrl: certBg, tags: "sertifika,arka plan", linkedType: "CERTIFICATE", linkedId: certPart.id, uploadedBy: "Selin Öztürk" } });
+    await tx.certificateDefinition.updateMany({
       where: { editionId: edition1.id },
       data: {
         widthMm: 297, heightMm: 210, bleedMm: 5, fontKey: "playfair", textColor: "1f2937",
@@ -1311,7 +1315,7 @@ export async function POST(req: NextRequest) {
     });
 
     // ── Aktivite günlüğü (§47 domain event örnekleri) ──
-    await db.activityLog.createMany({
+    await tx.activityLog.createMany({
       data: [
         { tenantId: tenant.id, editionId: edition1.id, type: "EDITION_PUBLISHED", message: "Etkinlik yayınlandı: No-Dig Turkey 2026 — kayıt bağlantısı açık", actorName: "Burak Demir", createdAt: D(-40) },
         { tenantId: tenant.id, editionId: edition1.id, type: "SPONSOR_AGREEMENT", message: "Sözleşme aktifleşti: ABC Pharma — Gold Sponsorship 2026 (500.000 TRY)", actorName: "Selin Öztürk", createdAt: D(-38) },
@@ -1328,7 +1332,7 @@ export async function POST(req: NextRequest) {
     });
 
     // yetim claim temizliği (LATER ile oluşturulanları sil)
-    await db.entitlementClaim.deleteMany({ where: { entitlementId: "LATER" } });
+    await tx.entitlementClaim.deleteMany({ where: { entitlementId: "LATER" } });
 
     // TASK-A F1: portal yetenek belirteçleri artık PortalToken tablosunda sha256-hash
     // olarak yaşar — düzyazı provision YASAK. Kalıcı belirteçler onay kanalında
@@ -1337,42 +1341,43 @@ export async function POST(req: NextRequest) {
     // belirteç provision adımı YOKTUR (düz metin depolama tamamen kaldırıldı).
 
     const counts = {
-      people: await db.person.count(),
-      organizations: await db.organization.count(),
-      editions: await db.eventEdition.count(),
-      registrations: await db.registration.count(),
-      sponsorAgreements: await db.sponsorAgreement.count(),
-      submissions: await db.submission.count(),
-      sessions: await db.programSession.count(),
-      scanEvents: await db.scanEvent.count(),
-      forms: await db.formDefinition.count(),
-      formSubmissions: await db.formSubmission.count(),
-      expenses: await db.expense.count(),
-      incomes: await db.income.count(),
+      people: await tx.person.count(),
+      organizations: await tx.organization.count(),
+      editions: await tx.eventEdition.count(),
+      registrations: await tx.registration.count(),
+      sponsorAgreements: await tx.sponsorAgreement.count(),
+      submissions: await tx.submission.count(),
+      sessions: await tx.programSession.count(),
+      scanEvents: await tx.scanEvent.count(),
+      forms: await tx.formDefinition.count(),
+      formSubmissions: await tx.formSubmission.count(),
+      expenses: await tx.expense.count(),
+      incomes: await tx.income.count(),
     };
     return NextResponse.json({ ok: true, counts });
+    }, { timeout: 300_000, maxWait: 60_000 });
   } catch (e) {
     console.error("POST /api/seed", e);
     return NextResponse.json({ error: e instanceof Error ? e.message : "Seed başarısız" }, { status: 500 });
   }
 }
 
-async function wipe() {
+async function wipe(tx: DbTx) {
   const order = [
-    db.portalToken, db.companion, db.delegationMember, db.delegation, db.formAnswer, db.formSubmission, db.formField, db.formDefinition,
-    db.expense,
-    db.invitation, db.scanEvent, db.credential, db.badgeInstance, db.badgeProfile, db.badgeDesign,
-    db.certificateIssue, db.certificateDefinition, db.floorPlanObject, db.boothAllocation, db.boothUnit,
-    db.waitlistEntry,
-    db.deliverable, db.sponsorAgreement, db.sponsorPackage, db.sponsorTierDefinition,
-    db.entitlementClaim, db.entitlement, db.refund, db.payment, db.orderLine, db.order, db.catalogItem,
-    db.occupancySlot, db.roommateRequest, db.reservation, db.inventoryNight, db.roomBlock, db.roomType, db.hotelProperty,
-    db.review, db.reviewAssignment, db.decision, db.authorship, db.sessionMaterial, db.submission, db.track, db.scientificSetup,
-    db.programAssignment, db.programSession, db.programRoom,
-    db.eventRoleAssignment, db.registration, db.registrationCategory, db.eventProfileSnapshot, db.eventParticipation,
-    db.eventOrganizationAssignment, db.eventCapability, db.eventEdition, db.eventSeries,
-    db.organizationContact, db.organization, db.task, db.campaign, db.activityLog, db.cvEntry, db.customRole, db.person, db.user,
-    db.mediaAsset, db.mediaFolder, db.integrationLog, db.apiIntegration, db.emailTemplate, db.mailProviderConfig, db.tenant,
+    tx.portalToken, tx.companion, tx.delegationMember, tx.delegation, tx.formAnswer, tx.formSubmission, tx.formField, tx.formDefinition,
+    tx.expense,
+    tx.invitation, tx.scanEvent, tx.credential, tx.badgeInstance, tx.badgeProfile, tx.badgeDesign,
+    tx.certificateIssue, tx.certificateDefinition, tx.floorPlanObject, tx.boothAllocation, tx.boothUnit,
+    tx.waitlistEntry,
+    tx.deliverable, tx.sponsorAgreement, tx.sponsorPackage, tx.sponsorTierDefinition,
+    tx.entitlementClaim, tx.entitlement, tx.refund, tx.payment, tx.orderLine, tx.order, tx.catalogItem,
+    tx.occupancySlot, tx.roommateRequest, tx.reservation, tx.inventoryNight, tx.roomBlock, tx.roomType, tx.hotelProperty,
+    tx.review, tx.reviewAssignment, tx.decision, tx.authorship, tx.sessionMaterial, tx.submission, tx.track, tx.scientificSetup,
+    tx.programAssignment, tx.programSession, tx.programRoom,
+    tx.eventRoleAssignment, tx.registration, tx.registrationCategory, tx.eventProfileSnapshot, tx.eventParticipation,
+    tx.eventOrganizationAssignment, tx.eventCapability, tx.eventEdition, tx.eventSeries,
+    tx.organizationContact, tx.organization, tx.task, tx.campaign, tx.activityLog, tx.cvEntry, tx.customRole, tx.person, tx.user,
+    tx.mediaAsset, tx.mediaFolder, tx.integrationLog, tx.apiIntegration, tx.emailTemplate, tx.mailProviderConfig, tx.tenant,
   ];
   for (const m of order) {
     await (m as unknown as { deleteMany: () => Promise<unknown> }).deleteMany();

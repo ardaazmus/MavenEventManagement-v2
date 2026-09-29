@@ -437,6 +437,12 @@ export const ROUTE_POLICY_DEFINITIONS = {
     enforcement: "requireAdmin() + NON_PROD_GUARD",
     description: "Demo veritabanı tohumlama (yalnız non-prod)",
   },
+  "src/app/api/tenant/ensure/route.ts": {
+    category: "ADMIN",
+    authRequired: true,
+    enforcement: "requireAdmin() + 10/dk/IP + idempotent (varsa yaratmaz)",
+    description: "ONBOARD-1 sıfır-veri kuruluş sağlama (ilk kiracı)",
+  },
   "src/app/api/users/route.ts": {
     category: "ADMIN",
     authRequired: true,

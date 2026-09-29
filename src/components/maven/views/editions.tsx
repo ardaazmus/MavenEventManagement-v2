@@ -1,6 +1,6 @@
 "use client";
 // Etkinlikler — seri/edisyon, şablon önerileri, 9 adımlı wizard (özet form), yayın denetimi
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { useLang } from "@/lib/i18n";
@@ -35,10 +35,15 @@ type EditionRow = {
 };
 
 export function EditionsView() {
-  const { editions, currentEditionId, setCurrentEdition, setModule, bump, bootstrap } = useApp();
+  const { tenant, editions, currentEditionId, setCurrentEdition, setModule, bump, bootstrap, editionWizardNonce } = useApp();
   const { toast } = useToast();
   const { t } = useLang();
   const [createOpen, setCreateOpen] = useState(false);
+  // ONBOARD-1: sıfır-tenant girişi — needOrg=true iken sihirbaz yerine org paneli
+  const [orgName, setOrgName] = useState("");
+  const [needOrg, setNeedOrg] = useState<boolean | null>(null);
+  const [orgBusy, setOrgBusy] = useState(false);
+  const [orgError, setOrgError] = useState<string | null>(null);
   const [step, setStep] = useState(1);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
@@ -134,7 +139,23 @@ export function EditionsView() {
     }
     setBusy(true);
     try {
-      const tenantId = (await bootstrapData())?.tenantId;
+      const t0 = await bootstrapData();
+      let tenantId: string | undefined = t0?.id ?? t0?.tenantId;
+      if (!tenantId && orgName.trim()) {
+        // Savunma: sihirbaz sırasında kiracı silinmiş olabilir — sessizce yeniden sağla
+        try {
+          const r = await fetch("/api/tenant/ensure", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: orgName.trim() }),
+          });
+          const j = await r.json();
+          if (r.ok) tenantId = j.id;
+        } catch { /* aşağıda toast ile bildirilir */ }
+      }
+      if (!tenantId) {
+        toast({ title: t("editions.orgNeeded"), variant: "destructive" });
+        return;
+      }
       // seri: basitlik için yeni seri adı ile (aynı ad varsa mevcut seri kullanılır — slug çakışması yoksa)
       const seriesRes = await fetch("/api/event-series", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -183,6 +204,51 @@ export function EditionsView() {
   };
 
   const steps = ["Kimlik", "Tarih/Yer", "Yetenekler"];
+
+  // Kabuk CTA köprüsü: mount'ta nonce>0 ise sihirbazı aç (ensure sonrası akış)
+  // H-13 kalıbı: senkron setState yerine rAF geri-çağrısı (kademeli render yok).
+  useEffect(() => {
+    if (editionWizardNonce <= 0) return;
+    const id = requestAnimationFrame(() => setCreateOpen(true));
+    return () => cancelAnimationFrame(id);
+  }, [editionWizardNonce]);
+
+  // Sihirbaz açılışında kiracı probu — yoksa org paneli (adım cerrahisi yok)
+  useEffect(() => {
+    if (!createOpen) return;
+    if (tenant) {
+      const id = requestAnimationFrame(() => setNeedOrg(false));
+      return () => cancelAnimationFrame(id);
+    }
+    let cancelled = false;
+    fetch("/api/bootstrap", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setNeedOrg(!d?.tenant); })
+      .catch(() => { if (!cancelled) setNeedOrg(false); });
+    return () => { cancelled = true; };
+  }, [createOpen, tenant]);
+
+  const ensureOrg = async () => {
+    const name = orgName.trim();
+    if (!name || orgBusy) return;
+    setOrgBusy(true);
+    setOrgError(null);
+    try {
+      const res = await fetch("/api/tenant/ensure", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Kuruluş oluşturulamadı");
+      setNeedOrg(false);
+      await bootstrap();
+      toast({ title: data.name ?? name, description: t("editions.orgCreated") });
+    } catch (e) {
+      setOrgError(e instanceof Error ? e.message : "Hata");
+    } finally {
+      setOrgBusy(false);
+    }
+  };
 
   return (
     <div>
@@ -323,6 +389,35 @@ export function EditionsView() {
               disabled={publishBusy || publishLoading || !publishChecks || publishChecks.blockers.length > 0}
             >
               {publishBusy ? "Yayınlanıyor…" : publishChecks?.blockers.length ? "Kilitli — engelleri çöz" : "Yayınla ve bağlantıyı aç"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ONBOARD-1: sıfır-tenant org paneli — ayrı diyalog, sihirbaz arkasında hazır bekler */}
+      <Dialog open={createOpen && needOrg === true} onOpenChange={(o) => { if (!o) setCreateOpen(false); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Icons.Building2 className="size-4 text-primary" /> {t("editions.orgTitle")}
+            </DialogTitle>
+            <DialogDescription>{t("editions.orgDesc")}</DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label htmlFor="editions-org-name">{t("editions.orgNameLabel")}</Label>
+            <Input id="editions-org-name" value={orgName} onChange={(ev) => setOrgName(ev.target.value)}
+              placeholder={t("editions.orgNamePh")} className="mt-1"
+              onKeyDown={(ev) => { if (ev.key === "Enter") ensureOrg(); }} />
+          </div>
+          {orgError && (
+            <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700">
+              {orgError}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" disabled={orgBusy} onClick={() => setCreateOpen(false)}>{t("editions.orgCancel")}</Button>
+            <Button disabled={orgBusy || !orgName.trim()} onClick={ensureOrg}>
+              {orgBusy ? t("editions.orgCreating") : t("editions.orgContinue")}
             </Button>
           </DialogFooter>
         </DialogContent>

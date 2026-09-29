@@ -7,6 +7,7 @@ import { encryptSecret } from "@/lib/secrets";
 import { AgreementScopeError, assertAgreementScope, validateAgreementInput, type AgreementScopePrisma } from "@/lib/sponsorship/agreements";
 import { guardPackageDelete, guardTierDelete, validatePackageInput, validateTierInput, type DeleteGuardPrisma } from "@/lib/sponsorship/capacity";
 import { ActivityType } from "./activity";
+import { GuardError } from "./tenant-guard";
 
 type AnyDelegate = {
   findMany: (args?: Record<string, unknown>) => Promise<unknown[]>;
@@ -846,6 +847,8 @@ export async function withTenant(entity: string, data: Record<string, unknown>):
   const v = data.tenantId;
   if (typeof v === "string" && v.trim() !== "") return data;
   const tenant = await db.tenant.findFirst({ select: { id: true } });
-  if (!tenant) throw new Error("Kiracı (tenant) bulunamadı — önce demo verisini yükleyin");
+  // ONBOARD-1: GuardError olarak fırlar — [entity] dış catch'i iletiyi istemciye taşır
+  // (düz Error olsaydı jenerik "Kayıt oluşturulamadı"ya gömülürdü).
+  if (!tenant) throw new GuardError("Kiracı (tenant) bulunamadı — önce kuruluş oluşturun veya demo verisini yükleyin", 400);
   return { ...data, tenantId: tenant.id };
 }

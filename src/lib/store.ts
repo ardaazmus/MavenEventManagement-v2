@@ -55,6 +55,11 @@ interface AppState {
   setModule: (m: string) => void;
   setCurrentEdition: (id: string) => void;
   bump: () => void;
+  // ONBOARD-1: sıfır-veri kabuğundaki "Kuruluş oluştur ve başla" CTA'si, ensure
+  // sonrası Etkinlikler görünümünde sihirbazı otomatik açar (görünüm mount'ta
+  // nonce>0 görürse açılır — kabuk çocukları tenant yokken render etmez).
+  editionWizardNonce: number;
+  openEditionWizard: () => void;
   bootstrap: () => Promise<void>;
   seed: () => Promise<void>;
   patchCapability: (editionId: string, cap: { id: string; key: string; enabled: boolean; setupNote?: string | null }) => void;
@@ -76,6 +81,8 @@ export const useApp = create<AppState>((set, get) => ({
   },
   setCurrentEdition: (id) => set({ currentEditionId: id }),
   bump: () => set({ refreshKey: get().refreshKey + 1 }),
+  editionWizardNonce: 0,
+  openEditionWizard: () => set({ editionWizardNonce: get().editionWizardNonce + 1 }),
 
   // Yetenek toggle'ından sonra store'u anında düzelt — menü kilidi (hasCapability)
   // ve Ayarlar switch'i DB ile aynı turda güncellenir (bug: toggle bağlı değildi)

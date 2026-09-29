@@ -1,11 +1,11 @@
 {
-  "totalDiscovered": 162,
-  "totalClassified": 162,
+  "totalDiscovered": 163,
+  "totalClassified": 163,
   "unclassifiedCount": 0,
   "categoryCounts": {
     "PUBLIC": 46,
     "STAFF": 76,
-    "ADMIN": 36,
+    "ADMIN": 37,
     "DOMAIN_POLICY": 4
   },
   "unclassifiedRoutes": [],
@@ -1094,6 +1094,13 @@
       "authRequired": true,
       "enforcement": "requireAdmin() + NON_PROD_GUARD",
       "description": "Demo veritabanı tohumlama (yalnız non-prod)"
+    },
+    {
+      "path": "src/app/api/tenant/ensure/route.ts",
+      "category": "ADMIN",
+      "authRequired": true,
+      "enforcement": "requireAdmin() + 10/dk/IP + idempotent (varsa yaratmaz)",
+      "description": "ONBOARD-1 sıfır-veri kuruluş sağlama (ilk kiracı)"
     },
     {
       "path": "src/app/api/users/[id]/roles/route.ts",

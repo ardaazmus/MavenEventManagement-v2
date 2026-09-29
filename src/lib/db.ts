@@ -1,6 +1,10 @@
 import { PrismaClient } from '@prisma/client'
 import { moduleFor, severityFor } from '@/lib/api/notification-meta'
 
+// ONBOARD-2: interaktif transaction istemci tipi — seed atomikliği için
+// helper'lara (registration-chain, media-system) tx geçilirken kullanılır.
+export type DbTx = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
+
 // Canlı bildirim yayını — ActivityLog create/createMany yakalanır, live-bus'a iletilir.
 // Fire-and-forget: bus kapalıysa sessizce yutulur; ana işlem ASLA bloklanmaz/bozulmaz.
 const LIVE_BUS_PUBLISH_URL = "http://127.0.0.1:3004/publish";

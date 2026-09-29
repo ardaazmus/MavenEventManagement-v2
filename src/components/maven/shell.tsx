@@ -6,6 +6,9 @@ import { MODULES, MODULE_GROUPS, roleCanSee, EDITION_STATUS, label, fmtDate } fr
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -160,13 +163,43 @@ function currentEditionOf() {
 }
 
 export function Shell({ children }: { children: React.ReactNode }) {
-  const { tenant, editions, currentEditionId, setCurrentEdition, module, loading, error, bootstrap, seed, modelCount, me } = useApp();
+  const { tenant, editions, currentEditionId, setCurrentEdition, module, setModule, openEditionWizard, loading, error, bootstrap, seed, modelCount, me } = useApp();
   const { lang, setLang: setUiLang } = useLang();
   const edition = editions.find((e) => e.id === currentEditionId);
   const activeModule = MODULES.find((m) => m.id === module);
 
   // mobil menü
   const [open, setOpen] = useState(false);
+
+  // ONBOARD-1: sıfır-veri kuruluş diyaloğu — ensure → bootstrap → Etkinlikler sihirbazı
+  const [orgOpen, setOrgOpen] = useState(false);
+  const [orgName, setOrgName] = useState("");
+  const [orgBusy, setOrgBusy] = useState(false);
+  const [orgError, setOrgError] = useState<string | null>(null);
+
+  const ensureOrgAndStart = async () => {
+    const name = orgName.trim();
+    if (!name || orgBusy) return;
+    setOrgBusy(true);
+    setOrgError(null);
+    try {
+      const res = await fetch("/api/tenant/ensure", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Kuruluş oluşturulamadı");
+      await bootstrap();
+      setOrgOpen(false);
+      setOrgName("");
+      openEditionWizard();
+      setModule("editions");
+    } catch (e) {
+      setOrgError(e instanceof Error ? e.message : "Hata");
+    } finally {
+      setOrgBusy(false);
+    }
+  };
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -320,7 +353,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   <p className="font-medium">{t("shell.noData")}</p>
                   <p className="mt-1 text-sm text-muted-foreground">{t("shell.noDataDesc")}</p>
                 </div>
-                <Button onClick={() => seed()} size="lg"><Icons.Sparkles className="size-4" /> {t("shell.seed")}</Button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button onClick={() => { setOrgError(null); setOrgOpen(true); }} size="lg"><Icons.Building2 className="size-4" /> {t("shell.onboardStart")}</Button>
+                  <Button onClick={() => seed()} size="lg" variant="outline"><Icons.Sparkles className="size-4" /> {t("shell.seed")}</Button>
+                </div>
               </div>
             ) : (
               children
@@ -340,6 +376,34 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </footer>
       </div>
+      {/* ONBOARD-1: sıfır-veri kuruluş diyaloğu — ensure sonrası Etkinlikler sihirbazı açılır */}
+      <Dialog open={orgOpen} onOpenChange={(o) => { if (!orgBusy) setOrgOpen(o); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Icons.Building2 className="size-4 text-primary" /> {t("editions.orgTitle")}
+            </DialogTitle>
+            <DialogDescription>{t("editions.orgDesc")}</DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label htmlFor="shell-org-name">{t("editions.orgNameLabel")}</Label>
+            <Input id="shell-org-name" value={orgName} onChange={(ev) => setOrgName(ev.target.value)}
+              placeholder={t("editions.orgNamePh")} className="mt-1"
+              onKeyDown={(ev) => { if (ev.key === "Enter") ensureOrgAndStart(); }} />
+          </div>
+          {orgError && (
+            <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700">
+              {orgError}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" disabled={orgBusy} onClick={() => setOrgOpen(false)}>{t("editions.orgCancel")}</Button>
+            <Button disabled={orgBusy || !orgName.trim()} onClick={ensureOrgAndStart}>
+              {orgBusy ? t("editions.orgCreating") : t("editions.orgContinue")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </TooltipProvider>
   );
 }

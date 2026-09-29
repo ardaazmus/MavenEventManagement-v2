@@ -12,7 +12,7 @@
 // Dış sağlayıcı sözleşmesi: burada Ödeme yalnız PENDING açılır — başarı onayı
 // SADECE sağlayıcı sonucunun kalıcı mutabakatından sonra yapılır (payments/[id]/process).
 
-import { db } from "@/lib/db";
+import { db, type DbTx } from "@/lib/db";
 import { ActivityType } from "./activity";
 
 // export: manuel/toplu içe-aktarma zinciri (manual-registration.ts) aynı üreticiyi paylaşır
@@ -42,9 +42,12 @@ export interface ChainResult {
 
 export async function createRegistrationFromSubmission(
   submissionId: string,
-  opts?: { paymentSource?: string }
+  opts?: { paymentSource?: string; client?: DbTx }
 ): Promise<ChainResult> {
-  const submission = await db.formSubmission.findUnique({
+  // ONBOARD-2: dış tx verilirse (seed) ona katılınır — iç-içe $transaction
+  // Prisma'da YASAK olduğundan iç tx atlanır; verilmezse davranış bayt-özdeş.
+  const c: DbTx = opts?.client ?? (db as unknown as DbTx);
+  const submission = await c.formSubmission.findUnique({
     where: { id: submissionId },
     include: { form: true },
   });
@@ -52,22 +55,22 @@ export async function createRegistrationFromSubmission(
 
   // Zaten zincir kurulmuşsa mevcut kaydı döndür (idempotent — hızlı yol)
   if (submission.registrationId) {
-    return readExistingChain(submission.registrationId, submission.editionId);
+    return readExistingChain(submission.registrationId, submission.editionId, c);
   }
 
-  const edition = await db.eventEdition.findUnique({ where: { id: submission.editionId } });
+  const edition = await c.eventEdition.findUnique({ where: { id: submission.editionId } });
   if (!edition) throw new Error("Etkinlik (edisyon) bulunamadı");
 
   // Kategori fiyatı tx DIŞINDA okunur (yalnız okuma; tx içinde yazımlar var)
   const category = submission.form.defaultCategoryId
-    ? await db.registrationCategory.findUnique({ where: { id: submission.form.defaultCategoryId } })
-    : await db.registrationCategory.findFirst({
+    ? await c.registrationCategory.findUnique({ where: { id: submission.form.defaultCategoryId } })
+    : await c.registrationCategory.findFirst({
         where: { editionId: edition.id, isActive: true },
         orderBy: { order: "asc" },
       });
 
-  try {
-    return await db.$transaction(async (tx) => {
+  // Zincir gövdesi — closure: edition/submission/category/opts
+  const build = async (tx: DbTx): Promise<ChainResult> => {
       // 1) KİŞİ — e-posta güçlü eşleştirme işareti (Kimlik kuralı 1): varsa yeniden oluşturma
       let person = await tx.person.findFirst({
         where: { tenantId: edition.tenantId, email: submission.respondentEmail },
@@ -185,27 +188,31 @@ export async function createRegistrationFromSubmission(
       });
 
       return { registration, order, payment, person, participation, existing: false };
-    }, { timeout: 20_000, maxWait: 10_000 }); // eşzamanlı onay yarışı: yazım kilit beklemesi tx zaman aşımına düşmeden çözülür
+  };
+  try {
+    if (opts?.client) return await build(opts.client);
+    return await db.$transaction(async (tx) => build(tx as unknown as DbTx), { timeout: 20_000, maxWait: 10_000 }); // eşzamanlı onay yarışı: yazım kilit beklemesi tx zaman aşımına düşmeden çözülür
   } catch (e) {
     // Idempotent-retry sözleşmesi: başarısızlık türünden bağımsız (P2002 unique yarışı,
     // tx kilidi/zaman aşımı vb.) önce gönderi defteri kontrol edilir — zincir bu ara
     // duruma kadar kalıcılaştıysa mevcut zincir döndürülür; tx tamamen geri alındıysa
     // submission.registrationId hâlâ boştur ve gerçek hata yeniden fırlatılır.
-    const again = await db.formSubmission.findUnique({ where: { id: submission.id }, select: { registrationId: true } });
-    if (again?.registrationId) return readExistingChain(again.registrationId, submission.editionId);
+    const again = await c.formSubmission.findUnique({ where: { id: submission.id }, select: { registrationId: true } });
+    if (again?.registrationId) return readExistingChain(again.registrationId, submission.editionId, c);
     throw e;
   }
 }
 
 // mevcut zinciri oku (idempotent dönüş) — ham ORM kayıtları DAHİLİ kullanım içindir;
 // herkese açık yanıtlar public-register DTO'suyla izin-listeye düşürülür.
-async function readExistingChain(registrationId: string, editionId: string): Promise<ChainResult> {
-  const registration = await db.registration.findUnique({
+async function readExistingChain(registrationId: string, editionId: string, client?: DbTx): Promise<ChainResult> {
+  const c: DbTx = client ?? (db as unknown as DbTx);
+  const registration = await c.registration.findUnique({
     where: { id: registrationId },
     include: { category: true, participation: { include: { person: true } } },
   });
   const order = registration
-    ? await db.order.findFirst({ where: { editionId, notes: { contains: registration.confirmationNo } } })
+    ? await c.order.findFirst({ where: { editionId, notes: { contains: registration.confirmationNo } } })
     : null;
   return { registration, order, payment: null, person: null, participation: null, existing: true };
 }

@@ -3,9 +3,12 @@
 // rol=null kabul eder ve TÜM modülleri gösterir (mevcut davranış korunur).
 // Auth-on + personel oturumu → { authenticated:true, role, name, email } — istemci
 // MODULES.roles matrisiyle menüyü ve modül kilitlerini süzer.
+// F2-a: read-only kadro rolleri (VIEWER/AUDITOR/OBSERVER) de döner — menü rol-uyarlı
+// süzülür; katılımcı rolleri yine null kalır (konsol erişimi yok).
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requestActor, STAFF_ROLES } from "@/lib/auth/request-context";
+import { READONLY_ROLES } from "@/lib/api/permissions";
 
 export async function GET() {
   try {
@@ -16,7 +19,7 @@ export async function GET() {
       select: { name: true, email: true, role: true },
     });
     if (!u) return NextResponse.json({ authenticated: false, role: null, name: null });
-    const role = STAFF_ROLES.has(u.role) ? u.role : null;
+    const role = STAFF_ROLES.has(u.role) || READONLY_ROLES.has(u.role) ? u.role : null;
     return NextResponse.json({
       authenticated: Boolean(role),
       role,

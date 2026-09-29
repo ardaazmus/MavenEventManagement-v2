@@ -4067,7 +4067,10 @@
     "SPONSORSHIP_MANAGER": "Sponsorship Manager",
     "SCIENTIFIC_MANAGER": "Scientific Manager",
     "PROGRAM_MANAGER": "Program Manager",
-    "ONSITE_MANAGER": "Onsite Manager"
+    "ONSITE_MANAGER": "Onsite Manager",
+    "VIEWER": "Viewer",
+    "AUDITOR": "Auditor",
+    "OBSERVER": "Observer"
   },
   "regMail": {
     "btn": "Organization Approval Mail",
@@ -4137,7 +4140,9 @@
     "sendInvite": "Send Invite",
     "inviteFailed": "Could not create invite",
     "inviteOnce": "Invite created for {email}. The token is shown once:",
-    "inviteToken": "Invite token"
+    "inviteToken": "Invite token",
+    "lockedTitle": "Admin permission required",
+    "lockedDesc": "This card is only available to the organization owner/admin (ORG_OWNER/ORG_ADMIN). Contact an authorized admin for role assignments."
   },
   "companyComms": {
     "title": "Company Communications",

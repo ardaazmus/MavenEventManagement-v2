@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLang } from "@/lib/i18n";
 import { useApp } from "@/lib/store";
 import { apiGet, apiSend } from "@/lib/client";
+import { canManageTeam } from "@/lib/constants";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, Chip } from "../bits";
 import * as Icons from "lucide-react";
 
@@ -50,16 +51,20 @@ interface InviteResult {
 export function UserAdminCard() {
   const { t } = useLang();
   const { toast } = useToast();
-  const { editions } = useApp();
+  const { editions, me } = useApp();
+  const canManage = canManageTeam(me?.role ?? null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [assignUser, setAssignUser] = useState<UserRow | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const usersApi = useApi<{ items: UserRow[]; total: number }>(
-    () => apiGet("/api/users?limit=200"),
-    [],
+    () => (canManage ? apiGet("/api/users?limit=200") : Promise.resolve({ items: [], total: 0 })),
+    [canManage],
   );
-  const rolesApi = useApi<RolesDict>(() => apiGet("/api/users/roles"), []);
+  const rolesApi = useApi<RolesDict>(
+    () => (canManage ? apiGet<RolesDict>("/api/users/roles") : Promise.resolve({ invitable: [], assignable: [] })),
+    [canManage],
+  );
 
   const editionName = (id: string) => editions.find((e) => e.id === id)?.name ?? id;
 
@@ -100,17 +105,28 @@ export function UserAdminCard() {
       title={t("userAdmin.title")}
       desc={t("userAdmin.desc")}
       action={
-        <Button size="sm" onClick={() => setInviteOpen(true)}>
-          <Icons.UserPlus className="size-3.5" /> {t("userAdmin.invite")}
-        </Button>
+        canManage ? (
+          <Button size="sm" onClick={() => setInviteOpen(true)}>
+            <Icons.UserPlus className="size-3.5" /> {t("userAdmin.invite")}
+          </Button>
+        ) : undefined
       }
     >
-      {usersApi.loading && <Loading rows={3} />}
-      {usersApi.error && <ErrorState message={usersApi.error} onRetry={usersApi.reload} />}
-      {usersApi.data && usersApi.data.items.length === 0 && (
+      {!canManage && (
+        <div className="flex min-h-40 flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed bg-muted/20 p-6 text-center">
+          <span className="grid size-10 place-items-center rounded-full bg-amber-50 text-amber-600">
+            <Icons.Lock className="size-5" />
+          </span>
+          <p className="text-sm font-medium">{t("userAdmin.lockedTitle")}</p>
+          <p className="max-w-sm text-xs text-muted-foreground">{t("userAdmin.lockedDesc")}</p>
+        </div>
+      )}
+      {canManage && usersApi.loading && <Loading rows={3} />}
+      {canManage && usersApi.error && <ErrorState message={usersApi.error} onRetry={usersApi.reload} />}
+      {canManage && usersApi.data && usersApi.data.items.length === 0 && (
         <EmptyState title={t("userAdmin.empty")} />
       )}
-      {usersApi.data && usersApi.data.items.length > 0 && (
+      {canManage && usersApi.data && usersApi.data.items.length > 0 && (
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-full text-left text-xs">
             <thead>

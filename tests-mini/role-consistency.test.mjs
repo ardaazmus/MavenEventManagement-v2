@@ -167,7 +167,7 @@ test("KC-5 — Legacy rol değişince menü ve kapı AYNI satırdan okur (tek do
 
     const readRole = async () =>
       (await prisma.user.findUnique({ where: { id: user.id }, select: { role: true } }))?.role;
-    const meRole = (role) => (STAFF_ROLES.has(role) ? role : null); // auth/me eşlemesi
+    const meRole = (role) => (STAFF_ROLES.has(role) || READONLY_ROLES.has(role) ? role : null); // auth/me eşlemesi (F2-a)
 
     const r1 = await readRole();
     assert.strictEqual(r1, "EVENT_MANAGER");
@@ -179,7 +179,7 @@ test("KC-5 — Legacy rol değişince menü ve kapı AYNI satırdan okur (tek do
     await prisma.user.update({ where: { id: user.id }, data: { role: "VIEWER" } });
     const r2 = await readRole();
     assert.strictEqual(r2, "VIEWER");
-    assert.strictEqual(meRole(r2), null, "menü tarafı: VIEWER STAFF_ROLES dışında (auth/me null döndürür — mevcut davranış)");
+    assert.strictEqual(meRole(r2), "VIEWER", "menü tarafı: read-only roller de menü katmanına taşınır (F2-a)");
     assert.strictEqual(roleCanSee(mod("finance"), r2), false, "menü: VIEWER finans modülünü görmez");
     assert.strictEqual(roleCanSee(mod("compliance"), r2), false, "menü: VIEWER uyumluluk modülünü görmez");
     assert.strictEqual(authorizeEntity({ entity: "api-integrations", action: "VIEW", role: r2 }), false, "kapı: READONLY + integrations yasak");

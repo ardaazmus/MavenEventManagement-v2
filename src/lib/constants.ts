@@ -507,6 +507,14 @@ export function roleCanSee(mod: Pick<ModuleDef, "roles">, role: string | null | 
   return (mod.roles as readonly string[]).includes(role);
 }
 
+// Ekip yönetimi kartı görünürlüğü (F2-a) — roleCanSee gibi SAF fonksiyon:
+// yalnız ORG_OWNER/ORG_ADMIN ekip yönetir; diğer tüm roller kilitli-bilgi görür.
+// Rol yoksa (auth-off/demo) mevcut davranış korunur: kart açık.
+export function canManageTeam(role: string | null | undefined): boolean {
+  if (!role) return true;
+  return role === "ORG_OWNER" || role === "ORG_ADMIN";
+}
+
 // ─── Yardımcılar ────────────────────────────────────────────────────────────
 
 // TASK-A F8: label() harita etiketini döner (saf fonksiyon, sunucu-güvenli)

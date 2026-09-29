@@ -4067,7 +4067,10 @@
     "SPONSORSHIP_MANAGER": "Sponsorluk Yöneticisi",
     "SCIENTIFIC_MANAGER": "Bilimsel Yönetici",
     "PROGRAM_MANAGER": "Program Yöneticisi",
-    "ONSITE_MANAGER": "Saha Yöneticisi"
+    "ONSITE_MANAGER": "Saha Yöneticisi",
+    "VIEWER": "İzleyici",
+    "AUDITOR": "Denetçi",
+    "OBSERVER": "Gözlemci"
   },
   "regMail": {
     "btn": "Kurum Onay Postası",
@@ -4137,7 +4140,9 @@
     "sendInvite": "Davet Gönder",
     "inviteFailed": "Davet oluşturulamadı",
     "inviteOnce": "{email} için davet oluşturuldu. Belirteç bir kez gösterilir:",
-    "inviteToken": "Davet belirteci"
+    "inviteToken": "Davet belirteci",
+    "lockedTitle": "Yönetici yetkisi gerekli",
+    "lockedDesc": "Bu kartı yalnızca üst firma sahibi/yöneticisi (ORG_OWNER/ORG_ADMIN) kullanabilir. Rol atamaları için yetkili bir yöneticiyle görüşün."
   },
   "companyComms": {
     "title": "Şirket İletişimi",

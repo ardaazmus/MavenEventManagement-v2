@@ -55,10 +55,11 @@ test("FULL — PortalToken AUTH girişi → kimlik + oturum kalıcılığı → 
     await expect(page.getByText("E2E Tokenlı")).toBeVisible({ timeout: 10_000 });
 
     // 4) oturum kalıcılığı — yenileme sonrası hâlâ AUTH (login ekranına düşmez)
+    // PWA-ADMIN v2 sözleşmesi: derin-bağ onurlandırılır — profil ekranında
+    // yenileme PROFİLDE kalır (oturum + ekran birlikte korunur — daha güçlü kanıt).
     await page.reload();
-    await expect(page.getByRole("list", { name: /Modüller|Modules/i })).toBeVisible({ timeout: 20_000 });
-    await page.getByRole("navigation", { name: /Ana gezinme|Main navigation/i }).getByRole("button", { name: /Profil|Profile/i }).click();
-    await expect(page.getByText("E2E Tokenlı")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("E2E Tokenlı")).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(/#p=profile/, { timeout: 10_000 });
 
     // 5) çıkış — oturum temizlenir, portal GİRİŞ ekranına döner (bootstrap: session yok → LOGIN)
     await page.getByRole("button", { name: /Çıkış Yap|Sign out/i }).click();

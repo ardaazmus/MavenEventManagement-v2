@@ -16,6 +16,7 @@ export const PWA_SHORTCUT_TARGETS = [
   "qa",
   "forms",
   "b2b",
+  "game",
   "profile",
 ] as const;
 export type PwaShortcutTarget = (typeof PWA_SHORTCUT_TARGETS)[number];
@@ -30,8 +31,9 @@ export const PWA_SHORTCUT_HASH: Record<PwaShortcutTarget, string> = {
   qa: "qa",
   forms: "forms",
   b2b: "b2b",
+  game: "game",
   profile: "profile",
-};
+}; // PORTAL_NAV_SCREENS ile birebir (form hariç — formRef gerekir)
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 // URL politikası: site-içi yol VEYA https — javascript:/data:/protocol-relative YASAK
@@ -133,6 +135,24 @@ export function validatePwaSettingsInput(input: unknown):
 
 export function serializePwaSettings(value: PwaSettings): string {
   return JSON.stringify(value);
+}
+
+// iOS kurulumları beforeinstallprompt üretmez — PWA_INSTALL analitiği eksik
+// sayılır. Telafi: standalone başlatmada BİR KEZ ateşlenir (bayrak-boğma).
+// storage enjekte edilir (node-test uyumu).
+export function consumeStandaloneInstallFlag(
+  slug: string,
+  storage: Pick<Storage, "getItem" | "setItem"> | null | undefined,
+): boolean {
+  if (!storage) return false;
+  try {
+    const k = `maven.pwa.installed.${slug}`;
+    if (storage.getItem(k)) return false;
+    storage.setItem(k, String(Date.now()));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Kurulabilirlik kontrol listesi (admin kartı + E2E denetimi AYNI mantık) ───

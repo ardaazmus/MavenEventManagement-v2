@@ -33,7 +33,7 @@ import { haptic } from "@/lib/haptic";
 import { useSwipeBack } from "@/hooks/useSwipeBack";
 import { usePWAInstall } from "@/hooks/usePWAInstall";
 import { PORTAL_NAV_ROOT, parseNavHash, navHash, pushNav, popNav, resetNav, syncNav, isPortalScreen } from "@/lib/portal-nav";
-import { PWA_DEFAULTS, type PwaSettings } from "@/lib/pwa-settings";
+import { PWA_DEFAULTS, consumeStandaloneInstallFlag, type PwaSettings } from "@/lib/pwa-settings";
 import { InstallSheet, OfflineStrip, CompactAppBar, isIosDevice } from "@/components/maven/portal-install-sheet";
 // PublicFormPage artık STATİK import EDİLMEZ — aşağıda dynamic (CRON-10 lazy chunk)
 
@@ -535,8 +535,16 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   const [content, setContent] = useState<PortalContent | null>(null);
   const [kind, setKind] = useState<"GUEST" | "AUTH" | null>(null);
   // ── gezinme yığını: her ekranın "önceki sayfa"sı buradan çözülür (kök: home) ──
-  const [nav, setNav] = useState<string[]>(() => [PORTAL_NAV_ROOT]);
-  // reload→home: hash yalnizca popstate esitlemesi icindir (derin-bag cozulmez)
+  const [nav, setNav] = useState<string[]>(() => {
+    // kısayol/paylaşılan bağlantı: yığın [home, hedef] başlar → geri home'a döner.
+    // parseNavHash güvenli kümeyle doğrular (form hariç — formRef gerekir).
+    if (typeof window !== "undefined") {
+      const h = parseNavHash(window.location.hash);
+      if (h && h !== PORTAL_NAV_ROOT) return [PORTAL_NAV_ROOT, h];
+    }
+    return [PORTAL_NAV_ROOT];
+  });
+  // PWA-ADMIN v2: ilk açılışta GEÇERLİ hash onurlandırılır (derin-bağ)
   const screen = nav[nav.length - 1] ?? PORTAL_NAV_ROOT;
   // detay-içi geri (konuşmacı/sponsor detayı): açık detay önce kapanır, sonra yığın pop'lanır
   const subBackRef = useRef<(() => boolean) | null>(null);
@@ -718,6 +726,12 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   // manifesti takar (kurulan uygulama doğru etkinliği açar).
   useEffect(() => {
     if (typeof document === "undefined" || !editionSlug) return;
+    // PWA kapalıysa kurulabilirlik teklifi KALDIRILIR (statik yedek admin yüzeyine
+    // işaret eder — kapalı PWA'da onu bırakmak daha kötüdür). İçerik gelene dek bilinmez.
+    if (content?.config && !content.config.pwaEnabled) {
+      document.querySelector('link[rel="manifest"]')?.remove();
+      return;
+    }
     try {
       let link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
       if (!link) {
@@ -749,13 +763,13 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     } catch {
       /* head enjeksiyonu başarısız olursa statik varsayılanlar kalır */
     }
-  }, [editionSlug, content?.config?.themeColor, content?.edition?.portalHeaderAccent, pwa.statusBarStyle]);
+  }, [editionSlug, content?.config?.themeColor, content?.config?.pwaEnabled, content?.edition?.portalHeaderAccent, pwa.statusBarStyle]);
 
   // ── PWA-ADMIN v1: kurulum bottom-sheet'i — anlamlı an + erteleme kalıcılığı ──
   const [installSheetOpen, setInstallSheetOpen] = useState(false);
   const [iosSheet, setIosSheet] = useState(false);
   useEffect(() => {
-    if (phase !== "ACTIVE" || !cfg?.pwaEnabled || !pwa.installBanner || isStandalone) return;
+    if (phase !== "ACTIVE" || !cfg?.pwaEnabled || !pwa.installBanner || isStandalone || pwa.display === "browser") return;
     let dismissedUntil = 0;
     try {
       dismissedUntil = Number(window.localStorage.getItem(`maven.pwa.dismiss.${editionSlug}`) || 0);
@@ -774,7 +788,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
       setInstallSheetOpen(true);
     }, Math.max(0, Math.min(600, pwa.installDelaySec)) * 1000);
     return () => clearTimeout(timer);
-  }, [phase, cfg?.pwaEnabled, pwa.installBanner, pwa.installDelaySec, pwa.iosInstructions, isStandalone, canInstall, editionSlug]);
+  }, [phase, cfg?.pwaEnabled, pwa.installBanner, pwa.installDelaySec, pwa.iosInstructions, pwa.display, isStandalone, canInstall, editionSlug]);
   const dismissInstallSheet = useCallback((days: number) => {
     setInstallSheetOpen(false);
     try {
@@ -825,6 +839,15 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     }
     toast({ title: t("portalApp.install.doneTitle"), description: t("portalApp.install.doneDesc") });
   };
+
+  // ── PWA-ADMIN v2: kurulu uygulamadan açılış — iOS kurulumları prompt
+  // üretmediği için analitik burada telafi edilir (bayrakla bir kez) ──
+  useEffect(() => {
+    if (phase !== "ACTIVE" || !sessionKey || !isStandalone) return;
+    if (typeof window === "undefined") return;
+    if (!consumeStandaloneInstallFlag(editionSlug, window.localStorage)) return;
+    portalSend("/api/portal/interact", { action: "PWA_INSTALL" }, sessionKey).catch(() => undefined);
+  }, [phase, sessionKey, isStandalone, editionSlug]);
 
   // ── canlı duyuru akışı (§5.4) — 20 sn polling ──
   const lastPollRef = useRef<string>(new Date().toISOString());

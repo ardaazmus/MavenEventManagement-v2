@@ -27,8 +27,12 @@ export async function GET(req: NextRequest) {
     }
     const config = await db.eventPortalConfig.findUnique({
       where: { editionId: edition.id },
-      select: { themeColor: true, pwaJson: true },
+      select: { themeColor: true, pwaJson: true, pwaEnabled: true },
     });
+    // PWA kapalıysa kurulabilirlik YOK — kayıt yoksa varsayılan AÇIK sayılır
+    if (config && !config.pwaEnabled) {
+      return NextResponse.json({ error: "PWA bu etkinlikte kapalı" }, { status: 404 });
+    }
 
     const manifest = buildPortalManifest({
       editionSlug: edition.slug,

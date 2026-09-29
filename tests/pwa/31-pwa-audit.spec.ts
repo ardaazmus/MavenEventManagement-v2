@@ -85,6 +85,24 @@ test("DENETİM — çevrimdışı yenilemede boş sayfa yok (önbellek/yedek)", 
   }
 });
 
+test("DENETİM — derin-bağ: #p=program ile giriş programa düşer + yenilemede korunur", async ({ page }) => {
+  test.setTimeout(90_000);
+  await isolateClientIp(page);
+  await page.goto(`/?portal=${SLUG}#p=program`);
+  await page.getByLabel(/Etkinlik Kodu|Event code/i).fill("DEMO26", { timeout: 8_000 });
+  await page.getByRole("button", { name: /Portala Gir|Enter portal/i }).click();
+  // kısayol hedefi: program ekranı + geri oku home'a döner
+  await expect(page.getByRole("heading", { name: /Genel Program|Program/i }).first()).toBeVisible({ timeout: 20_000 });
+  await page.reload({ waitUntil: "load", timeout: 30_000 }).catch(() => undefined);
+  await expect(page.getByRole("heading", { name: /Genel Program|Program/i }).first()).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: /Geri|Back/i }).first().click();
+  await expect(page.getByRole("list", { name: /Modüller|Modules/i })).toBeVisible({ timeout: 10_000 });
+  // geçersiz hash → güvenli home
+  await page.goto(`/?portal=${SLUG}#p=hacker`);
+  await page.waitForTimeout(1500);
+  await expect(page.getByRole("list", { name: /Modüller|Modules/i })).toBeVisible({ timeout: 20_000 });
+});
+
 test("DENETİM — kompakt bar kaydırınca belirir, tepede gizlenir", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await guestLogin(page);
@@ -130,6 +148,25 @@ test.describe("DENETİM — kurulum sheet (iOS yönergesi + erteleme)", () => {
       expect(Number(dismissed)).toBeGreaterThan(Date.now());
       await page.reload({ waitUntil: "load", timeout: 30_000 }).catch(() => undefined);
       await page.waitForTimeout(2500);
+      await expect(page.getByRole("dialog", { name: /Uygulamayı yükleyin|Install the app/i })).toHaveCount(0);
+    } finally {
+      await page.request.put("/api/portal/config", { data: { editionId: eid, pwa: null } });
+    }
+  });
+
+  test("display=browser iken sheet AÇILMAZ (kurulamaz yüzeyde teşvik yok)", async ({ page }, info) => {
+    test.skip(info.project.name !== "demo-auth-off", "singleton yazma: yalnız demo");
+    test.setTimeout(120_000);
+    await isolateClientIp(page);
+    const eid = await editionIdOf(page);
+    const setup = await page.request.put("/api/portal/config", { data: { editionId: eid, pwa: { installDelaySec: 0, display: "browser" } } });
+    expect(setup.status()).toBe(200);
+    try {
+      await page.goto(`/?portal=${SLUG}`);
+      await page.getByLabel(/Etkinlik Kodu|Event code/i).fill("DEMO26");
+      await page.getByRole("button", { name: /Portala Gir|Enter portal/i }).click();
+      await expect(page.getByRole("navigation", { name: /Ana gezinme|Main navigation/i })).toBeVisible({ timeout: 20_000 });
+      await page.waitForTimeout(3000);
       await expect(page.getByRole("dialog", { name: /Uygulamayı yükleyin|Install the app/i })).toHaveCount(0);
     } finally {
       await page.request.put("/api/portal/config", { data: { editionId: eid, pwa: null } });

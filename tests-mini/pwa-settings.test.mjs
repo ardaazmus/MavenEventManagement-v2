@@ -6,6 +6,7 @@ import {
   validatePwaSettingsInput,
   serializePwaSettings,
   pwaInstallabilityChecklist,
+  consumeStandaloneInstallFlag,
   PWA_SHORTCUT_HASH,
 } from "../src/lib/pwa-settings.ts";
 import { buildPortalManifest } from "../src/lib/portal-manifest.ts";
@@ -136,7 +137,7 @@ test("PWA-ADMIN-10 — kısayollar scope-içi derin bağdır (en fazla 4)", () =
       editionSlug: "s", name: "N",
       pwa: { ...PWA_DEFAULTS, shortcuts: [{ label: "X", target }] },
     });
-    assert.match(mm.shortcuts[0].url, /^\/\?portal=s#p=(home|program|speakers|sponsors|map|qa|forms|b2b|profile)$/);
+    assert.match(mm.shortcuts[0].url, /^\/\?portal=s#p=(home|program|speakers|sponsors|map|qa|forms|b2b|game|profile)$/);
   }
 });
 
@@ -185,9 +186,21 @@ test("PWA-ADMIN-14 — display=browser ve erişilemeyen SW kırmızı verir", ()
   assert.equal(list.find((c) => c.key === "service-worker").pass, false);
 });
 
+// ── standalone kurulum bayrağı (iOS analitik telafisi) ──
+
+test("PWA-ADMIN-16 — bayrak ilk tüketimde true, sonra false; storage yoksa false", () => {
+  const store = new Map();
+  const fake = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => void store.set(k, v) };
+  assert.equal(consumeStandaloneInstallFlag("s1", fake), true);
+  assert.equal(consumeStandaloneInstallFlag("s1", fake), false);
+  assert.equal(consumeStandaloneInstallFlag("s2", fake), true); // slug-bağımsız bayrak
+  assert.equal(consumeStandaloneInstallFlag("s1", null), false);
+  assert.equal(consumeStandaloneInstallFlag("s1", undefined), false);
+});
+
 // ── serileştirme turu ──
 
-test("PWA-ADMIN-15 — serialize→parse turu kayıpsızdır", () => {
+test("PWA-ADMIN-17 — serialize→parse turu kayıpsızdır", () => {
   const v = validatePwaSettingsInput({ shortName: "ND", installDelaySec: 10 });
   assert.equal(v.ok, true);
   const round = parsePwaSettings(serializePwaSettings(v.value));

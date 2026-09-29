@@ -34,6 +34,13 @@ durum-çubuğu (`apple-mobile-web-app-status-bar-style`) da edisyona göre enjek
 
 ## Mobil kabuk desenleri
 
+- **Derin-bağ**: ilk açılışta geçerli `#p=<ekran>` onurlandırılır (yığın
+  `[home, hedef]` başlar → geri home'a döner). `form` hash ile açılmaz
+  (formRef gerekir); geçersiz hash güvenli home'a düşer. Kısayol hedefleri
+  `PORTAL_NAV_SCREENS` ile birebirdir (10 ekran, `game` dahil).
+- **PWA kapalıyken** (`pwaEnabled=false`): manifest 404 döner, sayfadaki
+  manifest bağı kaldırılır (kurulum teklifi yok), SW kaydolmaz, sheet/kart
+  gizlenir. Kayıt yoksa varsayılan AÇIK sayılır.
 - **Kompakt bar**: home'da hero yarıdan fazla kayınca belirir (logo + ad + zil).
 - **Kurulum bottom-sheet**: giriş sonrası + `installDelaySec` (varsayılan 45sn);
   iOS'ta 3-adım Paylaş yönergesi; kapatma `installDismissDays` (7 gün) ertelenir
@@ -62,3 +69,14 @@ Kurulum Teşviki/Çevrimdışı → **Kurulabilirlik kontrolü (9 madde)** + man
 Singleton kuralı: `pwaJson` YAZAN E2E testleri yalnız `demo-auth-off` projesinde
 koşar ve sonunda `pwa:null` ile temizler; okuyan testler kirlenme-toleranslıdır
 (değer-eşitliği değil yapısal iddia).
+
+## Bilinen sınırlar / yol haritası
+
+- **Arka-plan push**: SW'de `push` dinleyicisi yok; duyurular ön-plan
+  `Notification` + polling ile çalışır (izin, hatırlatıcı/profil akışında istenir).
+  Tam push: VAPID + abonelik + SW push + admin gönderici (ayrı epic).
+- **İkon yükleme**: medya kitaplığı dataURL-tabanlıdır (sunulabilir dosya ucu
+  yok); kartta "Etkinlik logosunu kullan" kısayolu + manuel URL vardır.
+  Gerçek resize/sunum hattı yol haritasındadır.
+- **iOS kurulum sayımı**: `beforeinstallprompt` iOS'ta yoktur; standalone
+  açılışta bayrakla bir kez `PWA_INSTALL` ateşlenerek telafi edilir.

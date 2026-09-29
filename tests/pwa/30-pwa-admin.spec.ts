@@ -64,6 +64,22 @@ test("FULL — kısa ad + kısayol kaydı → manifest yansıması → temizlik"
   expect(man2.short_name).not.toBe("PWA-E2E");
 });
 
+test("API — PWA kapalıyken manifest 404, açıkken 200", async ({ page }, info) => {
+  test.skip(DEMO_ONLY(info), "singleton yazma: yalnız demo");
+  await isolateClientIp(page);
+  await page.goto("/");
+  const eid = await editionIdOf(page);
+  try {
+    const off = await page.request.put("/api/portal/config", { data: { editionId: eid, pwaEnabled: false } });
+    expect(off.status()).toBe(200);
+    expect(await page.request.get("/api/portal/manifest?slug=no-dig-turkey-2026").then((r) => r.status())).toBe(404);
+  } finally {
+    const on = await page.request.put("/api/portal/config", { data: { editionId: eid, pwaEnabled: true } });
+    expect(on.status()).toBe(200);
+  }
+  expect(await page.request.get("/api/portal/manifest?slug=no-dig-turkey-2026").then((r) => r.status())).toBe(200);
+});
+
 test("API — geçersiz PWA gövdesi 400 + kayıt YAZILMAZ", async ({ page }) => {
   await isolateClientIp(page);
   await page.goto("/");

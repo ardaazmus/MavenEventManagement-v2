@@ -101,6 +101,7 @@ const SHORTCUT_HASH: Record<string, string> = {
   qa: "qa",
   forms: "forms",
   b2b: "b2b",
+  game: "game",
   profile: "profile",
 };
 

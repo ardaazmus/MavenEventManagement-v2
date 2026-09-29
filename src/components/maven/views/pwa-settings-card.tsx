@@ -31,6 +31,7 @@ type Props = {
   enabled: boolean;
   onEnabledChange: (v: boolean) => void;
   editionName: string;
+  editionLogoUrl: string | null;
   portalSlug: string | null;
   themeColor: string;
 };
@@ -38,7 +39,9 @@ type Props = {
 const clampInt = (n: number, lo: number, hi: number) =>
   Number.isFinite(n) ? Math.max(lo, Math.min(hi, Math.round(n))) : lo;
 
-export function PwaSettingsCard({ value, onChange, enabled, onEnabledChange, editionName, portalSlug, themeColor }: Props) {
+export function PwaSettingsCard({ value, onChange, enabled, onEnabledChange, editionName, editionLogoUrl, portalSlug, themeColor }: Props) {
+  // PWA kapalıysa ayar bölümleri salt-görünür (kayıt yine çalışır — taslak bozulmaz)
+  const sectionCls = cn(!enabled && "pointer-events-none opacity-60");
   const { t } = useLang();
   const [swOk, setSwOk] = useState<boolean | null>(null);
 
@@ -63,6 +66,7 @@ export function PwaSettingsCard({ value, onChange, enabled, onEnabledChange, edi
       case "qa": return t("portalApp.qa.title");
       case "forms": return t("portalApp.forms.title");
       case "b2b": return t("portalApp.b2b.title");
+      case "game": return t("portalApp.game.title");
       case "profile": return t("portalApp.profile.title");
       default: return target;
     }
@@ -91,7 +95,7 @@ export function PwaSettingsCard({ value, onChange, enabled, onEnabledChange, edi
         </div>
 
         {/* 1 — uygulama kimliği */}
-        <fieldset className="space-y-3 rounded-lg border p-3">
+        <fieldset disabled={!enabled} className={cn("space-y-3 rounded-lg border p-3", sectionCls)}>
           <legend className="px-1 text-xs font-semibold">{t("portalSettings.pwa.identity")}</legend>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -125,7 +129,7 @@ export function PwaSettingsCard({ value, onChange, enabled, onEnabledChange, edi
         </fieldset>
 
         {/* 2 — görünüm */}
-        <fieldset className="space-y-3 rounded-lg border p-3">
+        <fieldset disabled={!enabled} className={cn("space-y-3 rounded-lg border p-3", sectionCls)}>
           <legend className="px-1 text-xs font-semibold">{t("portalSettings.pwa.appearance")}</legend>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -175,7 +179,7 @@ export function PwaSettingsCard({ value, onChange, enabled, onEnabledChange, edi
         </fieldset>
 
         {/* 3 — ikonlar */}
-        <fieldset className="space-y-3 rounded-lg border p-3">
+        <fieldset disabled={!enabled} className={cn("space-y-3 rounded-lg border p-3", sectionCls)}>
           <legend className="px-1 text-xs font-semibold">{t("portalSettings.pwa.icons")}</legend>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -201,11 +205,16 @@ export function PwaSettingsCard({ value, onChange, enabled, onEnabledChange, edi
               </div>
             </div>
           </div>
+          {/^(https:\/\/[^/\s]+\/|\/[^/\s])/.test(editionLogoUrl ?? "") && (
+            <Button variant="outline" size="sm" onClick={() => patch("iconSrc", (editionLogoUrl ?? "").trim())}>
+              <Icons.Image className="size-3.5" /> {t("portalSettings.pwa.useEditionLogo")}
+            </Button>
+          )}
           <p className="text-[11px] text-muted-foreground">{t("portalSettings.pwa.iconsNote")}</p>
         </fieldset>
 
         {/* 4 — kısayollar (en fazla 4) */}
-        <fieldset className="space-y-2 rounded-lg border p-3">
+        <fieldset disabled={!enabled} className={cn("space-y-2 rounded-lg border p-3", sectionCls)}>
           <legend className="px-1 text-xs font-semibold">{t("portalSettings.pwa.shortcuts")} ({value.shortcuts.length}/4)</legend>
           {value.shortcuts.map((s, i) => (
             <div key={i} className="flex items-center gap-2">
@@ -230,10 +239,11 @@ export function PwaSettingsCard({ value, onChange, enabled, onEnabledChange, edi
             onClick={() => patch("shortcuts", [...value.shortcuts, { label: "", target: "program" as PwaShortcutTarget }])}>
             <Icons.Plus className="size-3.5" /> {t("portalSettings.pwa.addShortcut")}
           </Button>
+          <p className="text-[11px] text-muted-foreground">{t("portalSettings.pwa.shortcutsHint")}</p>
         </fieldset>
 
         {/* 5 — ekran görüntüleri (zengin kurulum arayüzü) */}
-        <fieldset className="space-y-2 rounded-lg border p-3">
+        <fieldset disabled={!enabled} className={cn("space-y-2 rounded-lg border p-3", sectionCls)}>
           <legend className="px-1 text-xs font-semibold">{t("portalSettings.pwa.screenshots")} ({value.screenshots.length}/8)</legend>
           {value.screenshots.map((s, i) => (
             <div key={i} className="flex items-center gap-2">
@@ -257,7 +267,7 @@ export function PwaSettingsCard({ value, onChange, enabled, onEnabledChange, edi
         </fieldset>
 
         {/* 6 — kurulum teşviki + 7 — çevrimdışı */}
-        <fieldset className="space-y-3 rounded-lg border p-3">
+        <fieldset disabled={!enabled} className={cn("space-y-3 rounded-lg border p-3", sectionCls)}>
           <legend className="px-1 text-xs font-semibold">{t("portalSettings.pwa.promotion")}</legend>
           <div className="flex items-center justify-between gap-3">
             <Label className="text-xs">{t("portalSettings.pwa.installBanner")}</Label>

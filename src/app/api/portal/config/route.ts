@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
     // bağlama seçenekleri (§5.2/5.5): diğer edisyonlar, kayıt formları, sponsorlar, kişiler
     const edition = await db.eventEdition.findUnique({
       where: { id: eid },
-      select: { tenantId: true, name: true, portalHeaderTitle: true, portalHeaderSubtitle: true, portalHeaderImageUrl: true, portalHeaderAccent: true },
+      select: { tenantId: true, name: true, logoUrl: true, portalHeaderTitle: true, portalHeaderSubtitle: true, portalHeaderImageUrl: true, portalHeaderAccent: true },
     });
     const [editions, forms, agreements, people] = await Promise.all([
       db.eventEdition.findMany({
@@ -115,7 +115,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       config,
-      edition: { name: edition?.name ?? "" },
+      edition: { name: edition?.name ?? "", logoUrl: edition?.logoUrl ?? null },
       header: {
         title: edition?.portalHeaderTitle ?? "",
         subtitle: edition?.portalHeaderSubtitle ?? "",

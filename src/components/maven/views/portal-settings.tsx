@@ -52,7 +52,7 @@ type Lookups = {
   sponsors: { id: string; name: string; logoUrl: string | null; tierName: string | null }[];
   people: { id: string; firstName: string; lastName: string; email: string | null; company: string | null }[];
 };
-type ConfigPayload = { config: PortalConfig; edition?: { name: string }; header: { title: string; subtitle: string }; lookups: Lookups };
+type ConfigPayload = { config: PortalConfig; edition?: { name: string; logoUrl: string | null }; header: { title: string; subtitle: string }; lookups: Lookups };
 type WidgetRow = { key: string; enabled: boolean; visibility: "ALL" | "AUTH"; order: number };
 type Analytics = {
   uniqueVisitors: { guest: number; auth: number; total: number };
@@ -1181,6 +1181,7 @@ export function PortalSettingsTab({ editionId, portalSlug, onDirtyChange }: { ed
         enabled={draft.pwaEnabled}
         onEnabledChange={(v) => patch("pwaEnabled", v)}
         editionName={payload?.edition?.name ?? ""}
+        editionLogoUrl={payload?.edition?.logoUrl ?? null}
         portalSlug={portalSlug}
         themeColor={draft.themeColor}
       />

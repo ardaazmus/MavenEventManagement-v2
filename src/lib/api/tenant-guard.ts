@@ -373,7 +373,9 @@ export function tenantSelectFor(entity: string): Record<string, unknown> | null 
     case "chainOptional": return nestedTenantSelect(scope.path) as Record<string, unknown>;
     case "chainTenant": return nestedTenantSelect(scope.path) as Record<string, unknown>;
     case "scalarChain": return null; // ilişki yok — ensureInScope iki adımlı yolu kullanır
-    case "activity": return null;
+    // QA: activity select'sizdi → ensureInScope ok:true dönüyordu (IDOR). Karışık
+    // sahiplik: tenantId öncelikli, yoksa edition zinciri; ikisi de yoksa legacy (izinli).
+    case "activity": return { select: { tenantId: true, editionId: true, edition: { select: { tenantId: true } } } };
   }
 }
 
@@ -392,7 +394,8 @@ export function tenantIdOf(entity: string, record: unknown): string | null {
     case "chainOptional":
     case "chainTenant": return (read([...scope.path, "tenantId"]) as string) ?? null;
     case "scalarChain": return null; // ilişki yok — ensureInScope iki adımlı yolu kullanır
-    case "activity": return null;
+    // QA: tenantId öncelikli → edition zinciri → legacy null/null (liste korumasıyla aynı kural).
+    case "activity": return (rec.tenantId as string) ?? (read(["edition", "tenantId"]) as string) ?? null;
   }
 }
 
@@ -533,6 +536,17 @@ export async function applyWriteGuard(
       return data;
     }
     case "activity": {
+      // QA: body olduğu gibi yazılıyordu — yabancı tenantId/editionId ile çapraz-kiracı
+      // log enjeksiyonu mümkündü. Verilen değer bağlama doğrulanır (verilmezse legacy
+      // null/null satır — liste korumasıyla aynı görünürlük kuralı; iç yazımlar
+      // db.activityLog.create'i doğrudan kullanır, bu kapı yalnız generic uç içindir).
+      const ctx = await resolveContext(typeof data.tenantId === "string" ? data.tenantId : null);
+      if (opts.isUpdate) delete data.tenantId;
+      const edId = typeof data.editionId === "string" ? data.editionId : null;
+      if (edId) {
+        const ed = await db.eventEdition.findUnique({ where: { id: edId }, select: { tenantId: true } });
+        if (!ed || ed.tenantId !== ctx) throw new GuardError("Etkinlik bulunamadı", 404);
+      }
       return data;
     }
   }

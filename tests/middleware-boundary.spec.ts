@@ -2,7 +2,15 @@
 // Bu dosya YALNIZ MAVEN_AUTH=on iken ANLAMLIDIR (bayrak kapalıyken middleware bypass).
 // Koşum: MAVEN_AUTH=on bunx playwright test tests/middleware-boundary.spec.ts
 // Beklenti: public kuralların SEGMENT sınırı dışındaki benzer-önek yollar 401 alır.
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext } from "@playwright/test";
+
+// QA-run5: negatif testler YALNIZ MAVEN_AUTH=on sunucusunda anlamlıdır (dosya başlığı).
+// auth-off koşuda middleware bypass'tır → 401 beklemek yanlış olur; açıkça atla.
+async function skipUnlessAuthOn(request: APIRequestContext) {
+  const h = await request.get("/api/health");
+  const j = (await h.json().catch(() => ({}))) as { authEnabled?: boolean };
+  test.skip(!j.authEnabled, "MAVEN_AUTH=on sunucusu gerekli");
+}
 
 test.describe("middleware public-path boundary (MAVEN_AUTH=on)", () => {
   test("pozitif — gerçek public yüzeyler 401 ALMAZ", async ({ request }) => {
@@ -21,6 +29,7 @@ test.describe("middleware public-path boundary (MAVEN_AUTH=on)", () => {
   });
 
   test("negatif — benzer-önek istismar yolları 401 (eski geniş startsWith açık sayıyordu)", async ({ request }) => {
+    await skipUnlessAuthOn(request);
     for (const path of ["/api/healthXYZ", "/api/scanXYZ", "/api/publicity", "/api/healthz-deep", "/api/portalXYZ"]) {
       const res = await request.get(path);
       expect(res.status(), `${path} public sanıldı`).toBe(401);

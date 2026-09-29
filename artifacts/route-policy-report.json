@@ -1,11 +1,11 @@
 {
-  "totalDiscovered": 161,
-  "totalClassified": 161,
+  "totalDiscovered": 162,
+  "totalClassified": 162,
   "unclassifiedCount": 0,
   "categoryCounts": {
     "PUBLIC": 46,
     "STAFF": 76,
-    "ADMIN": 35,
+    "ADMIN": 36,
     "DOMAIN_POLICY": 4
   },
   "unclassifiedRoutes": [],
@@ -618,6 +618,13 @@
       "authRequired": true,
       "enforcement": "requireAdmin()",
       "description": "Bildirim sağlayıcı ve kanal ayarları"
+    },
+    {
+      "path": "src/app/api/notifications/channels/test/route.ts",
+      "category": "ADMIN",
+      "authRequired": true,
+      "enforcement": "requireAdmin() + edition ownership + rate-limit 10/dk",
+      "description": "Kanal test gönderimi (DEMO simüle / gerçek sağlayıcı tek mesaj)"
     },
     {
       "path": "src/app/api/notifications/instant/route.ts",

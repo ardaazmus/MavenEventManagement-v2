@@ -9,6 +9,7 @@
 //   UI : Konaklama → Manuel Rezervasyon diyaloğu → serbest misafir girişi → listede görünür
 // Temizlik: oluşturulan kişi + otel (cascade) + rezervasyonlar silinir.
 import { test, expect, type APIRequestContext } from "@playwright/test";
+import { isolateClientIp } from './_helpers';
 import { PrismaClient } from "@prisma/client";
 import * as XLSX from "xlsx";
 
@@ -248,6 +249,15 @@ test.describe.serial("M19 — manuel rezervasyon + stok + export", () => {
   });
 
   test("export oda listesi — xlsx üretir, filtre çalışır", async ({ request }) => {
+    // P14.2: kişiye bağlı satırlar YALNIZ rızalıysa exporta düşer (serbest-ad
+    // satırlar rıza kapsamı dışındadır). Personel çevrimdışı rızayı işler.
+    const hakan = await db.person.findFirst({ where: { email: `m19-hakan-${SUFFIX}@test.reserv` }, select: { id: true } });
+    expect(hakan).not.toBeNull();
+    const put = await request.put(`/api/people/${hakan!.id}`, {
+      data: { consentVersion: "2026-01-KVKK-TEST", consentAcceptedAt: new Date().toISOString() },
+      headers: virtualClientHeaders(),
+    });
+    expect(put.status()).toBe(200);
     const res = await request.get(`/api/reservations/export?editionId=${editionId}`, { headers: virtualClientHeaders() });
     expect(res.status()).toBe(200);
     expect(res.headers()["content-type"]).toContain("spreadsheetml");
@@ -278,13 +288,15 @@ test.describe.serial("M19 — manuel rezervasyon + stok + export", () => {
     const inIso = isoOf(new Date(Date.now() + 86400000));
     const outIso = isoOf(new Date(Date.now() + 3 * 86400000));
 
+    await isolateClientIp(page);
     await page.goto("/");
     await page.getByRole("navigation", { name: /Ana menü|Main menu/i }).getByRole("button", { name: /Konaklama|Accommodation/i }).click();
 
     // araç çubuğu — üç yüzey de görünür
     const manualBtn = page.getByRole("button", { name: /Manuel Rezervasyon|Manual Reservation/i });
     await expect(manualBtn).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("button", { name: /Oda Listesi|Rooming List/i })).toBeVisible();
+    // "Excel Rooming Listesi Yapıştır" butonu da /Rooming List/ ile eşleşir — araç çubuğu tam adı.
+    await expect(page.getByRole("button", { name: /^(Oda Listesi|Rooming List) \(xlsx\)$/i })).toBeVisible();
     // otel kartı aksiyonları — stok yönetimi yüzeyleri
     await expect(page.getByRole("button", { name: /oda tipi ekle$/ }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: /gecelik stoğunu ekle veya uzat$/ }).first()).toBeVisible();

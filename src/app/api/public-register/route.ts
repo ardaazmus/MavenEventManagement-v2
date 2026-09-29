@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { evaluateSpam, registerSubmissionHits } from "@/lib/spam-guard";
 import { verifyChallenge } from "@/lib/form-challenge";
 import { filterVisibleAnswers, isFieldVisible, computeVisitedSteps } from "@/lib/form-logic";
-import { createRegistrationFromSubmission } from "@/lib/api/registration-chain";
+import { createRegistrationFromSubmission, ChainCapacityError } from "@/lib/api/registration-chain";
 import { ActivityType } from "@/lib/api/activity";
 import { enforceRateLimit, enforceRateLimitById, clientIp } from "@/lib/rate-limit";
 import { dispatchMail, EMAIL_RE } from "@/lib/mail-dispatch";
@@ -174,6 +174,7 @@ export async function POST(req: NextRequest) {
     // chainError alanıyla 2xx olarak TAŞINMAZ — çağırana açık başarısızlık döner.
     let chain: Awaited<ReturnType<typeof createRegistrationFromSubmission>> | null = null;
     let chainFailed = false;
+    let capacityFull = false;
     if (!verdict.isSpam && form.type === "REGISTRATION") {
       try {
         chain = await createRegistrationFromSubmission(submission.id, {
@@ -193,6 +194,9 @@ export async function POST(req: NextRequest) {
         }
       } catch (e) {
         chainFailed = true;
+        // QA: kapasite doluluğu beklenen iş durumudur — 500 değil 409 (gönderi kayda
+        // geçti; ekip bekleme listesine alabilir). Diğer zincir hataları 500'de kalır.
+        if (e instanceof ChainCapacityError) capacityFull = true;
         console.error("POST /api/public-register [chain]", submission.id, e instanceof Error ? e.message : e); // PII yok
       }
     }
@@ -261,6 +265,13 @@ export async function POST(req: NextRequest) {
     // özel notlar, adres/telefon/e-posta ASLA dönülmez. Zincir hatası 2xx+chainError
     // olarak MASKEDENMEZ — açık başarısızlık (500) döner.
     if (chainFailed) {
+      // QA: kapasite 409 — başvuru kayıtta, kontenjan açılırsa ekip tamamlar.
+      if (capacityFull) {
+        return NextResponse.json(
+          { error: "Başvurunuz alındı ancak kontenjan dolu — ekibimiz bekleme listesi için sizinle iletişime geçecektir", code: "CAPACITY_FULL", submissionId: submission.id },
+          { status: 409 }
+        );
+      }
       return NextResponse.json(
         { error: "Başvurunuz alındı ancak kayıt işlemi tamamlanamadı — ekibimiz başvurunuzu inceleyip tamamlayacaktır" },
         { status: 500 }

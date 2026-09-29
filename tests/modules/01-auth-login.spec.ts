@@ -68,7 +68,10 @@ test("FULL — PortalToken AUTH girişi → kimlik + oturum kalıcılığı → 
   } finally {
     // 6) geçersiz/süresi-dolmuş belirteç reddedilir (410/404) — tekrar kullanım kapanır
     await db.portalToken.delete({ where: { id: token.id } }).catch(() => undefined);
+    // QA: benzersiz IP — "local" kotası tam-suite'te sahte 429 veriyordu (404/410 beklenir)
+    const ip = `10.31.${Math.floor(Math.random() * 255)}.${Math.ceil(Math.random() * 254)}`;
     const resp = await page.request.post("/api/portal/access", {
+      headers: { "x-forwarded-for": ip },
       data: { editionSlug: SLUG, mode: "TOKEN", token: raw },
     });
     expect([404, 410]).toContain(resp.status());

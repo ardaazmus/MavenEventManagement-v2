@@ -132,7 +132,30 @@ export function RegistrationsView() {
   const { data: regsPaged, error, reload, loading, more } = useApi<{ items: RegRow[]; nextCursor?: string | null }>(regsLoader, [currentEditionId, statusFilter, q, refreshKey], { append: true });
   const registrations = useMemo(() => regsPaged?.items ?? [], [regsPaged]);
   const { data: categories } = useApi<CategoryRow[]>(() => listEntity<CategoryRow>("registration-categories", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
-  const { data: invitations } = useApi<InvitationRow[]>(() => listEntity<InvitationRow>("invitations", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey, tab]);
+  const { data: invitations, reload: reloadInvitations } = useApi<InvitationRow[]>(() => listEntity<InvitationRow>("invitations", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey, tab]);
+  // QA: LCV sekmesi salt-okunurdu (ekleme butonu yoktu) — davetli ekleme diyaloğu.
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ fullName: "", email: "", notes: "" });
+  const [inviteBusy, setInviteBusy] = useState(false);
+
+  const saveInvitation = async () => {
+    if (!currentEditionId || !inviteForm.fullName.trim() || !inviteForm.email.trim()) return;
+    setInviteBusy(true);
+    try {
+      await apiSend("/api/invitations", "POST", {
+        editionId: currentEditionId,
+        fullName: inviteForm.fullName.trim(),
+        email: inviteForm.email.trim().toLowerCase(),
+        notes: inviteForm.notes.trim() || null,
+      });
+      toast({ title: "Davetli eklendi", description: `${inviteForm.fullName.trim()} — LCV listesine kaydedildi.` });
+      setInviteForm({ fullName: "", email: "", notes: "" });
+      setInviteOpen(false);
+      reloadInvitations(); bump();
+    } catch (e) {
+      toast({ title: "Davetli eklenemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally { setInviteBusy(false); }
+  };
 
   const decide = async () => {
     if (!decideTarget) return;
@@ -164,7 +187,9 @@ export function RegistrationsView() {
     }
   };
 
-  const counts = (s: string) => (s === "ALL" ? registrations.length : registrations.filter((r) => r.status === s).length);
+  // QA: durum sayıları KALDIRILDI — liste sunucuda status ile filtrelenip sayfalı
+  // yüklendiği için istemci sayımı her zaman yanlıştı (filtre=CONFIRMED iken diğer
+  // durumlar 0 görünüyordu). Doğru sayılar kategori KPI kartlarında zaten var.
 
   return (
     <div>
@@ -197,9 +222,9 @@ export function RegistrationsView() {
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="ALL">Tüm durumlar ({counts("ALL")})</SelectItem>
+                <SelectItem value="ALL">Tüm durumlar</SelectItem>
                 {Object.entries(REGISTRATION_STATUS).map(([k, v]) => (
-                  <SelectItem key={k} value={k}>{v} ({counts(k)})</SelectItem>
+                  <SelectItem key={k} value={k}>{v}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -321,9 +346,21 @@ export function RegistrationsView() {
 
         <WaitlistTab editionId={currentEditionId} categories={categories ?? []} onChanged={() => { bump(); }} />
       ) : (
-        <SectionCard title="LCV — Davet Listesi Yönetimi" desc="Davet bir kayıt yerine geçmez; 'gelecek' yanıtı kayıt yoluna yönlenir">
+        <SectionCard
+          title="LCV — Davet Listesi Yönetimi"
+          desc="Davet bir kayıt yerine geçmez; 'gelecek' yanıtı kayıt yoluna yönlenir"
+          action={
+            <Button size="sm" onClick={() => setInviteOpen(true)} disabled={!currentEditionId}>
+              <Icons.UserPlus className="size-3.5" /> Davetli Ekle
+            </Button>
+          }
+        >
           {(invitations ?? []).length === 0 ? (
-            <EmptyState title="Henüz davet oluşturmadınız" desc="Davetli ekleyin veya davet listesi yükleyin." />
+            <EmptyState
+              title="Henüz davet oluşturmadınız"
+              desc="Davetli ekleyin veya davet listesi yükleyin."
+              action={<Button size="sm" onClick={() => setInviteOpen(true)} disabled={!currentEditionId}><Icons.UserPlus className="size-3.5" /> Davetli Ekle</Button>}
+            />
           ) : (
             <div className="grid gap-2">
               {(invitations ?? []).map((inv) => (
@@ -343,6 +380,36 @@ export function RegistrationsView() {
           )}
         </SectionCard>
       )}
+
+      {/* Davetli ekleme (LCV) — ad + e-posta + not; durum INVITED başlar */}
+      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Davetli Ekle</DialogTitle>
+            <DialogDescription>LCV listesine yeni davetli kaydedilir. Davet bir kayıt yerine geçmez.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div>
+              <Label>Ad Soyad</Label>
+              <Input className="mt-1" value={inviteForm.fullName} onChange={(e) => setInviteForm({ ...inviteForm, fullName: e.target.value })} placeholder="Ad Soyad" />
+            </div>
+            <div>
+              <Label>E-posta</Label>
+              <Input className="mt-1" type="email" value={inviteForm.email} onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })} placeholder="ornek@eposta.com" />
+            </div>
+            <div>
+              <Label>Not</Label>
+              <Textarea className="mt-1" rows={2} value={inviteForm.notes} onChange={(e) => setInviteForm({ ...inviteForm, notes: e.target.value })} placeholder="İsteğe bağlı not" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInviteOpen(false)}>Vazgeç</Button>
+            <Button onClick={saveInvitation} disabled={inviteBusy || !inviteForm.fullName.trim() || !inviteForm.email.trim()}>
+              {inviteBusy ? "Ekleniyor…" : "Davetli Ekle"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Onay/ret/iptal dialogu — etki önizlemesi ile */}
       <Dialog open={Boolean(decideTarget)} onOpenChange={(o) => !o && setDecideTarget(null)}>

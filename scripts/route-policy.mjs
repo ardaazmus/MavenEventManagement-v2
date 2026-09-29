@@ -371,6 +371,12 @@ export const ROUTE_POLICY_DEFINITIONS = {
     enforcement: "requireAdmin()",
     description: "Bildirim sağlayıcı ve kanal ayarları",
   },
+  "src/app/api/notifications/channels/test/route.ts": {
+    category: "ADMIN",
+    authRequired: true,
+    enforcement: "requireAdmin() + edition ownership + rate-limit 10/dk",
+    description: "Kanal test gönderimi (DEMO simüle / gerçek sağlayıcı tek mesaj)",
+  },
   "src/app/api/portal/blocks/route.ts": {
     category: "ADMIN",
     authRequired: true,

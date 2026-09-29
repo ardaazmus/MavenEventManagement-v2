@@ -69,11 +69,17 @@ test("FULL — kart turu + dirty guard + JSON export/import döngüsü", async (
   await expect(page.getByText(/Yapılandırma içe aktarıldı|Configuration imported/i).first()).toBeVisible({ timeout: 10_000 });
 
   // 6) temizlik — widget anahtarını eski haline çevir + kaydet (baseline korunur)
-  const toggleBack = widgetsCard.getByRole("switch").first();
-  await toggleBack.click();
-  await page.getByRole("button", { name: /Ayarları Kaydet|Save settings/i }).click();
-  await expect(page.getByText(/Ayarlar kaydedildi|Settings saved/i).first()).toBeVisible({ timeout: 10_000 });
-  expect(await toggleBack.getAttribute("data-state")).toBe(stateBefore);
+  // QA-run4: import-sonrası re-render/geç fetch tıklamayı ezebiliyor (M29'u zehirledi) —
+  // durum baseline'a dönene dek idempotent döngü.
+  for (let i = 0; i < 3; i++) {
+    const sw = widgetsCard.getByRole("switch").first();
+    if ((await sw.getAttribute("data-state")) === stateBefore) break;
+    await sw.click();
+    await page.getByRole("button", { name: /Ayarları Kaydet|Save settings/i }).click();
+    await expect(page.getByText(/Ayarlar kaydedildi|Settings saved/i).first()).toBeVisible({ timeout: 10_000 });
+    await page.waitForTimeout(1500);
+  }
+  expect(await widgetsCard.getByRole("switch").first().getAttribute("data-state")).toBe(stateBefore);
 
   // 7) DB & Migration kartı yalnız-okur (Ayarlar modülünde, Geçici rozeti)
   await page.getByRole("navigation", { name: /Ana menü|Main menu/i }).getByRole("button", { name: /Ayarlar/i }).click();

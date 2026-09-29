@@ -14,16 +14,18 @@ export function ExportHubCard() {
   const { currentEditionId } = useApp();
   const [busy, setBusy] = useState(false);
 
-  const downloadSnapshot = async () => {
+  // QA: tüm indirmeler fetch+blob — düz <a> tıklamasında sunucu hatası ham JSON
+  // sayfasına yönlendiriyordu (uygulamadan çıkış + hata görünmezdi).
+  const downloadFile = async (href: string, fallbackName: string) => {
     setBusy(true);
     try {
-      const res = await fetch("/api/export/company-snapshot");
+      const res = await fetch(href);
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? t("exportHub.failed"));
       }
       const blob = await res.blob();
-      const name = res.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "company-snapshot.json";
+      const name = res.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] ?? fallbackName;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -40,12 +42,14 @@ export function ExportHubCard() {
     }
   };
 
+  const downloadSnapshot = () => downloadFile("/api/export/company-snapshot", "company-snapshot.json");
+
   const editionLinks = currentEditionId
     ? [
-        { href: `/api/registrations/export?editionId=${currentEditionId}`, label: t("exportHub.regExport") },
-        { href: `/api/reservations/export?editionId=${currentEditionId}`, label: t("exportHub.resExport") },
-        { href: `/api/customer-contacts/export?editionId=${currentEditionId}`, label: t("exportHub.ccExport") },
-        { href: `/api/media/export?editionId=${currentEditionId}`, label: t("exportHub.mediaExport") },
+        { href: `/api/registrations/export?editionId=${currentEditionId}`, label: t("exportHub.regExport"), file: "kayitlar.xlsx" },
+        { href: `/api/reservations/export?editionId=${currentEditionId}`, label: t("exportHub.resExport"), file: "rezervasyonlar.xlsx" },
+        { href: `/api/customer-contacts/export?editionId=${currentEditionId}`, label: t("exportHub.ccExport"), file: "musteri-datasi.xlsx" },
+        { href: `/api/media/export?editionId=${currentEditionId}`, label: t("exportHub.mediaExport"), file: "medya-arsivi.zip" },
       ]
     : [];
 
@@ -64,13 +68,15 @@ export function ExportHubCard() {
       ) : (
         <div className="flex flex-wrap gap-2">
           {editionLinks.map((l) => (
-            <a
+            <button
               key={l.href}
-              href={l.href}
-              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs text-foreground hover:bg-muted/60"
+              type="button"
+              onClick={() => downloadFile(l.href, l.file)}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs text-foreground hover:bg-muted/60 disabled:opacity-50"
             >
               <Icons.FileDown className="size-3.5 text-primary" /> {l.label}
-            </a>
+            </button>
           ))}
         </div>
       )}

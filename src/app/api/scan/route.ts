@@ -21,9 +21,14 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
 
     const body = await req.json();
-    const { code, door = "MAIN_DOOR", sessionId, action = "ENTRY", forceReason } = body as {
+    const { code, forceReason } = body as {
       code: string; door?: string; sessionId?: string; action?: string; forceReason?: string;
     };
+    // QA: kapı/aksiyon/oturum dize-dışı gelirse Prisma 500 yapardı — normalize edilir.
+    // action allowlist: ENTRY|EXIT (bilinmeyen → ENTRY; RESCAN yalnız sunucu tarafından yazılır).
+    const door = typeof body.door === "string" && body.door ? body.door : "MAIN_DOOR";
+    const action = body.action === "EXIT" ? "EXIT" : "ENTRY";
+    const sessionId = typeof body.sessionId === "string" && body.sessionId ? body.sessionId : undefined;
     // P4 (yeni-fazlar 17): forceReason OPERATÖR yeteneğidir — engelleyiciyi aşan istisna
     // (check-in/CME/sertifika kanıtı üretir) kimliksiz çağırana verilmez. Cihaz sınırı:
     // MAVEN_AUTH=on → oturum + staff rolü ZORUNLU; off (demo) → admin UI güvenilir kabul edilir
@@ -33,7 +38,8 @@ export async function POST(req: NextRequest) {
       if (gate) return gate;
     }
 
-    if (!code) return NextResponse.json({ error: "Tarama kodu gerekli" }, { status: 400 });
+    // QA: code dize değilse startsWith/Prisma 500 yapardı — erken 400.
+    if (typeof code !== "string" || !code) return NextResponse.json({ error: "Tarama kodu gerekli" }, { status: 400 });
 
     // P14.1: tam kimlik yalnız doğrulanmış kadroya; cihaz/anonim bağlam maskeli alır.
     const actor = await requestActor();
@@ -99,6 +105,8 @@ export async function POST(req: NextRequest) {
     }
 
     // tekrar tarama kontrolü (aynı gün, aynı konumda önceki geçerli ENTRY)
+    // QA: arama YAZILAN değerle eşleşmeli — location:MAIN_DOOR yazılıp location:door
+    // aranıyordu; özel kapı adlarında rescan HİÇ tetiklenmiyordu. Kapı ayrımı doorName'den.
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
     const isSessionScan = Boolean(sessionId);
     const previousValid = await db.scanEvent.findFirst({
@@ -107,7 +115,8 @@ export async function POST(req: NextRequest) {
         action,
         result: "ALLOWED",
         sessionId: sessionId ?? null,
-        location: isSessionScan ? "SESSION" : door,
+        location: isSessionScan ? "SESSION" : "MAIN_DOOR",
+        ...(isSessionScan ? {} : { doorName: door }),
         scannedAt: { gte: dayStart },
       },
       orderBy: { scannedAt: "desc" },

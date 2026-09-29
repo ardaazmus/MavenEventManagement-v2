@@ -6,6 +6,7 @@
 //   UI : Kayıt & Katılımcılar → Manuel Kayıt diyaloğu → kayıt → listede görünür
 // Temizlik: created kişiler silinir (Cascade: Participation → Registration).
 import { test, expect, type APIRequestContext } from "@playwright/test";
+import { isolateClientIp } from './_helpers';
 import { PrismaClient } from "@prisma/client";
 import * as XLSX from "xlsx";
 
@@ -180,6 +181,19 @@ test.describe.serial("M18 — manuel kayıt + içe/dışa aktarma", () => {
   });
 
   test("export normal — xlsx üretir ve içe aktarılan kişiyi taşır", async ({ request }) => {
+    // P14.2: export YALNIZ rızalı kişileri taşır. Personel, çevrimdışı alınan rızayı
+    // kişi kartından işler (generic people PUT — gerçek ürün yolu); rızasız kap1
+    // kontrol grubu olarak DIŞARIDA kalır (davranışsal P14.2 kanıtı).
+    const consentEmails = [`m18-manuel-${SUFFIX}@test.import`, `m18-defne-${SUFFIX}@test.import`, `m18-burak-${SUFFIX}@test.import`];
+    const consentPersons = await db.person.findMany({ where: { email: { in: consentEmails } }, select: { id: true } });
+    expect(consentPersons).toHaveLength(3);
+    for (const p of consentPersons) {
+      const put = await request.put(`/api/people/${p.id}`, {
+        data: { consentVersion: "2026-01-KVKK-TEST", consentAcceptedAt: new Date().toISOString() },
+        headers: virtualClientHeaders(),
+      });
+      expect(put.status()).toBe(200);
+    }
     const res = await request.get(`/api/registrations/export?editionId=${editionId}`, { headers: virtualClientHeaders() });
     expect(res.status()).toBe(200);
     expect(res.headers()["content-type"]).toContain("spreadsheetml");
@@ -194,6 +208,7 @@ test.describe.serial("M18 — manuel kayıt + içe/dışa aktarma", () => {
     expect(flat).toContain("Teyit No");
     expect(flat).toContain(`m18-defne-${SUFFIX}@test.import`);
     expect(flat).toContain("Akarca Makine A.Ş.");
+    expect(flat).not.toContain(`m18-kap1-${SUFFIX}@test.import`); // rızasız — P14.2 dışlama
   });
 
   test("export resmi onay — kurum filtresi + belge formatı + imza bloğu", async ({ request }) => {
@@ -222,6 +237,7 @@ test.describe.serial("M18 — manuel kayıt + içe/dışa aktarma", () => {
     const email = `m18-ui-${SUFFIX}@test.import`;
     createdEmails.push(email);
 
+    await isolateClientIp(page);
     await page.goto("/");
     await page.getByRole("navigation", { name: /Ana menü|Main menu/i }).getByRole("button", { name: /Kayıt & Katılımcılar|Registrations/i }).click();
     const toolbar = page.getByRole("button", { name: new RegExp(`^${"Manuel Kayıt"}$`) });

@@ -44,41 +44,45 @@ test("FULL — AUTH kaydol → kontenjan dolu 409 → saat çakışması 409 →
   };
   const rawA = await mkToken(personA.id);
   const rawB = await mkToken(personB.id);
-  const login = async (raw: string) => {
-    const r = await request.post("/api/portal/access", { data: { editionSlug: SLUG, mode: "TOKEN", token: raw } });
+  // QA: her istemci kendi IP'siyle konuşur (üretim gerçeği) — "local" kotası
+  // tam-suite'te sahte 429 üretiyordu (M05 login 429).
+  const ipA = `10.21.${Math.floor(Math.random() * 255)}.${Math.ceil(Math.random() * 254)}`;
+  const ipB = `10.22.${Math.floor(Math.random() * 255)}.${Math.ceil(Math.random() * 254)}`;
+  const login = async (raw: string, ip: string) => {
+    const r = await request.post("/api/portal/access", { headers: { "x-forwarded-for": ip }, data: { editionSlug: SLUG, mode: "TOKEN", token: raw } });
     expect(r.status()).toBe(200);
     return ((await r.json()) as { sessionKey: string }).sessionKey;
   };
-  const reg = async (key: string, sessionId: string) =>
-    request.post("/api/portal/interact", { headers: { "x-portal-session": key }, data: { action: "SESSION_REGISTER", sessionId } });
-  const unreg = async (key: string, sessionId: string) =>
-    request.post("/api/portal/interact", { headers: { "x-portal-session": key }, data: { action: "SESSION_UNREGISTER", sessionId } });
+  const reg = async (key: string, sessionId: string, ip: string) =>
+    request.post("/api/portal/interact", { headers: { "x-portal-session": key, "x-forwarded-for": ip }, data: { action: "SESSION_REGISTER", sessionId } });
+  const unreg = async (key: string, sessionId: string, ip: string) =>
+    request.post("/api/portal/interact", { headers: { "x-portal-session": key, "x-forwarded-for": ip }, data: { action: "SESSION_UNREGISTER", sessionId } });
 
   try {
-    const keyA = await login(rawA);
-    const keyB = await login(rawB);
+    const keyA = await login(rawA, ipA);
+    const keyB = await login(rawB, ipB);
 
     // 1) A kapasite-1 oturuma kaydolur → 200
-    const okA = await reg(keyA, s1.id);
+    const okA = await reg(keyA, s1.id, ipA);
     expect(okA.status()).toBe(200);
     expect(((await okA.json()) as { registered: boolean }).registered).toBe(true);
 
     // 2) B aynı oturum → 409 SESSION_FULL (makine-okur code + dostu mesaj)
-    const fullB = await reg(keyB, s1.id);
+    const fullB = await reg(keyB, s1.id, ipB);
     expect(fullB.status()).toBe(409);
     const fullBody = (await fullB.json()) as { code?: string; error?: string };
     expect(fullBody.code).toBe("SESSION_FULL");
     expect(fullBody.error).toContain("kontenjan");
 
     // 3) A çakışan saatli oturuma → 409 TIME_CONFLICT + conflictWith = S1 başlığı
-    const conflictA = await reg(keyA, s2.id);
+    const conflictA = await reg(keyA, s2.id, ipA);
     expect(conflictA.status()).toBe(409);
     const conflictBody = (await conflictA.json()) as { code?: string; conflictWith?: string };
     expect(conflictBody.code).toBe("TIME_CONFLICT");
     expect(conflictBody.conflictWith).toBe(S1_TITLE);
 
     // 4) @@unique ikinci güvence — B'nin tekrar kaydı yine 409 FULL (çift kayıt oluşmaz)
-    const againB = await reg(keyB, s1.id);
+    const againB = await reg(keyB, s1.id, ipB);
     expect(againB.status()).toBe(409);
 
     // 5) portala yansıma — A'nın portalında S1 "Kayıtlısın" + "Kontenjan doldu" çipi
@@ -91,14 +95,14 @@ test("FULL — AUTH kaydol → kontenjan dolu 409 → saat çakışması 409 →
     await expect(page.getByText(/Kontenjan doldu/i).first()).toBeVisible();
 
     // 6) iptal — 200 + tekrar iptal idempotent 200 (dostu davranış)
-    const cancelA = await unreg(keyA, s1.id);
+    const cancelA = await unreg(keyA, s1.id, ipA);
     expect(cancelA.status()).toBe(200);
     expect(((await cancelA.json()) as { registered: boolean }).registered).toBe(false);
-    const cancelAgain = await unreg(keyA, s1.id);
+    const cancelAgain = await unreg(keyA, s1.id, ipA);
     expect(cancelAgain.status()).toBe(200);
 
     // 7) koltuk serbest — B artık kaydolabilir (RELEASE)
-    const okB = await reg(keyB, s1.id);
+    const okB = await reg(keyB, s1.id, ipB);
     expect(okB.status()).toBe(200);
   } finally {
     await db.portalSessionRegistration.deleteMany({ where: { sessionId: { in: [s1.id, s2.id] } } }).catch(() => undefined);

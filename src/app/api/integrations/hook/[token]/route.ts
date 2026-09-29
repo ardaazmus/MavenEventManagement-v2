@@ -143,7 +143,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
 }
 
 // GET yazım yapmaz — entegrasyon durum yoklaması (önizleme/tarayıcı güvenliği)
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+// QA: POST'taki gibi hız limiti — limitsiz token-yoklama (oracle) + ucuz DoS kapanır.
+export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  const denied = enforceRateLimit(req, { key: "webhook-inbound-status", limit: 60, windowMs: 60_000 });
+  if (denied) return denied;
   const { token } = await params;
   const integration = await db.apiIntegration.findUnique({
     where: { inboundToken: token },

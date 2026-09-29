@@ -272,9 +272,12 @@ export function MediaArchiveView() {
     } finally { setBusy(false); }
   };
 
+  // QA: aşan dosya sürpriz mod-değişimiyle KAYBOLMUYOR — satır-içi uyarı + elle geçiş.
+  const [oversize, setOversize] = useState<string | null>(null);
   const onPickFile = (file: File) => {
     const kind = kindFromMime(file.type, file.name);
     const sizeKb = Math.round(file.size / 1024);
+    setOversize(null);
     setUploadForm((prev) => ({
       ...prev,
       name: prev.name || file.name.replace(/\.[^.]+$/, ""),
@@ -288,8 +291,7 @@ export function MediaArchiveView() {
       reader.onload = () => setUploadForm((prev) => ({ ...prev, dataUrl: typeof reader.result === "string" ? reader.result : "" }));
       reader.readAsDataURL(file);
     } else {
-      toast({ title: "Dosya 400KB sınırı aşılıyor", description: "400KB üstü dosyalar için bağlantı modunu kullanın — bağlantı ekleme moduna geçildi.", variant: "destructive" });
-      setUploadMode("link");
+      setOversize(`${file.name} · ${fmtSize(sizeKb)} — 400KB sınırını aşıyor. Daha küçük bir dosya seçin ya da bağlantı modunda dış adres ekleyin.`);
     }
   };
 
@@ -464,7 +466,7 @@ export function MediaArchiveView() {
         <Button variant="outline" size="sm" onClick={() => { setFolderDialog({ mode: "create", parent: selectedFolder }); setFolderForm({ name: "", color: "teal" }); }}>
           <Icons.FolderPlus className="size-4" /> Yeni Klasör
         </Button>
-        <Button size="sm" onClick={() => { setUploadMode("file"); setUploadForm({ name: "", kind: "OTHER", folderId: selectedId ?? "__none__", linkedType: "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 }); setUploadOpen(true); }}>
+        <Button size="sm" onClick={() => { setOversize(null); setUploadMode("file"); setUploadForm({ name: "", kind: "OTHER", folderId: selectedId ?? "__none__", linkedType: "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 }); setUploadOpen(true); }}>
           <Icons.Upload className="size-4" /> Varlık Yükle
         </Button>
       </PageHeader>
@@ -647,7 +649,7 @@ export function MediaArchiveView() {
                   type="button"
                   role="tab"
                   aria-selected={uploadMode === m}
-                  onClick={() => setUploadMode(m)}
+                  onClick={() => { setOversize(null); setUploadMode(m); }}
                   className={cn(
                     "flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
                     uploadMode === m ? "bg-card shadow-sm" : "text-muted-foreground hover:text-foreground",
@@ -669,9 +671,18 @@ export function MediaArchiveView() {
                   className="file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-0.5 file:text-xs"
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  {uploadForm.sizeKb > 0 && <>Seçildi: {fmtSize(uploadForm.sizeKb)} · {uploadForm.mimeType} · {uploadForm.dataUrl ? "arşive gömülecek ✓" : "bağlantı modu önerilir"}</>}
+                  {uploadForm.sizeKb > 0 && <>Seçildi: {fmtSize(uploadForm.sizeKb)} · {uploadForm.mimeType} · {uploadForm.dataUrl ? "arşive gömülecek ✓" : oversize ? "gömülemez (sınır aşımı)" : "bağlantı modu önerilir"}</>}
                   {uploadForm.sizeKb === 0 && "Görsel, video, belge, arşiv — mime tipinden tür otomatik tanınır."}
                 </p>
+                {oversize && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-800">
+                    <Icons.AlertTriangle className="size-4 shrink-0" />
+                    <span className="min-w-0 flex-1">{oversize}</span>
+                    <Button size="sm" variant="outline" className="h-7 border-amber-300 text-[11px]" onClick={() => { setOversize(null); setUploadMode("link"); }}>
+                      Bağlantı moduna geç
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-1.5">
@@ -757,7 +768,7 @@ export function MediaArchiveView() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setUploadOpen(false)}>Vazgeç</Button>
-            <Button onClick={uploadAsset} disabled={busy || !uploadForm.name.trim() || (uploadMode === "link" && !uploadForm.externalUrl.trim())}>
+            <Button onClick={uploadAsset} disabled={busy || !uploadForm.name.trim() || (uploadMode === "link" && !uploadForm.externalUrl.trim()) || (uploadMode === "file" && oversize !== null)}>
               {busy ? "Ekleniyor…" : t("media.addToArchive")}
             </Button>
           </DialogFooter>

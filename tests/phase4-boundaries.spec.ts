@@ -16,6 +16,17 @@ test.beforeAll(async () => {
   tenantId = t!.id;
 });
 
+// QA: P4 artıkları GOLDEN 3'ü (+2 medya/proje) ve kiracı/edisyon listesini
+// kirletiyordu. Yabancı kiracı silimi edisyonunu cascade temizler.
+test.afterAll(async () => {
+  // upload-linked ada uniq-sonek ekler ("p4-<uniq>") — önek eşleşme şart
+  await db.mediaAsset.deleteMany({ where: { name: { startsWith: "p4-" } } });
+  await db.mediaFolder.deleteMany({ where: { name: "P4 Klasör" } });
+  await db.organization.deleteMany({ where: { name: { startsWith: "P4 Audit Org " } } });
+  await db.tenant.deleteMany({ where: { slug: { startsWith: "p4-foreign-" } } });
+  await db.$disconnect();
+});
+
 test.describe("P4.14 — strict pagination", () => {
   const bad = ["0", "-5", "501", "2.5", "abc", "", "1e2", "0x5"];
   for (const v of bad) {

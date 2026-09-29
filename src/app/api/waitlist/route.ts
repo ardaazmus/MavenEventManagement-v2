@@ -95,8 +95,9 @@ export async function POST(req: NextRequest) {
         if (!editionId || !personId) return NextResponse.json({ error: "editionId ve personId zorunlu" }, { status: 400 });
 
         // G0-b: hedef edisyon bağlama doğrulanır
+        let edTenant: string;
         try {
-          await verifyEditionTenant(editionId);
+          edTenant = await verifyEditionTenant(editionId);
         } catch (e) {
           const ge = await guard(e);
           if (ge) return ge;
@@ -104,6 +105,9 @@ export async function POST(req: NextRequest) {
         }
         const person = await db.person.findUnique({ where: { id: personId } });
         if (!person) return NextResponse.json({ error: "Kişi bulunamadı" }, { status: 404 });
+        // QA: kişi de AYNI kiracıya ait olmalı — aksi halde yabancı kişi bu edisyona
+        // katılım satırıyla bağlanır (çapraz-kiracı katılım sızıntısı). Varlık ifşa edilmez.
+        if (person.tenantId !== edTenant) return NextResponse.json({ error: "Kişi bulunamadı" }, { status: 404 });
 
         if (categoryId) {
           const existing = await db.waitlistEntry.findFirst({ where: { editionId, personId, categoryId, status: { in: ["WAITING", "OFFERED"] } } });

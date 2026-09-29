@@ -486,6 +486,16 @@ export async function POST(req: NextRequest) {
       const remaining = Math.max(0, order.totalAmount - succeeded);
       if (remaining <= 0) return NextResponse.json({ error: "Siparişin açık bakiyesi yok" }, { status: 409 });
 
+      // QA: TEK bağlantı politikası (iyzico create ile aynı desen) — aynı kalan bakiye
+      // için çift tıklama/yeniden deneme YENİ finansal hareket AÇMAZ; mevcut PENDING
+      // satır + bağlantısı döner. Bakiye değiştiyse (kısmi ödeme) yeni satır açılır.
+      const pending = await db.payment.findFirst({
+        where: { orderId: order.id, source: "PAYMENT_LINK", status: "PENDING", amount: remaining },
+        orderBy: { createdAt: "desc" },
+      });
+      if (pending?.reference) {
+        return NextResponse.json({ ok: true, payment: pending, link: `https://odeme.maven.events/${pending.reference}`, reused: true });
+      }
       const ref = `PAYLINK-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
       const payment = await db.payment.create({
         data: { orderId: order.id, amount: remaining, currency: order.currency, source: "PAYMENT_LINK", status: "PENDING", reference: ref },

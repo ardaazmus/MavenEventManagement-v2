@@ -2,7 +2,17 @@
 // Tam akış: karşılama duyurusu gösterimi → kapatma kalıcılığı (localStorage) →
 // admin Canlı Duyuru gönderimi → portala anında düşer + bildirim merkezine girer
 import { test, expect } from "@playwright/test";
+import { PrismaClient } from "@prisma/client";
 import { guestLogin, gotoScreen } from "./_helpers";
+
+const db = new PrismaClient();
+
+// QA: canlı duyuru artığı sonraki projede İKİNCİ banner olur → kapatma sayımı
+// bozulur (Expected 0, Received 1). Karşılama duyurusu seed'indir, korunur.
+test.afterAll(async () => {
+  await db.portalAnnouncement.deleteMany({ where: { title: { startsWith: "E2E Canlı Duyuru " } } });
+  await db.$disconnect();
+});
 
 test("SMOKE — karşılama duyurusu banner'ı görünür + kapatılabilir", async ({ page }) => {
   await guestLogin(page);

@@ -173,8 +173,9 @@ export function NotificationBell() {
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" aria-label={`Bildirimler${unread > 0 ? ` — ${unread} okunmamış` : ""}`} className={cn("relative", unread > 0 && "text-primary")}>
           <Icons.Bell className={cn("size-4 transition-transform", open && "scale-110", (unread > 0 || flash) && "animate-[swing_1.6s_ease-in-out_infinite]")} />
+          {/* QA: rozet beyaz/rose-500 kontrastı 3.75 (axe serious) — rose-700 ile 5.9+ */}
           {unread > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-4 text-white shadow-sm">
+            <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-rose-700 px-1 text-[10px] font-bold leading-4 text-white shadow-sm">
               {unread > 9 ? "9+" : unread}
               <span aria-hidden className="absolute inline-flex size-full animate-ping rounded-full bg-rose-400 opacity-50" />
             </span>

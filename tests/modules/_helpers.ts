@@ -6,9 +6,17 @@ import { Page, expect } from "@playwright/test";
 // Not 1: giriş alanının erişilebilir adı Label'dan gelir (placeholder değil).
 // Not 2: hydration yarışı — React bağlanmadan fill edilen değer state'e düşmez; buton
 //        etkinleşene dek yeniden doldurulur.
-// Not 3: /api/portal/access 20 istek/dk/IP rate-limit'lidir (üretim koruması) — tam-suite
-//        koşumlarında 429 görülebilir; POST yanıtında 429 görünce pencere beklenir.
+// Not 3: /api/portal/access 20 istek/dk/IP rate-limit'lidir (üretim koruması).
+// QA: tarayıcı x-forwarded-for göndermez → TÜM UI testleri "local" kotasında
+// çarpışırdı (tam-suite'te sahte 429). Her sayfaya benzersiz istemci IP'si verilir
+// (üretim gerçeği: her kullanıcı kendi IP'si; API spec'lerindeki virtualClientHeaders
+// konvansiyonunun UI karşılığı). Güvenlik davranışı değişmez — limitler aynen durur.
+export async function isolateClientIp(page: Page) {
+  const ip = `10.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.ceil(Math.random() * 254)}`;
+  await page.setExtraHTTPHeaders({ "x-forwarded-for": ip });
+}
 export async function guestLogin(page: Page): Promise<void> {
+  await isolateClientIp(page);
   await page.goto("/?portal=no-dig-turkey-2026");
   // sekme zaten seçili olabilir — optional tıklama KISA timeout'lu olmalı, yoksa EN
   // modunda "Etkinlik Kodu" bulunamaz ve tıklama test-timeout'unu tüketir (E2E dersi)

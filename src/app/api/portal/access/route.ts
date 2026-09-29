@@ -140,8 +140,11 @@ export async function POST(req: NextRequest) {
 }
 
 // oturum durumunu sorgulama (sayfa yenilendiğinde anahtar hâlâ geçerli mi)
+// QA: salt-okuma doğrulama, GİRİŞ brute-force kotasını (20/dk) YİYORDU — her sayfa
+// açılışı + yoklama kotadan düşüyor, etkinlik-NAT arkası meşru kullanıcılar (ve
+// testler) sahte 429 alıyordu. Doğrulama ayrı/cömert kovada; giriş 20/dk korunur.
 export async function GET(req: NextRequest) {
-  const denied = enforceRateLimit(req, { key: "portal-access", limit: 20, windowMs: 60_000 });
+  const denied = enforceRateLimit(req, { key: "portal-access-validate", limit: 180, windowMs: 60_000 });
   if (denied) return denied;
   const raw = req.headers.get("x-portal-session") ?? req.nextUrl.searchParams.get("session");
   if (!raw) return NextResponse.json({ valid: false }, { status: 200 });

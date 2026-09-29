@@ -17,6 +17,15 @@ test.beforeAll(async () => {
   editionId = ed!.id;
 });
 
+// QA: P2 artıkları (P2M-/P2T-/… siparişler + P2 ödemeler) GOLDEN 1'i sonraki
+// projelerde bozuyordu (paySum +6M/proje). Sipariş silimi ödeme/iade satırlarını
+// cascade temizler; yetim P2 ödemesi savunma amaçlı ayrıca silinir.
+test.afterAll(async () => {
+  await db.payment.deleteMany({ where: { reason: { startsWith: "P2 " } } });
+  await db.order.deleteMany({ where: { orderNo: { startsWith: "P2" } } });
+  await db.$disconnect();
+});
+
 test.describe.serial("P2.7 — ödeme simülasyonu + iyzico callback fail-closed", () => {
   let payId = "";
 

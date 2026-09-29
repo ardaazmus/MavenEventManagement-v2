@@ -11,7 +11,7 @@
 import { test, expect, type APIRequestContext } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import * as XLSX from "xlsx";
-import { removeDevtoolsOverlay } from "./_helpers";
+import { removeDevtoolsOverlay, isolateClientIp } from "./_helpers";
 
 const db = new PrismaClient();
 const SUFFIX = Date.now().toString(36).slice(-6);
@@ -51,8 +51,11 @@ async function postJSONWarm(request: APIRequestContext, path: string, body: unkn
 
 test.describe.serial("M22 — müşteri datası dosya içe aktarma", () => {
   test.afterAll(async () => {
+    // QA: e-posta deseni `m22-<SUFFIX>` idi ama gerçek adresler `m22-<ad>-<SUFFIX>`
+    // biçiminde — UI kontakları hiç silinmiyor, sonraki projede telefon-birleştirmeyi
+    // bozuyordu. Sonek-içerir eşleşme tüm koşu adreslerini yakalar.
     await db.customerContact.deleteMany({
-      where: { tenantId, OR: [{ tags: { contains: BULK_TAG } }, { email: { contains: `m22-${SUFFIX}` } }] },
+      where: { tenantId, OR: [{ tags: { contains: BULK_TAG } }, { email: { contains: SUFFIX } }] },
     });
     await db.$disconnect();
   });
@@ -162,9 +165,12 @@ test.describe.serial("M22 — müşteri datası dosya içe aktarma", () => {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Veri");
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 
+    await isolateClientIp(page);
     await page.goto("/");
     await removeDevtoolsOverlay(page);
-    await page.getByRole("navigation", { name: /Ana menü|Main menu/i }).getByRole("button", { name: /İletişim|Communication/i }).click();
+    // QA-run5: substring eşleşme etkinlik "İletişim" render olunca strict-ihlal verir;
+    // bu akış şirket havuzunu ister → tam-eşleşme
+    await page.getByRole("navigation", { name: /Ana menü|Main menu/i }).getByRole("button", { name: /^(Şirket İletişimi|Company Communications)$/i }).click();
 
     const fileBtn = page.getByRole("button", { name: /Dosyadan İçe Aktar|Import from File/i });
     await expect(fileBtn).toBeVisible({ timeout: 20_000 });

@@ -9,6 +9,7 @@ import { requireAdmin } from "@/lib/auth/request-context";
 import { resolveContext } from "@/lib/api/tenant-guard";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { redactPayload } from "@/lib/integrations/webhooks";
+import { sanitizeHeaderValue } from "@/lib/integrations/providers";
 
 export async function POST(req: NextRequest) {
   // DÜZELTME (politika ihlali): rota ADMIN sınıflıydı ama kapısızdı —
@@ -42,7 +43,8 @@ export async function POST(req: NextRequest) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 8000);
         try {
-          const headers: Record<string, string> = { "Content-Type": "application/json", "X-Maven-Integration": integration.name };
+          // QA: Türkçe/Unicode ad fetch'i ByteString hatasıyla patlatır (drain ile aynı kök).
+          const headers: Record<string, string> = { "Content-Type": "application/json", "X-Maven-Integration": sanitizeHeaderValue(integration.name) };
           const auth = integration.authConfig ? JSON.parse(integration.authConfig) as Record<string, string> : {};
           if (integration.authType === "API_KEY" && auth.key) headers["X-API-Key"] = auth.key;
           if (integration.authType === "BEARER" && auth.token) headers["Authorization"] = `Bearer ${auth.token}`;

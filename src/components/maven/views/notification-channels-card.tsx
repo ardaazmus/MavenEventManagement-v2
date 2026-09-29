@@ -5,7 +5,7 @@
 // (portal-settings.tsx'ten buraya taşındı; API uçları ve davranış aynıdır).
 // Bağımsız kaydetme akışı: /api/notifications/channels (GET/PUT) + /test.
 // Sırlar API'den daima maskeli döner; maske değeri gönderilirse değişmez.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as Icons from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,12 +60,16 @@ export function NotificationChannelsCard({ editionId }: { editionId: string }) {
   const [busy, setBusy] = useState(false);
   const [testPhone, setTestPhone] = useState("");
   const [testBusy, setTestBusy] = useState<"WHATSAPP" | "SMS" | null>(null);
+  // QA: edisyon değişiminde geç gelen (stale) yanıt kullanıcı düzenlemesini ezmesin
+  const loadSeq = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     try {
       const d = await apiGet<{ config: ChannelConfig; hasWaToken: boolean; hasSmsToken: boolean }>(
         `/api/notifications/channels?editionId=${encodeURIComponent(editionId)}`,
       );
+      if (seq !== loadSeq.current) return; // stale yanıt — düşür
       setCfg(d.config);
       setHasWaToken(d.hasWaToken);
       setHasSmsToken(d.hasSmsToken);

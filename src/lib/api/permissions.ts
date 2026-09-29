@@ -570,7 +570,10 @@ export async function authorizeDualRead({
         return { authorized: false, source: "db_rbac", reason: "ROLE_PERMISSION_DENIED" };
       }
     } catch {
-      // DB hatası durumunda fallback'e geç
+      // QA: DB kararı beklenirken hata → FAIL-CLOSED (kesin RED). Eski davranış
+      // legacy fallback'e düşüyordu — kesinti anında rol-dizesiyle yetki AÇILABİLİRDİ.
+      // Atamasız kullanıcıların normal fallback yolu (boş liste) korunur.
+      return { authorized: false, source: "db_rbac", reason: "DB_ERROR_FAIL_CLOSED" };
     }
   }
 

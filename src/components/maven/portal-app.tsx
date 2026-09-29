@@ -1191,7 +1191,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
               {otherEventsSorted.map((e) => {
                 const past = isPastEvent(e);
                 return (
-                <div key={e.id} className={`w-44 shrink-0 rounded-lg border bg-muted/30 p-2${past ? " opacity-70" : ""}`} role="listitem">
+                <a key={e.id} href={`?portal=${encodeURIComponent(e.slug)}`} className={`w-44 shrink-0 rounded-lg border bg-muted/30 p-2 transition-colors hover:border-primary/40 hover:bg-muted/60${past ? " opacity-70" : ""}`} role="listitem" aria-label={e.name}>
                   <div className="flex items-center gap-1.5">
                     {e.logoUrl ? (
                       <img src={e.logoUrl} alt="" className="size-5 rounded object-contain" />
@@ -1208,7 +1208,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
                   <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
                     {[e.city, e.startDate ? fmtDate(e.startDate) : null].filter(Boolean).join(" · ") || "—"}
                   </p>
-                </div>
+                </a>
                 );
               })}
             </div>
@@ -1695,7 +1695,7 @@ function LoginScreen({
         </div>
 
         {/* §2 Anonim oturum mantığı: kayıt yönlendirmesi */}
-        {opts.allowRegistrationRedirect && (
+        {opts.allowRegistrationRedirect && opts.registrationFormId && (
           <div className="mt-3.5 rounded-[20px] border border-dashed bg-white/60 p-4 text-center dark:bg-card/60">
             <p className="text-xs text-muted-foreground">{t("portalApp.login.registerHint")}</p>
             <Button variant="outline" className="mt-2 h-10 rounded-xl font-semibold" onClick={() => onOpenForm(opts.registrationFormId)} disabled={!opts.registrationFormId}>
@@ -2009,6 +2009,27 @@ function ProgramScreen({ content, onBack, sessionKey, accent, onGotoLogin }: { c
     toast({ title: t("portalApp.reminder.on") });
   };
 
+  // QA: scroll-spy — manuel kaydırmada aktif gün hapı görünür bölümle senkron kalır
+  // (yalnızca tıklamada set ediliyordu; kaydırınca hap-bölüm eşleşmesi bozuluyordu).
+  useEffect(() => {
+    if (byDay.length < 2 || typeof IntersectionObserver === "undefined") return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const vis = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (vis.length > 0) {
+          const di = Number((vis[0].target.id ?? "").replace("portal-day-", ""));
+          if (Number.isInteger(di) && di >= 0 && di < byDay.length) setActiveDay(di);
+        }
+      },
+      { rootMargin: "-30% 0px -60% 0px" },
+    );
+    for (let di = 0; di < byDay.length; di++) {
+      const el = document.getElementById(`portal-day-${di}`);
+      if (el) obs.observe(el);
+    }
+    return () => obs.disconnect();
+  }, [byDay]);
+
   if (program.length === 0) {
     return <ScreenShell title={t("portalApp.program.title")} onBack={onBack} icon={<Icons.CalendarDays className="size-4" />}>
       <EmptyMini text={t("portalApp.program.empty")} />
@@ -2017,7 +2038,8 @@ function ProgramScreen({ content, onBack, sessionKey, accent, onGotoLogin }: { c
 
   const jumpToDay = (di: number) => {
     setActiveDay(di);
-    document.getElementById(`portal-day-${di}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const smooth = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches !== true;
+    document.getElementById(`portal-day-${di}`)?.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
   };
 
   return (

@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { ensureInScope } from "@/lib/api/tenant-guard";
 import { requireStaff } from "@/lib/auth/request-context";
 import { ActivityType } from "@/lib/api/activity";
+import { withLock } from "@/lib/tx-lock";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -59,10 +60,25 @@ export async function POST(req: NextRequest, { params }: Params) {
     const declined = cardNo.endsWith("0000");
 
     if (declined) {
-      const failed = await db.payment.update({
-        where: { id },
-        data: { status: "FAILED", reference: `DEC-${Date.now().toString(36).toUpperCase()}` },
+      // QA: ret yolu da kilitli + idempotent — çift POST çift log üretmez
+      // (FAILED→SUCCEEDED yeniden deneme korunur: yalnız DEC- tekrarı kısa-devre).
+      const { failed, repeated } = await withLock(`pay:${id}`, async () => {
+        const cur = await db.payment.findUnique({ where: { id } });
+        if (cur?.status === "FAILED" && cur.reference?.startsWith("DEC-")) return { failed: cur, repeated: true };
+        const next = await db.payment.update({
+          where: { id },
+          data: { status: "FAILED", reference: `DEC-${Date.now().toString(36).toUpperCase()}` },
+        });
+        return { failed: next, repeated: false };
       });
+      if (repeated) {
+        return NextResponse.json({
+          payment: failed,
+          outcome: "FAILED",
+          message: "Banka işlemi reddetti (test kuralı: **0000 ile biten kartlar)",
+          idempotent: true,
+        });
+      }
       await db.activityLog.create({
         data: {
           editionId: payment.order.editionId,
@@ -80,15 +96,19 @@ export async function POST(req: NextRequest, { params }: Params) {
       });
     }
 
-    // Başarılı tahsilat
-    const succeeded = await db.payment.update({
-      where: { id },
-      data: {
-        status: "SUCCEEDED",
-        paidAt: new Date(),
-        reference: `TR-${Date.now().toString(36).toUpperCase()}`,
-      },
-    });
+    // Başarılı tahsilat — QA: koşullu geçiş + kilit (iyzico callback ile aynı desen):
+    // eşzamanlı çift POST'ta yalnız biri SUCCEEDED olur, kaybeden 409 alır.
+    const reference = `TR-${Date.now().toString(36).toUpperCase()}`;
+    const settled = await withLock(`pay:${id}`, () =>
+      db.payment.updateMany({
+        where: { id, status: { not: "SUCCEEDED" } },
+        data: { status: "SUCCEEDED", paidAt: new Date(), reference },
+      })
+    );
+    if (settled.count === 0) {
+      return NextResponse.json({ error: "Bu ödeme zaten tahsil edildi" }, { status: 409 });
+    }
+    const succeeded = (await db.payment.findUnique({ where: { id } }))!;
 
     // Sipariş bakiyesi: toplam başarılı ödeme ≥ tutar → PAID
     const orderPayments = await db.payment.findMany({ where: { orderId: payment.orderId } });

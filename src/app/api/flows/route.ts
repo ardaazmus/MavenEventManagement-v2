@@ -131,11 +131,17 @@ export async function POST(req: NextRequest) {
       case "registration.cancel": {
         const { registrationId, reason } = body as { registrationId: string; reason?: string };
         // G0-d: iptal edilen kaydın ebeveyn edisyonu bağlama doğrulanır
-        const target = await db.registration.findUnique({ where: { id: registrationId }, select: { editionId: true } });
+        const target = await db.registration.findUnique({ where: { id: registrationId }, select: { editionId: true, status: true } });
         if (!target) return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
         try { await verifyEditionTenant(target.editionId); } catch (e) {
           if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
           throw e;
+        }
+        // QA: idempotent tekrar — zaten iptal kayıtta yan etki YOK (çift log +
+        // bekleme-listesi teklif tekrarı kapanır; decide aksiyonuyla aynı desen).
+        if (target.status === "CANCELLED") {
+          const existing = await db.registration.findUnique({ where: { id: registrationId }, include: { participation: { include: { person: true } } } });
+          return NextResponse.json({ ...JSON.parse(JSON.stringify(existing ?? { id: registrationId, status: "CANCELLED" })), idempotent: true, waitlistOffered: [] });
         }
         const reg = await db.registration.update({
           where: { id: registrationId },
@@ -232,7 +238,10 @@ export async function POST(req: NextRequest) {
       // (₺60.000 teyidi bile eşiği tetiklemiyordu). Para birimi siparişle AYNI olmak
       // ZORUNDA; aşım-ödeme (paid+amount > total) reddedilir.
       case "finance.manualPayment": {
-        const { orderId, amount, currency = "TRY", reference, enteredBy, reason } = body as { orderId: string; amount: number; currency?: string; reference?: string; enteredBy?: string; reason?: string };
+        // Sözleşme: amount = MAJOR (₺, UI girdisi) — refund'un minor-only sözleşmesiyle
+        // KARIŞTIRILMAMALI. İki alan bir arada gelirse birim belirsizliği 400 (100x tuzak).
+        const { orderId, amount, amountMinor: ambiguousMinor, currency = "TRY", reference, enteredBy, reason } = body as { orderId: string; amount: number; amountMinor?: number; currency?: string; reference?: string; enteredBy?: string; reason?: string };
+        if (ambiguousMinor !== undefined) return NextResponse.json({ error: "Belirsiz birim — bu uçta yalnız major-unit 'amount' (₺) gönderin (kuruş için finance.refund sözleşmesine bakın)" }, { status: 400 });
         if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) return NextResponse.json({ error: "Tutar zorunlu" }, { status: 400 });
         const amountMinor = toMinor(amount); // F6: UI ₺ gönderir, DB kuruş tutar
         if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return NextResponse.json({ error: "Tutar kuruş cinsinden güvenli tam sayı olmalı" }, { status: 400 });
@@ -240,23 +249,44 @@ export async function POST(req: NextRequest) {
         // G0-d: siparişin ebeveyn edisyonu bağlama doğrulanır
         const orderCtx = await db.order.findUnique({ where: { id: orderId } });
         if (!orderCtx) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
-        try { await verifyEditionTenant(orderCtx.editionId); } catch (e) {
+        let orderTenant: string;
+        try { orderTenant = await verifyEditionTenant(orderCtx.editionId); } catch (e) {
           if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
           throw e;
         }
         if (orderCtx.currency !== currency) return NextResponse.json({ error: `Para birimi siparişle uyuşmuyor (sipariş: ${orderCtx.currency})` }, { status: 400 });
-        const paidSoFar = await db.payment.findMany({ where: { orderId, status: "SUCCEEDED" }, select: { amount: true } });
-        const paidSum = paidSoFar.reduce((a, p) => a + p.amount, 0);
-        if (paidSum + amountMinor > orderCtx.totalAmount) {
-          return NextResponse.json({ error: `Aşım ödeme: kalan ${orderCtx.totalAmount - paidSum} minor — talep ${amountMinor} minor` }, { status: 409 });
-        }
 
-        const payment = await db.payment.create({
-          data: { orderId, amount: amountMinor, currency, source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference, enteredBy: enteredBy ?? "Finans Sorumlusu", reason, approvedBy: amountMinor > 5_000_000 ? "Tenant Sahibi" : undefined, paidAt: new Date() }, // P2: eşik minor-birimde
-        });
-        await recalcOrder(orderId);
-        await db.activityLog.create({ data: { type: ActivityType.PAYMENT_RECEIVED, message: `Manuel tahsilat: ${amount} ${currency} — ${reason}`, entityType: "Payment", entityId: payment.id, actorName: enteredBy ?? "Finans Sorumlusu" } });
-        return NextResponse.json(payment, { status: 201 });
+        // QA: bakiye kontrolü + yazım + yeniden hesap TEK kilit+tx'te (refund ile aynı
+        // desen) — eşzamanlı çift gönderim aşım-ödemeye yol açamaz (okuma-taze-sayım).
+        try {
+          const payment = await withLock(`order:${orderId}`, () => db.$transaction(async (tx) => {
+            const order = await tx.order.findUnique({ where: { id: orderId }, include: { payments: true } });
+            if (!order) throw new GuardError("Sipariş bulunamadı", 404);
+            const paidSum = order.payments.filter((p) => p.status === "SUCCEEDED").reduce((a, p) => a + p.amount, 0);
+            if (paidSum + amountMinor > order.totalAmount) {
+              throw new GuardError(`Aşım ödeme: kalan ${order.totalAmount - paidSum} kuruş — talep ${amountMinor} kuruş`, 409);
+            }
+            const created = await tx.payment.create({
+              data: { orderId, amount: amountMinor, currency, source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference, enteredBy: enteredBy ?? "Finans Sorumlusu", reason, approvedBy: amountMinor > 5_000_000 ? "Tenant Sahibi" : undefined, paidAt: new Date() }, // P2: eşik minor-birimde
+            });
+            // recalcOrder birebir — tx bağlamında (ayrı bağlantı kullanmamak için)
+            const fresh = await tx.order.findUnique({ where: { id: orderId }, include: { lines: true, payments: true, refunds: true } });
+            if (fresh) {
+              const linesTotal = fresh.lines.reduce((s, l) => s + l.total, 0) || fresh.totalAmount;
+              const paid = fresh.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
+              const refunded = fresh.refunds.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + r.amount, 0);
+              const balance = linesTotal - paid + refunded;
+              const status = fresh.status === "CANCELLED" ? "CANCELLED" : balance <= 0 ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "OPEN";
+              await tx.order.update({ where: { id: orderId }, data: { totalAmount: linesTotal, status } });
+            }
+            await tx.activityLog.create({ data: { type: ActivityType.PAYMENT_RECEIVED, tenantId: orderTenant, editionId: order.editionId, message: `Manuel tahsilat: ${amount} ${currency} — ${reason}`, entityType: "Payment", entityId: created.id, actorName: enteredBy ?? "Finans Sorumlusu" } });
+            return created;
+          }));
+          return NextResponse.json(payment, { status: 201 });
+        } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
       }
 
       // ── İade talebi/onayı (iade ≠ iptal; hak iadesi ayrı adım) ──

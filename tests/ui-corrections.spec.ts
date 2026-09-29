@@ -61,7 +61,9 @@ test.describe.serial("P3 — UI doğrulamaları", () => {
 
   test("P3.12 — Kampanya diyaloğu: boş ad → Kaydet devre dışı + satır-içi hata; doldurunca açılır", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: /İletişim|Communications/i }).first().click();
+    // QA-run5: capability-gated "İletişim" ~230ms geç render olur; substring .first()
+    // erken gelen "Şirket İletişimi"ne kilitleniyordu → M21 deseni: tam-eşleşme + nav kapsamı
+    await page.getByRole("navigation", { name: /Ana menü|Main menu/i }).getByRole("button", { name: /^(İletişim|Communications)$/i }).click();
     // Kampanya bölümü → Yeni Kampanya (varsa boş-durum butonu, yoksa satırdaki oluştur)
     const newBtn = page.getByRole("button", { name: /Yeni Kampanya|New Campaign/i }).first();
     await newBtn.click();

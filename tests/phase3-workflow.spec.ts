@@ -16,6 +16,31 @@ test.beforeAll(async () => {
   editionId = ed!.id;
 });
 
+// QA: P3 artıkları GOLDEN 2'yi (+1 CONFIRMED/proje) ve edisyon seçiciyi (P3 Yayın
+// Testi kirliliği) bozuyordu. Sıralı silim: kayıt → kategori → form → otel zinciri →
+// edisyon (SetNull/cascade yönlerine uygun); kişiler maven-test.local dışlamasıyla
+// golden-güvenli ama hijyen için silinir.
+test.afterAll(async () => {
+  const cats = await db.registrationCategory.findMany({ where: { name: { startsWith: "P3-Dolu-" } }, select: { id: true } });
+  if (cats.length > 0) {
+    await db.registration.deleteMany({ where: { categoryId: { in: cats.map((c) => c.id) } } });
+    await db.registrationCategory.deleteMany({ where: { id: { in: cats.map((c) => c.id) } } });
+  }
+  await db.formDefinition.deleteMany({ where: { name: { startsWith: "P3 Kapasite Formu " } } });
+  const hotels = await db.hotelProperty.findMany({ where: { name: { startsWith: "P3 Otel " } }, select: { id: true } });
+  if (hotels.length > 0) {
+    const hids = hotels.map((h) => h.id);
+    const blocks = await db.roomBlock.findMany({ where: { hotelId: { in: hids } }, select: { id: true } });
+    if (blocks.length > 0) {
+      await db.reservation.deleteMany({ where: { blockId: { in: blocks.map((b) => b.id) } } });
+    }
+    await db.hotelProperty.deleteMany({ where: { id: { in: hids } } });
+  }
+  await db.eventEdition.deleteMany({ where: { name: { startsWith: "P3 Yayın Testi " } } });
+  await db.person.deleteMany({ where: { email: { startsWith: "p3-" } } });
+  await db.$disconnect();
+});
+
 test.describe.serial("P3.9 — kayıt kararları + haklar", () => {
   test("geçersiz karar değeri 400", async ({ request }) => {
     const reg = await db.registration.findFirst({ where: { status: "PENDING_APPROVAL" }, select: { id: true } });

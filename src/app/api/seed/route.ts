@@ -13,6 +13,10 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 import { encryptSecret } from "@/lib/secrets";
 import { toMinor } from "@/lib/money";
 import { requireAdmin } from "@/lib/auth/request-context";
+// QA: sistem rolleri — scripts/seed-roles.mjs hiç çağrılmıyordu; rol atama UI'ı
+// boş listeyle ölüydü. Demo seed idempotent upsert'i buradan çalıştırır (atamasız
+// kullanıcıda legacy fallback korunur — davranış değişmez, liste dolar).
+import { seedSystemRoles } from "../../../../scripts/seed-roles.mjs";
 
 const D = (offsetDays: number, h = 9, m = 0) => {
   const d = new Date();
@@ -71,6 +75,9 @@ export async function POST(req: NextRequest) {
         },
       },
     });
+
+    // ── Sistem rolleri (11 standart rol + izin matrisi; idempotent upsert) ──
+    await seedSystemRoles(db);
 
     // ── Kurumlar (sponsor TÜRÜ değil — rol ataması §4) — TAM kimlik kartı girişli ──
     const [abcPharma, association, pco, icc, beta, media, uni, hotelOrg] = await Promise.all([
@@ -177,6 +184,38 @@ export async function POST(req: NextRequest) {
         { editionId: edition3.id, personId: P.Ayşe.id, source: "PUBLIC_FORM", attendance: "CHECKED_IN" },
         { editionId: edition3.id, personId: P.Mustafa.id, source: "ADMIN_ENTRY", attendance: "CHECKED_OUT" },
       ],
+    });
+
+    // ── Dış portal yapılandırması (canlı edisyon) ──
+    // QA: wipe edisyonları cascade siler → portal config YOK OLUR; seed kurmazsa portal
+    // DISABLED kalır ve tüm portal E2E düşer. Deterministik demo: portal AÇIK +
+    // misafir kodu DEMO26 (tests/modules/_helpers.ts sözleşmesi).
+    await db.eventPortalConfig.upsert({
+      where: { editionId: edition1.id },
+      create: {
+        editionId: edition1.id, portalEnabled: true, eventCode: "DEMO26",
+        // QA: E2E sözleşmeleri — oyun puanları (M09/M10), kroki (M03/M07).
+        // Puan/seviye content varsayılanları (FORM_SUBMIT 20, QA_SUBMIT 10 …).
+        gameEnabled: true,
+        venueMapEnabled: true,
+        venueMapUrl: "https://assets.maven.demo/kroki/no-dig-2026.svg",
+      },
+      update: {
+        portalEnabled: true, eventCode: "DEMO26",
+        gameEnabled: true, venueMapEnabled: true,
+        venueMapUrl: "https://assets.maven.demo/kroki/no-dig-2026.svg",
+      },
+    });
+    // QA: karşılama duyurusu (M12/M13) — hedef ALL: misafir + kimlikli görür.
+    await db.portalAnnouncement.upsert({
+      where: { id: "seed-welcome-no-dig-2026" },
+      create: {
+        id: "seed-welcome-no-dig-2026", editionId: edition1.id, target: "ALL", level: "INFO",
+        title: "Katılımcı Portalına Hoş Geldiniz",
+        message: "Program, kroki ve duyurular bu portalda. Sorularınız için Q&A ekranını kullanın.",
+        sentBy: "ADMIN",
+      },
+      update: { target: "ALL", level: "INFO" },
     });
 
     // ── Yetenekler (§6 şablonlar) ──
@@ -1143,7 +1182,7 @@ export async function POST(req: NextRequest) {
     // (4) API Geçidi — çift yönlü entegrasyon örnekleri + log dili
     await db.apiIntegration.createMany({
       data: [
-        { tenantId: tenant.id, editionId: edition1.id, name: "CRM Kişi Eşitleme", direction: "OUTBOUND", kind: "REST", baseUrl: "https://crm.maven-demo.example/api/v1/participants", authType: "API_KEY", authConfig: JSON.stringify({ key: "demo-crm-***" }), status: "ACTIVE", notes: "Onaylı kayıtlar gecelik CRM'e aktarılır" },
+        { tenantId: tenant.id, editionId: edition1.id, name: "CRM Kişi Eşitleme", direction: "OUTBOUND", kind: "REST", baseUrl: "https://crm.maven-demo.example/api/v1/participants", authType: "API_KEY", authConfig: JSON.stringify({ key: "demo-crm-***" }), status: "DRAFT", notes: "Onaylı kayıtlar gecelik CRM'e aktarılır" },
         { tenantId: tenant.id, name: "Iyzico Sanal POS", direction: "OUTBOUND", kind: "PAYMENT", provider: "IYZICO", baseUrl: "https://api.iyzico.example/payment/pos/auth", authType: "BASIC", authConfig: JSON.stringify({ user: "maven-api", pass: "***" }), status: "ACTIVE", notes: "Form Merkezi online ödemeleri bu kanaldan akar" },
         { tenantId: tenant.id, editionId: edition1.id, name: "Kayıt Webhook (dış form)", direction: "INBOUND", kind: "WEBHOOK", inboundToken: "maven-hook-demo-token", status: "ACTIVE", notes: "POST /api/integrations/hook/maven-hook-demo-token — type=PARTICIPANT ile kişi+katılım upsert" },
         { tenantId: tenant.id, editionId: edition1.id, name: "Mailjet Kampanya Kanalı", direction: "OUTBOUND", kind: "MAIL", provider: "MAILJET", authType: "API_KEY", authConfig: JSON.stringify({ key: "mj-***" }), status: "DRAFT", notes: "Toplu gönderimler spam'e düşmemesi için" },

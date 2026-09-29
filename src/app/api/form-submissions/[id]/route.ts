@@ -48,12 +48,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     switch (action) {
       case "approve": {
-        // 1) Gönderiyi onayla
-        const updated = await db.formSubmission.update({
-          where: { id },
-          data: { status: "APPROVED", notes: notes ?? submission.notes },
-        });
-        // 2) Kayıt formuysa zinciri kur / iptal edilen kaydı geri aç
+        // QA: zincir ÖNCE kurulur — zincir hatası (kapasite 409 dahil) gönderiyi
+        // PENDING'de bırakır; onaysız-kayıtsız tutarsız durum oluşmaz, yeniden onay
+        // denenebilir. createRegistrationFromSubmission durumdan bağımsızdır (idempotent).
+        // 1) Kayıt formuysa zinciri kur / iptal edilen kaydı geri aç
         let chain: ChainResult | null = null;
         if (submission.form.type === "REGISTRATION") {
           chain = await createRegistrationFromSubmission(id);
@@ -67,6 +65,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
             }
           }
         }
+        // 2) Zincir kuruldu → gönderiyi onayla
+        const updated = await db.formSubmission.update({
+          where: { id },
+          data: { status: "APPROVED", notes: notes ?? submission.notes },
+        });
         await db.activityLog.create({
           data: {
             editionId: submission.editionId,
@@ -88,14 +91,18 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         return NextResponse.json(updated);
       }
       case "spam": {
+        // QA: bozuk spamReasons JSON'u 500 yapmaz — korumalı ayrıştırma + dizi yedeği.
+        let priorReasons: unknown[] = [];
+        try {
+          const parsed: unknown = JSON.parse(submission.spamReasons ?? "[]");
+          if (Array.isArray(parsed)) priorReasons = parsed;
+        } catch { /* bozuk kayıt — taze listeyle devam */ }
         const updated = await db.formSubmission.update({
           where: { id },
           data: {
             status: "SPAM",
             spamScore: Math.max(submission.spamScore, 100),
-            spamReasons: JSON.stringify(
-              JSON.parse(submission.spamReasons ?? "[]").concat(["Manuel spam işaretlemesi"])
-            ),
+            spamReasons: JSON.stringify([...priorReasons, "Manuel spam işaretlemesi"]),
           },
         });
         await cancelRegistrationOfSubmission(id, "Form gönderisi spam olarak işaretlendi");

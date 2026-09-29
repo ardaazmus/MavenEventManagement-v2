@@ -106,3 +106,24 @@ test("P22.4 - zaman asimi: yavas saglayici kesilir + tekrarlanabilir", async () 
     slow.server.close();
   }
 });
+
+test("QA - unicode baslik degeri: Turkce entegrasyon adi fetch'i patlatmaz", async () => {
+  const { dispatchWebhook, sanitizeHeaderValue } = await import(pathToFileURL(providersLib).href);
+  assert.strictEqual(sanitizeHeaderValue("CRM Kişi Eşitleme"), "CRM Ki?i E?itleme");
+  assert.strictEqual(sanitizeHeaderValue("plain-ascii_123"), "plain-ascii_123");
+  const srv = await startServer((req, raw, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  try {
+    const out = await dispatchWebhook({
+      url: srv.url, eventType: "lead.captured", deliveryId: "d-tr",
+      payload: {}, extraHeaders: { "X-Maven-Integration": "CRM Kişi Eşitleme" },
+    });
+    assert.strictEqual(out.ok, true);
+    assert.strictEqual(out.status, 200);
+    assert.strictEqual(srv.seen[0].headers["x-maven-integration"], "CRM Ki?i E?itleme");
+  } finally {
+    srv.server.close();
+  }
+});

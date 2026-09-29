@@ -199,7 +199,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="ml-auto flex items-center gap-2">
-              <ThemeSwitcher />
+              {/* QA: 390px taşma — tema/yenile mobilde gizli (akış-dışı; ayarlarda mevcut) */}
+              <span className="hidden sm:inline"><ThemeSwitcher /></span>
               {/* Faz E: mini dil butonu — TR/EN tek tıkla değişir */}
               <Button
                 variant="outline"
@@ -247,7 +248,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   {label(EDITION_STATUS, edition.status)}
                 </Badge>
               )}
-              <Button variant="ghost" size="icon" aria-label={t("shell.refresh")} onClick={() => bootstrap()} disabled={loading}>
+              <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label={t("shell.refresh")} onClick={() => bootstrap()} disabled={loading}>
                 <Icons.RefreshCw className={cn("size-4", loading && "animate-spin text-primary")} />
               </Button>
               <NotificationBell />

@@ -50,7 +50,7 @@ interface ParticipationRow {
   person: { id: string; firstName: string; lastName: string; email?: string | null };
 }
 
-const NO_SHOW_NOTE = "Gerçekleşmeyen konaklama ücreti faturaya no-show kalemi olarak yansır — sistemden düşme kaydıdır.";
+const NO_SHOW_NOTE = "Gerçekleşmeyen konaklama no-show ücretiyle kayda geçer — raporda ve dışa aktarımda görünür.";
 const COMPANION_AGE = { ADULT: "Yetişkin", CHILD: "Çocuk", INFANT: "Bebek (0-2)" } as const;
 
 export function AccommodationView() {
@@ -175,7 +175,7 @@ export function AccommodationView() {
     setBusy(true);
     try {
       await apiSend(`/api/reservations/${noShowRes.id}`, "PUT", { noShow: true, noShowFee: toMinor(Number(noShowFee) || 0) }); // F6
-      toast({ title: "No-show işaretlendi", description: `${noShowRes.guestName} sistemden düşüldü — ücret faturaya kalem olarak yansır.` });
+      toast({ title: "No-show işaretlendi", description: `${noShowRes.guestName} sistemden düşüldü — ücret no-show kaydına işlendi.` });
       setNoShowRes(null);
       reloadRes(); bump();
     } catch (e) {
@@ -853,6 +853,13 @@ export function AccommodationView() {
                       <Button size="sm" onClick={() => confirm(r)} disabled={busyId === r.id}>
                         {busyId === r.id ? "Kontrol ediliyor…" : "Teyit Et"}
                       </Button>
+                    )}
+                    {/* QA: bloksuz rezervasyon stoktan teyit edilemez (sunucu 400) — sessiz
+                        buton-yokluğu yerine neden gösterilir; çözüm: bloklu yeniden açma. */}
+                    {["REQUESTED", "WAITLIST"].includes(r.status) && !r.block && (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800" title="Teyit stoktan düşer; oda bloğu bağlantısı olmayan rezervasyon teyit edilemez">
+                        <Icons.AlertTriangle className="size-3.5" /> Teyit için oda bloğu gerekli
+                      </span>
                     )}
                   </div>
                 </div>

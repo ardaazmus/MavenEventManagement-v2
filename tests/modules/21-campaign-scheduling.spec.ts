@@ -12,6 +12,7 @@
 //      "SENT" doğrulaması DB son-durumuna yapılır (kim işlediyse); tick rapor sayıları
 //      yarış-toleranslı doğrulanır.
 import { test, expect, type APIRequestContext, type APIResponse } from "@playwright/test";
+import { isolateClientIp } from './_helpers';
 import { PrismaClient } from "@prisma/client";
 
 const db = new PrismaClient();
@@ -212,6 +213,7 @@ test.describe.serial("M21 — zamanlanmış kampanya gönderimi", () => {
     test.setTimeout(90_000);
     const id = await createCampaign(`Sched UI ${SUFFIX}`, `sched-ui-${SUFFIX}@test.crm`);
 
+    await isolateClientIp(page);
     await page.goto("/");
     const menu = page.getByRole("navigation", { name: /Ana menü|Main menu/i });
     await expect(menu).toBeVisible({ timeout: 15_000 });
@@ -220,7 +222,8 @@ test.describe.serial("M21 — zamanlanmış kampanya gönderimi", () => {
       await edSelect.click();
       await page.getByRole("option", { name: /No-Dig Turkey 2026/i }).click();
     }
-    await menu.getByRole("button", { name: /İletişim|Communications/i }).click();
+    // Şirket İletişimi modülü eklendiğinden beri /İletişim/ iki butona eşleşiyor — tam ad çapası.
+    await menu.getByRole("button", { name: /^(İletişim|Communications)$/i }).click();
 
     // kampanya kartı + Zamanla butonu (rounded-xl = kampanya kartı; div genel filtre DİŞ wrapper'ı da yakalar — E2E dersi)
     const card = page.locator("div.rounded-xl").filter({ has: page.getByText(`Sched UI ${SUFFIX}`) }).first();

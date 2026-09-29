@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 // N-05 kilitleri: SheetJS 0.18.5 (npm) CVE-2023-30533 (prototype pollution) +
 // CVE-2024-22363 (ReDoS) taşır; düzeltme yalnız resmi 0.20.x derlemesindedir.
-// Bağımlılık: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+// Bağımlılık: vendor/xlsx-0.20.3.tgz (kaynak: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz)
 
 test("N05-1 - kurulu xlsx 0.20.3+ resmi derlemedir", async () => {
   const XLSX = await import("xlsx");

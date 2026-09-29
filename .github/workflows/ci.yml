@@ -41,6 +41,13 @@ jobs:
       - name: 1. Frozen Dependency Installation
         run: bun install --frozen-lockfile
 
+      - name: 1b. Cache Prisma Engines
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/prisma
+          key: prisma-engines-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            prisma-engines-${{ runner.os }}-
       - name: 2. Prisma Client Generation
         run: npx prisma generate
 

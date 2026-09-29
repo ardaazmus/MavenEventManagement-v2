@@ -54,7 +54,9 @@ test("P22.2 - claim/lease/retry/dead-letter + kira calisma", async () => {
     await publishOutbox(iso.prisma, { ...EVT, idempotencyKey: "b", maxAttempts: 2 });
 
     // w1 ikisini de alir; w2 bosta bulamaz (lease)
-    const t0 = Date.now();
+    // +2ms emniyet payi: Prisma engine now() ile Date.now() arasindaki ms-siniri
+    // yuvarlamasi, "nextRunAt <= now" marjini 0/altina indirebiliyor (flake kaydi: 2026-09-30).
+    const t0 = Date.now() + 2;
     const c1 = await claimOutbox(iso.prisma, "w1", { nowMs: t0 });
     assert.strictEqual(c1.length, 2);
     const c2 = await claimOutbox(iso.prisma, "w2", { nowMs: t0 });

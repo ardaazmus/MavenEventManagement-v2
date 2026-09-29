@@ -1,5 +1,5 @@
 // CRON-E2E — Modül: Admin Tüm Kartlar (Ayarlar IA bütünlüğü)
-// Tam akış: Portal Ayarları kart turu (11 kart başlığı) → dirty-state guard →
+// Tam akış: Portal Ayarları kart turu (12 kart başlığı) → dirty-state guard →
 // Kaydet rozeti → config JSON export/import döngüsü → DB&Migration yalnız-okur
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "fs";
@@ -16,6 +16,7 @@ const CARD_TITLES = [
   /Canlı Portal İstatistikleri/,
   /Yapılandırma Yedekleme/,
   /Soru & Cevap Moderasyonu/,
+  /Mobil Uygulama \(PWA\)/,
 ];
 
 test("SMOKE — admin konsolu render (footer model sayısı)", async ({ page }) => {
@@ -34,7 +35,7 @@ test("FULL — kart turu + dirty guard + JSON export/import döngüsü", async (
   await page.getByRole("navigation", { name: /Ana menü|Main menu/i }).getByRole("button", { name: /Dış Portal/i }).click();
   await page.getByRole("tab", { name: /Portal Ayarları/i }).click();
 
-  // 2) kart turu — 11 SectionCard başlığı tek tek görünür
+  // 2) kart turu — 12 SectionCard başlığı tek tek görünür
   for (const title of CARD_TITLES) {
     await expect(page.getByRole("heading", { name: title })).toBeVisible({ timeout: 15_000 });
   }

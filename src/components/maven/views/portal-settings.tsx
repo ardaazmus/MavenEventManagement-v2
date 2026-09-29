@@ -24,6 +24,8 @@ import { fmtDate } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { fontStackFor, loadGoogleFont, GOOGLE_FONTS } from "@/lib/portal-fonts";
 import { PORTAL_ICON_LIBRARY, resolvePortalIcon, type LibraryIcon } from "@/components/maven/portal-icon-library";
+import { PwaSettingsCard } from "@/components/maven/views/pwa-settings-card";
+import { parsePwaSettings, type PwaSettings } from "@/lib/pwa-settings";
 
 // ─── tipler ─────────────────────────────────────────────────────────────────
 type PortalConfig = {
@@ -34,7 +36,7 @@ type PortalConfig = {
   headerEventsJson: string | null; bottomNavJson: string | null; widgetsJson: string | null;
   notificationsEnabled: boolean; notifyOffsetsJson: string | null;
   sponsorIdsJson: string | null; venueMapUrl: string | null; venueMapEnabled: boolean;
-  pwaEnabled: boolean;
+  pwaEnabled: boolean; pwaJson: string | null;
   // ── tasarım kontrolü (§5.2+) ──
   fontFamily: string | null; fontScale: number | null;
   headerBgColor: string | null; footerBgColor: string | null; contentBgColor: string | null;
@@ -50,7 +52,7 @@ type Lookups = {
   sponsors: { id: string; name: string; logoUrl: string | null; tierName: string | null }[];
   people: { id: string; firstName: string; lastName: string; email: string | null; company: string | null }[];
 };
-type ConfigPayload = { config: PortalConfig; header: { title: string; subtitle: string }; lookups: Lookups };
+type ConfigPayload = { config: PortalConfig; edition?: { name: string }; header: { title: string; subtitle: string }; lookups: Lookups };
 type WidgetRow = { key: string; enabled: boolean; visibility: "ALL" | "AUTH"; order: number };
 type Analytics = {
   uniqueVisitors: { guest: number; auth: number; total: number };
@@ -202,6 +204,7 @@ type PortalDraft = {
   headerEvents: string[]; bottomNav: Record<string, boolean>;
   widgets: WidgetRow[]; notificationsEnabled: boolean; offsets: number[];
   sponsorIds: string[]; venueMapUrl: string; venueMapEnabled: boolean; pwaEnabled: boolean;
+  pwa: PwaSettings;
   headerTitle: string; headerSubtitle: string;
   // ── tasarım (§5.2+) ──
   fontFamily: string; fontScale: number;
@@ -236,6 +239,7 @@ function configToDraft(data: ConfigSource): PortalDraft {
     venueMapUrl: data.config.venueMapUrl ?? "",
     venueMapEnabled: data.config.venueMapEnabled,
     pwaEnabled: data.config.pwaEnabled,
+    pwa: parsePwaSettings(data.config.pwaJson),
     headerTitle: data.header.title,
     headerSubtitle: data.header.subtitle,
     // ── tasarım alanları ──
@@ -391,6 +395,7 @@ export function PortalSettingsTab({ editionId, portalSlug, onDirtyChange }: { ed
         venueMapUrl: draft.venueMapUrl || null,
         venueMapEnabled: draft.venueMapEnabled,
         pwaEnabled: draft.pwaEnabled,
+        pwa: draft.pwa,
         headerTitle: draft.headerTitle || null,
         headerSubtitle: draft.headerSubtitle || null,
         // ── tasarım alanları ──
@@ -1166,15 +1171,19 @@ export function PortalSettingsTab({ editionId, portalSlug, onDirtyChange }: { ed
               </div>
             </div>
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
-            <div>
-              <Label className="text-xs">PWA</Label>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">{t("portalSettings.content.pwaHint")}</p>
-            </div>
-            <Switch checked={draft.pwaEnabled} onCheckedChange={(v) => patch("pwaEnabled", v)} aria-label="PWA" />
-          </div>
         </div>
       </SectionCard>
+
+      {/* ── PWA-ADMIN v1: Mobil Uygulama (PWA) — Branded App Builder ── */}
+      <PwaSettingsCard
+        value={draft.pwa}
+        onChange={(v) => patch("pwa", v)}
+        enabled={draft.pwaEnabled}
+        onEnabledChange={(v) => patch("pwaEnabled", v)}
+        editionName={payload?.edition?.name ?? ""}
+        portalSlug={portalSlug}
+        themeColor={draft.themeColor}
+      />
 
       {/* ── §5.6 Canlı Portal İstatistikleri ── */}
       <SectionCard title={t("portalSettings.analytics.title")} desc={t("portalSettings.analytics.desc")}>

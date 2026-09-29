@@ -2315,6 +2315,7 @@ model EventPortalConfig {
   gameConfigJson            String? // {points:{FORM_SUBMIT,QA_SUBMIT,B2B_ACCEPT}, levels:[{name,min}]}
   // PWA
   pwaEnabled                Boolean   @default(true)
+  pwaJson                   String? // Mobil Uygulama (PWA) ayarları — bkz. src/lib/pwa-settings.ts (PWA-ADMIN v1)
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
 

@@ -33,6 +33,8 @@ import { haptic } from "@/lib/haptic";
 import { useSwipeBack } from "@/hooks/useSwipeBack";
 import { usePWAInstall } from "@/hooks/usePWAInstall";
 import { PORTAL_NAV_ROOT, parseNavHash, navHash, pushNav, popNav, resetNav, syncNav, isPortalScreen } from "@/lib/portal-nav";
+import { PWA_DEFAULTS, type PwaSettings } from "@/lib/pwa-settings";
+import { InstallSheet, OfflineStrip, CompactAppBar, isIosDevice } from "@/components/maven/portal-install-sheet";
 // PublicFormPage artık STATİK import EDİLMEZ — aşağıda dynamic (CRON-10 lazy chunk)
 
 // CRON-10: form motoru ağır bir pakettir — portala STATİK değil, form açılınca
@@ -148,6 +150,7 @@ type PortalContent = {
     allowRegistrationRedirect: boolean;
     registrationFormId: string | null;
     pwaEnabled: boolean;
+    pwa?: PwaSettings | null;
     design?: PortalDesign | null;
     chrome?: PortalChrome | null;
     game?: GameRules | null;
@@ -648,7 +651,9 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
   const cfg = content?.config;
 
   // ── PWA: service worker + install prompt (tek kaynak: usePWAInstall) ──
-  const { canInstall, promptInstall } = usePWAInstall();
+  const { canInstall, isStandalone, promptInstall } = usePWAInstall();
+  // PWA-ADMIN v1: sunucu ayarı (yoksa sektör varsayılanları) — banner/şerit/durum çubuğu
+  const pwa: PwaSettings = cfg?.pwa ?? PWA_DEFAULTS;
   // CRON-8: yeni SW sürümü "installed" durumunda beklerken kullanıcıya toast göster
   const [swUpdateReady, setSwUpdateReady] = useState(false);
   const swRegRef = useRef<ServiceWorkerRegistration | null>(null);
@@ -708,10 +713,110 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
     });
   }, [swUpdateReady, applySwUpdate, toast]);
 
+  // ── PWA-ADMIN v1: edisyona özel manifest + tema/durum-çubuğu enjeksiyonu ──
+  // Statik /manifest.webmanifest yedek kalır; portal her zaman slug'a özel
+  // manifesti takar (kurulan uygulama doğru etkinliği açar).
+  useEffect(() => {
+    if (typeof document === "undefined" || !editionSlug) return;
+    try {
+      let link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "manifest";
+        document.head.appendChild(link);
+      }
+      link.href = `/api/portal/manifest?slug=${encodeURIComponent(editionSlug)}`;
+      const accentMeta = (content?.config?.themeColor ?? content?.edition?.portalHeaderAccent ?? "").trim();
+      if (/^#[0-9a-fA-F]{6}$/.test(accentMeta)) {
+        let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+        if (!meta) {
+          meta = document.createElement("meta");
+          meta.name = "theme-color";
+          document.head.appendChild(meta);
+        }
+        meta.content = accentMeta;
+      }
+      const sb = pwa.statusBarStyle;
+      if (sb && sb !== "default") {
+        let sbMeta = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-status-bar-style"]');
+        if (!sbMeta) {
+          sbMeta = document.createElement("meta");
+          sbMeta.name = "apple-mobile-web-app-status-bar-style";
+          document.head.appendChild(sbMeta);
+        }
+        sbMeta.content = sb;
+      }
+    } catch {
+      /* head enjeksiyonu başarısız olursa statik varsayılanlar kalır */
+    }
+  }, [editionSlug, content?.config?.themeColor, content?.edition?.portalHeaderAccent, pwa.statusBarStyle]);
+
+  // ── PWA-ADMIN v1: kurulum bottom-sheet'i — anlamlı an + erteleme kalıcılığı ──
+  const [installSheetOpen, setInstallSheetOpen] = useState(false);
+  const [iosSheet, setIosSheet] = useState(false);
+  useEffect(() => {
+    if (phase !== "ACTIVE" || !cfg?.pwaEnabled || !pwa.installBanner || isStandalone) return;
+    let dismissedUntil = 0;
+    try {
+      dismissedUntil = Number(window.localStorage.getItem(`maven.pwa.dismiss.${editionSlug}`) || 0);
+    } catch {
+      /* private-mode: erteleme yok sayılır */
+    }
+    if (dismissedUntil > Date.now()) return;
+    const ios = pwa.iosInstructions && isIosDevice();
+    // iOS: yönerge her zaman gösterilebilir; diğerleri: tarayıcı sinyali VEYA bekleme notu
+    if (!ios && !canInstall) {
+      // beforeinstallprompt henüz gelmediyse sheet'i geciktir (sinyal gelince açılır)
+      return;
+    }
+    const timer = setTimeout(() => {
+      setIosSheet(ios);
+      setInstallSheetOpen(true);
+    }, Math.max(0, Math.min(600, pwa.installDelaySec)) * 1000);
+    return () => clearTimeout(timer);
+  }, [phase, cfg?.pwaEnabled, pwa.installBanner, pwa.installDelaySec, pwa.iosInstructions, isStandalone, canInstall, editionSlug]);
+  const dismissInstallSheet = useCallback((days: number) => {
+    setInstallSheetOpen(false);
+    try {
+      window.localStorage.setItem(`maven.pwa.dismiss.${editionSlug}`, String(Date.now() + Math.max(1, days) * 86_400_000));
+    } catch {
+      /* yoksay */
+    }
+  }, [editionSlug]);
+
+  // ── PWA-ADMIN v1: çevrimiçi durumu (şerit) + kaydırma (kompakt bar) ──
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  useEffect(() => {
+    const on = () => setIsOnline(true);
+    const off = () => setIsOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+  // PWA-ADMIN v1: kompakt bar eşiği hero boyunun YARISI (sabit piksel değil) —
+  // kısa sayfalarda da çalışır; kaydırılamayan sayfada bara gerek zaten yoktur.
+  const heroRef = useRef<HTMLElement | null>(null);
+  const [scrolledPast, setScrolledPast] = useState(false);
+  useEffect(() => {
+    if (phase !== "ACTIVE") return;
+    const onScroll = () => {
+      const heroH = heroRef.current?.offsetHeight ?? 240;
+      setScrolledPast(window.scrollY > Math.min(240, Math.max(60, heroH * 0.5)));
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [phase]);
+
   // ── PWA: kurulum — sonuç (accepted/dismissed) beklenir; vazgeçmede sessiz çıkılır ──
   const installApp = async () => {
     const accepted = await promptInstall();
     if (!accepted) return;
+    setInstallSheetOpen(false);
+    dismissInstallSheet(365); // kuruldu — bir yıl sorma
     haptic.success();
     try {
       await portalSend("/api/portal/interact", { action: "PWA_INSTALL" }, sessionKey);
@@ -1167,6 +1272,17 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
         ...contentBgStyle,
       }}
     >
+      {/* ── PWA-ADMIN v1: çevrimdışı şerit + kompakt bar (hero kayınca) ── */}
+      {pwa.offlineBanner && !isOnline && <OfflineStrip onRetry={() => window.location.reload()} />}
+      <CompactAppBar
+        visible={screen === "home" && scrolledPast}
+        logoUrl={content.edition.logoUrl}
+        title={content.edition.portalHeaderTitle || content.edition.name}
+        accent={accent}
+        unread={unreadNotifCount}
+        onBell={() => setNotifOpen(true)}
+        bellLabel={t("portalApp.notifCenter.ariaOpen")}
+      />
       {/* ── Top Header (§3.1): organizatör + diğer etkinlikler carousel ──
           Görünürlük: varsayılan yalnız ANASAYFA; admin her ekran için custom karar verir */}
       {showTopHeader && (
@@ -1220,7 +1336,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
       {/* ── Event Header (§3.1) — ANASAYFA hero: baner tam-bleed, yoksa aksan bandı.
           Admin özel başlık arka planı varsa eski kart düzeni korunur (okunabilirlik). ── */}
       {showEventBar && screen === "home" && (design?.headerBgColor || design?.headerBgImage ? (
-        <header className="px-4 pt-3">
+        <header ref={heroRef} className="px-4 pt-3">
           <div className="overflow-hidden rounded-2xl border bg-background shadow-sm" style={headerBgStyle}>
             {content.edition.headerImageUrl && (
               <div className="relative h-32 sm:h-40">
@@ -1254,7 +1370,7 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
           </div>
         </header>
       ) : (
-        <header className="relative overflow-hidden">
+        <header ref={heroRef} className="relative overflow-hidden">
           {content.edition.headerImageUrl ? (
             <>
               <img src={content.edition.headerImageUrl} alt={`${content.edition.name} ${t("portalApp.bannerAlt")}`} className="absolute inset-0 size-full object-cover" />
@@ -1455,6 +1571,16 @@ export function PortalApp({ editionSlug, magicToken }: { editionSlug: string; ma
         </div>
       </nav>
 
+      {/* ── PWA-ADMIN v1: kurulum bottom-sheet'i (anlamlı an + erteleme) ── */}
+      <InstallSheet
+        open={installSheetOpen}
+        onClose={() => dismissInstallSheet(pwa.installDismissDays)}
+        onInstall={() => void installApp()}
+        canInstall={canInstall}
+        showIos={iosSheet}
+        accent={accent}
+        appName={content.edition.portalHeaderTitle || content.edition.name}
+      />
       {/* ── Hafif Bildirim Merkezi (CRON-4) — duyuru geçmişi + yaklaşan hatırlatıcılar ── */}
       <NotificationCenterSheet
         open={notifOpen}

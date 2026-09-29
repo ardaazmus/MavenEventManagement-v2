@@ -11,6 +11,7 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/auth/request-context";
 import { generateEventCode, normalizeEventCode } from "@/lib/api/portal-access";
 import { ALL_FONT_KEYS } from "@/lib/portal-fonts";
+import { validatePwaSettingsInput, serializePwaSettings } from "@/lib/pwa-settings";
 
 function guardJson(e: unknown) {
   if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
@@ -81,7 +82,7 @@ export async function GET(req: NextRequest) {
     // bağlama seçenekleri (§5.2/5.5): diğer edisyonlar, kayıt formları, sponsorlar, kişiler
     const edition = await db.eventEdition.findUnique({
       where: { id: eid },
-      select: { tenantId: true, portalHeaderTitle: true, portalHeaderSubtitle: true, portalHeaderImageUrl: true, portalHeaderAccent: true },
+      select: { tenantId: true, name: true, portalHeaderTitle: true, portalHeaderSubtitle: true, portalHeaderImageUrl: true, portalHeaderAccent: true },
     });
     const [editions, forms, agreements, people] = await Promise.all([
       db.eventEdition.findMany({
@@ -114,6 +115,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       config,
+      edition: { name: edition?.name ?? "" },
       header: {
         title: edition?.portalHeaderTitle ?? "",
         subtitle: edition?.portalHeaderSubtitle ?? "",
@@ -180,6 +182,8 @@ export async function PUT(req: NextRequest) {
       // ── Oyunlaştırma (§ gamification — formlarla etkileşimli) ──
       gameEnabled?: boolean;
       gameConfig?: { points?: Record<string, number>; levels?: { name: string; min: number }[]; qaCap?: number; masking?: string } | null;
+      // ── Mobil Uygulama (PWA) — Branded App Builder v1 ──
+      pwa?: unknown;
     };
     if (!body.editionId) return NextResponse.json({ error: "editionId zorunlu" }, { status: 400 });
     const ctx = await resolveEditionContext(body.editionId, { required: true });
@@ -236,6 +240,16 @@ export async function PUT(req: NextRequest) {
     if (body.venueMapUrl !== undefined) data.venueMapUrl = body.venueMapUrl?.slice(0, 2_000_000) || null;
     if (body.venueMapEnabled !== undefined) data.venueMapEnabled = Boolean(body.venueMapEnabled);
     if (body.pwaEnabled !== undefined) data.pwaEnabled = Boolean(body.pwaEnabled);
+    // PWA-ADMIN v1: katı zod doğrulama — geçersizse 400 (kayıt YAZILMAZ)
+    if (body.pwa !== undefined) {
+      if (body.pwa === null) {
+        data.pwaJson = null;
+      } else {
+        const res = validatePwaSettingsInput(body.pwa);
+        if (!res.ok) return NextResponse.json({ error: "PWA ayarları geçersiz", issues: res.issues }, { status: 400 });
+        data.pwaJson = serializePwaSettings(res.value);
+      }
+    }
 
     // ── tasarım alanları (§5.2+) ──
     if (body.fontFamily !== undefined) {

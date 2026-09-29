@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { buildPortalManifest } from "@/lib/portal-manifest";
+import { parsePwaSettings } from "@/lib/pwa-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -26,13 +27,14 @@ export async function GET(req: NextRequest) {
     }
     const config = await db.eventPortalConfig.findUnique({
       where: { editionId: edition.id },
-      select: { themeColor: true },
+      select: { themeColor: true, pwaJson: true },
     });
 
     const manifest = buildPortalManifest({
       editionSlug: edition.slug,
       name: edition.name,
       themeColor: config?.themeColor,
+      pwa: parsePwaSettings(config?.pwaJson),
     });
     return new NextResponse(JSON.stringify(manifest), {
       status: 200,

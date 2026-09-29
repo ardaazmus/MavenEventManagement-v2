@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { extractSession, validatePortalSession, touchSession, type PortalSessionRow } from "@/lib/api/portal-access";
+import { parsePwaSettings } from "@/lib/pwa-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -427,6 +428,8 @@ export async function GET(req: NextRequest) {
         allowRegistrationRedirect: config?.allowRegistrationRedirect ?? true,
         registrationFormId: config?.registrationFormId ?? null,
         pwaEnabled: config?.pwaEnabled ?? true,
+        // PWA-ADMIN v1: kurulum teşviki + çevrimdışı şerit + durum çubuğu (herkese açık, PII yok)
+        pwa: parsePwaSettings(config?.pwaJson),
         // ── tasarım kontrolü (§5.2+): tipografi + alan-renkleri/görselleri + sponsor + ikonlar ──
         design: {
           fontFamily: config?.fontFamily ?? null,

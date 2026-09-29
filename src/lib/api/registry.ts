@@ -7,7 +7,7 @@ import { encryptSecret } from "@/lib/secrets";
 import { AgreementScopeError, assertAgreementScope, validateAgreementInput, type AgreementScopePrisma } from "@/lib/sponsorship/agreements";
 import { guardPackageDelete, guardTierDelete, validatePackageInput, validateTierInput, type DeleteGuardPrisma } from "@/lib/sponsorship/capacity";
 import { ActivityType } from "./activity";
-import { GuardError } from "./tenant-guard";
+import { GuardError } from "./guard-error";
 
 type AnyDelegate = {
   findMany: (args?: Record<string, unknown>) => Promise<unknown[]>;

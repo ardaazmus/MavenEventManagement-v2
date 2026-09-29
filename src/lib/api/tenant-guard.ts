@@ -6,14 +6,11 @@
 import { db } from "@/lib/db";
 import { headers } from "next/headers";
 import { AUTH_ENABLED } from "@/lib/auth-flag";
+import { GuardError } from "./guard-error";
 
-export class GuardError extends Error {
-  status: number;
-  constructor(message: string, status = 400) {
-    super(message);
-    this.status = status;
-  }
-}
+// N-11: GuardError ortak modüle taşındı ('registry ↔ tenant-guard' döngüsü kırıldı);
+// geriye dönük uyum için buradan yeniden dışa aktarılır.
+export { GuardError };
 
 export type Scope =
   | { mode: "tenant" }                                        // modelde tenantId kolonu var (GET: param zorunlu)

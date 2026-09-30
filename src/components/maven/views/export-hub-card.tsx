@@ -5,13 +5,16 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useLang } from "@/lib/i18n";
 import { useApp } from "@/lib/store";
+import { canManageTeam, isStaffRole } from "@/lib/constants";
 import { SectionCard } from "../bits";
 import * as Icons from "lucide-react";
 
 export function ExportHubCard() {
   const { t } = useLang();
   const { toast } = useToast();
-  const { currentEditionId } = useApp();
+  const { currentEditionId, me } = useApp();
+  const canManage = canManageTeam(me?.role ?? null);
+  const isStaff = isStaffRole(me?.role ?? null);
   const [busy, setBusy] = useState(false);
 
   // QA: tüm indirmeler fetch+blob — düz <a> tıklamasında sunucu hatası ham JSON
@@ -58,12 +61,22 @@ export function ExportHubCard() {
       title={t("exportHub.title")}
       desc={t("exportHub.desc")}
       action={
-        <Button size="sm" onClick={downloadSnapshot} disabled={busy}>
-          <Icons.Download className="size-3.5" /> {busy ? t("common.saving") : t("exportHub.snapshot")}
-        </Button>
+        canManage ? (
+          <Button size="sm" onClick={downloadSnapshot} disabled={busy}>
+            <Icons.Download className="size-3.5" /> {busy ? t("common.saving") : t("exportHub.snapshot")}
+          </Button>
+        ) : undefined
       }
     >
-      {editionLinks.length === 0 ? (
+      {!isStaff ? (
+        <div className="flex min-h-40 flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed bg-muted/20 p-6 text-center">
+          <span className="grid size-10 place-items-center rounded-full bg-amber-50 text-amber-600">
+            <Icons.Lock className="size-5" />
+          </span>
+          <p className="text-sm font-medium">{t("common.adminLockedTitle")}</p>
+          <p className="max-w-sm text-xs text-muted-foreground">{t("common.adminLockedDesc")}</p>
+        </div>
+      ) : editionLinks.length === 0 ? (
         <p className="text-xs text-muted-foreground">{t("exportHub.noEdition")}</p>
       ) : (
         <div className="flex flex-wrap gap-2">

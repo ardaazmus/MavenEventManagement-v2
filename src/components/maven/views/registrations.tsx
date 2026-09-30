@@ -198,7 +198,7 @@ export function RegistrationsView() {
           <button onClick={() => setTab("list")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Kayıtlar</button>
           <button onClick={() => setTab("agency")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "agency" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Acente Konsolu</button>
           <button onClick={() => setTab("waitlist")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "waitlist" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Bekleme</button>
-          <button onClick={() => setTab("lcv")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "lcv" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>LCV / Davetler</button>
+          <button onClick={() => setTab("lcv")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "lcv" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>{t("registrations.lcvTab")}</button>
         </div>
 
       </PageHeader>
@@ -347,19 +347,19 @@ export function RegistrationsView() {
         <WaitlistTab editionId={currentEditionId} categories={categories ?? []} onChanged={() => { bump(); }} />
       ) : (
         <SectionCard
-          title="LCV — Davet Listesi Yönetimi"
-          desc="Davet bir kayıt yerine geçmez; 'gelecek' yanıtı kayıt yoluna yönlenir"
+          title={t("registrations.lcvTitle")}
+          desc={t("registrations.lcvDesc")}
           action={
             <Button size="sm" onClick={() => setInviteOpen(true)} disabled={!currentEditionId}>
-              <Icons.UserPlus className="size-3.5" /> Davetli Ekle
+              <Icons.UserPlus className="size-3.5" /> {t("registrations.lcvAddInvitee")}
             </Button>
           }
         >
           {(invitations ?? []).length === 0 ? (
             <EmptyState
-              title="Henüz davet oluşturmadınız"
-              desc="Davetli ekleyin veya davet listesi yükleyin."
-              action={<Button size="sm" onClick={() => setInviteOpen(true)} disabled={!currentEditionId}><Icons.UserPlus className="size-3.5" /> Davetli Ekle</Button>}
+              title={t("registrations.lcvEmptyTitle")}
+              desc={t("registrations.lcvEmptyDesc")}
+              action={<Button size="sm" onClick={() => setInviteOpen(true)} disabled={!currentEditionId}><Icons.UserPlus className="size-3.5" /> {t("registrations.lcvAddInvitee")}</Button>}
             />
           ) : (
             <div className="grid gap-2">
@@ -385,7 +385,7 @@ export function RegistrationsView() {
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Davetli Ekle</DialogTitle>
+            <DialogTitle>{t("registrations.lcvAddInvitee")}</DialogTitle>
             <DialogDescription>LCV listesine yeni davetli kaydedilir. Davet bir kayıt yerine geçmez.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">
@@ -405,7 +405,7 @@ export function RegistrationsView() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setInviteOpen(false)}>Vazgeç</Button>
             <Button onClick={saveInvitation} disabled={inviteBusy || !inviteForm.fullName.trim() || !inviteForm.email.trim()}>
-              {inviteBusy ? "Ekleniyor…" : "Davetli Ekle"}
+              {inviteBusy ? t("registrations.lcvAdding") : t("registrations.lcvAddInvitee")}
             </Button>
           </DialogFooter>
         </DialogContent>

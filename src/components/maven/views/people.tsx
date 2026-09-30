@@ -1671,6 +1671,10 @@ export function PeopleView() {
                   {detail?.person.status === "MERGED" && <Chip tone="rose">{t("people.mergedChip")}</Chip>}
                 </SheetTitle>
                 <SheetDescription>{t("people.p360.desc")}</SheetDescription>
+                <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                  <Icons.Info className="mt-0.5 size-3 shrink-0" aria-hidden />
+                  <span>{t("people.p360.recordHint")}</span>
+                </p>
               </SheetHeader>
               {detailLoading ? <div className="p-6"><Loading rows={5} /></div> : !detail ? (
                 <EmptyState title={t("people.p360.failed")} />

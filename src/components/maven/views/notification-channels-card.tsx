@@ -16,6 +16,8 @@ import { SectionCard, Loading } from "@/components/maven/bits";
 import { useToast } from "@/hooks/use-toast";
 import { useLang } from "@/lib/i18n";
 import { apiGet, apiSend } from "@/lib/client";
+import { canManageTeam } from "@/lib/constants";
+import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 type ChannelConfig = {
@@ -51,6 +53,8 @@ const SMS_FIELDS: Record<string, ("endpoint" | "senderId" | "accountId" | "from"
 export function NotificationChannelsCard({ editionId }: { editionId: string }) {
   const { t } = useLang();
   const { toast } = useToast();
+  const { me } = useApp();
+  const canManage = canManageTeam(me?.role ?? null);
   const [cfg, setCfg] = useState<ChannelConfig | null>(null);
   const [hasWaToken, setHasWaToken] = useState(false);
   const [hasSmsToken, setHasSmsToken] = useState(false);
@@ -64,6 +68,7 @@ export function NotificationChannelsCard({ editionId }: { editionId: string }) {
   const loadSeq = useRef(0);
 
   const load = useCallback(async () => {
+    if (!canManage) return; // yetkisiz → istek atılmaz
     const seq = ++loadSeq.current;
     try {
       const d = await apiGet<{ config: ChannelConfig; hasWaToken: boolean; hasSmsToken: boolean }>(
@@ -81,12 +86,26 @@ export function NotificationChannelsCard({ editionId }: { editionId: string }) {
     } catch (e) {
       toast({ title: t("portalSettings.channels.loadFail"), description: e instanceof Error ? e.message : undefined, variant: "destructive" });
     }
-  }, [editionId, t, toast]);
+  }, [editionId, t, toast, canManage]);
 
   useEffect(() => {
     // N-06: yükleme commit-sonrası microtask'te başlar — effect gövdesinde senkron setState yok.
     queueMicrotask(() => void load());
   }, [load]);
+
+  if (!canManage) {
+    return (
+      <SectionCard title={t("portalSettings.channels.title")} desc={t("portalSettings.channels.desc")}>
+        <div className="flex min-h-40 flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed bg-muted/20 p-6 text-center">
+          <span className="grid size-10 place-items-center rounded-full bg-amber-50 text-amber-600">
+            <Icons.Lock className="size-5" />
+          </span>
+          <p className="text-sm font-medium">{t("common.adminLockedTitle")}</p>
+          <p className="max-w-sm text-xs text-muted-foreground">{t("common.adminLockedDesc")}</p>
+        </div>
+      </SectionCard>
+    );
+  }
 
   if (!cfg) return <Loading rows={3} />;
 

@@ -84,7 +84,10 @@
     "all": "All",
     "error": "Error",
     "delete": "Delete",
-    "deleteTitle": "Confirm deletion"
+    "deleteTitle": "Confirm deletion",
+    "adminLockedTitle": "Admin permission required",
+    "adminLockedDesc": "This section is only available to the organization owner/admin (ORG_OWNER/ORG_ADMIN).",
+    "readonlyHint": "Read-only role: this action is disabled"
   },
   "accounting": {
     "title": "Accounting",
@@ -758,6 +761,7 @@
     },
     "p360": {
       "desc": "Person 360 — a view that combines the truths of the modules; it is not the data owner.",
+      "recordHint": "This is a person/registration record — it has no portal or console login account.",
       "failed": "360 data could not be fetched",
       "identity": "Identity",
       "participationDesc": "Participation · source: {source}",
@@ -2861,6 +2865,13 @@
     "addToArchive": "Add to archive"
   },
   "registrations": {
+    "lcvTitle": "LCV — Attendee Invitations Management",
+    "lcvDesc": "An invitation is not a registration; a 'coming' response is routed to the registration path.",
+    "lcvTab": "Attendee Invitations / LCV",
+    "lcvAddInvitee": "Add invitee",
+    "lcvAdding": "Adding…",
+    "lcvEmptyTitle": "No invitations yet",
+    "lcvEmptyDesc": "Add an invitee; a 'coming' response is routed into the registration path.",
     "title": "Registrations & Participants",
     "updatedAll": "Person, participation and registration fields updated.",
     "cancelled": "Registration cancelled",
@@ -4112,12 +4123,12 @@
   "userAdmin": {
     "title": "Users & Roles",
     "desc": "Staff list, invites, role assignments and access status",
-    "invite": "Invite",
+    "invite": "Invite Team Member",
     "empty": "No users found",
     "colUser": "User",
-    "colLegacyRole": "System Role",
+    "colLegacyRole": "System Role (menu+gate)",
     "colStatus": "Status",
-    "colAssignments": "Role Assignments",
+    "colAssignments": "Event Authorizations (flow)",
     "colActions": "Actions",
     "noAssignments": "No assignments",
     "tenantScope": "Company-wide",
@@ -4135,7 +4146,7 @@
     "enable": "Enable",
     "statusDone": "Status updated",
     "statusFailed": "Could not change status",
-    "inviteTitle": "Invite user",
+    "inviteTitle": "Invite a team member",
     "email": "Email",
     "sendInvite": "Send Invite",
     "inviteFailed": "Could not create invite",

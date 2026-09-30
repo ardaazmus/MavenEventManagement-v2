@@ -515,6 +515,31 @@ export function canManageTeam(role: string | null | undefined): boolean {
   return role === "ORG_OWNER" || role === "ORG_ADMIN";
 }
 
+// F2 ek turu istemci aynaları (sunucu kümeleriyle birebir; TV-7 kilidi):
+// rol yoksa (auth-off/demo) mevcut davranış — kadro gibi.
+const STAFF_ROLE_KEYS = [
+  "ORG_OWNER",
+  "ORG_ADMIN",
+  "EVENT_MANAGER",
+  "FINANCE_MANAGER",
+  "REGISTRATION_MANAGER",
+  "SPONSORSHIP_MANAGER",
+  "SCIENTIFIC_MANAGER",
+  "PROGRAM_MANAGER",
+  "ONSITE_MANAGER",
+] as const;
+const READONLY_ROLE_KEYS = ["VIEWER", "AUDITOR", "OBSERVER"] as const;
+
+export function isStaffRole(role: string | null | undefined): boolean {
+  if (!role) return true;
+  return (STAFF_ROLE_KEYS as readonly string[]).includes(role);
+}
+
+export function isReadonlyRole(role: string | null | undefined): boolean {
+  if (!role) return false;
+  return (READONLY_ROLE_KEYS as readonly string[]).includes(role);
+}
+
 // ─── Yardımcılar ────────────────────────────────────────────────────────────
 
 // TASK-A F8: label() harita etiketini döner (saf fonksiyon, sunucu-güvenli)

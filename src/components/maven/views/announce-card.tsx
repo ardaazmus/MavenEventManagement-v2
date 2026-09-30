@@ -10,6 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { useToast } from "@/hooks/use-toast";
 import { useLang } from "@/lib/i18n";
 import { apiGet, apiSend } from "@/lib/client";
+import { canManageTeam } from "@/lib/constants";
+import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, Chip } from "../bits";
 import * as Icons from "lucide-react";
 
@@ -39,10 +41,15 @@ const EMPTY: Omit<Announcement, "id"> = {
 export function AnnounceAdminCard() {
   const { t } = useLang();
   const { toast } = useToast();
+  const { me } = useApp();
+  const canManage = canManageTeam(me?.role ?? null);
   const [editing, setEditing] = useState<Announcement | "new" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const listApi = useApi<{ items: Announcement[] }>(() => apiGet("/api/announcements?activeOnly=0"), []);
+  const listApi = useApi<{ items: Announcement[] }>(
+    () => (canManage ? apiGet("/api/announcements?activeOnly=0") : Promise.resolve({ items: [] })),
+    [canManage],
+  );
 
   const remove = async (id: string) => {
     setBusy(id);
@@ -62,15 +69,26 @@ export function AnnounceAdminCard() {
       title={t("announce.title")}
       desc={t("announce.desc")}
       action={
-        <Button size="sm" onClick={() => setEditing("new")}>
-          <Icons.Plus className="size-3.5" /> {t("announce.new")}
-        </Button>
+        canManage ? (
+          <Button size="sm" onClick={() => setEditing("new")}>
+            <Icons.Plus className="size-3.5" /> {t("announce.new")}
+          </Button>
+        ) : undefined
       }
     >
-      {listApi.loading && <Loading rows={2} />}
-      {listApi.error && <ErrorState message={listApi.error} onRetry={listApi.reload} />}
-      {listApi.data && listApi.data.items.length === 0 && <EmptyState title={t("announce.empty")} />}
-      {listApi.data && listApi.data.items.length > 0 && (
+      {!canManage && (
+        <div className="flex min-h-40 flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed bg-muted/20 p-6 text-center">
+          <span className="grid size-10 place-items-center rounded-full bg-amber-50 text-amber-600">
+            <Icons.Lock className="size-5" />
+          </span>
+          <p className="text-sm font-medium">{t("common.adminLockedTitle")}</p>
+          <p className="max-w-sm text-xs text-muted-foreground">{t("common.adminLockedDesc")}</p>
+        </div>
+      )}
+      {canManage && listApi.loading && <Loading rows={2} />}
+      {canManage && listApi.error && <ErrorState message={listApi.error} onRetry={listApi.reload} />}
+      {canManage && listApi.data && listApi.data.items.length === 0 && <EmptyState title={t("announce.empty")} />}
+      {canManage && listApi.data && listApi.data.items.length > 0 && (
         <div className="space-y-2">
           {listApi.data.items.map((a) => (
             <div key={a.id} className="flex items-start justify-between gap-3 rounded-lg border p-3">

@@ -84,7 +84,10 @@
     "all": "Tümü",
     "error": "Hata",
     "delete": "Sil",
-    "deleteTitle": "Silme onayı"
+    "deleteTitle": "Silme onayı",
+    "adminLockedTitle": "Yönetici yetkisi gerekli",
+    "adminLockedDesc": "Bu bölümü yalnızca üst firma sahibi/yöneticisi (ORG_OWNER/ORG_ADMIN) kullanabilir.",
+    "readonlyHint": "Salt-okunur rol: bu işlem kapalı"
   },
   "accounting": {
     "title": "Muhasebe",
@@ -758,6 +761,7 @@
     },
     "p360": {
       "desc": "Kişi 360 — modüllerin gerçeklerini birleştiren görünüm; veri sahibi değildir.",
+      "recordHint": "Bu kayıt bir kişi/kayıt kaydıdır — portal veya konsol giriş hesabı yoktur.",
       "failed": "360 verisi alınamadı",
       "identity": "Kimlik",
       "participationDesc": "Katılım · kaynak: {source}",
@@ -2861,6 +2865,13 @@
     "addToArchive": "Arşive Ekle"
   },
   "registrations": {
+    "lcvTitle": "LCV — Katılımcı Davetleri Yönetimi",
+    "lcvDesc": "Davet bir kayıt yerine geçmez; 'gelecek' yanıtı kayıt yoluna yönlenir",
+    "lcvTab": "Katılımcı Davetleri / LCV",
+    "lcvAddInvitee": "Davetli Ekle",
+    "lcvAdding": "Ekleniyor…",
+    "lcvEmptyTitle": "Henüz davet oluşturmadınız",
+    "lcvEmptyDesc": "Davetli ekleyin; 'gelecek' yanıtı kayıt yoluna yönlenir.",
     "title": "Kayıt & Katılımcılar",
     "updatedAll": "Kişi, katılım ve kayıt alanları güncellendi.",
     "cancelled": "Kayıt iptal edildi",
@@ -4112,12 +4123,12 @@
   "userAdmin": {
     "title": "Kullanıcılar & Roller",
     "desc": "Personel listesi, davet, rol atama ve erişim durumu",
-    "invite": "Davet Et",
+    "invite": "Ekip Üyesi Davet Et",
     "empty": "Kullanıcı bulunamadı",
     "colUser": "Kullanıcı",
-    "colLegacyRole": "Sistem Rolü",
+    "colLegacyRole": "Sistem Rolü (menü+kapı)",
     "colStatus": "Durum",
-    "colAssignments": "Rol Atamaları",
+    "colAssignments": "Etkinlik Yetkileri (flow)",
     "colActions": "İşlemler",
     "noAssignments": "Atama yok",
     "tenantScope": "Şirket geneli",
@@ -4135,7 +4146,7 @@
     "enable": "Etkinleştir",
     "statusDone": "Durum güncellendi",
     "statusFailed": "Durum değiştirilemedi",
-    "inviteTitle": "Kullanıcı davet et",
+    "inviteTitle": "Ekip üyesi davet et",
     "email": "E-posta",
     "sendInvite": "Davet Gönder",
     "inviteFailed": "Davet oluşturulamadı",

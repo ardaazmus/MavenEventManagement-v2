@@ -6,7 +6,7 @@ import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { sanitizePreviewHtml } from "@/lib/safe-html";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
-import { ATTENDANCE_STATUS, BADGE_STATUS, BADGE_FONTS, CAMPAIGN_PHASE, CERTIFICATE_STATUS, EMAIL_TEMPLATE_CATEGORY, MAIL_PROVIDER_KIND, TASK_STATUS, TASK_PRIORITY, fmtDateTime, fmtDate, label, CAPABILITIES } from "@/lib/constants";
+import { ATTENDANCE_STATUS, BADGE_STATUS, BADGE_FONTS, CAMPAIGN_PHASE, CERTIFICATE_STATUS, EMAIL_TEMPLATE_CATEGORY, MAIL_PROVIDER_KIND, TASK_STATUS, TASK_PRIORITY, fmtDateTime, fmtDate, label, CAPABILITIES, isReadonlyRole } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -2167,12 +2167,13 @@ export function OperationsView() {
 
 export function SettingsView() {
   useLang(); // dil değişiminde yeniden render
-  const { editions, currentEditionId, bump, refreshKey, patchCapability } = useApp();
+  const { editions, currentEditionId, bump, refreshKey, patchCapability, me } = useApp();
   const { toast } = useToast();
+  const isReadonly = isReadonlyRole(me?.role ?? null);
   const edition = editions.find((e) => e.id === currentEditionId);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const { data: assignments } = useApi<{ id: string; role: string; organization: { name: string } }[]>(() => listEntity("org-assignments", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+  const { data: assignments, error: assignError, reload: assignReload, loading: assignLoading } = useApi<{ id: string; role: string; organization: { name: string } }[]>(() => listEntity("org-assignments", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
 
   // Yetenek aç/kapa: satır varsa güncelle, hiç yoksa editionId+key ile OLUŞTUR (upsert akışı).
   // Başarılı olunca store patchCapability ile anında düzeltilir — eskiden switch bağlı değildi.
@@ -2248,7 +2249,8 @@ export function SettingsView() {
                 <Switch
                   checked={Boolean(state?.enabled)}
                   onCheckedChange={(v) => toggleCap(cap.key, capId, v)}
-                  disabled={busy === capId || busy === `new-${cap.key}`}
+                  disabled={busy === capId || busy === `new-${cap.key}` || isReadonly}
+                  title={isReadonly ? t("common.readonlyHint") : undefined}
                   aria-label={t("settingsView.capAria", { name: cap.label })}
                 />
               </div>
@@ -2259,7 +2261,7 @@ export function SettingsView() {
       </SectionCard>
 
       <SectionCard title={t("settingsView.assignments")} desc={t("settingsView.assignmentsDesc")}>
-        {(assignments ?? []).length === 0 ? <EmptyState title={t("settingsView.noAssignments")} /> : (
+        {assignLoading ? <Loading rows={2} /> : assignError ? <ErrorState message={assignError} onRetry={assignReload} /> : (assignments ?? []).length === 0 ? <EmptyState title={t("settingsView.noAssignments")} /> : (
           <div className="flex flex-wrap gap-2">
             {(assignments ?? []).map((a) => (
               <div key={a.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
@@ -2326,7 +2328,8 @@ const EVENT_COLORS: { key: string; labelKey: string }[] = [
 
 export function EventIdentityCard() {
   useLang(); // dil değişiminde yeniden render
-  const { editions, currentEditionId, bootstrap, bump } = useApp();
+  const { editions, currentEditionId, bootstrap, bump, me } = useApp();
+  const isReadonly = isReadonlyRole(me?.role ?? null);
   const { toast } = useToast();
   const edition = editions.find((e) => e.id === currentEditionId);
   const [busy, setBusy] = useState(false);
@@ -2543,7 +2546,7 @@ export function EventIdentityCard() {
       </div>
 
       <div className="mt-4 flex justify-end">
-        <Button onClick={save} disabled={busy || !form.name.trim() || !form.startDate}>
+        <Button onClick={save} disabled={busy || !form.name.trim() || !form.startDate || isReadonly} title={isReadonly ? t("common.readonlyHint") : undefined}>
           {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Check className="size-4" />} {t("settingsView.saveEvent")}
         </Button>
       </div>
@@ -2556,7 +2559,8 @@ export function EventIdentityCard() {
 // Dış Portal → Firma Vitrini bu alanlardan beslenir. PUT /api/tenants/{id} (guard: self).
 export function TenantIdentityCard() {
   useLang(); // dil değişiminde yeniden render
-  const { tenant, bootstrap } = useApp();
+  const { tenant, bootstrap, me } = useApp();
+  const isReadonly = isReadonlyRole(me?.role ?? null);
   const { toast } = useToast();
   const [form, setForm] = useState({
     tagline: "", aboutText: "", contactName: "", contactPhone: "", contactEmail: "", website: "", logoUrl: "",
@@ -2676,7 +2680,7 @@ export function TenantIdentityCard() {
         </div>
       </div>
       <div className="mt-4 flex justify-end">
-        <Button onClick={save} disabled={busy}>
+        <Button onClick={save} disabled={busy || isReadonly} title={isReadonly ? t("common.readonlyHint") : undefined}>
           {busy ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.Check className="size-4" />} {t("settingsView.saveIdentity")}
         </Button>
       </div>

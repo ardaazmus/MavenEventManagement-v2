@@ -11,6 +11,8 @@ import { SectionCard, EmptyState, Loading, ErrorState, useApi } from "../bits";
 import { Chip } from "../bits";
 import { useLang, t } from "@/lib/i18n";
 import { apiGet } from "@/lib/client";
+import { canManageTeam } from "@/lib/constants";
+import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 type Check = { key: string; label: string; status: "PASS" | "WARN" | "TODO" | "INFO"; detail: string };
@@ -44,10 +46,12 @@ function fmtBytes(n: number | null): string {
 
 export function DatabaseMigrationCard() {
   const { t } = useLang();
+  const { me } = useApp();
+  const canManage = canManageTeam(me?.role ?? null);
   // sanctionsız veri yüklemesi — paylaşılan useApi deseni (lint uyumlu)
   const { data, error, reload, loading } = useApi<MigrationStatus>(
-    () => apiGet<MigrationStatus>("/api/admin/db-migration"),
-    [],
+    () => (canManage ? apiGet<MigrationStatus>("/api/admin/db-migration") : Promise.resolve(null as unknown as MigrationStatus)),
+    [canManage],
   );
   const [tablesOpen, setTablesOpen] = useState(false);
   const [copied, setCopied] = useState<number | null>(null);
@@ -68,7 +72,15 @@ export function DatabaseMigrationCard() {
       desc={t("settingsView.dbm.desc")}
       action={<Chip tone="amber">{t("settingsView.dbm.tempChip")}</Chip>}
     >
-      {error ? (
+      {!canManage ? (
+        <div className="flex min-h-40 flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed bg-muted/20 p-6 text-center">
+          <span className="grid size-10 place-items-center rounded-full bg-amber-50 text-amber-600">
+            <Icons.Lock className="size-5" />
+          </span>
+          <p className="text-sm font-medium">{t("common.adminLockedTitle")}</p>
+          <p className="max-w-sm text-xs text-muted-foreground">{t("common.adminLockedDesc")}</p>
+        </div>
+      ) : error ? (
         <ErrorState message={error === "Hata" ? t("settingsView.dbm.loadFail") : error} onRetry={() => reload()} />
       ) : !data ? (
         <Loading rows={4} />

@@ -89,6 +89,13 @@
     "adminLockedDesc": "This section is only available to the organization owner/admin (ORG_OWNER/ORG_ADMIN).",
     "readonlyHint": "Read-only role: this action is disabled"
   },
+  "commandPalette": {
+    "title": "Command palette",
+    "placeholder": "Search modules…",
+    "empty": "No results",
+    "hint": "↑↓ navigate · Enter to open · Esc to close",
+    "shortcutAria": "Open command palette (Ctrl+K)"
+  },
   "accounting": {
     "title": "Accounting",
     "desc": "Registration collections, manual incomes and field/extra expenses in a single ledger — income ≠ expense ≠ receivable (§36)",

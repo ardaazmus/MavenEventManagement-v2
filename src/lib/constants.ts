@@ -540,6 +540,32 @@ export function isReadonlyRole(role: string | null | undefined): boolean {
   return (READONLY_ROLE_KEYS as readonly string[]).includes(role);
 }
 
+// F3-a: Komut paleti süzgeci — menüyle AYNI iki kapı: yetenek + rol matrisi.
+// (Bağımsız/alias'sız tutulur: node testleri doğrudan çağırır — CP-1..6.)
+export interface CommandEntry {
+  id: string;
+  icon: string;
+  group: ModuleGroup;
+}
+
+export interface BuildCommandsInput {
+  role: string | null | undefined;
+  capabilityEnabled: (capability: string | null | undefined) => boolean;
+}
+
+export function buildModuleCommands(input: BuildCommandsInput): CommandEntry[] {
+  const out: CommandEntry[] = [];
+  for (const g of MODULE_GROUPS) {
+    for (const m of MODULES) {
+      if (m.group !== g.id) continue;
+      if (m.capability && !input.capabilityEnabled(m.capability)) continue;
+      if (!roleCanSee(m, input.role ?? null)) continue;
+      out.push({ id: m.id, icon: m.icon, group: g.id });
+    }
+  }
+  return out;
+}
+
 // ─── Yardımcılar ────────────────────────────────────────────────────────────
 
 // TASK-A F8: label() harita etiketini döner (saf fonksiyon, sunucu-güvenli)

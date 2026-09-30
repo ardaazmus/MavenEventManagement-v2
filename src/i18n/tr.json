@@ -89,6 +89,13 @@
     "adminLockedDesc": "Bu bölümü yalnızca üst firma sahibi/yöneticisi (ORG_OWNER/ORG_ADMIN) kullanabilir.",
     "readonlyHint": "Salt-okunur rol: bu işlem kapalı"
   },
+  "commandPalette": {
+    "title": "Komut paleti",
+    "placeholder": "Modül ara…",
+    "empty": "Sonuç bulunamadı",
+    "hint": "↑↓ gezin · Enter ile aç · Esc kapat",
+    "shortcutAria": "Komut paletini aç (Ctrl+K)"
+  },
   "accounting": {
     "title": "Muhasebe",
     "desc": "Kayıt tahsilatları, manuel gelirler ve saha/ek harcamalar tek defterde — gelir ≠ gider ≠ alacak (§36)",

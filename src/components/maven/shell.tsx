@@ -2,7 +2,7 @@
 // Kabuk: sidebar (§53 modül menüsü — yetenek kapalıysa VE rol kapalıysa gizli, UI-AKIS 2026
 // 7 sektör-yaşam-döngüsü grubu), üst şerit (bağlam seçici + oturum kimliği), footer
 import { useApp, hasCapability } from "@/lib/store";
-import { MODULES, MODULE_GROUPS, roleCanSee, EDITION_STATUS, label, fmtDate } from "@/lib/constants";
+import { MODULES, MODULE_GROUPS, roleCanSee, EDITION_STATUS, label, fmtDate, buildModuleCommands } from "@/lib/constants";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,9 +15,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 import { NotificationBell } from "./notification-bell";
+import { CommandPalette } from "./command-palette";
 import { useLang, t } from "@/lib/i18n";
 
 type ThemeOption = "light" | "system" | "dark";
@@ -168,6 +169,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const edition = editions.find((e) => e.id === currentEditionId);
   const activeModule = MODULES.find((m) => m.id === module);
 
+  // F3-a: ⌘K komut paleti — menüyle AYNI iki kapı (yetenek + rol)
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteEntries = useMemo(
+    () => buildModuleCommands({ role: me?.role ?? null, capabilityEnabled: (cap) => visibleFor(cap, edition) }),
+    [me?.role, edition],
+  );
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && ev.key.toLowerCase() === "k") {
+        ev.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // mobil menü
   const [open, setOpen] = useState(false);
 
@@ -284,6 +302,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label={t("shell.refresh")} onClick={() => bootstrap()} disabled={loading}>
                 <Icons.RefreshCw className={cn("size-4", loading && "animate-spin text-primary")} />
               </Button>
+              <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label={t("commandPalette.shortcutAria")} title={t("commandPalette.shortcutAria")} onClick={() => setPaletteOpen(true)}>
+                <Icons.Search className="size-4" />
+              </Button>
               <NotificationBell />
               {/* UI-AKIS 2026: oturum kimliği — ad baş harfleri + rol etiketi;
                   oturum yoksa (auth-off/serbest mod) nötr gösterge */}
@@ -321,6 +342,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
           )}
         </header>
+
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          entries={paletteEntries}
+          onSelect={(id) => { setModule(id); setPaletteOpen(false); }}
+        />
 
         <div className="flex flex-1">
           <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 border-r bg-sidebar text-sidebar-foreground lg:block">

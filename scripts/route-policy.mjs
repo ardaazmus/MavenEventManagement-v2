@@ -479,6 +479,12 @@ export const ROUTE_POLICY_DEFINITIONS = {
     enforcement: "requireAdmin() + resolveContext server tenant + read-only dictionary",
     description: "H-05 rol sözlüğü: davet ve atama açılır listeleri (GET yalnız)",
   },
+  "src/app/api/users/me/permissions/route.ts": {
+    category: "STAFF",
+    authRequired: true,
+    enforcement: "requireStaff() + P05.3 kaynak izi (db_rbac/legacy_fallback/demo_bypass)",
+    description: "F1-b yetki izi: karar kaynağı ve atama özeti (GET, salt-okunur)",
+  },
   "src/app/api/export/company-snapshot/route.ts": {
     category: "ADMIN",
     authRequired: true,
@@ -616,7 +622,7 @@ export const ROUTE_POLICY_DEFINITIONS = {
   "src/app/api/flows/route.ts": {
     category: "STAFF",
     authRequired: true,
-    enforcement: "requireStaff()",
+    enforcement: "requestActor() + authorizeFlowAction() + kapsam/rol doğrulaması",
     description: "İş akış motoru tetikleyicileri",
   },
   "src/app/api/form-fields/reorder/route.ts": {
@@ -824,9 +830,9 @@ export const ROUTE_POLICY_DEFINITIONS = {
     description: "Sistem içi bildirim listesi",
   },
   "src/app/api/notifications/channels/reports/route.ts": {
-    category: "STAFF",
+    category: "ADMIN",
     authRequired: true,
-    enforcement: "requireStaff()",
+    enforcement: "requireAdmin() + resolveEditionContext (salt-okunur edition raporu)",
     description: "Bildirim teslimat raporları",
   },
   "src/app/api/notifications/instant/route.ts": {

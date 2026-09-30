@@ -1,11 +1,11 @@
 {
-  "totalDiscovered": 163,
-  "totalClassified": 163,
+  "totalDiscovered": 164,
+  "totalClassified": 164,
   "unclassifiedCount": 0,
   "categoryCounts": {
     "PUBLIC": 46,
     "STAFF": 76,
-    "ADMIN": 37,
+    "ADMIN": 38,
     "DOMAIN_POLICY": 4
   },
   "unclassifiedRoutes": [],
@@ -462,7 +462,7 @@
       "path": "src/app/api/flows/route.ts",
       "category": "STAFF",
       "authRequired": true,
-      "enforcement": "requireStaff()",
+      "enforcement": "requestActor() + authorizeFlowAction() + kapsam/rol doğrulaması",
       "description": "İş akış motoru tetikleyicileri"
     },
     {
@@ -607,9 +607,9 @@
     },
     {
       "path": "src/app/api/notifications/channels/reports/route.ts",
-      "category": "STAFF",
+      "category": "ADMIN",
       "authRequired": true,
-      "enforcement": "requireStaff()",
+      "enforcement": "requireAdmin() + resolveEditionContext (salt-okunur edition raporu)",
       "description": "Bildirim teslimat raporları"
     },
     {
@@ -1129,6 +1129,13 @@
       "authRequired": true,
       "enforcement": "requireAdmin() + resolveContext server tenant + create rate-limit + one-time token",
       "description": "P06.2 davet oluşturma / yeniden gönderme"
+    },
+    {
+      "path": "src/app/api/users/me/permissions/route.ts",
+      "category": "STAFF",
+      "authRequired": true,
+      "enforcement": "requireStaff() + P05.3 kaynak izi (db_rbac/legacy_fallback/demo_bypass)",
+      "description": "F1-b yetki izi: karar kaynağı ve atama özeti (GET, salt-okunur)"
     },
     {
       "path": "src/app/api/users/roles/route.ts",

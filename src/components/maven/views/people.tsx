@@ -33,6 +33,7 @@ interface PersonRow {
 }
 interface Person360 {
   person: PersonRow;
+  staffEmailMatch?: boolean;
   participations: {
     id: string; source: string; attendance: string; editionId: string;
     edition: { name: string; startDate?: string | null };
@@ -1675,6 +1676,12 @@ export function PeopleView() {
                   <Icons.Info className="mt-0.5 size-3 shrink-0" aria-hidden />
                   <span>{t("people.p360.recordHint")}</span>
                 </p>
+                {detail?.staffEmailMatch && (
+                  <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-relaxed text-amber-700">
+                    <Icons.IdCard className="mt-0.5 size-3 shrink-0" aria-hidden />
+                    <span>{t("people.p360.staffEmailMatch")}</span>
+                  </p>
+                )}
               </SheetHeader>
               {detailLoading ? <div className="p-6"><Loading rows={5} /></div> : !detail ? (
                 <EmptyState title={t("people.p360.failed")} />

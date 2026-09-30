@@ -159,16 +159,23 @@ test("P14.4 - bütçe: 1000 meta-veride süre/bellek sınırı içinde paket", a
     const { job } = await enqueueMediaJob(ctx.iso.prisma, { tenantId: ctx.tenant.id, editionId: ctx.edition.id });
 
     const memBefore = process.memoryUsage().heapUsed;
+    const cpuBefore = process.cpuUsage();
     const started = Date.now();
     const out = await processOneMediaJob(ctx.iso.prisma, { storeDir: ctx.storeDir });
     const pack = await buildTrustedZip((await ctx.iso.prisma.mediaExportJob.findUnique({ where: { id: job.id } })).artifactDir);
     const elapsed = Date.now() - started;
+    const cpu = process.cpuUsage(cpuBefore);
+    const cpuMs = (cpu.user + cpu.system) / 1000;
     const memDeltaMb = (process.memoryUsage().heapUsed - memBefore) / 1024 / 1024;
 
     assert.strictEqual(out.status, "SUCCEEDED");
     assert.strictEqual(pack.included, 1000);
     assert.ok(pack.buffer.byteLength > 1000, "paket boş olmamalı");
-    assert.ok(elapsed < 60_000, `1000 varlık ${elapsed}ms sürdü (<60sn olmalı)`);
+    // Bütçe: BİRİNCİL kapı CPU süresi (paralel süit yükünden bağımsız; duvar-saati
+    // eşzamanlı 20+ süreç altında 4 dakikaya şişip flake üretiyordu — 2026-09-30).
+    assert.ok(cpuMs < 60_000, `1000 varlık CPU ${Math.round(cpuMs)}ms sürdü (<60sn CPU olmalı)`);
+    // Duvar saati yalnız patolojik takılma (I/O kilitlenmesi) nöbeti için geniş payla:
+    assert.ok(elapsed < 300_000, `duvar saati ${elapsed}ms (<300sn olmalı; yük payı)`);
     assert.ok(memDeltaMb < 512, `bellek artışı ${memDeltaMb.toFixed(1)}MB (<512MB olmalı)`);
   } finally {
     await teardown(ctx);

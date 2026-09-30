@@ -9,6 +9,7 @@ import { sanitize } from "@/lib/api/registry";
 import { ensureInScope } from "@/lib/api/tenant-guard";
 import { requireStaff } from "@/lib/auth/request-context";
 import { ActivityType } from "@/lib/api/activity";
+import { detectStaffEmailMatch, type OverlapPrisma } from "@/lib/users/staff-overlap";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   // N-08 rol kapısı — envanter iddiasıyla uyum (auth-off'ta null, davranış korunur).
@@ -38,7 +39,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     });
     if (!person) return NextResponse.json({ error: "Kişi bulunamadı" }, { status: 404 });
     const { participations, submissions, reviewAssignments, ...personCore } = person;
-    return NextResponse.json({ person: personCore, participations, submissions, reviewAssignments });
+    // F2-d: yalnız BİLGİ — e-posta bir ekip üyesiyle çakışıyor mu (FK yok, ayrım korunur).
+    const staffEmailMatch = await detectStaffEmailMatch(db as unknown as OverlapPrisma, person.tenantId, person.email);
+    return NextResponse.json({ person: personCore, participations, submissions, reviewAssignments, staffEmailMatch });
   } catch (e) {
     console.error("GET /api/people/[id]", e);
     return NextResponse.json({ error: "360 verisi alınamadı" }, { status: 500 });

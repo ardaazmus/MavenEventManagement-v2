@@ -762,6 +762,7 @@
     "p360": {
       "desc": "Person 360 — a view that combines the truths of the modules; it is not the data owner.",
       "recordHint": "This is a person/registration record — it has no portal or console login account.",
+      "staffEmailMatch": "This email matches a team member — the login account is separate; record separation is preserved.",
       "failed": "360 data could not be fetched",
       "identity": "Identity",
       "participationDesc": "Participation · source: {source}",

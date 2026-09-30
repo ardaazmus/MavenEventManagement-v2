@@ -762,6 +762,7 @@
     "p360": {
       "desc": "Kişi 360 — modüllerin gerçeklerini birleştiren görünüm; veri sahibi değildir.",
       "recordHint": "Bu kayıt bir kişi/kayıt kaydıdır — portal veya konsol giriş hesabı yoktur.",
+      "staffEmailMatch": "Bu e-posta bir ekip üyesiyle eşleşiyor — giriş hesabı ayrıdır, kayıt ayrımı korunur.",
       "failed": "360 verisi alınamadı",
       "identity": "Kimlik",
       "participationDesc": "Katılım · kaynak: {source}",

@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -56,7 +57,7 @@ interface ImportResult { mode: "commit"; imported: number; skipped: ImportIssue[
 interface ManualResult { registrationId: string; confirmationNo: string; status: string; personCreated: boolean; orderCreated: boolean }
 
 export function RegistrationsView() {
-  const { currentEditionId, bump, refreshKey } = useApp();
+  const { currentEditionId, bump, refreshKey, moduleSubView, setModuleSubView } = useApp();
   const { toast } = useToast();
   const { t } = useLang(); // dil değişiminde re-render (F9-R-b)
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -64,14 +65,38 @@ export function RegistrationsView() {
   const [decideTarget, setDecideTarget] = useState<{ reg: RegRow; decision: "CONFIRMED" | "REJECTED" | "CANCELLED" } | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"list" | "agency" | "waitlist" | "lcv">("list");
+  const [tab, setTab] = useState<"list" | "categories" | "agency" | "waitlist" | "lcv">("list");
 
+  // ── Kategoriler & Haklar yönetimi state'i ──
+  const [catDialogOpen, setCatDialogOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<CategoryRow | null>(null);
+  const [catBusy, setCatBusy] = useState(false);
+  const emptyCatForm = { name: "", code: "", basePrice: "0", currency: "TRY", capacity: "", requiresApproval: false, paymentInstruction: "", isActive: true };
+  const [catForm, setCatForm] = useState(emptyCatForm);
 
   // ── Manuel kayıt + içe/dışa aktarma (form-dışı kayıt yüzeyleri) ──
   const [manualOpen, setManualOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [approvalMailOpen, setApprovalMailOpen] = useState(false);
+
+  useEffect(() => {
+    if (!moduleSubView) return;
+    const timer = setTimeout(() => {
+      if (moduleSubView === "categories") {
+        setTab("categories");
+      } else if (moduleSubView === "approval") {
+        setTab("list");
+        setStatusFilter("PENDING_APPROVAL");
+      } else if (moduleSubView === "import") {
+        setTab("list");
+        setImportOpen(true);
+      } else if (moduleSubView === "list") {
+        setTab("list");
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [moduleSubView]);
 
   // ── R10-a: çift tıkla tam durum düzenleme — kişi + katılım + kayıt tek diyaloğda ──
   const [editOpen, setEditOpen] = useState(false);
@@ -131,12 +156,68 @@ export function RegistrationsView() {
     }, cursor);
   const { data: regsPaged, error, reload, loading, more } = useApi<{ items: RegRow[]; nextCursor?: string | null }>(regsLoader, [currentEditionId, statusFilter, q, refreshKey], { append: true });
   const registrations = useMemo(() => regsPaged?.items ?? [], [regsPaged]);
-  const { data: categories } = useApi<CategoryRow[]>(() => listEntity<CategoryRow>("registration-categories", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+  const { data: categories, reload: reloadCategories } = useApi<CategoryRow[]>(() => listEntity<CategoryRow>("registration-categories", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
   const { data: invitations, reload: reloadInvitations } = useApi<InvitationRow[]>(() => listEntity<InvitationRow>("invitations", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey, tab]);
   // QA: LCV sekmesi salt-okunurdu (ekleme butonu yoktu) — davetli ekleme diyaloğu.
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteForm, setInviteForm] = useState({ fullName: "", email: "", notes: "" });
   const [inviteBusy, setInviteBusy] = useState(false);
+
+  const openNewCategory = () => {
+    setEditingCategory(null);
+    setCatForm(emptyCatForm);
+    setCatDialogOpen(true);
+  };
+
+  const openEditCategory = (c: CategoryRow) => {
+    setEditingCategory(c);
+    setCatForm({
+      name: c.name,
+      code: c.code,
+      basePrice: String(c.basePrice > 0 ? c.basePrice / 100 : 0),
+      currency: c.currency || "TRY",
+      capacity: c.capacity != null ? String(c.capacity) : "",
+      requiresApproval: Boolean(c.requiresApproval),
+      paymentInstruction: c.paymentInstruction || "",
+      isActive: Boolean(c.isActive),
+    });
+    setCatDialogOpen(true);
+  };
+
+  const saveCategory = async () => {
+    if (!currentEditionId || !catForm.name.trim() || !catForm.code.trim()) return;
+    setCatBusy(true);
+    try {
+      const priceLiras = parseFloat(catForm.basePrice) || 0;
+      const basePriceInCents = Math.round(priceLiras * 100);
+      const payload = {
+        editionId: currentEditionId,
+        name: catForm.name.trim(),
+        code: catForm.code.trim().toUpperCase(),
+        basePrice: basePriceInCents,
+        currency: catForm.currency,
+        capacity: catForm.capacity ? parseInt(catForm.capacity, 10) : null,
+        requiresApproval: catForm.requiresApproval,
+        paymentInstruction: catForm.paymentInstruction.trim() || null,
+        isActive: catForm.isActive,
+      };
+
+      if (editingCategory) {
+        await apiSend(`/api/registration-categories/${editingCategory.id}`, "PUT", payload);
+        toast({ title: t("registrations.categoryUpdated") });
+      } else {
+        await apiSend("/api/registration-categories", "POST", payload);
+        toast({ title: t("registrations.categoryCreated") });
+      }
+      setCatDialogOpen(false);
+      reloadCategories();
+      bump();
+    } catch (e) {
+      toast({ title: t("common.error"), description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
+    } finally {
+      setCatBusy(false);
+    }
+  };
 
   const saveInvitation = async () => {
     if (!currentEditionId || !inviteForm.fullName.trim() || !inviteForm.email.trim()) return;
@@ -195,16 +276,28 @@ export function RegistrationsView() {
     <div>
       <PageHeader title={t("registrations.title")} desc="Kategori → form → onay akışı; kayıt/ödeme/katılım üç ayrı eksen">
         <div className="flex rounded-lg border p-0.5">
-          <button onClick={() => setTab("list")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Kayıtlar</button>
-          <button onClick={() => setTab("agency")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "agency" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Acente Konsolu</button>
-          <button onClick={() => setTab("waitlist")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "waitlist" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Bekleme</button>
-          <button onClick={() => setTab("lcv")} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "lcv" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>{t("registrations.lcvTab")}</button>
+          <button onClick={() => { setTab("list"); setModuleSubView?.("list"); }} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>{t("registrations.tabList") || "Kayıtlar"}</button>
+          <button onClick={() => { setTab("categories"); setModuleSubView?.("categories"); }} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "categories" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>{t("registrations.tabCategories") || "Kategoriler & Haklar"}</button>
+          <button onClick={() => { setTab("agency"); setModuleSubView?.(null); }} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "agency" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Acente Konsolu</button>
+          <button onClick={() => { setTab("waitlist"); setModuleSubView?.(null); }} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "waitlist" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>Bekleme</button>
+          <button onClick={() => { setTab("lcv"); setModuleSubView?.(null); }} className={cn("rounded-md px-3 py-1.5 text-xs font-medium", tab === "lcv" ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>{t("registrations.lcvTab")}</button>
         </div>
 
       </PageHeader>
 
       {tab === "list" ? (
         <>
+          {currentEditionId && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/30 p-2.5 text-xs">
+              <div className="flex items-center gap-2">
+                <Icons.Ticket className="size-4 text-primary shrink-0" />
+                <span className="text-muted-foreground">{t("registrations.scopeNotice")}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Chip tone="teal">İş Katılımı</Chip>
+              </div>
+            </div>
+          )}
           {/* Kategori kartları — doluluk */}
           <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
             {(categories ?? []).map((c) => (
@@ -336,6 +429,150 @@ export function RegistrationsView() {
             </div>
           )}
         </>
+      ) : tab === "categories" ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <KpiCard
+              label={t("registrations.totalCategories")}
+              value={categories?.length ?? 0}
+              tone="teal"
+              icon={<Icons.Ticket className="size-4" />}
+            />
+            <KpiCard
+              label={t("registrations.totalCapacity")}
+              value={categories?.reduce((acc, c) => (c.capacity ? acc + c.capacity : acc), 0) || "—"}
+              tone="violet"
+              icon={<Icons.Users className="size-4" />}
+            />
+            <KpiCard
+              label={t("registrations.totalRegistrations")}
+              value={categories?.reduce((acc, c) => acc + (c._count?.registrations ?? 0), 0) ?? 0}
+              tone="emerald"
+              icon={<Icons.UserCheck className="size-4" />}
+            />
+            <KpiCard
+              label={t("registrations.requiresApprovalCount")}
+              value={categories?.filter((c) => c.requiresApproval).length ?? 0}
+              tone="amber"
+              icon={<Icons.Clock className="size-4" />}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold">{t("registrations.tabCategories")}</h3>
+              <p className="text-xs text-muted-foreground">{t("registrations.categoriesDesc")}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" className="gap-1.5" disabled={!currentEditionId} onClick={openNewCategory}>
+                <Icons.Plus className="size-4" />
+                {t("registrations.newCategory")}
+              </Button>
+            </div>
+          </div>
+
+          {!categories || categories.length === 0 ? (
+            <EmptyState
+              title={t("registrations.noCategories")}
+              desc={t("registrations.categoriesDesc")}
+              action={
+                <Button size="sm" onClick={openNewCategory} disabled={!currentEditionId}>
+                  <Icons.Plus className="size-4" /> {t("registrations.newCategory")}
+                </Button>
+              }
+            />
+          ) : (
+            <div className="rounded-xl border bg-card overflow-hidden shadow-xs">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-muted/60 border-b font-medium text-muted-foreground">
+                  <tr>
+                    <th className="p-3">{t("registrations.categoryName")}</th>
+                    <th className="p-3">{t("registrations.categoryCode")}</th>
+                    <th className="p-3">{t("registrations.basePrice")}</th>
+                    <th className="p-3">{t("registrations.capacity")}</th>
+                    <th className="p-3">{t("registrations.occupancy")}</th>
+                    <th className="p-3">{t("registrations.requiresApproval")}</th>
+                    <th className="p-3">{t("registrations.includedRights")}</th>
+                    <th className="p-3 text-center">İşlem</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {categories.map((c) => {
+                    const regCount = c._count?.registrations ?? 0;
+                    const cap = c.capacity;
+                    const pct = cap ? Math.min(100, Math.round((regCount / cap) * 100)) : null;
+                    return (
+                      <tr key={c.id} className="hover:bg-muted/20 transition-colors">
+                        <td className="p-3 font-semibold text-foreground">
+                          <div className="flex items-center gap-1.5">
+                            <span>{c.name}</span>
+                            {!c.isActive && <Chip tone="neutral">Pasif</Chip>}
+                          </div>
+                        </td>
+                        <td className="p-3 font-mono text-[11px] text-muted-foreground">{c.code}</td>
+                        <td className="p-3 font-medium">
+                          {c.basePrice > 0 ? `${(c.basePrice / 100).toLocaleString("tr-TR")} ${c.currency}` : t("registrations.freePrice")}
+                        </td>
+                        <td className="p-3 tabular-nums">
+                          {c.capacity != null ? c.capacity : "Sınırsız"}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <span className="tabular-nums text-xs">{regCount} {cap ? `/ ${cap}` : ""}</span>
+                            {pct != null && (
+                              <span className={cn("text-[10px] font-semibold px-1 rounded", pct >= 90 ? "bg-rose-100 text-rose-700" : pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700")}>
+                                %{pct}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <Chip tone={c.requiresApproval ? "amber" : "teal"}>
+                            {c.requiresApproval ? t("registrations.manualApproval") : t("registrations.autoApproval")}
+                          </Chip>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex flex-wrap gap-1">
+                            <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              <Icons.BadgePercent className="size-2.5" /> Yaka Kartı
+                            </span>
+                            <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              <Icons.BookOpen className="size-2.5" /> Bildiri Kitabı
+                            </span>
+                            {c.basePrice > 0 && (
+                              <span className="inline-flex items-center gap-0.5 rounded bg-teal-50 text-teal-700 px-1.5 py-0.5 text-[10px] font-medium">
+                                <Icons.Utensils className="size-2.5" /> Gala Katılımı
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-3 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => openEditCategory(c)}>
+                              <Icons.Edit className="size-3" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs text-primary"
+                              onClick={() => {
+                                setQ(c.name);
+                                setTab("list");
+                              }}
+                              title={t("registrations.viewRegistrations")}
+                            >
+                              <Icons.ExternalLink className="size-3" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       ) : tab === "agency" ? (
         <AgencyGroupTab
           editionId={currentEditionId}
@@ -586,6 +823,72 @@ export function RegistrationsView() {
       <ApprovalMailDialog
         open={approvalMailOpen} onOpenChange={setApprovalMailOpen} editionId={currentEditionId}
       />
+
+      {/* ── Kategori Ekle/Düzenle Diyaloğu ── */}
+      <Dialog open={catDialogOpen} onOpenChange={setCatDialogOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto maven-scroll sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingCategory ? t("registrations.editCategory") : t("registrations.newCategory")}</DialogTitle>
+            <DialogDescription>{t("registrations.categoriesDesc")}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2 text-xs">
+            <div className="grid gap-1">
+              <Label className="text-xs">{t("registrations.categoryName")}</Label>
+              <Input value={catForm.name} onChange={(e) => setCatForm({ ...catForm, name: e.target.value })} placeholder="Örn: Tam Katılımcı" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1">
+                <Label className="text-xs">{t("registrations.categoryCode")}</Label>
+                <Input value={catForm.code} onChange={(e) => setCatForm({ ...catForm, code: e.target.value })} placeholder="REG-FULL" />
+              </div>
+              <div className="grid gap-1">
+                <Label className="text-xs">{t("registrations.currency")}</Label>
+                <Select value={catForm.currency} onValueChange={(v) => setCatForm({ ...catForm, currency: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="TRY">TRY (₺)</SelectItem>
+                    <SelectItem value="EUR">EUR (€)</SelectItem>
+                    <SelectItem value="USD">USD ($)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1">
+                <Label className="text-xs">{t("registrations.basePrice")}</Label>
+                <Input type="number" min="0" value={catForm.basePrice} onChange={(e) => setCatForm({ ...catForm, basePrice: e.target.value })} />
+              </div>
+              <div className="grid gap-1">
+                <Label className="text-xs">{t("registrations.capacity")}</Label>
+                <Input type="number" min="1" value={catForm.capacity} onChange={(e) => setCatForm({ ...catForm, capacity: e.target.value })} placeholder="Sınırsız için boş bırakın" />
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2 rounded-lg border p-2.5">
+              <div>
+                <p className="font-medium">{t("registrations.requiresApproval")}</p>
+                <p className="text-[11px] text-muted-foreground">{catForm.requiresApproval ? t("registrations.manualApproval") : t("registrations.autoApproval")}</p>
+              </div>
+              <Switch checked={catForm.requiresApproval} onCheckedChange={(v) => setCatForm({ ...catForm, requiresApproval: v })} />
+            </div>
+            <div className="grid gap-1">
+              <Label className="text-xs">{t("registrations.paymentInstruction")}</Label>
+              <Textarea rows={2} value={catForm.paymentInstruction} onChange={(e) => setCatForm({ ...catForm, paymentInstruction: e.target.value })} placeholder="Banka hesap bilgileri veya ödeme talimatı..." />
+            </div>
+            <div className="flex items-center justify-between gap-2 rounded-lg border p-2.5">
+              <div>
+                <p className="font-medium">{t("registrations.isActive")}</p>
+              </div>
+              <Switch checked={catForm.isActive} onCheckedChange={(v) => setCatForm({ ...catForm, isActive: v })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCatDialogOpen(false)}>Vazgeç</Button>
+            <Button disabled={catBusy || !catForm.name.trim() || !catForm.code.trim()} onClick={saveCategory}>
+              {catBusy ? "Kaydediliyor…" : t("registrations.saveCategory")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 // Sponsor & Fuar — tier/paket/anlaşma, Entitlement motoru (20/14/2/4), teslimler, stand tahsisi
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { listEntity, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip } from "../bits";
@@ -57,9 +57,10 @@ const ENT_TYPES: Record<string, string> = {
 };
 
 export function SponsorshipView() {
-  const { currentEditionId, bump, refreshKey } = useApp();
+  const { currentEditionId, bump, refreshKey, moduleSubView, setModuleSubView, setModule } = useApp();
   const { toast } = useToast();
   const { t } = useLang(); // dil değişiminde re-render (F9-R-d)
+  const [tab, setTab] = useState<"sponsors" | "packages" | "entitlements" | "deliverables" | "booths">("sponsors");
   const [guestTarget, setGuestTarget] = useState<Entitlement | null>(null);
   const [guest, setGuest] = useState({ firstName: "", lastName: "", email: "", company: "" });
   const [busy, setBusy] = useState(false);
@@ -73,6 +74,24 @@ export function SponsorshipView() {
   const [tierForm, setTierForm] = useState({ name: "", priceMajor: "", capacity: "" });
   const [packForm, setPackForm] = useState({ name: "", priceMajor: "", tierId: "__none__", rightsSpec: "" });
   const [defsError, setDefsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!moduleSubView) return;
+    const timer = setTimeout(() => {
+      if (moduleSubView === "sponsors") {
+        setTab("sponsors");
+      } else if (moduleSubView === "packages") {
+        setTab("packages");
+      } else if (moduleSubView === "deliverables") {
+        setTab("deliverables");
+      } else if (moduleSubView === "entitlements") {
+        setTab("entitlements");
+      } else if (moduleSubView === "booths") {
+        setTab("booths");
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [moduleSubView]);
 
   const { data: agreements, error, reload, loading } = useApi<Agreement[]>(() => listEntity<Agreement>("sponsor-agreements", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
   const { data: entitlements, reload: reloadEnts } = useApi<Entitlement[]>(() => listEntity<Entitlement>("entitlements", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
@@ -220,45 +239,166 @@ export function SponsorshipView() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Sponsor & Fuar" desc="Tier hard-code değildir — her etkinlik kendi tier'ını tanımlar; hak tüketimi finansal işlem değildir" />
+      <PageHeader
+        title={t("sponsorship.title") || "Sponsor & Fuar"}
+        desc="Tier hard-code değildir — her etkinlik kendi tier'ını tanımlar; hak tüketimi finansal işlem değildir"
+      >
+        <div className="flex flex-wrap rounded-lg border p-0.5 bg-muted/30">
+          <button
+            type="button"
+            onClick={() => { setTab("sponsors"); setModuleSubView?.("sponsors"); }}
+            className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", tab === "sponsors" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            {t("sponsorship.tabSponsors")}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setTab("packages"); setModuleSubView?.("packages"); }}
+            className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", tab === "packages" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            {t("sponsorship.tabPackages")}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setTab("entitlements"); setModuleSubView?.("entitlements"); }}
+            className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", tab === "entitlements" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            {t("sponsorship.tabEntitlements")}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setTab("deliverables"); setModuleSubView?.("deliverables"); }}
+            className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", tab === "deliverables" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            {t("sponsorship.tabDeliverables")}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setTab("booths"); setModuleSubView?.("booths"); }}
+            className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", tab === "booths" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            {t("sponsorship.tabBooths")}
+          </button>
+        </div>
+      </PageHeader>
+
+      {/* Sponsor Dış Portalı İzolasyonu Bilgilendirme Kartı */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 text-xs">
+        <div className="flex items-start gap-2.5">
+          <Icons.ShieldCheck className="size-5 text-primary shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-foreground">Sponsor Dış Portalı (Portal İzolasyonu)</p>
+            <p className="text-muted-foreground leading-relaxed mt-0.5">{t("sponsorship.portalIsolationNotice")}</p>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="shrink-0 gap-1.5 text-xs border-primary/30 hover:bg-primary/10"
+          onClick={() => {
+            window.open(`/portal`, "_blank");
+          }}
+        >
+          <Icons.ExternalLink className="size-3.5" />
+          {t("sponsorship.btnOpenSponsorPortal")}
+        </Button>
+      </div>
 
       {/* Sponsorluk Kanban Boru Hattı */}
-      <SponsorshipKanban
-        agreements={(agreements ?? []) as any}
-        organizations={(orgDirectory ?? []).map((o) => ({ id: o.id, name: o.name }))}
-        tiers={(tierDirectory ?? []).map((t) => ({ id: t.id, name: t.name, price: t.price, currency: t.currency }))}
-        packages={(packageDirectory ?? []).map((p) => ({ id: p.id, name: p.name, price: p.price, currency: p.currency, tierId: p.tierId, rightsSpec: p.rightsSpec }))}
-        tierUsage={tierUsage}
-        onMoveStage={handleMoveKanbanStage}
-        onNewDeal={handleNewDeal}
-        onOrganizationsChanged={reloadOrgs}
-      />
+      {tab === "sponsors" && (
+        <SponsorshipKanban
+          agreements={(agreements ?? []) as any}
+          organizations={(orgDirectory ?? []).map((o) => ({ id: o.id, name: o.name }))}
+          tiers={(tierDirectory ?? []).map((t) => ({ id: t.id, name: t.name, price: t.price, currency: t.currency }))}
+          packages={(packageDirectory ?? []).map((p) => ({ id: p.id, name: p.name, price: p.price, currency: p.currency, tierId: p.tierId, rightsSpec: p.rightsSpec }))}
+          tierUsage={tierUsage}
+          onMoveStage={handleMoveKanbanStage}
+          onNewDeal={handleNewDeal}
+          onOrganizationsChanged={reloadOrgs}
+        />
+      )}
 
       {/* P10.1: Seviye & Paket Tanımları */}
-      <SectionCard
-        title="Seviye & Paket Tanımları"
-        desc="Kullanımda olan seviye/paket silinemez (409). Fiyatlar TL girilir, kuruş saklanır."
-        action={defsError ? <span className="text-[11px] text-destructive">{defsError}</span> : undefined}
-      >
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <h4 className="text-xs font-semibold">Seviyeler ({(tierDirectory ?? []).length})</h4>
-            {(tierDirectory ?? []).length === 0 && <EmptyState title="Tanımlı seviye yok" />}
-            {(tierDirectory ?? []).map((t) => {
-              const usage = tierUsage[t.id];
-              return (
-                <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border p-2 text-xs">
-                  <span className="font-medium line-clamp-1">{t.name}</span>
-                  <span className="text-[11px] text-muted-foreground tabular-nums">
-                    {fmtMoney(t.price, t.currency)}{usage ? (usage.capacity == null ? ` — ${usage.used} dolu` : ` — ${usage.used}/${usage.capacity} dolu`) : ""}
-                  </span>
+      {tab === "packages" && (
+        <SectionCard
+          title="Seviye & Paket Tanımları"
+          desc="Kullanımda olan seviye/paket silinemez (409). Fiyatlar TL girilir, kuruş saklanır."
+          action={defsError ? <span className="text-[11px] text-destructive">{defsError}</span> : undefined}
+        >
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold">Seviyeler ({(tierDirectory ?? []).length})</h4>
+              {(tierDirectory ?? []).length === 0 && <EmptyState title="Tanımlı seviye yok" />}
+              {(tierDirectory ?? []).map((t) => {
+                const usage = tierUsage[t.id];
+                return (
+                  <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border p-2 text-xs">
+                    <span className="font-medium line-clamp-1">{t.name}</span>
+                    <span className="text-[11px] text-muted-foreground tabular-nums">
+                      {fmtMoney(t.price, t.currency)}{usage ? (usage.capacity == null ? ` — ${usage.used} dolu` : ` — ${usage.used}/${usage.capacity} dolu`) : ""}
+                    </span>
+                    <Button
+                      size="sm" variant="ghost" className="h-6 text-[10px] text-destructive"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true); setDefsError(null);
+                        try {
+                          await apiSend(`/api/sponsor-tiers/${t.id}`, "DELETE");
+                          bump();
+                        } catch (e) {
+                          setDefsError(e instanceof Error ? e.message : "Silinemedi");
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Sil
+                    </Button>
+                  </div>
+                );
+              })}
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <Input className="h-7 text-[11px] flex-1 min-w-28" placeholder="Seviye adı" value={tierForm.name} onChange={(e) => setTierForm({ ...tierForm, name: e.target.value })} />
+                <Input className="h-7 text-[11px] w-24" type="number" min="0" step="0.01" placeholder="Fiyat TL" value={tierForm.priceMajor} onChange={(e) => setTierForm({ ...tierForm, priceMajor: e.target.value })} />
+                <Input className="h-7 text-[11px] w-20" type="number" min="0" step="1" placeholder="Kapasite" value={tierForm.capacity} onChange={(e) => setTierForm({ ...tierForm, capacity: e.target.value })} />
+                <Button
+                  size="sm" className="h-7 text-[11px]" disabled={busy || !tierForm.name.trim() || !currentEditionId}
+                  onClick={async () => {
+                    setBusy(true); setDefsError(null);
+                    try {
+                      await apiSend("/api/sponsor-tiers", "POST", {
+                        editionId: currentEditionId,
+                        name: tierForm.name.trim(),
+                        price: Math.round((Number(tierForm.priceMajor) || 0) * 100),
+                        capacity: tierForm.capacity === "" ? null : Math.max(0, Math.round(Number(tierForm.capacity))),
+                      });
+                      setTierForm({ name: "", priceMajor: "", capacity: "" });
+                      bump();
+                    } catch (e) {
+                      setDefsError(e instanceof Error ? e.message : "Eklenemedi");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Ekle
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold">Paketler ({(packageDirectory ?? []).length})</h4>
+              {(packageDirectory ?? []).length === 0 && <EmptyState title="Tanımlı paket yok" />}
+              {(packageDirectory ?? []).map((p) => (
+                <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg border p-2 text-xs">
+                  <span className="font-medium line-clamp-1">{p.name}</span>
+                  <span className="text-[11px] text-muted-foreground tabular-nums">{fmtMoney(p.price, p.currency)}</span>
                   <Button
                     size="sm" variant="ghost" className="h-6 text-[10px] text-destructive"
                     disabled={busy}
                     onClick={async () => {
                       setBusy(true); setDefsError(null);
                       try {
-                        await apiSend(`/api/sponsor-tiers/${t.id}`, "DELETE");
+                        await apiSend(`/api/sponsor-packages/${p.id}`, "DELETE");
                         bump();
                       } catch (e) {
                         setDefsError(e instanceof Error ? e.message : "Silinemedi");
@@ -270,277 +410,241 @@ export function SponsorshipView() {
                     Sil
                   </Button>
                 </div>
-              );
-            })}
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              <Input className="h-7 text-[11px] flex-1 min-w-28" placeholder="Seviye adı" value={tierForm.name} onChange={(e) => setTierForm({ ...tierForm, name: e.target.value })} />
-              <Input className="h-7 text-[11px] w-24" type="number" min="0" step="0.01" placeholder="Fiyat TL" value={tierForm.priceMajor} onChange={(e) => setTierForm({ ...tierForm, priceMajor: e.target.value })} />
-              <Input className="h-7 text-[11px] w-20" type="number" min="0" step="1" placeholder="Kapasite" value={tierForm.capacity} onChange={(e) => setTierForm({ ...tierForm, capacity: e.target.value })} />
-              <Button
-                size="sm" className="h-7 text-[11px]" disabled={busy || !tierForm.name.trim() || !currentEditionId}
-                onClick={async () => {
-                  setBusy(true); setDefsError(null);
-                  try {
-                    await apiSend("/api/sponsor-tiers", "POST", {
-                      editionId: currentEditionId,
-                      name: tierForm.name.trim(),
-                      price: Math.round((Number(tierForm.priceMajor) || 0) * 100),
-                      capacity: tierForm.capacity === "" ? null : Math.max(0, Math.round(Number(tierForm.capacity))),
-                    });
-                    setTierForm({ name: "", priceMajor: "", capacity: "" });
-                    bump();
-                  } catch (e) {
-                    setDefsError(e instanceof Error ? e.message : "Eklenemedi");
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                Ekle
-              </Button>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <h4 className="text-xs font-semibold">Paketler ({(packageDirectory ?? []).length})</h4>
-            {(packageDirectory ?? []).length === 0 && <EmptyState title="Tanımlı paket yok" />}
-            {(packageDirectory ?? []).map((p) => (
-              <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg border p-2 text-xs">
-                <span className="font-medium line-clamp-1">{p.name}</span>
-                <span className="text-[11px] text-muted-foreground tabular-nums">{fmtMoney(p.price, p.currency)}</span>
+              ))}
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <Input className="h-7 text-[11px] flex-1 min-w-28" placeholder="Paket adı" value={packForm.name} onChange={(e) => setPackForm({ ...packForm, name: e.target.value })} />
+                <Input className="h-7 text-[11px] w-24" type="number" min="0" step="0.01" placeholder="Fiyat TL" value={packForm.priceMajor} onChange={(e) => setPackForm({ ...packForm, priceMajor: e.target.value })} />
+                <Select value={packForm.tierId} onValueChange={(v) => setPackForm({ ...packForm, tierId: v })}>
+                  <SelectTrigger className="h-7 w-28 text-[11px]"><SelectValue placeholder="Seviye" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Seviyesiz</SelectItem>
+                    {(tierDirectory ?? []).map((t) => (
+                      <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input className="h-7 text-[11px] flex-1 min-w-28" placeholder="Hak özeti (örn: 2 stand)" value={packForm.rightsSpec} onChange={(e) => setPackForm({ ...packForm, rightsSpec: e.target.value })} />
                 <Button
-                  size="sm" variant="ghost" className="h-6 text-[10px] text-destructive"
-                  disabled={busy}
+                  size="sm" className="h-7 text-[11px]" disabled={busy || !packForm.name.trim() || !currentEditionId}
                   onClick={async () => {
                     setBusy(true); setDefsError(null);
                     try {
-                      await apiSend(`/api/sponsor-packages/${p.id}`, "DELETE");
+                      await apiSend("/api/sponsor-packages", "POST", {
+                        editionId: currentEditionId,
+                        name: packForm.name.trim(),
+                        price: Math.round((Number(packForm.priceMajor) || 0) * 100),
+                        tierId: packForm.tierId === "__none__" ? null : packForm.tierId,
+                        rightsSpec: packForm.rightsSpec.trim() || null,
+                      });
+                      setPackForm({ name: "", priceMajor: "", tierId: "__none__", rightsSpec: "" });
                       bump();
                     } catch (e) {
-                      setDefsError(e instanceof Error ? e.message : "Silinemedi");
+                      setDefsError(e instanceof Error ? e.message : "Eklenemedi");
                     } finally {
                       setBusy(false);
                     }
                   }}
                 >
-                  Sil
+                  Ekle
                 </Button>
               </div>
-            ))}
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              <Input className="h-7 text-[11px] flex-1 min-w-28" placeholder="Paket adı" value={packForm.name} onChange={(e) => setPackForm({ ...packForm, name: e.target.value })} />
-              <Input className="h-7 text-[11px] w-24" type="number" min="0" step="0.01" placeholder="Fiyat TL" value={packForm.priceMajor} onChange={(e) => setPackForm({ ...packForm, priceMajor: e.target.value })} />
-              <Select value={packForm.tierId} onValueChange={(v) => setPackForm({ ...packForm, tierId: v })}>
-                <SelectTrigger className="h-7 w-28 text-[11px]"><SelectValue placeholder="Seviye" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Seviyesiz</SelectItem>
-                  {(tierDirectory ?? []).map((t) => (
-                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input className="h-7 text-[11px] flex-1 min-w-28" placeholder="Hak özeti (örn: 2 stand)" value={packForm.rightsSpec} onChange={(e) => setPackForm({ ...packForm, rightsSpec: e.target.value })} />
-              <Button
-                size="sm" className="h-7 text-[11px]" disabled={busy || !packForm.name.trim() || !currentEditionId}
-                onClick={async () => {
-                  setBusy(true); setDefsError(null);
-                  try {
-                    await apiSend("/api/sponsor-packages", "POST", {
-                      editionId: currentEditionId,
-                      name: packForm.name.trim(),
-                      price: Math.round((Number(packForm.priceMajor) || 0) * 100),
-                      tierId: packForm.tierId === "__none__" ? null : packForm.tierId,
-                      rightsSpec: packForm.rightsSpec.trim() || null,
-                    });
-                    setPackForm({ name: "", priceMajor: "", tierId: "__none__", rightsSpec: "" });
-                    bump();
-                  } catch (e) {
-                    setDefsError(e instanceof Error ? e.message : "Eklenemedi");
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                Ekle
-              </Button>
             </div>
           </div>
-        </div>
-      </SectionCard>
+        </SectionCard>
+      )}
 
       {/* Hak havuzları */}
-      <SectionCard
-        title="Entitlement Havuzları"
-        desc="Hak kaynağı → sahip → tanınan → ayrılmış → kullanılan → kalan (§15)"
-        action={
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setPendingOnly((v) => !v)}
-              aria-pressed={pendingOnly}
-              className={cn(
-                "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors",
-                pendingOnly ? "border-amber-300 bg-amber-100 text-amber-900" : "bg-card text-muted-foreground hover:bg-muted",
-              )}
-            >
-              <Icons.Hourglass className={cn("size-3.5", pendingCount > 0 && "text-amber-500")} />
-              Onay bekleyen haklar
-              <span className={cn("rounded-full px-1.5 text-[10px] tabular-nums", pendingCount > 0 ? "bg-amber-500/15 text-amber-800" : "bg-muted text-muted-foreground")}>{pendingCount}</span>
-            </button>
-            <Button size="sm" variant="outline" onClick={() => { setCreateForm({ label: "", type: "COMPLIMENTARY_REGISTRATION", orgId: "__none__", quantityGranted: 1, restrictions: "", approvalStatus: "APPROVED" }); setCreateOpen(true); }}>
-              <Icons.Plus className="size-3.5" /> Hak Havuzu Ekle
-            </Button>
-          </div>
-        }
-      >
-        {sponsorEnts.length === 0 ? (
-          <EmptyState
-            title={pendingOnly ? "Onay bekleyen hak yok" : "Hak havuzu yok"}
-            desc={pendingOnly ? "Tüm haklar karara bağlanmış — filtreyi kapatın." : "Sponsor sözleşmesiyle hak tanımlayın veya öneri olarak ekleyin."}
-          />
-        ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {sponsorEnts.map((ent) => {
-              const remaining = Math.max(0, ent.quantityGranted - ent.quantityConsumed - ent.quantityReserved);
-              const pct = ent.quantityGranted ? Math.round((ent.quantityConsumed / ent.quantityGranted) * 100) : 0;
-              const isProposed = ent.approvalStatus === "PROPOSED";
-              return (
-                <div key={ent.id} className={cn("animate-in rounded-xl border p-4 transition-all duration-200 hover:shadow-md fade-in slide-in-from-bottom-1 fill-mode-backwards", isProposed && "border-amber-200 bg-amber-50/30")}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
-                        <span className="truncate">{ent.label}</span>
-                        <Chip tone={APPROVAL_TONE[ent.approvalStatus ?? "APPROVED"] ?? "neutral"}>
-                          {ent.approvalStatus === "PROPOSED" && <Icons.Hourglass className="mr-0.5 inline size-3" />}
-                          {label(APPROVAL_STATUS, ent.approvalStatus) ?? "Onaylı"}
-                        </Chip>
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {ent.ownerOrganization?.name} · {ENT_TYPES[ent.type] ? t(ENT_TYPES[ent.type]) : ent.type}
-                        {ent.approvalStatus === "APPROVED" && ent.approvedBy && <span> · onay: {ent.approvedBy}{ent.approvedAt ? ` · ${fmtDate(ent.approvedAt)}` : ""}</span>}
-                        {ent.approvalStatus === "REJECTED" && <span className="text-rose-600"> · komite kararıyla reddedildi</span>}
-                      </p>
+      {tab === "entitlements" && (
+        <SectionCard
+          title="Entitlement Havuzları"
+          desc="Hak kaynağı → sahip → tanınan → ayrılmış → kullanılan → kalan (§15)"
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingOnly((v) => !v)}
+                aria-pressed={pendingOnly}
+                className={cn(
+                  "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors",
+                  pendingOnly ? "border-amber-300 bg-amber-100 text-amber-900" : "bg-card text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <Icons.Hourglass className={cn("size-3.5", pendingCount > 0 && "text-amber-500")} />
+                Onay bekleyen haklar
+                <span className={cn("rounded-full px-1.5 text-[10px] tabular-nums", pendingCount > 0 ? "bg-amber-500/15 text-amber-800" : "bg-muted text-muted-foreground")}>{pendingCount}</span>
+              </button>
+              <Button size="sm" variant="outline" onClick={() => { setCreateForm({ label: "", type: "COMPLIMENTARY_REGISTRATION", orgId: "__none__", quantityGranted: 1, restrictions: "", approvalStatus: "APPROVED" }); setCreateOpen(true); }}>
+                <Icons.Plus className="size-3.5" /> Hak Havuzu Ekle
+              </Button>
+            </div>
+          }
+        >
+          {sponsorEnts.length === 0 ? (
+            <EmptyState
+              title={pendingOnly ? "Onay bekleyen hak yok" : "Hak havuzu yok"}
+              desc={pendingOnly ? "Tüm haklar karara bağlanmış — filtreyi kapatın." : "Sponsor sözleşmesiyle hak tanımlayın veya öneri olarak ekleyin."}
+            />
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {sponsorEnts.map((ent) => {
+                const remaining = Math.max(0, ent.quantityGranted - ent.quantityConsumed - ent.quantityReserved);
+                const pct = ent.quantityGranted ? Math.round((ent.quantityConsumed / ent.quantityGranted) * 100) : 0;
+                const isProposed = ent.approvalStatus === "PROPOSED";
+                return (
+                  <div key={ent.id} className={cn("animate-in rounded-xl border p-4 transition-all duration-200 hover:shadow-md fade-in slide-in-from-bottom-1 fill-mode-backwards", isProposed && "border-amber-200 bg-amber-50/30")}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
+                          <span className="truncate">{ent.label}</span>
+                          <Chip tone={APPROVAL_TONE[ent.approvalStatus ?? "APPROVED"] ?? "neutral"}>
+                            {ent.approvalStatus === "PROPOSED" && <Icons.Hourglass className="mr-0.5 inline size-3" />}
+                            {label(APPROVAL_STATUS, ent.approvalStatus) ?? "Onaylı"}
+                          </Chip>
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {ent.ownerOrganization?.name} · {ENT_TYPES[ent.type] ? t(ENT_TYPES[ent.type]) : ent.type}
+                          {ent.approvalStatus === "APPROVED" && ent.approvedBy && <span> · onay: {ent.approvedBy}{ent.approvedAt ? ` · ${fmtDate(ent.approvedAt)}` : ""}</span>}
+                          {ent.approvalStatus === "REJECTED" && <span className="text-rose-600"> · komite kararıyla reddedildi</span>}
+                        </p>
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => setGuestTarget(ent)} disabled={remaining <= 0 || isProposed} title={isProposed ? "Önce komite onayı gerekir" : undefined}>
+                        <Icons.UserPlus className="size-3.5" /> Misafir Ekle
+                      </Button>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => setGuestTarget(ent)} disabled={remaining <= 0 || isProposed} title={isProposed ? "Önce komite onayı gerekir" : undefined}>
-                      <Icons.UserPlus className="size-3.5" /> Misafir Ekle
-                    </Button>
+                    {/* 09-C: 20 / 14 / 2 / 4 dökümü */}
+                    <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+                      <div className="rounded-lg bg-muted p-2"><p className="text-lg font-semibold tabular-nums">{ent.quantityGranted}</p><p className="text-[11px] text-muted-foreground">tanınan</p></div>
+                      <div className="rounded-lg bg-teal-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-teal-700">{ent.quantityConsumed}</p><p className="text-[11px] text-teal-600/80">kullanılan</p></div>
+                      <div className="rounded-lg bg-amber-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-amber-700">{ent.quantityReserved}</p><p className="text-[11px] text-amber-800">ayrılmış</p></div>
+                      <div className="rounded-lg bg-emerald-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{remaining}</p><p className="text-[11px] text-emerald-800">kalan</p></div>
+                    </div>
+                    <Progress value={pct} className="mt-3 h-2" />
+                    <p className="mt-1 text-[11px] text-muted-foreground">%{pct} tüketildi · {ent.restrictions ?? "kısıt yok"}</p>
+                    {isProposed && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-amber-200/60 pt-2.5">
+                        <span className="text-[11px] text-muted-foreground">Komite kararı bekleniyor — onaysız haktan misafir ayrılamaz.</span>
+                        <div className="ml-auto flex gap-1.5">
+                          <Button size="sm" className="h-7 bg-teal-600 text-[11px] text-white hover:bg-teal-700" onClick={() => setApproval(ent, "APPROVED")} disabled={busyApprovalId === ent.id}>
+                            {busyApprovalId === ent.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Check className="size-3" />} Onayla
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 border-rose-200 text-[11px] text-rose-700 hover:bg-rose-50" onClick={() => setApproval(ent, "REJECTED")} disabled={busyApprovalId === ent.id}>
+                            <Icons.X className="size-3" /> Reddet
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs font-medium text-primary/80">Claim dökümü ({ent.claims.length})</summary>
+                      <div className="mt-1.5 max-h-36 space-y-1 overflow-y-auto maven-scroll pr-1">
+                        {ent.claims.map((c) => (
+                          <div key={c.id} className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-2 py-1 text-xs">
+                            <span className="truncate">{c.guestName ?? "—"} <span className="text-muted-foreground">{c.notes ? `· ${c.notes}` : ""}</span></span>
+                            <StatusBadge map={CLAIM_STATUS} value={c.status} />
+                          </div>
+                        ))}
+                      </div>
+                    </details>
                   </div>
-                  {/* 09-C: 20 / 14 / 2 / 4 dökümü */}
-                  <div className="mt-3 grid grid-cols-4 gap-2 text-center">
-                    <div className="rounded-lg bg-muted p-2"><p className="text-lg font-semibold tabular-nums">{ent.quantityGranted}</p><p className="text-[11px] text-muted-foreground">tanınan</p></div>
-                    <div className="rounded-lg bg-teal-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-teal-700">{ent.quantityConsumed}</p><p className="text-[11px] text-teal-600/80">kullanılan</p></div>
-                    <div className="rounded-lg bg-amber-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-amber-700">{ent.quantityReserved}</p><p className="text-[11px] text-amber-800">ayrılmış</p></div>
-                    <div className="rounded-lg bg-emerald-500/10 p-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{remaining}</p><p className="text-[11px] text-emerald-800">kalan</p></div>
-                  </div>
-                  <Progress value={pct} className="mt-3 h-2" />
-                  <p className="mt-1 text-[11px] text-muted-foreground">%{pct} tüketildi · {ent.restrictions ?? "kısıt yok"}</p>
-                  {isProposed && (
-                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-amber-200/60 pt-2.5">
-                      <span className="text-[11px] text-muted-foreground">Komite kararı bekleniyor — onaysız haktan misafir ayrılamaz.</span>
-                      <div className="ml-auto flex gap-1.5">
-                        <Button size="sm" className="h-7 bg-teal-600 text-[11px] text-white hover:bg-teal-700" onClick={() => setApproval(ent, "APPROVED")} disabled={busyApprovalId === ent.id}>
-                          {busyApprovalId === ent.id ? <Icons.Loader2 className="size-3 animate-spin" /> : <Icons.Check className="size-3" />} Onayla
-                        </Button>
-                        <Button size="sm" variant="outline" className="h-7 border-rose-200 text-[11px] text-rose-700 hover:bg-rose-50" onClick={() => setApproval(ent, "REJECTED")} disabled={busyApprovalId === ent.id}>
-                          <Icons.X className="size-3" /> Reddet
-                        </Button>
+                );
+              })}
+            </div>
+          )}
+        </SectionCard>
+      )}
+
+      {/* Sözleşmeler & Teslimatlar */}
+      {tab === "deliverables" && (
+        <SectionCard title="Sponsor Sözleşmeleri" desc="paket + haklar + teslim takvimi">
+          {(agreements ?? []).length === 0 ? (
+            <EmptyState title="Bu kuruma atanmış bir sponsorluk yok" desc="Sözleşme ekleyin veya kurum rolünü kontrol edin." />
+          ) : (
+            <div className="grid gap-3">
+              {(agreements ?? []).map((ag) => (
+                <div key={ag.id} className="rounded-xl border p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-3">
+                      <span className="grid size-10 place-items-center rounded-lg bg-violet-500/10 text-violet-600"><Icons.Handshake className="size-5" /></span>
+                      <div>
+                        <p className="text-sm font-semibold">{ag.organization.name}</p>
+                        <p className="text-xs text-muted-foreground">{ag.package?.name ?? ag.tier?.name ?? "Paket yok"} · {fmtMoney(ag.amount, ag.currency)}</p>
                       </div>
                     </div>
+                    <div className="flex items-center gap-2">
+                      <StatusBadge map={{ PROSPECT: "Aday", NEGOTIATION: "Görüşme", CONTRACTED: "Sözleşmeli", ACTIVE: "Aktif", COMPLETED: "Tamamlandı", CANCELLED: "İptal" }} value={ag.status} />
+                      {ag.signedAt && <span className="text-xs text-muted-foreground">imza {fmtDate(ag.signedAt)}</span>}
+                    </div>
+                  </div>
+                  {ag.package?.rightsSpec && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {ag.package.rightsSpec.split("·").map((r, i) => <Chip key={i} tone="violet">{r.trim()}</Chip>)}
+                    </div>
                   )}
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs font-medium text-primary/80">Claim dökümü ({ent.claims.length})</summary>
-                    <div className="mt-1.5 max-h-36 space-y-1 overflow-y-auto maven-scroll pr-1">
-                      {ent.claims.map((c) => (
-                        <div key={c.id} className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-2 py-1 text-xs">
-                          <span className="truncate">{c.guestName ?? "—"} <span className="text-muted-foreground">{c.notes ? `· ${c.notes}` : ""}</span></span>
-                          <StatusBadge map={CLAIM_STATUS} value={c.status} />
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </SectionCard>
-
-      {/* Sözleşmeler */}
-      <SectionCard title="Sponsor Sözleşmeleri" desc="paket + haklar + teslim takvimi">
-        {(agreements ?? []).length === 0 ? (
-          <EmptyState title="Bu kuruma atanmış bir sponsorluk yok" desc="Sözleşme ekleyin veya kurum rolünü kontrol edin." />
-        ) : (
-          <div className="grid gap-3">
-            {(agreements ?? []).map((ag) => (
-              <div key={ag.id} className="rounded-xl border p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-3">
-                    <span className="grid size-10 place-items-center rounded-lg bg-violet-500/10 text-violet-600"><Icons.Handshake className="size-5" /></span>
-                    <div>
-                      <p className="text-sm font-semibold">{ag.organization.name}</p>
-                      <p className="text-xs text-muted-foreground">{ag.package?.name ?? ag.tier?.name ?? "Paket yok"} · {fmtMoney(ag.amount, ag.currency)}</p>
-                    </div>
+                  {/* P13.2: yayın hazır olma göstergesi (imza + teslimler + ödeme-manuel) */}
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+                    <span className={cn("rounded-full border px-2 py-0.5", ag.signedAt ? "border-emerald-300 text-emerald-700" : "border-amber-300 text-amber-700")}>
+                      İmza: {ag.signedAt ? "Hazır" : "Eksik"}
+                    </span>
+                    <span className={cn("rounded-full border px-2 py-0.5", ag.deliverables.length > 0 && ag.deliverables.every((d) => d.status === "APPROVED" || d.status === "COMPLETED") ? "border-emerald-300 text-emerald-700" : ag.deliverables.some((d) => d.status === "REJECTED") ? "border-rose-300 text-rose-700" : "border-amber-300 text-amber-700")}>
+                      Teslimler: {ag.deliverables.filter((d) => d.status === "APPROVED" || d.status === "COMPLETED").length}/{ag.deliverables.length} onaylı
+                    </span>
+                    <span className="rounded-full border border-slate-300 px-2 py-0.5 text-muted-foreground">
+                      Ödeme: manuel muhasebe onayı
+                    </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge map={{ PROSPECT: "Aday", NEGOTIATION: "Görüşme", CONTRACTED: "Sözleşmeli", ACTIVE: "Aktif", COMPLETED: "Tamamlandı", CANCELLED: "İptal" }} value={ag.status} />
-                    {ag.signedAt && <span className="text-xs text-muted-foreground">imza {fmtDate(ag.signedAt)}</span>}
+                  {/* teslim takvimi — P13.1: durum + kanıt */}
+                  <div className="mt-3 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                    {ag.deliverables.map((d) => (
+                      <DeliverableRow key={d.id} deliverable={d} onChanged={bump} />
+                    ))}
                   </div>
+                  {ag.boothAllocations.length > 0 && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Stant: {ag.boothAllocations.map((b) => `${b.boothUnit.code} (${b.boothUnit.sizeSqm} m², ${b.boothUnit.status})`).join(", ")} — tahsis Maven'da, geometri Floor Studio'da
+                    </p>
+                  )}
                 </div>
-                {ag.package?.rightsSpec && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {ag.package.rightsSpec.split("·").map((r, i) => <Chip key={i} tone="violet">{r.trim()}</Chip>)}
-                  </div>
-                )}
-                {/* P13.2: yayın hazır olma göstergesi (imza + teslimler + ödeme-manuel) */}
-                <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
-                  <span className={cn("rounded-full border px-2 py-0.5", ag.signedAt ? "border-emerald-300 text-emerald-700" : "border-amber-300 text-amber-700")}>
-                    İmza: {ag.signedAt ? "Hazır" : "Eksik"}
-                  </span>
-                  <span className={cn("rounded-full border px-2 py-0.5", ag.deliverables.length > 0 && ag.deliverables.every((d) => d.status === "APPROVED" || d.status === "COMPLETED") ? "border-emerald-300 text-emerald-700" : ag.deliverables.some((d) => d.status === "REJECTED") ? "border-rose-300 text-rose-700" : "border-amber-300 text-amber-700")}>
-                    Teslimler: {ag.deliverables.filter((d) => d.status === "APPROVED" || d.status === "COMPLETED").length}/{ag.deliverables.length} onaylı
-                  </span>
-                  <span className="rounded-full border border-slate-300 px-2 py-0.5 text-muted-foreground">
-                    Ödeme: manuel muhasebe onayı
-                  </span>
-                </div>
-                {/* teslim takvimi — P13.1: durum + kanıt */}
-                <div className="mt-3 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                  {ag.deliverables.map((d) => (
-                    <DeliverableRow key={d.id} deliverable={d} onChanged={bump} />
-                  ))}
-                </div>
-                {ag.boothAllocations.length > 0 && (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Stant: {ag.boothAllocations.map((b) => `${b.boothUnit.code} (${b.boothUnit.sizeSqm} m², ${b.boothUnit.status})`).join(", ")} — tahsis Maven'da, geometri Floor Studio'da
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </SectionCard>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+      )}
 
       {/* Stand planı — ticari durum */}
-      <SectionCard title="Fuar Alanı — Ticari Tahsis" desc="Stant ticari kimlik Maven'dadır; Floor Studio yalnız geometriyi yönetir. Opsiyon süresi dolunca stant RELEASED olur.">
-        {(booths ?? []).length === 0 ? (
-          <EmptyState title="Stant envanteri yok" desc="Fuar yeteneği açıkken stant birimleri tanımlanır." />
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {(booths ?? []).map((b) => (
-              <button
-                key={b.id}
-                onClick={() => setAllocTarget(b)}
-                className={cn("w-32 rounded-lg border-2 p-2.5 text-left transition hover:shadow-md", BOOTH_TONE[b.status] ?? "border-border")}
-              >
-                <p className="text-sm font-bold">{b.code}</p>
-                <p className="text-[11px] opacity-80">{b.sizeSqm} m² · {b.type === "SHELL_SCHEME" ? "Kabuk" : "Alandan"}</p>
-                <p className="mt-1 truncate text-[11px] font-medium">{b.allocation?.organization?.name ?? b.status}</p>
-                {b.optionExpiresAt && <p className="text-[10px] opacity-70">opsiyon: {fmtDate(b.optionExpiresAt)}</p>}
-                {b.floorObject && <p className="text-[10px] opacity-70">📍 Floor Studio bağlı</p>}
-              </button>
-            ))}
+      {tab === "booths" && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3 text-xs">
+            <div className="flex items-center gap-2">
+              <Icons.LayoutGrid className="size-4 text-primary shrink-0" />
+              <span>{t("sponsorship.boothFloorNotice")}</span>
+            </div>
+            <Button size="sm" variant="outline" className="shrink-0 h-7 text-xs" onClick={() => setModule?.("floors", null)}>
+              <Icons.MapPin className="size-3 mr-1" /> Floor Studio'ya Git
+            </Button>
           </div>
-        )}
-      </SectionCard>
+
+          <SectionCard title="Fuar Alanı — Ticari Tahsis" desc="Stant ticari kimlik Maven'dadır; Floor Studio yalnız geometriyi yönetir. Opsiyon süresi dolunca stant RELEASED olur.">
+            {(booths ?? []).length === 0 ? (
+              <EmptyState title="Stant envanteri yok" desc="Fuar yeteneği açıkken stant birimleri tanımlanır." />
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {(booths ?? []).map((b) => (
+                  <button
+                    key={b.id}
+                    onClick={() => setAllocTarget(b)}
+                    className={cn("w-32 rounded-lg border-2 p-2.5 text-left transition hover:shadow-md", BOOTH_TONE[b.status] ?? "border-border")}
+                  >
+                    <p className="text-sm font-bold">{b.code}</p>
+                    <p className="text-[11px] opacity-80">{b.sizeSqm} m² · {b.type === "SHELL_SCHEME" ? "Kabuk" : "Alandan"}</p>
+                    <p className="mt-1 truncate text-[11px] font-medium">{b.allocation?.organization?.name ?? b.status}</p>
+                    {b.optionExpiresAt && <p className="text-[10px] opacity-70">opsiyon: {fmtDate(b.optionExpiresAt)}</p>}
+                    {b.floorObject && <p className="text-[10px] opacity-70">📍 Floor Studio bağlı</p>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </SectionCard>
+        </div>
+      )}
 
       {/* Misafir ekleme dialogu — hakkın nereden düşeceği görünür */}
       <Dialog open={Boolean(guestTarget)} onOpenChange={(o) => !o && setGuestTarget(null)}>

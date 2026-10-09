@@ -67,6 +67,7 @@ function legacyPrisma() {
     boothUnit: nil,
     certificateDefinition: nil,
     eventCapability: nil,
+    payment: nil,
     b2bAssignment: nil,
     userRoleAssignment: { findMany: async () => [] },
   };
@@ -159,6 +160,7 @@ test("N-01 - tohum kapsamı: her aksiyonun doğal sahibi seed'de izinli", () => 
     "registration.cancel": "REGISTRATION_MANAGER",
     "sponsor.guest": "SPONSORSHIP_MANAGER",
     "finance.manualPayment": "FINANCE_MANAGER",
+    "finance.approvePayment": "FINANCE_MANAGER",
     "finance.refund": "FINANCE_MANAGER",
     "booth.allocate": "SPONSORSHIP_MANAGER",
     "reservation.confirm": "REGISTRATION_MANAGER",

@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { useLang } from "@/lib/i18n";
+import { useLang, t } from "@/lib/i18n";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
 import { generateZplBadge, sendZplToThermalPrinter, PrintJobResult } from "@/lib/onsite/zpl-engine";
@@ -238,6 +238,12 @@ export function BadgeQueueView() {
       <PageHeader title="Yaka Kartı Baskı" desc="Baskıya hazır yaka kartları, toplu baskı ve teslim akışı — yaka kartı ≠ katılım (§40): durum bağımsız yönetilir.">
         <Chip tone="teal">{selectedInQueue.length} seçili</Chip>
       </PageHeader>
+
+      {/* Katılımcı Dış Portalı Bağlantı Bildirimi */}
+      <div className="flex items-center gap-2 rounded-lg border border-teal-500/30 bg-teal-500/10 p-3 text-xs text-teal-800 dark:text-teal-200">
+        <Icons.Info className="size-4 shrink-0" />
+        <span>{t("badgeQueue.portalBadgeNotice")}</span>
+      </div>
 
       {/* Sekmeler: Baskı Kuyruğu / Tasarımcı */}
       <div className="flex rounded-lg border bg-card p-1 shadow-sm">

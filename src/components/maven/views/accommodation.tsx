@@ -2,7 +2,7 @@
 // Konaklama — gecelik stok (§32), rezervasyon teyidi (§09-E), oda-gece metriği
 // R9-d genişletmesi: occupancy/rate/gece düzenleme, no-show akışı, misafir hiyerarşisi (bağımlı kişi + refakatçi).
 // R10-c genişletmesi: Otel Ekle/Düzenle diyaloğu (tüm HotelProperty alanları) + Medya Arşivi'ne bağlantılı logo/kapak yükleme.
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { listEntity, apiSend } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -53,11 +53,81 @@ interface ParticipationRow {
 const NO_SHOW_NOTE = "Gerçekleşmeyen konaklama no-show ücretiyle kayda geçer — raporda ve dışa aktarımda görünür.";
 const COMPANION_AGE = { ADULT: "Yetişkin", CHILD: "Çocuk", INFANT: "Bebek (0-2)" } as const;
 
+interface TransferRow {
+  id: string;
+  passengerName: string;
+  flightCode: string;
+  airport: string;
+  dateTime: string;
+  vehicleType: string;
+  driverName: string;
+  plateNumber: string;
+  status: "REQUESTED" | "ASSIGNED" | "CONFIRMED" | "COMPLETED";
+}
+
 export function AccommodationView() {
   useLang(); // dil değişiminde re-render (t() parça sözlükten okur)
-  const { currentEditionId, tenant, bump, refreshKey } = useApp();
+  const { currentEditionId, tenant, bump, refreshKey, moduleSubView, setModuleSubView } = useApp();
   const { toast } = useToast();
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  const [activeTab, setActiveTab] = useState<"hotels" | "reservations" | "rooming" | "transfers">(
+    moduleSubView === "transfers" ? "transfers" : "hotels"
+  );
+
+  useEffect(() => {
+    if (!moduleSubView) return;
+    const timer = setTimeout(() => {
+      if (moduleSubView === "transfers") setActiveTab("transfers");
+      else if (moduleSubView === "reservations") setActiveTab("reservations");
+      else if (moduleSubView === "rooming") setActiveTab("rooming");
+      else if (moduleSubView === "hotels") setActiveTab("hotels");
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [moduleSubView]);
+
+  const handleTabChange = (newTab: "hotels" | "reservations" | "rooming" | "transfers") => {
+    setActiveTab(newTab);
+    setTimeout(() => {
+      setModuleSubView(newTab);
+    }, 0);
+  };
+
+  const [transfers, setTransfers] = useState<TransferRow[]>([
+    {
+      id: "tr-1",
+      passengerName: "Prof. Dr. Ahmet Yılmaz",
+      flightCode: "TK2410",
+      airport: "IST",
+      dateTime: "12.11.2026 09:30",
+      vehicleType: "VIP Minivan (Mercedes Vito)",
+      driverName: "Mehmet Demir",
+      plateNumber: "34 MAV 01",
+      status: "CONFIRMED",
+    },
+    {
+      id: "tr-2",
+      passengerName: "Dr. Ayşe Kaya",
+      flightCode: "PC2180",
+      airport: "SAW",
+      dateTime: "12.11.2026 11:15",
+      vehicleType: "Binek (Sedan)",
+      driverName: "Ali Öztürk",
+      plateNumber: "34 MAV 02",
+      status: "ASSIGNED",
+    },
+    {
+      id: "tr-3",
+      passengerName: "Canan Şahin",
+      flightCode: "TK2418",
+      airport: "IST",
+      dateTime: "15.11.2026 16:45",
+      vehicleType: "Midibüs (16 Kişilik)",
+      driverName: "Murat Çelik",
+      plateNumber: "34 MAV 03",
+      status: "REQUESTED",
+    },
+  ]);
 
   const { data: hotels, error, reload, loading } = useApi<HotelRow[]>(() => listEntity<HotelRow>("hotels", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
   const { data: reservations, reload: reloadRes } = useApi<ReservationRow[]>(() => listEntity<ReservationRow>("reservations", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
@@ -616,14 +686,73 @@ export function AccommodationView() {
         <span className="ml-auto text-[11px] text-muted-foreground">no-show ve iptaller dağılıma katılmaz</span>
       </div>
 
-      {/* Cvent Standartı: Rooming Listesi, Attrition & Eşleştirme Konsolu */}
-      <RoomingMatrixConsole
-        hotels={(hotels ?? []) as any}
-        reservations={(reservations ?? []) as any}
-        onImportRoomingList={handleBulkImportRooming}
-        onPairRoommates={handlePairRoommates}
-      />
+      {/* 4 Sekmeli Konaklama & Seyahat Gezinmesi */}
+      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border bg-card p-1 shadow-sm">
+        <button
+          type="button"
+          onClick={() => handleTabChange("hotels")}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
+            activeTab === "hotels"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          )}
+        >
+          <Icons.Building className="size-3.5" />
+          {t("accommodation.tabHotels")}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleTabChange("reservations")}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
+            activeTab === "reservations"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          )}
+        >
+          <Icons.BedDouble className="size-3.5" />
+          {t("accommodation.tabReservations")}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleTabChange("rooming")}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
+            activeTab === "rooming"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          )}
+        >
+          <Icons.Users2 className="size-3.5" />
+          {t("accommodation.tabRooming")}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleTabChange("transfers")}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
+            activeTab === "transfers"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          )}
+        >
+          <Icons.Plane className="size-3.5" />
+          {t("accommodation.tabTransfers")}
+        </button>
+      </div>
 
+      {/* Cvent Standartı: Rooming Listesi, Attrition & Eşleştirme Konsolu */}
+      {activeTab === "rooming" && (
+        <RoomingMatrixConsole
+          hotels={(hotels ?? []) as any}
+          reservations={(reservations ?? []) as any}
+          onImportRoomingList={handleBulkImportRooming}
+          onPairRoommates={handlePairRoommates}
+        />
+      )}
+
+      {activeTab === "hotels" && (
       <SectionCard
         title="Oteller"
         desc="kontratlı oteller, iletişim ayrıntıları ve oda stoğu — çift tıkla düzenle"
@@ -781,7 +910,9 @@ export function AccommodationView() {
           </div>
         )}
       </SectionCard>
+      )}
 
+      {activeTab === "reservations" && (
       <SectionCard
         title="Rezervasyonlar"
         desc="varış/çıkış, doluluk tipi, gecelik fiyat, misafir bağlantıları — rezervasyon ile ödeyen aynı olmak zorunda değil (§35)"
@@ -868,6 +999,100 @@ export function AccommodationView() {
           </div>
         )}
       </SectionCard>
+      )}
+
+      {activeTab === "transfers" && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 rounded-lg border border-teal-500/30 bg-teal-500/10 p-3 text-xs text-teal-800 dark:text-teal-200">
+            <Icons.Info className="size-4 shrink-0" />
+            <span>{t("accommodation.transferNotice")}</span>
+          </div>
+
+          <SectionCard
+            title={t("accommodation.tabTransfers")}
+            desc={t("accommodation.transferNotice")}
+            action={
+              <Button
+                size="sm"
+                onClick={() => {
+                  toast({
+                    title: t("accommodation.btnNewTransfer"),
+                    description: t("accommodation.transferNotice"),
+                  });
+                }}
+              >
+                <Icons.Plus className="size-4" /> {t("accommodation.btnNewTransfer")}
+              </Button>
+            }
+          >
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b bg-muted/40 text-muted-foreground">
+                    <th className="p-2.5 font-medium">{t("accommodation.thPassenger")}</th>
+                    <th className="p-2.5 font-medium">{t("accommodation.thFlight")}</th>
+                    <th className="p-2.5 font-medium">{t("accommodation.thAirport")}</th>
+                    <th className="p-2.5 font-medium">{t("accommodation.thVehicle")}</th>
+                    <th className="p-2.5 font-medium">{t("accommodation.thDriver")}</th>
+                    <th className="p-2.5 font-medium">{t("accommodation.thTransferStatus")}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {transfers.map((tr) => (
+                    <tr key={tr.id} className="hover:bg-muted/30">
+                      <td className="p-2.5 font-semibold text-foreground">
+                        {tr.passengerName}
+                        <span className="block text-[11px] font-normal text-muted-foreground">
+                          {tr.dateTime}
+                        </span>
+                      </td>
+                      <td className="p-2.5 tabular-nums font-mono">{tr.flightCode}</td>
+                      <td className="p-2.5">
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium">
+                          {tr.airport}
+                        </span>
+                      </td>
+                      <td className="p-2.5 text-muted-foreground">{tr.vehicleType}</td>
+                      <td className="p-2.5">
+                        <span className="font-medium">{tr.driverName}</span>
+                        <span className="block text-[11px] text-muted-foreground font-mono">
+                          {tr.plateNumber}
+                        </span>
+                      </td>
+                      <td className="p-2.5">
+                        <Select
+                          value={tr.status}
+                          onValueChange={(val: any) => {
+                            setTransfers((prev) =>
+                              prev.map((item) =>
+                                item.id === tr.id ? { ...item, status: val } : item
+                              )
+                            );
+                            toast({
+                              title: t("accommodation.thTransferStatus"),
+                              description: `${tr.passengerName} → ${val}`,
+                            });
+                          }}
+                        >
+                          <SelectTrigger className="h-7 w-36 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="REQUESTED">{t("accommodation.stRequested")}</SelectItem>
+                            <SelectItem value="ASSIGNED">{t("accommodation.stAssigned")}</SelectItem>
+                            <SelectItem value="CONFIRMED">{t("accommodation.stConfirmed")}</SelectItem>
+                            <SelectItem value="COMPLETED">{t("accommodation.stCompleted")}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+        </div>
+      )}
 
       {/* Rezervasyon düzenleme diyaloğu */}
       <Dialog open={Boolean(editRes)} onOpenChange={(o) => !o && setEditRes(null)}>

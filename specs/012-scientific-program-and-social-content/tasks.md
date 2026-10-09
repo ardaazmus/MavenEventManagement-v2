@@ -1,0 +1,26 @@
+# Görev Listesi: 012 — Bilimsel, Program ve Sosyal İçerik (Faz 7)
+
+- [x] **T-01:** `specs/012-scientific-program-and-social-content/` dokümantasyonunun hazırlanması (`spec.md`, `plan.md`, `tasks.md`).
+- [x] **T-02:** `src/components/maven/navigation/dual-sidebar.tsx` içinde `program_content` grubunun `moduleSubView` ile entegrasyonu.
+- [x] **T-03:** `src/components/maven/views/scientific.tsx` (`ScientificView`) bileşeninde Bildiri, Hakem, Karar ve CME'nin tek çatı altında sekmelendirilmesi:
+  - [x] `submissions` sekmesi: Bildiriler, filtreler, hızlı durum güncellemesi.
+  - [x] `reviews` sekmesi: Hakem değerlendirmeleri, gecikenler listesi, puan ve rubrik modalı.
+  - [x] `decisions` sekmesi: Karar merkezi, beklemedeki bildiriler, gerekçeli karar modalı.
+  - [x] `cme` sekmesi: CME kredi defteri, oturum kredileri, toplu atama ve CME rapor overlay'i.
+- [x] **T-04:** `ScientificView` içinde Kabulden Oturum / Konuşmacıya Geçiş akışının kurulması:
+  - [x] Kabul edilen bildirilerde oturum durumu rozeti ("Program Slotu Bekliyor" vs "Oturumda Planlandı").
+  - [x] Tek tıkla oturum oluşturma ve sunucu yazarı konuşmacı olarak bağlama diyaloğu (`CreateSessionFromSubDialog`).
+  - [x] Planlanmış oturumlar için "Programda Aç" geçişi (`setModule("program")`).
+- [x] **T-05:** `src/components/maven/views/scientific.tsx` (`ProgramView`) bileşeninde Oturum, Salon, Konuşmacı, Çizelge ve Yayın Akışı sekmelerinin oluşturulması:
+  - [x] `sessions` sekmesi: Gün/saat filtresi, oturum kartları, çakışma uyarıları, materyaller.
+  - [x] `rooms` sekmesi: Salon listesi, kapasiteler, oturum sayıları.
+  - [x] `speakers` sekmesi: Konuşmacı ve görevli fihristi, bağlı oturumlar.
+  - [x] `timetable` sekmesi: Timetable matrisi (`TimetableGrid`).
+  - [x] `broadcast` sekmesi: Yayın görünürlüğü, durumlar ve canlı akış önizlemesi.
+- [x] **T-06:** `src/components/maven/views/social.tsx` (`SocialView`) bileşeninde ana iş programı entegrasyonu ve ayrı katılım alanı sunumu:
+  - [x] Ana iş programı ile entegre çalışma bilgilendirmesi.
+  - [x] Katılım/LCV (RSVP) ve kayıt paketine dahil/ek ücretli ayrımı.
+- [x] **T-07:** i18n Sözlük Güncellemeleri (`src/i18n/_new/scientific.tr.json`, `scientific.en.json`, `social.tr.json`, `social.en.json`, 0 hardcoded metin ihlali).
+- [x] **T-08:** `tests-mini/scientific-program-and-social-content.test.mjs` test paketinin yazılması ve `package.json`'a eklenmesi.
+- [x] **T-09:** Kalite kapılarının çalıştırılması (`typecheck`, `lint`, `i18n:scan`, `lint:arch`, `test:unit`, `test:smoke`, `quality-report`).
+- [x] **T-10:** Kanıt raporunun (`docs/evidence/`) ve Codex devir protokolünün güncellenmesi.

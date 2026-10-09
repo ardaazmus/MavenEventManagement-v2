@@ -21,7 +21,7 @@ export function hashToken(raw: string): string {
   return createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
-export type PortalTokenScope = "PARTICIPANT" | "SPONSOR";
+export type PortalTokenScope = "PARTICIPANT" | "SPONSOR" | "CLIENT";
 
 // çıkarım: ham belirteci BİR KEZ döndürür — çağıranın eline geçer (onay kanalında
 // e-postayla gönderilir / yönetici önizlemesinde bellekte tutulur), sonra yok.

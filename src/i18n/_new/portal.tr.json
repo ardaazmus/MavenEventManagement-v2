@@ -717,5 +717,71 @@
       "status_ANSWERED": "Yanıtlandı",
       "status_HIDDEN": "Gizlendi"
     }
+  },
+  "portalsView": {
+    "page": {
+      "title": "Dış Deneyimler & Portallar",
+      "desc": "Etkinliğin dış dünyaya açılan mobil, katılımcı, B2B, sponsor ve müşteri yüzeyleri — ortak kimlik ve canlı yayın akışı."
+    },
+    "tabs": {
+      "pwa": "Mobil Deneyim (PWA)",
+      "attendee": "Katılımcı Portalı",
+      "participant": "Katılımcı Portalı",
+      "b2b": "B2B Portalı",
+      "sponsor": "Sponsor Portalı",
+      "client": "Müşteri Portalı",
+      "vitrin": "Firma Vitrini",
+      "ayarlar": "Portal Ayarları"
+    },
+    "noEditionTitle": "Edisyon seçin",
+    "noEditionDesc": "Dış deneyim ve portal önizlemesi için bir edisyon gereklidir.",
+    "isolation": {
+      "title": "Firma Vitrini ve İş Portalı Ayrımı — {work}",
+      "desc": "Firma B kurumsal vitrini tüm portföyü temsil eden kamuya açık marka yüzeyidir. Bu ekrandaki portallar ise yalnızca '{work}' işine ait katılımcı, sponsor, B2B ve müşteri deneyimleridir.",
+      "btnVitrin": "Firma Vitrinini Gör"
+    },
+    "publish": {
+      "title": "İş İçeriğinden Dış Yayın Akışı",
+      "desc": "'{work}' modüllerindeki canlı verilerin dış deneyim portallarına anlık yayına aktarım durumu.",
+      "liveSync": "Canlı Senkronize",
+      "openLivePortal": "Dış Portalı Aç",
+      "statusPublished": "Yayında",
+      "statusDraft": "Taslak",
+      "statusToggleAria": "yayın durumunu değiştir",
+      "items": {
+        "program": "Program & Oturumlar",
+        "speakers": "Konuşmacılar",
+        "sponsors": "Sponsorlar & Stantlar",
+        "forms": "Kayıt Formları"
+      }
+    },
+    "pwa": {
+      "title": "Genel Mobil Deneyim (Event App / PWA)",
+      "desc": "Tüm katılımcıların cep telefonlarından eriştiği, çevrimdışı destekli hafif web uygulaması.",
+      "badgeInstall": "Yüklenebilir PWA",
+      "badgeOffline": "Çevrimdışı Destekli",
+      "openApp": "Mobil Uygulamayı Önizle",
+      "qrHint": "Katılımcıların mobil cihazlarından doğrudan açması için QR kod ve dağıtım linki."
+    },
+    "b2b": {
+      "title": "B2B Eşleşme Portalı",
+      "desc": "Temsilcilerin ve katılımcıların ikili iş görüşmesi randevuları aldığı, masa ve takvim planını yönettiği dış arayüz.",
+      "btnOpenModule": "B2B Yönetim Modülüne Git",
+      "previewPortal": "B2B Portalını Önizle",
+      "activeMatches": "Aktif Görüşme Randevuları",
+      "matchesHint": "Katılımcıların birbirleriyle ve sponsorlarla teyit ettiği görüşme saatleri ve ajandaları.",
+      "tablePlan": "Masa & Görüşme Alanı Planı",
+      "tablePlanHint": "B2B salonundaki numaralandırılmış masalar ve müsaitlik durumu."
+    },
+    "client": {
+      "title": "Müşteri & Kurum Portalı",
+      "desc": "Etkinliği düzenleyen müşteri kurumun delege kotalarını, onaylarını ve mali mutabakatını izlediği dış arayüz.",
+      "btnOpenOrgs": "Kurumlar Modülüne Git",
+      "previewPortal": "Müşteri Portalını Önizle",
+      "quotaSummary": "Delegasyon Kota Özeti",
+      "quotaHint": "Müşteri kurumun sözleşmeli delege kontenjanları, kullanılan biletler ve kalan haklar.",
+      "financeSummary": "Cari Mutabakat & Faturalar",
+      "financeHint": "Kurum bazlı kesinleşen harcamalar, avanslar, faturalar ve tahsilat durumu."
+    }
   }
 }

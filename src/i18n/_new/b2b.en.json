@@ -112,7 +112,16 @@
     "feedbackSavedDesc": "Organizer can view the feedback on the card.",
     "feedbackSaveFailed": "Feedback could not be saved",
     "selectEditionTitle": "Select an edition",
-    "selectEditionDesc": "B2B plans are tied to an edition."
+    "selectEditionDesc": "B2B plans are tied to an edition.",
+    "tabRequests": "Requests & Matching",
+    "tabMutual": "Mutual Acceptance & Approval",
+    "tabTimetable": "Meetings Timetable & Schedule",
+    "journeyNotice": "B2B User Journey: Match request → Mutual acceptance (parties & organizer) → Meeting table/location schedule moves in a single flow.",
+    "thMeeting": "Meeting Subject",
+    "thParticipants": "Participants",
+    "thTimeSlot": "Time Slot",
+    "thLocation": "Table / Location",
+    "thMutualStatus": "Mutual Status"
   },
   "common": {
     "error": "Error"

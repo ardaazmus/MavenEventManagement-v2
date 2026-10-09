@@ -243,6 +243,16 @@ export function FloorsView() {
         </Button>
       </PageHeader>
 
+      {/* Sponsor Hakları ve Mekân Entegrasyonu Bilgilendirme Şeridi */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5 text-xs">
+        <div className="flex items-start gap-2.5">
+          <Icons.Handshake className="size-4 text-primary shrink-0 mt-0.5" />
+          <p className="text-muted-foreground leading-relaxed">
+            {t("floors.sponsorLinkNotice")}
+          </p>
+        </div>
+      </div>
+
       {/* KPI şeridi */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         <KpiCard label={t("floors.kpiTotal")} value={summary?.total ?? 0} sub={t("floors.kpiTotalSub", { sqm: summary?.totalSqm ?? 0 })} icon={<Icons.MapPin className="size-4" />} tone="teal" />

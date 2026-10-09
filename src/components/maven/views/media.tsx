@@ -73,6 +73,15 @@ const KIND_TONE: Record<string, string> = {
   FONT: "bg-violet-500/10 text-violet-600", OTHER: "bg-muted text-muted-foreground",
 };
 
+const BRAND_LIBRARY_ITEMS = [
+  { id: "brand-logo-primary", name: "Firma B — Ana Logo (Vektörel)", kind: "IMAGE", format: "SVG", size: "120 KB", category: "Logo", description: "Tüm etkinlik ve işlerde kullanılan ana kurumsal logo (şeffaf zemin)" },
+  { id: "brand-logo-dark", name: "Firma B — Koyu Zemin Logosu", kind: "IMAGE", format: "SVG", size: "115 KB", category: "Logo", description: "Koyu zemin ve gece modları için beyaz varyant" },
+  { id: "brand-letterhead", name: "Firma B — Kurumsal Antetli Şablon", kind: "DOCUMENT", format: "DOCX", size: "450 KB", category: "Şablon", description: "Teklif, sözleşme ve resmi yazışma şablonu" },
+  { id: "brand-press-kit", name: "Firma B — Basın & Medya Kiti 2026", kind: "ARCHIVE", format: "ZIP", size: "14.2 MB", category: "Basın", description: "Yüksek çözünürlüklü marka görselleri ve rehber" },
+  { id: "brand-typography", name: "Firma B — Tipografi Paketi (Inter & Plus Jakarta)", kind: "FONT", format: "ZIP", size: "2.8 MB", category: "Tipografi", description: "Web ve basılı materyal kurumsal font ailesi" },
+  { id: "brand-slide-template", name: "Firma B — Kurumsal Sunum Şablonu (16:9)", kind: "DOCUMENT", format: "PPTX", size: "8.6 MB", category: "Sunum", description: "Açılış, sponsor ve operasyon sunum şablonu" },
+];
+
 const MAX_DATAURL_KB = 400;
 
 function fmtSize(sizeKb?: number | null): string {
@@ -152,6 +161,7 @@ export function MediaArchiveView() {
     }
   }, [folders, mergedFolders]);
 
+  const [mediaScopeTab, setMediaScopeTab] = useState<"work" | "brand">("work");
   const [search, setSearch] = useState("");
 
   // ── diyaloklar
@@ -460,117 +470,219 @@ export function MediaArchiveView() {
   return (
     <div className="space-y-5">
       <PageHeader title="Medya Arşivi" desc="Klasör mimarisi ve etkinlik içi izolasyon — her varlık kendi edisyonunda arşivlenir.">
-        <Button variant="outline" size="sm" onClick={downloadZip} disabled={zipping || !currentEditionId} aria-label="Medya arşivini ZIP olarak indir">
-          {zipping ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.FileArchive className="size-4" />} ZIP olarak indir
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => { setFolderDialog({ mode: "create", parent: selectedFolder }); setFolderForm({ name: "", color: "teal" }); }}>
-          <Icons.FolderPlus className="size-4" /> Yeni Klasör
-        </Button>
-        <Button size="sm" onClick={() => { setOversize(null); setUploadMode("file"); setUploadForm({ name: "", kind: "OTHER", folderId: selectedId ?? "__none__", linkedType: "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 }); setUploadOpen(true); }}>
-          <Icons.Upload className="size-4" /> Varlık Yükle
-        </Button>
-      </PageHeader>
-
-      {/* Üst KPI şeridi + etkinlik izolasyonu */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Chip tone="teal"><Icons.ShieldCheck className="mr-1 inline size-3" /> Bu arşiv yalnızca {editionName} verilerini içerir — etkinlik izolasyonu</Chip>
-        <Chip tone="violet"><Icons.Pin className="mr-1 inline size-3" /> Sistem klasörleri: {sysFolders?.specs.length ?? 9}</Chip>
-        <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-          <Icons.FileArchive className="size-3" aria-hidden /> ZIP çıktısı: klasör yapısı + manifest.json dahil
-        </span>
-      </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard label={t("media.totalAssets")} value={(assets ?? []).length} icon={<Icons.Files className="size-4" />} />
-        <KpiCard label="Görsel" value={imageCount} tone="teal" icon={<Icons.Image className="size-4" />} />
-        <KpiCard label="Video" value={videoCount} tone="violet" icon={<Icons.Clapperboard className="size-4" />} />
-        <KpiCard label="Klasör" value={mergedFolders.length} tone="amber" icon={<Icons.FolderOpen className="size-4" />} />
-      </div>
-
-      {/* İki panel — lg altında üst üste */}
-      <div className="grid items-start gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
-        {/* SOL: klasör ağacı */}
-        <SectionCard
-          title="Klasörler"
-          desc="iç içe mimari — seçili: Tümü"
-          className="lg:sticky lg:top-4"
-          action={<button type="button" aria-label="Kök klasör ekle" onClick={() => { setFolderDialog({ mode: "create", parent: null }); setFolderForm({ name: "", color: "teal" }); }} className="grid size-7 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"><Icons.Plus className="size-3.5" /></button>}
-        >
-          <div className="maven-scroll max-h-96 space-y-0.5 overflow-y-auto pr-1 lg:max-h-[480px]">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-lg border p-0.5 bg-muted/30">
             <button
               type="button"
-              onClick={() => setSelectedId(null)}
-              className={cn(
-                "flex w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left text-[13px] font-medium transition-colors hover:bg-muted/60",
-                !selectedId && "border-teal-300 bg-teal-500/10 text-teal-900",
-              )}
+              onClick={() => setMediaScopeTab("work")}
+              className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", mediaScopeTab === "work" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
             >
-              <Icons.Library className="size-3.5 text-muted-foreground" />
-              Tümü
-              <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{(assets ?? []).length}</span>
+              {t("media.tabWorkMedia")}
             </button>
-            {tree.map(renderNode)}
-            {mergedFolders.length === 0 && (
-              <p className="px-2 py-3 text-xs text-muted-foreground">Henüz klasör yok — sağ üstten ilk klasörü ekleyin.</p>
-            )}
+            <button
+              type="button"
+              onClick={() => setMediaScopeTab("brand")}
+              className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", mediaScopeTab === "brand" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            >
+              {t("media.tabBrandLibrary")}
+            </button>
           </div>
-        </SectionCard>
+          {mediaScopeTab === "work" && (
+            <>
+              <Button variant="outline" size="sm" onClick={downloadZip} disabled={zipping || !currentEditionId} aria-label="Medya arşivini ZIP olarak indir">
+                {zipping ? <Icons.Loader2 className="size-4 animate-spin" /> : <Icons.FileArchive className="size-4" />} ZIP olarak indir
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => { setFolderDialog({ mode: "create", parent: selectedFolder }); setFolderForm({ name: "", color: "teal" }); }}>
+                <Icons.FolderPlus className="size-4" /> Yeni Klasör
+              </Button>
+              <Button size="sm" onClick={() => { setOversize(null); setUploadMode("file"); setUploadForm({ name: "", kind: "OTHER", folderId: selectedId ?? "__none__", linkedType: "__none__", tags: "", notes: "", externalUrl: "", dataUrl: "", mimeType: "", sizeKb: 0 }); setUploadOpen(true); }}>
+                <Icons.Upload className="size-4" /> Varlık Yükle
+              </Button>
+            </>
+          )}
+        </div>
+      </PageHeader>
 
-        {/* SAĞ: varlık ızgarası */}
-        <SectionCard
-          title={selectedFolder ? selectedFolder.name : "Tüm Varlıklar"}
-          desc={selectedFolder
-            ? (selectedFolder.description ?? `${selectedFolder.systemKey ? "sistem klasörü · " : ""}klasör içeriği`)
-            : "tüm klasörler ve klasörsüz varlıklar"}
-          action={
-            <div className="relative">
-              <Icons.Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Ad veya etiket ara…" className="h-8 w-44 pl-8 text-xs sm:w-56" aria-label="Varlık ara" />
+      {/* İşe Ait Medya Arşivi Sekmesi */}
+      {mediaScopeTab === "work" && (
+        <div className="space-y-4">
+          {/* İşe Ait Medya Bilgilendirme Şeridi */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5 text-xs">
+            <div className="flex items-start gap-2.5">
+              <Icons.FolderTree className="size-4 text-primary shrink-0 mt-0.5" />
+              <p className="text-muted-foreground leading-relaxed">
+                {t("media.workMediaNotice")}
+              </p>
             </div>
-          }
-        >
-          {assetsLoading && !assets ? <Loading rows={3} /> : assetsError ? <ErrorState message={assetsError} onRetry={reloadAssets} /> : visibleAssets.length === 0 ? (
-            <EmptyState
-              title={search ? "Aramaya uyan varlık yok" : "Bu klasörde varlık yok"}
-              desc={search ? "Farklı bir ad/etiket deneyin." : t("media.emptyAssetsDesc")}
-            />
-          ) : (
-            <div className="maven-scroll grid max-h-[520px] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
-              {visibleAssets.map((a, i) => {
-                const KIcon = (Icons[KIND_ICON[a.kind] ?? "File"] as typeof Icons.File);
-                const tagList = (a.tags ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+          </div>
+
+          {/* Üst KPI şeridi + etkinlik izolasyonu */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip tone="teal"><Icons.ShieldCheck className="mr-1 inline size-3" /> Bu arşiv yalnızca {editionName} verilerini içerir — etkinlik izolasyonu</Chip>
+            <Chip tone="violet"><Icons.Pin className="mr-1 inline size-3" /> Sistem klasörleri: {sysFolders?.specs.length ?? 9}</Chip>
+            <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+              <Icons.FileArchive className="size-3" aria-hidden /> ZIP çıktısı: klasör yapısı + manifest.json dahil
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <KpiCard label={t("media.totalAssets")} value={(assets ?? []).length} icon={<Icons.Files className="size-4" />} />
+            <KpiCard label="Görsel" value={imageCount} tone="teal" icon={<Icons.Image className="size-4" />} />
+            <KpiCard label="Video" value={videoCount} tone="violet" icon={<Icons.Clapperboard className="size-4" />} />
+            <KpiCard label="Klasör" value={mergedFolders.length} tone="amber" icon={<Icons.FolderOpen className="size-4" />} />
+          </div>
+
+          {/* İki panel — lg altında üst üste */}
+          <div className="grid items-start gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
+            {/* SOL: klasör ağacı */}
+            <SectionCard
+              title="Klasörler"
+              desc="iç içe mimari — seçili: Tümü"
+              className="lg:sticky lg:top-4"
+              action={<button type="button" aria-label="Kök klasör ekle" onClick={() => { setFolderDialog({ mode: "create", parent: null }); setFolderForm({ name: "", color: "teal" }); }} className="grid size-7 place-items-center rounded-md border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"><Icons.Plus className="size-3.5" /></button>}
+            >
+              <div className="maven-scroll max-h-96 space-y-0.5 overflow-y-auto pr-1 lg:max-h-[480px]">
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(null)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left text-[13px] font-medium transition-colors hover:bg-muted/60",
+                    !selectedId && "border-teal-300 bg-teal-500/10 text-teal-900",
+                  )}
+                >
+                  <Icons.Library className="size-3.5 text-muted-foreground" />
+                  Tümü
+                  <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{(assets ?? []).length}</span>
+                </button>
+                {tree.map(renderNode)}
+                {mergedFolders.length === 0 && (
+                  <p className="px-2 py-3 text-xs text-muted-foreground">Henüz klasör yok — sağ üstten ilk klasörü ekleyin.</p>
+                )}
+              </div>
+            </SectionCard>
+
+            {/* SAĞ: varlık ızgarası */}
+            <SectionCard
+              title={selectedFolder ? selectedFolder.name : "Tüm Varlıklar"}
+              desc={selectedFolder
+                ? (selectedFolder.description ?? `${selectedFolder.systemKey ? "sistem klasörü · " : ""}klasör içeriği`)
+                : "tüm klasörler ve klasörsüz varlıklar"}
+              action={
+                <div className="relative">
+                  <Icons.Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Ad veya etiket ara…" className="h-8 w-44 pl-8 text-xs sm:w-56" aria-label="Varlık ara" />
+                </div>
+              }
+            >
+              {assetsLoading && !assets ? <Loading rows={3} /> : assetsError ? <ErrorState message={assetsError} onRetry={reloadAssets} /> : visibleAssets.length === 0 ? (
+                <EmptyState
+                  title={search ? "Aramaya uyan varlık yok" : "Bu klasörde varlık yok"}
+                  desc={search ? "Farklı bir ad/etiket deneyin." : t("media.emptyAssetsDesc")}
+                />
+              ) : (
+                <div className="maven-scroll grid max-h-[520px] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+                  {visibleAssets.map((a, i) => {
+                    const KIcon = (Icons[KIND_ICON[a.kind] ?? "File"] as typeof Icons.File);
+                    const tagList = (a.tags ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => openDetail(a)}
+                        className="group animate-in flex flex-col gap-2 rounded-xl border bg-card p-3 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md fade-in slide-in-from-bottom-1 fill-mode-backwards focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                        style={{ animationDelay: `${Math.min(i, 9) * 40}ms` }}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg transition-transform duration-200 group-hover:scale-110", KIND_TONE[a.kind] ?? KIND_TONE.OTHER)}>
+                            <KIcon className="size-4" />
+                          </span>
+                          <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label(MEDIA_KIND, a.kind)}</span>
+                        </div>
+                        <p className="truncate text-[13px] font-semibold" title={a.name}>{a.name}</p>
+                        <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+                          <span className="tabular-nums">{fmtSize(a.sizeKb)}</span>
+                          {a.uploadedBy && <span>· {a.uploadedBy}</span>}
+                          {a.linkedType && <Chip tone="violet">{t(LINKED_TYPE_LABEL[a.linkedType] ?? a.linkedType)}</Chip>}
+                        </div>
+                        {tagList.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {tagList.slice(0, 3).map((t) => <Chip key={t}>{t}</Chip>)}
+                            {tagList.length > 3 && <Chip>+{tagList.length - 3}</Chip>}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </SectionCard>
+          </div>
+        </div>
+      )}
+
+      {/* Firma Marka Kitaplığı Sekmesi */}
+      {mediaScopeTab === "brand" && (
+        <div className="space-y-4">
+          {/* Firma Marka Kitaplığı Bilgilendirme Şeridi */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5 text-xs">
+            <div className="flex items-start gap-2.5">
+              <Icons.Sparkles className="size-4 text-primary shrink-0 mt-0.5" />
+              <p className="text-muted-foreground leading-relaxed">
+                {t("media.brandLibraryNotice")}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <KpiCard label={t("media.totalAssets")} value={BRAND_LIBRARY_ITEMS.length} icon={<Icons.Library className="size-4" />} tone="violet" />
+            <KpiCard label="Kurumsal Logolar" value={BRAND_LIBRARY_ITEMS.filter((i) => i.category === "Logo").length} tone="teal" icon={<Icons.PenTool className="size-4" />} />
+            <KpiCard label="Şablon & Belgeler" value={BRAND_LIBRARY_ITEMS.filter((i) => i.category === "Şablon" || i.category === "Sunum").length} tone="amber" icon={<Icons.FileText className="size-4" />} />
+            <KpiCard label="Basın & Tipografi" value={BRAND_LIBRARY_ITEMS.filter((i) => i.category === "Basın" || i.category === "Tipografi").length} tone="emerald" icon={<Icons.Palette className="size-4" />} />
+          </div>
+
+          <SectionCard
+            title="Firma B — Ortak Marka & Kurumsal Varlık Havuzu"
+            desc="Bu varlıklar Firma B bünyesindeki tüm etkinlik ve edisyonlarda ortak kullanılır; iş arşivinden ayrı yönetilir."
+          >
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {BRAND_LIBRARY_ITEMS.map((item) => {
+                const IconComp = KIND_ICON[item.kind] ? (Icons[KIND_ICON[item.kind]] as typeof Icons.File) : Icons.File;
                 return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    onClick={() => openDetail(a)}
-                    className="group animate-in flex flex-col gap-2 rounded-xl border bg-card p-3 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md fade-in slide-in-from-bottom-1 fill-mode-backwards focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-                    style={{ animationDelay: `${Math.min(i, 9) * 40}ms` }}
-                  >
+                  <div key={item.id} className="rounded-xl border bg-card p-3.5 shadow-sm transition hover:shadow-md space-y-2">
                     <div className="flex items-start justify-between gap-2">
-                      <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg transition-transform duration-200 group-hover:scale-110", KIND_TONE[a.kind] ?? KIND_TONE.OTHER)}>
-                        <KIcon className="size-4" />
-                      </span>
-                      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label(MEDIA_KIND, a.kind)}</span>
-                    </div>
-                    <p className="truncate text-[13px] font-semibold" title={a.name}>{a.name}</p>
-                    <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
-                      <span className="tabular-nums">{fmtSize(a.sizeKb)}</span>
-                      {a.uploadedBy && <span>· {a.uploadedBy}</span>}
-                      {a.linkedType && <Chip tone="violet">{a.linkedType}</Chip>}
-                    </div>
-                    {tagList.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {tagList.slice(0, 3).map((t) => <Chip key={t}>{t}</Chip>)}
-                        {tagList.length > 3 && <Chip>+{tagList.length - 3}</Chip>}
+                      <div className="flex items-center gap-2">
+                        <div className={cn("grid size-9 place-items-center rounded-lg", KIND_TONE[item.kind] ?? "bg-muted")}>
+                          <IconComp className="size-4.5" />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-xs leading-tight line-clamp-1">{item.name}</p>
+                          <span className="text-[10px] text-muted-foreground">{item.format} · {item.size}</span>
+                        </div>
                       </div>
-                    )}
-                  </button>
+                      <Chip tone="violet">{item.category}</Chip>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
+                      {item.description}
+                    </p>
+                    <div className="flex items-center justify-between pt-1 border-t text-[11px]">
+                      <span className="text-muted-foreground text-[10px]">Tüm İşlerde Geçerli</span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-[10px]"
+                        onClick={() => {
+                          toast({ title: "Marka Varlığı İndirildi", description: `${item.name} (${item.format}) başarıyla indirildi.` });
+                        }}
+                      >
+                        <Icons.Download className="size-3 mr-1" /> İndir
+                      </Button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
-          )}
-        </SectionCard>
-      </div>
+          </SectionCard>
+        </div>
+      )}
 
       {/* Klasör ekle/düzenle diyaloğu */}
       <Dialog open={Boolean(folderDialog)} onOpenChange={(o) => !o && setFolderDialog(null)}>

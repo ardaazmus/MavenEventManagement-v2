@@ -2,7 +2,7 @@
 // Sosyal Etkinlik & Tur Planı — BİRLEŞİK modül (kullanıcı isteği):
 // Sosyal etkinlik planları ile tur planları tek ekranda; planların çeşidi (type)
 // ve resmi/resmi olmayan ayrımı (isOfficial) olur; planlar kişilere DUYURULUR.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiSend, listEntity } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, PageHeader, StatusBadge, Chip, useApi, KpiCard, ConfirmDialog } from "../bits";
@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import * as Icons from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -74,8 +75,20 @@ const emptyForm = {
 
 export function SocialView() {
   useLang();
-  const { currentEditionId, bump, refreshKey } = useApp();
+  const { currentEditionId, bump, refreshKey, moduleSubView } = useApp();
   const { toast } = useToast();
+  const [socialTab, setSocialTab] = useState<"plans" | "attendance">("plans");
+
+  useEffect(() => {
+    if (moduleSubView === "attendance") {
+      const timer = setTimeout(() => setSocialTab("attendance"), 0);
+      return () => clearTimeout(timer);
+    }
+    if (moduleSubView === "plans") {
+      const timer = setTimeout(() => setSocialTab("plans"), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [moduleSubView]);
 
   const { data: plans, reload } = useApi<SocialPlanRow[]>(
     () => listEntity<SocialPlanRow>("social-plans", { editionId: currentEditionId ?? undefined, limit: 200 }),
@@ -263,117 +276,211 @@ export function SocialView() {
         <Button size="sm" onClick={openCreate}><Icons.Plus className="size-4" /> {t("social.btnNew")}</Button>
       </PageHeader>
 
-      {/* KPI şeridi */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <KpiCard label={t("social.kpiTotal")} value={stats.total} icon={<Icons.CalendarDays className="size-4" />} />
-        <KpiCard label={t("social.kpiSocial")} value={stats.social} tone="amber" icon={<Icons.PartyPopper className="size-4" />} />
-        <KpiCard label={t("social.kpiTour")} value={stats.tour} tone="teal" icon={<Icons.Bus className="size-4" />} />
-        <KpiCard label={t("social.kpiOfficial")} value={stats.official} tone="violet" icon={<Icons.Landmark className="size-4" />} />
-        <KpiCard label={t("social.kpiAnnounced")} value={stats.announcedPeople} tone="neutral" icon={<Icons.Megaphone className="size-4" />} />
-        <KpiCard label={t("social.kpiAccepted")} value={stats.accepted} tone="emerald" icon={<Icons.CheckCircle2 className="size-4" />} />
+      {/* Program Entegrasyon Bildirimi */}
+      <div className="flex items-start gap-3 rounded-xl border border-teal-200 bg-teal-50/60 p-3.5 text-sm text-teal-950 dark:border-teal-800/40 dark:bg-teal-950/20 dark:text-teal-200">
+        <Icons.CalendarCheck className="mt-0.5 size-4 shrink-0 text-teal-600 dark:text-teal-400" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium">{t("social.programIntegrationNotice")}</p>
+        </div>
       </div>
 
-      {/* filtreler */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex gap-1 rounded-lg border p-1">
-          {(["ALL", "SOCIAL", "TOUR"] as const).map((k) => (
-            <button key={k} onClick={() => setKindFilter(k)}
-              className={cn("rounded px-2.5 py-1 text-xs font-medium transition", kindFilter === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}>
-              {k === "ALL" ? t("social.all") : label(SOCIAL_KINDS, k)}
-            </button>
-          ))}
-        </div>
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="h-8 w-[170px]" aria-label={t("social.typeFilterAria")}><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">{t("social.allTypes")}</SelectItem>
-            {typeOptions.map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <div className="flex gap-1 rounded-lg border p-1">
-          {([["ALL", t("social.all")], ["OFFICIAL", t("social.official")], ["NORMAL", t("social.notOfficial")]] as const).map(([k, v]) => (
-            <button key={k} onClick={() => setOfficialFilter(k)}
-              className={cn("rounded px-2.5 py-1 text-xs font-medium transition", officialFilter === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}>
-              {v}
-            </button>
-          ))}
-        </div>
-        <Chip tone="teal">{t("social.planCount", { count: filtered.length })}</Chip>
-      </div>
+      <Tabs value={socialTab} onValueChange={(v: any) => setSocialTab(v)}>
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="plans" className="gap-1.5">
+            <Icons.PartyPopper className="size-4" /> {t("social.tabPlans")} ({stats.total})
+          </TabsTrigger>
+          <TabsTrigger value="attendance" className="gap-1.5">
+            <Icons.UserCheck className="size-4" /> {t("social.tabAttendance")} ({stats.accepted})
+          </TabsTrigger>
+        </TabsList>
 
-      {/* plan kartları — çift tık ile düzenle (her öğe kuralı) */}
-      {filtered.length === 0 ? (
-        <EmptyState
-          title={t("social.emptyTitle")}
-          desc={t("social.emptyDesc")}
-          action={<Button onClick={openCreate}><Icons.Plus className="size-4" /> {t("social.btnCreateFirst")}</Button>}
-        />
-      ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {filtered.map((p) => {
-            const isTour = p.kind === "TOUR";
-            const anns = p.announcements ?? [];
-            const accepted = anns.filter((a) => a.response === "ACCEPTED").length;
-            return (
-              <SectionCard
-                key={p.id}
-                title={p.title}
-                desc={[label(SOCIAL_PLAN_TYPES, p.type), p.venue].filter(Boolean).join(" · ")}
-                action={<StatusBadge map={SOCIAL_PLAN_STATUS} value={p.status} />}
-                className="cursor-pointer transition hover:shadow-md"
-              >
-                <div onDoubleClick={() => openEdit(p)} title={t("social.doubleClickEdit")}>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <Chip tone={isTour ? "teal" : "amber"}><span className="inline-flex items-center gap-1">{isTour ? <Icons.Bus className="size-3" /> : <Icons.PartyPopper className="size-3" />}{label(SOCIAL_KINDS, p.kind)}</span></Chip>
-                    {p.isOfficial && <Chip tone="violet"><span className="inline-flex items-center gap-1"><Icons.Landmark className="size-3" />{t("social.chipOfficial")}</span></Chip>}
-                    {p.capacity != null && <Chip>{t("social.capacityChip", { count: p.capacity })}</Chip>}
-                    {p.price != null && /* F6: kuruş→₺ */ (<Chip tone="emerald">{(p.price / 100).toLocaleString("tr-TR")} {p.currency}</Chip>)}
-                    {anns.length > 0 && <Chip>{accepted > 0 ? t("social.announcementsWithAccepted", { count: anns.length, accepted }) : t("social.announcementsChip", { count: anns.length })}</Chip>}
-                  </div>
-                  <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                    {p.startsAt && <p className="flex items-center gap-1.5"><Icons.CalendarDays className="size-3.5" /> {new Date(p.startsAt).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" })}{p.endsAt ? ` — ${new Date(p.endsAt).toLocaleTimeString("tr-TR", { timeStyle: "short" })}` : ""}</p>}
-                    {p.venue && <p className="flex items-center gap-1.5"><Icons.MapPin className="size-3.5" /> {p.venue}</p>}
-                    {p.meetingPoint && <p className="flex items-center gap-1.5"><Icons.Flag className="size-3.5" /> {t("social.meetingPoint")}: {p.meetingPoint}</p>}
-                    {p.description && <p className="line-clamp-2 pt-0.5">{p.description}</p>}
-                    {p.notes && <p className="line-clamp-1 italic"><Icons.StickyNote className="mr-1 inline size-3.5" />{p.notes}</p>}
-                  </div>
-                </div>
+        <TabsContent value="plans" className="mt-4 space-y-5">
+          {/* KPI şeridi */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <KpiCard label={t("social.kpiTotal")} value={stats.total} icon={<Icons.CalendarDays className="size-4" />} />
+            <KpiCard label={t("social.kpiSocial")} value={stats.social} tone="amber" icon={<Icons.PartyPopper className="size-4" />} />
+            <KpiCard label={t("social.kpiTour")} value={stats.tour} tone="teal" icon={<Icons.Bus className="size-4" />} />
+            <KpiCard label={t("social.kpiOfficial")} value={stats.official} tone="violet" icon={<Icons.Landmark className="size-4" />} />
+            <KpiCard label={t("social.kpiAnnounced")} value={stats.announcedPeople} tone="neutral" icon={<Icons.Megaphone className="size-4" />} />
+            <KpiCard label={t("social.kpiAccepted")} value={stats.accepted} tone="emerald" icon={<Icons.CheckCircle2 className="size-4" />} />
+          </div>
 
-                {/* duyurular */}
-                {expandedId === p.id && (
-                  <div className="mt-3 max-h-56 space-y-1.5 overflow-y-auto rounded-lg border bg-muted/30 p-2 maven-scroll">
-                    {anns.length === 0 && <p className="p-2 text-xs text-muted-foreground">{t("social.noAnnouncements")}</p>}
-                    {anns.map((a) => (
-                      <div key={a.id} className="flex items-center gap-2 rounded border bg-background px-2 py-1.5 text-xs">
-                        <Icons.User className="size-3.5 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate font-medium">{a.fullName ?? t("social.personFallback")}</span>
-                        <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">{label(SOCIAL_ANNOUNCE_CHANNELS, a.channel)}</span>
-                        {a.response === "ACCEPTED" ? <Chip tone="emerald">{label(SOCIAL_RESPONSE, a.response)}</Chip>
-                          : a.response === "DECLINED" ? <Chip tone="rose">{label(SOCIAL_RESPONSE, a.response)}</Chip>
-                          : <Chip tone="amber">{label(SOCIAL_RESPONSE, "INVITED")}</Chip>}
-                        <Button size="icon" variant="ghost" className="size-6" aria-label={t("social.ariaAccept")} onClick={() => setResponse(a, "ACCEPTED")}><Icons.Check className="size-3 text-emerald-600" /></Button>
-                        <Button size="icon" variant="ghost" className="size-6" aria-label={t("social.ariaDecline")} onClick={() => setResponse(a, "DECLINED")}><Icons.X className="size-3 text-rose-500" /></Button>
-                        <Button size="icon" variant="ghost" className="size-6" aria-label={t("social.ariaDeleteAnnouncement")} onClick={() => removeAnnouncement(a)}><Icons.Trash2 className="size-3 text-muted-foreground" /></Button>
+          {/* filtreler */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex gap-1 rounded-lg border p-1">
+              {(["ALL", "SOCIAL", "TOUR"] as const).map((k) => (
+                <button key={k} onClick={() => setKindFilter(k)}
+                  className={cn("rounded px-2.5 py-1 text-xs font-medium transition", kindFilter === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}>
+                  {k === "ALL" ? t("social.all") : label(SOCIAL_KINDS, k)}
+                </button>
+              ))}
+            </div>
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="h-8 w-[170px]" aria-label={t("social.typeFilterAria")}><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">{t("social.allTypes")}</SelectItem>
+                {typeOptions.map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <div className="flex gap-1 rounded-lg border p-1">
+              {([["ALL", t("social.all")], ["OFFICIAL", t("social.official")], ["NORMAL", t("social.notOfficial")]] as const).map(([k, v]) => (
+                <button key={k} onClick={() => setOfficialFilter(k)}
+                  className={cn("rounded px-2.5 py-1 text-xs font-medium transition", officialFilter === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}>
+                  {v}
+                </button>
+              ))}
+            </div>
+            <Chip tone="teal">{t("social.planCount", { count: filtered.length })}</Chip>
+          </div>
+
+          {/* plan kartları — çift tık ile düzenle (her öğe kuralı) */}
+          {filtered.length === 0 ? (
+            <EmptyState
+              title={t("social.emptyTitle")}
+              desc={t("social.emptyDesc")}
+              action={<Button onClick={openCreate}><Icons.Plus className="size-4" /> {t("social.btnCreateFirst")}</Button>}
+            />
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {filtered.map((p) => {
+                const isTour = p.kind === "TOUR";
+                const anns = p.announcements ?? [];
+                const accepted = anns.filter((a) => a.response === "ACCEPTED").length;
+                return (
+                  <SectionCard
+                    key={p.id}
+                    title={p.title}
+                    desc={[label(SOCIAL_PLAN_TYPES, p.type), p.venue].filter(Boolean).join(" · ")}
+                    action={<StatusBadge map={SOCIAL_PLAN_STATUS} value={p.status} />}
+                    className="cursor-pointer transition hover:shadow-md"
+                  >
+                    <div onDoubleClick={() => openEdit(p)} title={t("social.doubleClickEdit")}>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Chip tone={isTour ? "teal" : "amber"}><span className="inline-flex items-center gap-1">{isTour ? <Icons.Bus className="size-3" /> : <Icons.PartyPopper className="size-3" />}{label(SOCIAL_KINDS, p.kind)}</span></Chip>
+                        {p.isOfficial && <Chip tone="violet"><span className="inline-flex items-center gap-1"><Icons.Landmark className="size-3" />{t("social.chipOfficial")}</span></Chip>}
+                        {p.capacity != null && <Chip>{t("social.capacityChip", { count: p.capacity })}</Chip>}
+                        {p.price != null && /* F6: kuruş→₺ */ (<Chip tone="emerald">{(p.price / 100).toLocaleString("tr-TR")} {p.currency}</Chip>)}
+                        {anns.length > 0 && <Chip>{accepted > 0 ? t("social.announcementsWithAccepted", { count: anns.length, accepted }) : t("social.announcementsChip", { count: anns.length })}</Chip>}
                       </div>
-                    ))}
-                  </div>
-                )}
+                      <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                        {p.startsAt && <p className="flex items-center gap-1.5"><Icons.CalendarDays className="size-3.5" /> {new Date(p.startsAt).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" })}{p.endsAt ? ` — ${new Date(p.endsAt).toLocaleTimeString("tr-TR", { timeStyle: "short" })}` : ""}</p>}
+                        {p.venue && <p className="flex items-center gap-1.5"><Icons.MapPin className="size-3.5" /> {p.venue}</p>}
+                        {p.meetingPoint && <p className="flex items-center gap-1.5"><Icons.Flag className="size-3.5" /> {t("social.meetingPoint")}: {p.meetingPoint}</p>}
+                        {p.description && <p className="line-clamp-2 pt-0.5">{p.description}</p>}
+                        {p.notes && <p className="line-clamp-1 italic"><Icons.StickyNote className="mr-1 inline size-3.5" />{p.notes}</p>}
+                      </div>
+                    </div>
 
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => openAnnounce(p)}><Icons.Megaphone className="size-3.5" /> {t("social.btnAnnounce")}</Button>
-                  {anns.length > 0 && (
-                    <Button size="sm" variant="outline" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}>
-                      <Icons.BellRing className="size-3.5" /> {t("social.btnAnnouncements", { count: anns.length })}
-                    </Button>
-                  )}
-                  <Button size="sm" variant="ghost" onClick={() => openEdit(p)} aria-label={t("social.ariaEdit", { title: p.title })}><Icons.Pencil className="size-3.5" /> {t("social.btnEdit")}</Button>
-                  <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => setDeleteTarget(p)} aria-label={t("social.ariaDelete", { title: p.title })}><Icons.Trash2 className="size-3.5" /></Button>
-                </div>
-              </SectionCard>
-            );
-          })}
-        </div>
-      )}
+                    {/* duyurular */}
+                    {expandedId === p.id && (
+                      <div className="mt-3 max-h-56 space-y-1.5 overflow-y-auto rounded-lg border bg-muted/30 p-2 maven-scroll">
+                        {anns.length === 0 && <p className="p-2 text-xs text-muted-foreground">{t("social.noAnnouncements")}</p>}
+                        {anns.map((a) => (
+                          <div key={a.id} className="flex items-center gap-2 rounded border bg-background px-2 py-1.5 text-xs">
+                            <Icons.User className="size-3.5 shrink-0 text-muted-foreground" />
+                            <span className="min-w-0 flex-1 truncate font-medium">{a.fullName ?? t("social.personFallback")}</span>
+                            <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">{label(SOCIAL_ANNOUNCE_CHANNELS, a.channel)}</span>
+                            {a.response === "ACCEPTED" ? <Chip tone="emerald">{label(SOCIAL_RESPONSE, a.response)}</Chip>
+                              : a.response === "DECLINED" ? <Chip tone="rose">{label(SOCIAL_RESPONSE, a.response)}</Chip>
+                              : <Chip tone="amber">{label(SOCIAL_RESPONSE, "INVITED")}</Chip>}
+                            <Button size="icon" variant="ghost" className="size-6" aria-label={t("social.ariaAccept")} onClick={() => setResponse(a, "ACCEPTED")}><Icons.Check className="size-3 text-emerald-600" /></Button>
+                            <Button size="icon" variant="ghost" className="size-6" aria-label={t("social.ariaDecline")} onClick={() => setResponse(a, "DECLINED")}><Icons.X className="size-3 text-rose-500" /></Button>
+                            <Button size="icon" variant="ghost" className="size-6" aria-label={t("social.ariaDeleteAnnouncement")} onClick={() => removeAnnouncement(a)}><Icons.Trash2 className="size-3 text-muted-foreground" /></Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => openAnnounce(p)}><Icons.Megaphone className="size-3.5" /> {t("social.btnAnnounce")}</Button>
+                      {anns.length > 0 && (
+                        <Button size="sm" variant="outline" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}>
+                          <Icons.BellRing className="size-3.5" /> {t("social.btnAnnouncements", { count: anns.length })}
+                        </Button>
+                      )}
+                      <Button size="sm" variant="ghost" onClick={() => openEdit(p)} aria-label={t("social.ariaEdit", { title: p.title })}><Icons.Pencil className="size-3.5" /> {t("social.btnEdit")}</Button>
+                      <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => setDeleteTarget(p)} aria-label={t("social.ariaDelete", { title: p.title })}><Icons.Trash2 className="size-3.5" /></Button>
+                    </div>
+                  </SectionCard>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="attendance" className="mt-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <KpiCard label={t("social.thCapacity")} value={(plans ?? []).reduce((s, p) => s + (p.capacity ?? 0), 0)} icon={<Icons.Users className="size-4" />} />
+            <KpiCard label={t("social.kpiAccepted")} value={stats.accepted} tone="emerald" icon={<Icons.CheckCircle2 className="size-4" />} />
+            <KpiCard label={t("social.kpiAnnounced")} value={stats.announcedPeople} tone="amber" icon={<Icons.Megaphone className="size-4" />} />
+            <KpiCard label={t("social.includedInPackage")} value={(plans ?? []).filter((p) => !p.price || p.price === 0).length} tone="teal" icon={<Icons.PackageCheck className="size-4" />} />
+          </div>
+
+          {(plans ?? []).length === 0 ? (
+            <EmptyState
+              title={t("social.emptyTitle")}
+              desc={t("social.emptyDesc")}
+              action={<Button onClick={openCreate}><Icons.Plus className="size-4" /> {t("social.btnCreateFirst")}</Button>}
+            />
+          ) : (
+            <SectionCard title={t("social.tabAttendance")} desc={t("social.desc")}>
+              <div className="maven-scroll max-h-[600px] overflow-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
+                    <tr className="border-b">
+                      <th className="px-3 py-2 text-xs font-medium">{t("social.thPlan")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("social.thKind")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("social.thPricing")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("social.thCapacity")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("social.thRsvp")}</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(plans ?? []).map((p) => {
+                      const anns = p.announcements ?? [];
+                      const acceptedCount = anns.filter((a) => a.response === "ACCEPTED").length;
+                      const isFree = !p.price || p.price === 0;
+                      return (
+                        <tr key={p.id} className="border-b last:border-0 hover:bg-muted/30">
+                          <td className="px-3 py-2.5 font-semibold">
+                            <p>{p.title}</p>
+                            {p.venue && <p className="text-xs font-normal text-muted-foreground">{p.venue}</p>}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2.5">
+                            <Chip tone={p.kind === "TOUR" ? "teal" : "amber"}>{label(SOCIAL_KINDS, p.kind)}</Chip>
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2.5">
+                            <Chip tone={isFree ? "emerald" : "violet"}>
+                              {isFree ? t("social.includedInPackage") : `${t("social.paidActivity")} (${(p.price! / 100).toLocaleString("tr-TR")} ${p.currency})`}
+                            </Chip>
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">
+                            {p.capacity ? `${acceptedCount} / ${p.capacity}` : `${acceptedCount} (—)`}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2.5">
+                            <div className="flex items-center gap-1.5">
+                              <Chip tone="emerald">{acceptedCount} {t("social.ariaAccept")}</Chip>
+                              {anns.length - acceptedCount > 0 && (
+                                <Chip tone="neutral">{anns.length - acceptedCount} {t("social.kpiAnnounced")}</Chip>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openAnnounce(p)}>
+                              <Icons.Megaphone className="size-3" /> {t("social.inviteFromWork")}
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </SectionCard>
+          )}
+        </TabsContent>
+      </Tabs>
 
       {/* Plan formu — create + edit aynı diyalo */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>

@@ -26,7 +26,10 @@
     "integrations": "API Geçidi",
     "settings": "Ayarlar",
     "compliance": "Uyumluluk",
-    "company-communications": "Şirket İletişimi"
+    "company-communications": "Şirket İletişimi",
+    "company-reports": "Firma Raporları",
+    "portfolio": "Firma Portföyü",
+    "company-settings": "Firma Ayarları"
   },
   "shell": {
     "srMenu": "Ana menü",
@@ -87,7 +90,8 @@
     "deleteTitle": "Silme onayı",
     "adminLockedTitle": "Yönetici yetkisi gerekli",
     "adminLockedDesc": "Bu bölümü yalnızca üst firma sahibi/yöneticisi (ORG_OWNER/ORG_ADMIN) kullanabilir.",
-    "readonlyHint": "Salt-okunur rol: bu işlem kapalı"
+    "readonlyHint": "Salt-okunur rol: bu işlem kapalı",
+    "activeWork": "Aktif İş"
   },
   "commandPalette": {
     "title": "Komut paleti",
@@ -1087,6 +1091,9 @@
     "demoNote": "Demo: QR-0001 … QR-0024 aktif yaka kartları; iptal/reddedilen katılımcı kodu yoktur → kırmızı durum."
   },
   "communications": {
+    "workScopeTitle": "İş İletişimi — {work}",
+    "workScopeNotice": "Bu alandaki duyuru, SMS ve e-postalar yalnızca bu işin kayıtlı katılımcılarına, konuşmacılarına ve paydaşlarına iletilir. Firma genelindeki kitlelere erişmek için Genel İletişim alanını kullanın.",
+    "btnOpenCompanyComms": "Firma Genel İletişimine Geç",
     "nameRequired": "Kampanya adı zorunlu",
     "customEmpty": "Özel liste boş",
     "customEmptyDesc": "CUSTOM/BOTH modda alıcı e-postaları zorunlu.",
@@ -3600,14 +3607,68 @@
   },
   "portalsView": {
     "page": {
-      "title": "Dış Portal",
-      "desc": "Sponsor ve katılımcı self-servis görünümü — ayrı uygulama, ortak kimlik ilkesiyle gerçek verilerin dışarıdan hali."
+      "title": "Dış Deneyimler & Portallar",
+      "desc": "Etkinliğin dış dünyaya açılan mobil, katılımcı, B2B, sponsor ve müşteri yüzeyleri — ortak kimlik ve canlı yayın akışı."
     },
     "tabs": {
-      "participant": "Katılımcı",
-      "sponsor": "Sponsor",
+      "pwa": "Mobil Deneyim (PWA)",
+      "attendee": "Katılımcı Portalı",
+      "participant": "Katılımcı Portalı",
+      "b2b": "B2B Portalı",
+      "sponsor": "Sponsor Portalı",
+      "client": "Müşteri Portalı",
       "vitrin": "Firma Vitrini",
       "ayarlar": "Portal Ayarları"
+    },
+    "noEditionTitle": "Edisyon seçin",
+    "noEditionDesc": "Dış deneyim ve portal önizlemesi için bir edisyon gereklidir.",
+    "isolation": {
+      "title": "Firma Vitrini ve İş Portalı Ayrımı — {work}",
+      "desc": "Firma B kurumsal vitrini tüm portföyü temsil eden kamuya açık marka yüzeyidir. Bu ekrandaki portallar ise yalnızca '{work}' işine ait katılımcı, sponsor, B2B ve müşteri deneyimleridir.",
+      "btnVitrin": "Firma Vitrinini Gör"
+    },
+    "publish": {
+      "title": "İş İçeriğinden Dış Yayın Akışı",
+      "desc": "'{work}' modüllerindeki canlı verilerin dış deneyim portallarına anlık yayına aktarım durumu.",
+      "liveSync": "Canlı Senkronize",
+      "openLivePortal": "Dış Portalı Aç",
+      "statusPublished": "Yayında",
+      "statusDraft": "Taslak",
+      "statusToggleAria": "yayın durumunu değiştir",
+      "items": {
+        "program": "Program & Oturumlar",
+        "speakers": "Konuşmacılar",
+        "sponsors": "Sponsorlar & Stantlar",
+        "forms": "Kayıt Formları"
+      }
+    },
+    "pwa": {
+      "title": "Genel Mobil Deneyim (Event App / PWA)",
+      "desc": "Tüm katılımcıların cep telefonlarından eriştiği, çevrimdışı destekli hafif web uygulaması.",
+      "badgeInstall": "Yüklenebilir PWA",
+      "badgeOffline": "Çevrimdışı Destekli",
+      "openApp": "Mobil Uygulamayı Önizle",
+      "qrHint": "Katılımcıların mobil cihazlarından doğrudan açması için QR kod ve dağıtım linki."
+    },
+    "b2b": {
+      "title": "B2B Eşleşme Portalı",
+      "desc": "Temsilcilerin ve katılımcıların ikili iş görüşmesi randevuları aldığı, masa ve takvim planını yönettiği dış arayüz.",
+      "btnOpenModule": "B2B Yönetim Modülüne Git",
+      "previewPortal": "B2B Portalını Önizle",
+      "activeMatches": "Aktif Görüşme Randevuları",
+      "matchesHint": "Katılımcıların birbirleriyle ve sponsorlarla teyit ettiği görüşme saatleri ve ajandaları.",
+      "tablePlan": "Masa & Görüşme Alanı Planı",
+      "tablePlanHint": "B2B salonundaki numaralandırılmış masalar ve müsaitlik durumu."
+    },
+    "client": {
+      "title": "Müşteri & Kurum Portalı",
+      "desc": "Etkinliği düzenleyen müşteri kurumun delege kotalarını, onaylarını ve mali mutabakatını izlediği dış arayüz.",
+      "btnOpenOrgs": "Kurumlar Modülüne Git",
+      "previewPortal": "Müşteri Portalını Önizle",
+      "quotaSummary": "Delegasyon Kota Özeti",
+      "quotaHint": "Müşteri kurumun sözleşmeli delege kontenjanları, kullanılan biletler ve kalan haklar.",
+      "financeSummary": "Cari Mutabakat & Faturalar",
+      "financeHint": "Kurum bazlı kesinleşen harcamalar, avanslar, faturalar ve tahsilat durumu."
     }
   },
   "regIo": {
@@ -4168,7 +4229,10 @@
     "desc": "Etkinlikten bağımsız şirket iletişim havuzu: kişiler, içe/dışa aktarma",
     "campaignsTitle": "Kampanyalar etkinlik kapsamındadır",
     "campaignsDesc": "Toplu gönderim, zamanlama ve şablonlar seçili etkinliğin İletişim modülünden yönetilir.",
-    "openEditionComms": "Etkinlik İletişimine Git"
+    "openEditionComms": "Etkinlik İletişimine Git",
+    "segmentB2B": "Fuar & B2B Katılımcıları",
+    "calendarCampaign": "2026 Yıllık Etkinlik & Kongre Takvimi",
+    "invitationDesc": "Kişi adına hitap, RSVP butonları ve takvime ekle bağlantısı."
   },
   "exportHub": {
     "title": "Dışa Aktarma Merkezi",
@@ -4205,5 +4269,144 @@
     "fEnd": "Bitiş",
     "fActive": "Yayında",
     "more": "İncele"
+  },
+  "companyReports": {
+    "title": "Firma Raporları",
+    "desc": "Firma genelindeki tüm işlerin, portföyün, operasyonların ve mali tabloların konsolide analiz panosu.",
+    "tabPortfolio": "Portföy",
+    "tabWorks": "İş Portföyü",
+    "tabOperations": "Operasyon",
+    "tabFinance": "Finans",
+    "tabComms": "İletişim",
+    "tabExports": "Dışa Aktarımlar",
+    "kpiTotalWorks": "Toplam İş",
+    "kpiActiveWorks": "Aktif İş",
+    "kpiTotalTurnover": "Konsolide Hasılat",
+    "kpiTotalCollected": "Toplam Tahsilat",
+    "kpiOpenReceivables": "Açık Alacak",
+    "kpiTotalContacts": "Portföy Büyüklüğü",
+    "workComparisonTitle": "Çapraz İş Portföyü Karşılaştırması",
+    "workComparisonDesc": "Firma bünyesinde yürütülen işlerin durum, katılımcı ve mali performans özeti",
+    "thWorkName": "İş / Organizasyon",
+    "thType": "Tür",
+    "thMacroStage": "Aşama",
+    "thDate": "Tarih",
+    "thParticipants": "Katılımcı",
+    "thBudget": "Bütçe",
+    "thRealized": "Tahsilat",
+    "thActions": "Eylemler",
+    "actionOpenSummary": "İş Özeti",
+    "actionOpenFinance": "Finans",
+    "actionOpenAccounting": "Muhasebe",
+    "actionOpenRegs": "Katılımcılar",
+    "portfolioAnalysisTitle": "Kişi ve Kurum Portföy Analizi",
+    "portfolioAnalysisDesc": "Kalıcı kontak ana kayıtları, müşteri dağılımı ve büyüme dinamikleri",
+    "kpiPersons": "Kişiler",
+    "kpiOrganizations": "Kurumlar",
+    "kpiClients": "Müşteriler",
+    "kpiVip": "VIP / Protokol",
+    "openPortfolio": "Firma Portföyünü Aç",
+    "operationsAnalysisTitle": "Firma Çapında Operasyon ve Görev Metrikleri",
+    "operationsAnalysisDesc": "Tüm işlerdeki açık görevler, tamamlanma yüzdesi ve iş gücü dağılımı",
+    "kpiOpenTasks": "Açık Görev",
+    "kpiCompletedTasks": "Tamamlanan Görev",
+    "kpiSlaOverdue": "Geciken İşler",
+    "financeConsolidatedTitle": "Konsolide Finans ve Çapraz Defter",
+    "financeConsolidatedDesc": "Tüm işlerden toplanan sipariş, online ve harici tahsilat ile bakiye dökümü",
+    "kpiOrdersTotal": "Sipariş Hacmi",
+    "kpiRefundsTotal": "İade Tutarı",
+    "kpiReconciliationReady": "Mutabakata Hazır İş",
+    "commsAnalysisTitle": "Genel İletişim ve Kampanya Başarısı",
+    "commsAnalysisDesc": "Kurumsal e-posta, SMS ve anlık duyuru teslimat metrikleri",
+    "kpiAudiences": "Tanımlı Kitle",
+    "kpiCampaigns": "Kampanya Sayısı",
+    "kpiAvgDelivery": "Ortalama Teslimat",
+    "openComms": "Genel İletişimi Aç",
+    "exportsArchiveTitle": "Merkezi Dışa Aktarımlar Arşivi",
+    "exportsArchiveDesc": "Tüm modüllerden alınan Excel, CSV ve rapor dışa aktarım geçmişi",
+    "noExports": "Henüz dışa aktarılmış rapor dosyası bulunmuyor.",
+    "exportFileName": "Dosya Adı",
+    "exportScope": "Kapsam",
+    "exportDate": "Tarih",
+    "exportStatus": "Durum",
+    "btnDownload": "İndir"
+  },
+  "workReports": {
+    "title": "İş Raporları",
+    "desc": "Yalnızca seçili işe ait finans, katılım ve sponsorluk analizleri",
+    "financeReports": "Finans ve Bütçe Raporları",
+    "financeReportsDesc": "İşin gelir, gider, tahsilat ve mutabakat raporları",
+    "regReports": "Kayıt ve Katılım İstatistikleri",
+    "regReportsDesc": "Katılımcı profili, doluluk ve kontenjan analizleri",
+    "sponsorReports": "Sponsor ve ROI Raporu",
+    "sponsorReportsDesc": "Sponsorluk gerçekleşme ve teslimat metrikleri",
+    "btnBackToWorkSummary": "İş Özetine Dön",
+    "btnBackToFinance": "Operasyonel Finansa Dön",
+    "btnBackToRegs": "Katılımcı Listesine Dön",
+    "btnBackToSponsors": "Sponsor Listesine Dön"
+  },
+  "financeView": {
+    "scopeNotice": "Operasyonel Finans Alanı: Siparişler, tahsilat kayıtları, iade talepleri ve ek hizmetler bu ekranda yönetilir. Genel mali defter ve mutabakat için Muhasebe ekranına geçin.",
+    "btnGoToAccounting": "Mali Defter & Mutabakat Görünümüne Git",
+    "sodNotice": "Görevler Ayrılığı (SoD): 50.000 TL ve üzeri manuel tahsilatlarda ikinci bir yöneticinin onayı zorunludur."
+  },
+  "accountingView": {
+    "scopeNotice": "Kurumsal Muhasebe & Defter Alanı: Gelirler, giderler, genel defter dökümleri, bütçe gerçekleşme kırılımı ve kapanış mutabakatı bu ekranda yönetilir. Sipariş satırları için Finans ekranına dönün.",
+    "btnGoToFinance": "Operasyonel Finans & Siparişlere Dön",
+    "btnGoToSummary": "İş Özetine Dön",
+    "workSettlementTitle": "İş Kapanış Mutabakatı Sertifikası",
+    "workSettlementDesc": "Operasyonu tamamlanan işin mali denetimi ve arşive kaldırma hazırlığı",
+    "btnArchiveWork": "İşi Arşivle ve Kapat"
+  },
+  "lifecycle": {
+    "stageDraft": "Taslak",
+    "stagePlanning": "Planlanan",
+    "stageActive": "Aktif",
+    "stageCompleted": "Tamamlanan",
+    "stageArchived": "Arşiv",
+    "tabAll": "Tüm İşler",
+    "tabDraft": "Taslak",
+    "tabPlanning": "Planlanan",
+    "tabActive": "Aktif",
+    "tabCompleted": "Tamamlanan",
+    "tabArchive": "Arşiv"
+  },
+  "contextBridge": {
+    "ariaLabel": "İş Çapraz Modül Gezinme Köprüsü",
+    "title": "İş Omurgası",
+    "summary": "İş Özeti",
+    "setup": "Kurulum",
+    "comms": "İletişim",
+    "portals": "Dış Deneyim",
+    "reports": "Raporlar"
+  },
+  "scopes": {
+    "globalCompany": "Firma B Global",
+    "workWorkspace": "İşe Özel Alan",
+    "platformOperator": "Platform Yönetimi",
+    "externalExperience": "Dış Deneyimler"
+  },
+  "dualSidebar": {
+    "tabWork": "İş Modülleri",
+    "tabCompany": "Firma Globali",
+    "ariaContextToggle": "Gezinme bağlamı seçimi",
+    "searchPlaceholder": "Menüde ara...",
+    "clearSearch": "Temizle",
+    "noResults": "Eşleşen menü öğesi bulunamadı",
+    "viewModeHub": "Odaklı Hub",
+    "viewModeAll": "Tümünü Göster",
+    "hubCockpit": "Kokpit ve Yönetim",
+    "hubRegistration": "Katılım ve Kayıt",
+    "hubProgram": "Program ve İçerik",
+    "hubSponsor": "Sponsor ve Sergi",
+    "hubLogistics": "Saha ve Lojistik",
+    "hubComms": "İletişim ve Deneyim",
+    "hubReports": "İş Raporları",
+    "hubSettings": "İş Ayarları",
+    "badgeSetup": "Kurulum",
+    "badgeApproval": "Onay Bekleyen",
+    "badgeOnsite": "Canlı Saha"
   }
 }
+
+

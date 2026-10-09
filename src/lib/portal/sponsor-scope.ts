@@ -34,3 +34,44 @@ export function checkSponsorScope(token: SponsorTokenView, want: SponsorWant): S
 export function agreementFilter(token: SponsorTokenView): { id: string } | Record<string, never> {
   return token.agreementId ? { id: token.agreementId } : {};
 }
+
+/**
+ * restrictions veya notes metninden "agreement:<id>" veya "agreementId:<id>" etiketini çıkarır.
+ */
+export function extractAgreementTag(text?: string | null): string | null {
+  if (!text) return null;
+  const match = text.match(/\bagreement(?:Id)?[:=]\s*([a-zA-Z0-9_-]+)/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Belirli bir öğenin (Entitlement, Order vb.) jeton anlaşma kapsamına uyup uymadığını denetler (F-04).
+ * - tokenAgreementId null ise (kurum geneli jeton): tüm öğeler kapsama dahildir (true).
+ * - tokenAgreementId dolu ise:
+ *     - Öğe başka bir anlaşmaya etiketlenmişse (agreement:otherId): KAPSAM DIŞIDIR (false).
+ *     - Öğe hedef anlaşmaya etiketlenmişse (agreement:targetId): KAPSAMDADIR (true).
+ *     - Öğe herhangi bir anlaşmaya etiketlenmemişse: KAPSAMDADIR (kurum geneli hak/sipariş).
+ */
+export function isItemInAgreementScope(
+  item: { restrictions?: string | null; notes?: string | null; agreementId?: string | null },
+  tokenAgreementId: string | null | undefined,
+): boolean {
+  if (!tokenAgreementId) return true;
+
+  if (item.agreementId) {
+    return item.agreementId === tokenAgreementId;
+  }
+
+  const tagInRestrictions = extractAgreementTag(item.restrictions);
+  if (tagInRestrictions) {
+    return tagInRestrictions === tokenAgreementId;
+  }
+
+  const tagInNotes = extractAgreementTag(item.notes);
+  if (tagInNotes) {
+    return tagInNotes === tokenAgreementId;
+  }
+
+  return true;
+}
+

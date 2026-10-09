@@ -717,5 +717,71 @@
       "status_ANSWERED": "Answered",
       "status_HIDDEN": "Hidden"
     }
+  },
+  "portalsView": {
+    "page": {
+      "title": "External Experiences & Portals",
+      "desc": "Mobile, attendee, B2B, sponsor, and client external surfaces — shared identity and live publishing."
+    },
+    "tabs": {
+      "pwa": "Mobile App (PWA)",
+      "attendee": "Attendee Portal",
+      "participant": "Attendee Portal",
+      "b2b": "B2B Portal",
+      "sponsor": "Sponsor Portal",
+      "client": "Client Portal",
+      "vitrin": "Company Showcase",
+      "ayarlar": "Portal Settings"
+    },
+    "noEditionTitle": "Select an edition",
+    "noEditionDesc": "An edition is required for external experience and portal previews.",
+    "isolation": {
+      "title": "Company Showcase & Work Portal Isolation — {work}",
+      "desc": "Company B showcase represents the organization portfolio publicly. The portals on this screen belong strictly to the '{work}' work edition.",
+      "btnVitrin": "View Company Showcase"
+    },
+    "publish": {
+      "title": "Content Publishing Flow",
+      "desc": "Live sync status of '{work}' modules to external experience portals.",
+      "liveSync": "Live Synchronized",
+      "openLivePortal": "Open External Portal",
+      "statusPublished": "Published",
+      "statusDraft": "Draft",
+      "statusToggleAria": "toggle publish status",
+      "items": {
+        "program": "Program & Sessions",
+        "speakers": "Speakers",
+        "sponsors": "Sponsors & Booths",
+        "forms": "Registration Forms"
+      }
+    },
+    "pwa": {
+      "title": "General Mobile Experience (Event App / PWA)",
+      "desc": "Lightweight offline-supported web app accessed from any mobile smartphone.",
+      "badgeInstall": "Installable PWA",
+      "badgeOffline": "Offline Capable",
+      "openApp": "Preview Mobile App",
+      "qrHint": "QR code and distribution link for attendees to launch directly on mobile."
+    },
+    "b2b": {
+      "title": "B2B Matchmaking Portal",
+      "desc": "External interface for delegates to book bilateral meetings and manage booth/table schedules.",
+      "btnOpenModule": "Go to B2B Management Module",
+      "previewPortal": "Preview B2B Portal",
+      "activeMatches": "Active Meeting Appointments",
+      "matchesHint": "Confirmed bilateral appointments and agendas between delegates and sponsors.",
+      "tablePlan": "Table & Meeting Area Plan",
+      "tablePlanHint": "Numbered tables and slot availability in the B2B hall."
+    },
+    "client": {
+      "title": "Client & Corporate Portal",
+      "desc": "External dashboard for client organizers to monitor quotas, approvals, and reconciliation.",
+      "btnOpenOrgs": "Go to Organizations Module",
+      "previewPortal": "Preview Client Portal",
+      "quotaSummary": "Delegation Quota Summary",
+      "quotaHint": "Contractual delegation quotas, claimed tickets, and remaining entitlement balances.",
+      "financeSummary": "Reconciliation & Invoices",
+      "financeHint": "Finalized corporate expenses, retainers, invoices, and payment collection status."
+    }
   }
 }

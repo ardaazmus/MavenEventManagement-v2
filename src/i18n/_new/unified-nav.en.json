@@ -1,0 +1,38 @@
+{
+  "contextBridge": {
+    "ariaLabel": "Work Cross-Module Navigation Bridge",
+    "title": "Work Backbone",
+    "summary": "Work Summary",
+    "setup": "Setup",
+    "comms": "Communications",
+    "portals": "External Experience",
+    "reports": "Reports"
+  },
+  "scopes": {
+    "globalCompany": "Company Global",
+    "workWorkspace": "Work Workspace",
+    "platformOperator": "Platform Management",
+    "externalExperience": "External Experiences"
+  },
+  "dualSidebar": {
+    "tabWork": "Work Modules",
+    "tabCompany": "Company Global",
+    "ariaContextToggle": "Navigation context selection",
+    "searchPlaceholder": "Search menu...",
+    "clearSearch": "Clear",
+    "noResults": "No matching menu item found",
+    "viewModeHub": "Focused Hubs",
+    "viewModeAll": "Show All",
+    "hubCockpit": "Cockpit & Management",
+    "hubRegistration": "Participation & Registration",
+    "hubProgram": "Program & Content",
+    "hubSponsor": "Sponsors & Expo",
+    "hubLogistics": "Onsite & Logistics",
+    "hubComms": "Comms & Experience",
+    "hubReports": "Work Reports",
+    "hubSettings": "Work Settings",
+    "badgeSetup": "Setup",
+    "badgeApproval": "Pending Approval",
+    "badgeOnsite": "Live Onsite"
+  }
+}

@@ -58,6 +58,26 @@ export const MODULE_COMPONENTS: Record<string, ComponentType> = {
   settings: dyn(() => import("@/components/maven/views/onsite").then((m) => ({ default: m.SettingsView }))),
 };
 
+const PortfolioViewDyn = dyn(() =>
+  import("@/components/maven/views/portfolio-view").then((m) => ({ default: m.PortfolioView }))
+);
+
+const CompanySettingsViewDyn = dyn(() =>
+  import("@/components/maven/views/company-settings-view").then((m) => ({ default: m.CompanySettingsView }))
+);
+
+const CompanyReportsViewDyn = dyn(() =>
+  import("@/components/maven/views/company-reports-view").then((m) => ({ default: m.CompanyReportsView }))
+);
+
+MODULE_COMPONENTS["portfolio"] = PortfolioViewDyn;
+MODULE_COMPONENTS["company-settings"] = CompanySettingsViewDyn;
+MODULE_COMPONENTS["company-reports"] = CompanyReportsViewDyn;
+MODULE_COMPONENTS["reports"] = CompanyReportsViewDyn;
+
 export function renderModuleComponent(moduleId: string): ComponentType {
+  if (moduleId === "portfolio") return PortfolioViewDyn;
+  if (moduleId === "company-settings") return CompanySettingsViewDyn;
+  if (moduleId === "company-reports" || moduleId === "reports") return CompanyReportsViewDyn;
   return MODULE_COMPONENTS[moduleId] ?? DashboardView;
 }

@@ -5,5 +5,10 @@
       "groupDesc": "Event-wide WhatsApp & SMS delivery — a general communication feature, independent of the mobile portal settings.",
       "scopeChip": "General communication"
     }
+  },
+  "communications": {
+    "workScopeTitle": "Work Communications — {work}",
+    "workScopeNotice": "Announcements, SMS, and emails here are dispatched strictly to registered attendees, speakers, and stakeholders of this work edition. Use Company Comms for global audience campaigns.",
+    "btnOpenCompanyComms": "Switch to Company Communications"
   }
 }

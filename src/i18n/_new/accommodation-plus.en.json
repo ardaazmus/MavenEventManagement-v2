@@ -14,6 +14,22 @@
     "guestExistingParticipation": "existing participation",
     "guestPlusCompanion": " + companion",
     "guestPlusSlot": " + guest slot",
-    "editHotel": "Edit Hotel"
+    "editHotel": "Edit Hotel",
+    "tabHotels": "Hotels & Blocks",
+    "tabReservations": "Reservations",
+    "tabRooming": "Rooming Console",
+    "tabTransfers": "Travel & Transfers",
+    "transferNotice": "Flight and transfer operations are tracked in sync with passenger lists and accommodation bookings.",
+    "thFlight": "Flight Code",
+    "thAirport": "Airport",
+    "thPassenger": "Passenger / Guest",
+    "thVehicle": "Vehicle Type",
+    "thDriver": "Driver & Plate",
+    "thTransferStatus": "Transfer Status",
+    "stRequested": "Requested",
+    "stAssigned": "Assigned",
+    "stConfirmed": "Confirmed",
+    "stCompleted": "Completed",
+    "btnNewTransfer": "New Transfer Request"
   }
 }

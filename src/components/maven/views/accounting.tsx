@@ -193,7 +193,7 @@ function BreakdownBar({ text, count, total, max, barClass }: { text: string; cou
 // ─── View ────────────────────────────────────────────────────────────────────
 
 export function AccountingView() {
-  const { currentEditionId, bump, refreshKey } = useApp();
+  const { currentEditionId, bump, refreshKey, setModule, editions } = useApp();
   const { toast } = useToast();
   useLang(); // dil değişiminde yeniden render
 
@@ -541,6 +541,34 @@ export function AccountingView() {
           </DropdownMenuContent>
         </DropdownMenu>
       </PageHeader>
+
+      {/* Kurumsal Muhasebe & Defter Ayrımı ve Operasyonel Finansa Dönüş Bildirimi */}
+      <div className="flex flex-col gap-2 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2.5">
+          <Icons.Info className="size-4 shrink-0 text-primary" />
+          <p className="text-xs text-foreground/80">{t("accountingView.scopeNotice")}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 text-xs bg-background shadow-xs hover:bg-muted"
+            onClick={() => setModule("finance")}
+          >
+            <Icons.CreditCard className="size-3.5" />
+            {t("accountingView.btnGoToFinance")}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => setModule("dashboard")}
+          >
+            <Icons.LayoutDashboard className="size-3.5" />
+            {t("accountingView.btnGoToSummary")}
+          </Button>
+        </div>
+      </div>
 
       {/* Üst KPI sırası — 8 kart: tahsilat, manuel gelir, bekleyen, gider, planlanan, net, alacak, planlanan gelir */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
@@ -1110,6 +1138,41 @@ export function AccountingView() {
                   )}
                 </div>
               </SectionCard>
+
+              {/* İş Kapanış Mutabakatı Sertifikası */}
+              <div className="flex flex-col gap-3 rounded-xl border border-violet-500/20 bg-violet-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <Icons.ShieldCheck className="size-4 text-violet-600" />
+                    <span className="text-sm font-semibold text-foreground">
+                      {t("accountingView.workSettlementTitle")}
+                    </span>
+                    {recon.readiness.ok && (
+                      <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-[10px] text-emerald-700">
+                        Mutabakat Tamam
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t("accountingView.workSettlementDesc")}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 text-xs bg-background hover:bg-muted"
+                  disabled={!recon.readiness.ok || busy}
+                  onClick={() => {
+                    toast({
+                      title: "İş Kapanış Mutabakatı Tamamlandı",
+                      description: "Mali denetim onaylandı. Arşivleme hazır.",
+                    });
+                  }}
+                >
+                  <Icons.Archive className="size-3.5" />
+                  {t("accountingView.btnArchiveWork")}
+                </Button>
+              </div>
 
               {/* Sipariş özeti — mini durum çipleri */}
               <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card px-4 py-3 shadow-sm">

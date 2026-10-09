@@ -14,6 +14,12 @@
     "emptyAssetsDesc": "'Varlık Yükle' ile dosya bağlantısı ekleyin ya da küçük dosyaları doğrudan arşive gömün.",
     "addSubfolder": "Alt Klasör Ekle",
     "deleteFolder": "Klasörü Sil",
-    "addToArchive": "Arşive Ekle"
+    "addToArchive": "Arşive Ekle",
+    "tabWorkMedia": "İşe Ait Medya Arşivi",
+    "tabBrandLibrary": "Firma Marka Kitaplığı",
+    "brandLibraryNotice": "Firma Marka Kitaplığı: Firma B'nin tüm işlerde ortak kullandığı kurumsal logolar, antetli şablonlar, filigranlar ve basın kitleri burada saklanır. İşe ait operasyonel medya ise seçili etkinliğe bağlı kalır.",
+    "workMediaNotice": "İş Medyası: Seçili işin oturum sunumları, katılımcı fotoğrafları, yaka kartı ve sertifika varlıkları bu alanda yönetilir.",
+    "linkedModule": "Bağlı Modül",
+    "brandItemsCount": "{count} Marka Varlığı"
   }
 }

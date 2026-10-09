@@ -45,10 +45,32 @@ interface ScanResult {
 
 export function OnsiteView() {
   useLang(); // dil değişiminde yeniden render
-  const { currentEditionId, bump, refreshKey } = useApp();
+  const { currentEditionId, editions, setModule, bump, refreshKey, moduleSubView, setModuleSubView } = useApp();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<"desk" | "cme">("desk");
+  const currentEdition = editions.find((e) => e.id === currentEditionId);
+  const venueDisplay = currentEdition?.venueName || currentEdition?.city || "ICC";
+  const [activeTab, setActiveTab] = useState<"desk" | "kiosk" | "occupancy" | "cme">(
+    moduleSubView === "kiosk" || moduleSubView === "occupancy" || moduleSubView === "cme" ? moduleSubView : "desk"
+  );
   const [kioskOpen, setKioskOpen] = useState(false);
+
+  useEffect(() => {
+    if (!moduleSubView) return;
+    const timer = setTimeout(() => {
+      if (moduleSubView === "desk") setActiveTab("desk");
+      else if (moduleSubView === "kiosk") setActiveTab("kiosk");
+      else if (moduleSubView === "occupancy") setActiveTab("occupancy");
+      else if (moduleSubView === "cme") setActiveTab("cme");
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [moduleSubView]);
+
+  const handleTabChange = (newTab: "desk" | "kiosk" | "occupancy" | "cme") => {
+    setActiveTab(newTab);
+    setTimeout(() => {
+      setModuleSubView(newTab);
+    }, 0);
+  };
   const [door, setDoor] = useState("Kapı A");
   const [code, setCode] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -114,27 +136,67 @@ export function OnsiteView() {
         </Button>
       </PageHeader>
 
-      {/* Mod Seçimi: Kapı Kontrol Deski vs Oturum CME Akreditasyonu */}
-      <div className="flex rounded-lg border bg-card p-1 shadow-sm">
+      {/* Mekân ve Saha Operasyonu Bildirimi */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-teal-500/30 bg-teal-500/10 p-3 text-xs text-teal-800 dark:text-teal-200">
+        <div className="flex items-center gap-2 font-medium">
+          <Icons.MapPin className="size-4 shrink-0" />
+          <span>{t("onsite.venueNotice", { venue: venueDisplay })}</span>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setModule("floors")}
+          className="h-7 text-xs"
+        >
+          <Icons.Layers className="size-3.5" />
+          {t("onsite.btnOpenVenue")}
+        </Button>
+      </div>
+
+      {/* Mod Seçimi: Kapı Kontrol Deski vs Kiosk vs Yoğunluk vs CME */}
+      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border bg-card p-1 shadow-sm">
         <button
           type="button"
-          onClick={() => setActiveTab("desk")}
+          onClick={() => handleTabChange("desk")}
           className={cn(
-            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-4 py-2 text-xs font-semibold transition sm:flex-none",
+            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition sm:flex-none",
             activeTab === "desk" ? "bg-teal-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted/60"
           )}
         >
-          <Icons.DoorOpen className="size-3.5" /> Kapı & Giriş Deski
+          <Icons.DoorOpen className="size-3.5" /> {t("onsite.tabDesk")}
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab("cme")}
+          onClick={() => {
+            handleTabChange("kiosk");
+            setKioskOpen(true);
+          }}
           className={cn(
-            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-4 py-2 text-xs font-semibold transition sm:flex-none",
+            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition sm:flex-none",
+            activeTab === "kiosk" ? "bg-teal-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted/60"
+          )}
+        >
+          <Icons.MonitorPlay className="size-3.5" /> {t("onsite.tabKiosk")}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleTabChange("occupancy")}
+          className={cn(
+            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition sm:flex-none",
+            activeTab === "occupancy" ? "bg-teal-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted/60"
+          )}
+        >
+          <Icons.Users className="size-3.5" /> {t("onsite.tabOccupancy")}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleTabChange("cme")}
+          className={cn(
+            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition sm:flex-none",
             activeTab === "cme" ? "bg-teal-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted/60"
           )}
         >
-          <Icons.GraduationCap className="size-3.5" /> Oturum & CME Kredi Takibi
+          <Icons.GraduationCap className="size-3.5" /> {t("onsite.tabCme")}
         </button>
       </div>
 
@@ -721,6 +783,11 @@ export function CertificatesView() {
   return (
     <div className="space-y-5">
       <PageHeader title={t("certificates.title")} desc={t("certificates.desc")} />
+      {/* Katılımcı Dış Portalı Bağlantı Bildirimi */}
+      <div className="flex items-center gap-2 rounded-lg border border-teal-500/30 bg-teal-500/10 p-3 text-xs text-teal-800 dark:text-teal-200">
+        <Icons.Info className="size-4 shrink-0" />
+        <span>{t("certificates.portalLinkNotice")}</span>
+      </div>
       {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : (defs ?? []).length === 0 ? (
         <EmptyState title={t("certificates.emptyDefs")} desc={t("certificates.emptyDefsDesc")} />
       ) : (
@@ -1215,7 +1282,8 @@ const PHASE_PILLS: { key: string; label: string }[] = [
 
 export function CommunicationsView() {
   useLang(); // dil değişiminde yeniden render
-  const { currentEditionId, tenant, bump, refreshKey } = useApp();
+  const { currentEditionId, tenant, bump, refreshKey, setModule, editions } = useApp();
+  const currentWork = editions?.find((e) => e.id === currentEditionId);
   const { toast } = useToast();
 
   const [phaseFilter, setPhaseFilter] = useState("ALL");
@@ -1511,6 +1579,33 @@ export function CommunicationsView() {
           <Icons.Megaphone className="size-3.5" /> {t("communications.newCampaign")}
         </Button>
       </PageHeader>
+
+      {/* 0 — İş İletişimi ve Firma Genel İletişimi Kapsam Ayrımı Bildirim Şeridi */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50/70 p-3.5 text-xs text-teal-950 shadow-sm">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-teal-600 text-white shadow-sm">
+            <Icons.Radio className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="font-semibold text-teal-900">
+              {t("communications.workScopeTitle", { work: currentWork?.name ?? t("common.activeWork") })}
+            </p>
+            <p className="text-[11px] text-teal-800/90 leading-tight">
+              {t("communications.workScopeNotice")}
+            </p>
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 border-teal-300 bg-white text-xs font-medium text-teal-900 shadow-sm hover:bg-teal-100/60"
+          onClick={() => setModule("company-communications")}
+        >
+          <Icons.Megaphone className="size-3.5 text-teal-700" />
+          {t("communications.btnOpenCompanyComms")}
+        </Button>
+      </div>
 
       {/* 1 — aşama filtre şeridi */}
       <div className="flex flex-wrap gap-1 rounded-xl border bg-card p-1.5 shadow-sm">

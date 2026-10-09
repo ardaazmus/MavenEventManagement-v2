@@ -5,5 +5,10 @@
       "groupDesc": "Etkinlik geneli WhatsApp & SMS gönderimi — mobil portal ayarlarından bağımsız genel iletişim özelliği.",
       "scopeChip": "Genel iletişim"
     }
+  },
+  "communications": {
+    "workScopeTitle": "İş İletişimi — {work}",
+    "workScopeNotice": "Bu alandaki duyuru, SMS ve e-postalar yalnızca bu işin kayıtlı katılımcılarına, konuşmacılarına ve paydaşlarına iletilir. Firma genelindeki kitlelere erişmek için Genel İletişim alanını kullanın.",
+    "btnOpenCompanyComms": "Firma Genel İletişimine Geç"
   }
 }

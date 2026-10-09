@@ -14,6 +14,22 @@
     "guestExistingParticipation": "mevcut katılım",
     "guestPlusCompanion": " + refakatçi",
     "guestPlusSlot": " + konuk slotu",
-    "editHotel": "Otel Düzenle"
+    "editHotel": "Otel Düzenle",
+    "tabHotels": "Oteller ve Bloklar",
+    "tabReservations": "Rezervasyonlar",
+    "tabRooming": "Rooming Konsolu",
+    "tabTransfers": "Seyahat ve Transfer",
+    "transferNotice": "Uçuş ve transfer operasyonu yolcu listesi ve konaklama rezervasyonlarıyla eşzamanlı takip edilir.",
+    "thFlight": "Uçuş Kodu",
+    "thAirport": "Havalimanı",
+    "thPassenger": "Yolcu / Misafir",
+    "thVehicle": "Araç Tipi",
+    "thDriver": "Şoför & Plaka",
+    "thTransferStatus": "Transfer Durumu",
+    "stRequested": "Talep Alındı",
+    "stAssigned": "Araç Atandı",
+    "stConfirmed": "Teyit Edildi",
+    "stCompleted": "Karşılandı / Tamamlandı",
+    "btnNewTransfer": "Yeni Transfer Talebi"
   }
 }

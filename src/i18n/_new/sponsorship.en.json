@@ -1,11 +1,20 @@
 {
   "sponsorship": {
-    "guestFlowDesc": "Person → Participation → Registration(SPONSOR_ENTITLEMENT) → Claim(RESERVED) chain created. Approving does not consume it yet.",
+    "guestFlowDesc": "Person → Participation → Registration(SPONSOR_ENTITLEMENT) → Claim(RESERVED) chain created. Approval does not consume immediately.",
     "addAsProposal": "Add as Proposal",
+    "tabSponsors": "Sponsors & Sales Funnel",
+    "tabPackages": "Packages & Agreements",
+    "tabEntitlements": "Entitlements & Rights Pool",
+    "tabDeliverables": "Deliverables Schedule",
+    "tabBooths": "Booth Allocation & Floor",
+    "portalIsolationNotice": "Sponsor External Portal: Sponsor representatives access their agreement and rights as an independent external experience. Sponsors manage their entitlements, logos, and representative registrations through this isolated portal.",
+    "btnOpenSponsorPortal": "Open Sponsor External Portal",
+    "boothFloorNotice": "Booth Allocation Rule: Commercial identity and agreements remain in Maven; layout geometry and floor plans are bi-directionally synchronized with Floor Studio.",
+    "noEdition": "No edition selected.",
     "entType": {
-      "complimentaryRegistration": "Free Registration",
+      "complimentaryRegistration": "Complimentary Registration",
       "booth": "Booth",
-      "galaTicket": "Gala Invitation",
+      "galaTicket": "Gala Ticket",
       "badge": "Badge",
       "loungeAccess": "Lounge Access",
       "discount": "Discount",

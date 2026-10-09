@@ -20,6 +20,7 @@ import { allocateBooth, type BoothPrisma } from "@/lib/sponsorship/booth-allocat
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { withLock } from "@/lib/tx-lock";
 import { issuePortalToken } from "@/lib/api/portal-tokens";
+import { isTenantCapabilityEntitled } from "@/lib/tenant-entitlements";
 
 type FlowBody = Record<string, unknown> & { action?: string };
 
@@ -266,8 +267,22 @@ export async function POST(req: NextRequest) {
             if (paidSum + amountMinor > order.totalAmount) {
               throw new GuardError(`Aşım ödeme: kalan ${order.totalAmount - paidSum} kuruş — talep ${amountMinor} kuruş`, 409);
             }
+            const requiresApproval = amountMinor > 5_000_000;
+            const verifiedEnteredBy = (AUTH_ENABLED && actor?.uid) ? actor.uid : (enteredBy ?? (actor?.uid ?? "Finans Sorumlusu"));
+            const verifiedApprovedBy = requiresApproval ? undefined : ((AUTH_ENABLED && actor?.uid) ? actor.uid : "Finans Sorumlusu");
             const created = await tx.payment.create({
-              data: { orderId, amount: amountMinor, currency, source: "MANUAL_EXTERNAL", status: "SUCCEEDED", reference, enteredBy: enteredBy ?? "Finans Sorumlusu", reason, approvedBy: amountMinor > 5_000_000 ? "Tenant Sahibi" : undefined, paidAt: new Date() }, // P2: eşik minor-birimde
+              data: {
+                orderId,
+                amount: amountMinor,
+                currency,
+                source: "MANUAL_EXTERNAL",
+                status: requiresApproval ? "PENDING" : "SUCCEEDED",
+                reference,
+                enteredBy: verifiedEnteredBy,
+                reason,
+                approvedBy: verifiedApprovedBy,
+                paidAt: requiresApproval ? null : new Date(),
+              },
             });
             // recalcOrder birebir — tx bağlamında (ayrı bağlantı kullanmamak için)
             const fresh = await tx.order.findUnique({ where: { id: orderId }, include: { lines: true, payments: true, refunds: true } });
@@ -279,10 +294,171 @@ export async function POST(req: NextRequest) {
               const status = fresh.status === "CANCELLED" ? "CANCELLED" : balance <= 0 ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "OPEN";
               await tx.order.update({ where: { id: orderId }, data: { totalAmount: linesTotal, status } });
             }
-            await tx.activityLog.create({ data: { type: ActivityType.PAYMENT_RECEIVED, tenantId: orderTenant, editionId: order.editionId, message: `Manuel tahsilat: ${amount} ${currency} — ${reason}`, entityType: "Payment", entityId: created.id, actorName: enteredBy ?? "Finans Sorumlusu" } });
+            await tx.activityLog.create({
+              data: {
+                type: ActivityType.PAYMENT_RECEIVED,
+                tenantId: orderTenant,
+                editionId: order.editionId,
+                message: requiresApproval
+                  ? `Manuel tahsilat teyit bekliyor: ${amount} ${currency} — ${reason} (50.000 TL üzeri ikinci onay gerekir)`
+                  : `Manuel tahsilat: ${amount} ${currency} — ${reason}`,
+                entityType: "Payment",
+                entityId: created.id,
+                actorName: enteredBy ?? (actor?.uid ?? "Finans Sorumlusu"),
+              },
+            });
             return created;
           }));
           return NextResponse.json(payment, { status: 201 });
+        } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
+      }
+
+      // ── İkinci yetkili manuel tahsilat onayı/reddi (F-01 / SoD ilkesi) ──
+      case "finance.approvePayment": {
+        const { paymentId, approved, reason, approverName: explicitApprover } = body as {
+          paymentId: string;
+          approved: boolean;
+          reason?: string;
+          approverName?: string;
+        };
+        if (!paymentId || typeof paymentId !== "string") {
+          return NextResponse.json({ error: "paymentId zorunlu" }, { status: 400 });
+        }
+        if (typeof approved !== "boolean") {
+          return NextResponse.json({ error: "approved (boolean) zorunlu" }, { status: 400 });
+        }
+
+        const existingPayment = await db.payment.findUnique({
+          where: { id: paymentId },
+          include: { order: true },
+        });
+        if (!existingPayment) {
+          return NextResponse.json({ error: "Ödeme bulunamadı" }, { status: 404 });
+        }
+
+        let orderTenant: string;
+        try {
+          orderTenant = await verifyEditionTenant(existingPayment.order.editionId);
+        } catch (e) {
+          if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+          throw e;
+        }
+
+        if (existingPayment.status !== "PENDING") {
+          return NextResponse.json(
+            { error: `Ödeme '${existingPayment.status}' durumunda — yalnızca beklemede (PENDING) olan ödemeler onaylanabilir veya reddedilebilir` },
+            { status: 409 }
+          );
+        }
+
+        if (existingPayment.source !== "MANUAL_EXTERNAL") {
+          return NextResponse.json(
+            { error: "Yalnızca manuel harici tahsilat (MANUAL_EXTERNAL) kayıtları bu akış üzerinden onaylanabilir" },
+            { status: 400 }
+          );
+        }
+
+        const approverName = (AUTH_ENABLED && actor?.uid) ? actor.uid : (explicitApprover ?? (actor?.uid ?? "Finans Yöneticisi"));
+
+        // SoD (Görevler Ayrılığı): Auth açıkken giren kişi kendi kaydını onaylayamaz
+        if (AUTH_ENABLED && actor && existingPayment.enteredBy) {
+          const isSameUser = existingPayment.enteredBy === actor.uid;
+          if (isSameUser) {
+            return NextResponse.json(
+              { error: "Görevler ayrılığı ilkesi gereği kendi girdiğiniz yüksek tutarlı tahsilatı onaylayamazsınız" },
+              { status: 403 }
+            );
+          }
+        }
+
+        const orderId = existingPayment.orderId;
+        try {
+          const updatedPayment = await withLock(`order:${orderId}`, () =>
+            db.$transaction(async (tx) => {
+              const current = await tx.payment.findUnique({
+                where: { id: paymentId },
+                include: { order: { include: { payments: true } } },
+              });
+              if (!current || current.status !== "PENDING") {
+                throw new GuardError("Ödeme bulunamadı veya artık beklemede değil", 409);
+              }
+
+              if (approved) {
+                const paidSum = current.order.payments
+                  .filter((p) => p.status === "SUCCEEDED")
+                  .reduce((a, p) => a + p.amount, 0);
+                if (paidSum + current.amount > current.order.totalAmount) {
+                  throw new GuardError(
+                    `Aşım ödeme: kalan bakiye ${current.order.totalAmount - paidSum} kuruş — onaylanmak istenen ${current.amount} kuruş`,
+                    409
+                  );
+                }
+
+                const updated = await tx.payment.update({
+                  where: { id: paymentId },
+                  data: {
+                    status: "SUCCEEDED",
+                    approvedBy: approverName,
+                    paidAt: new Date(),
+                  },
+                });
+
+                // Siparişi yeniden hesapla
+                const fresh = await tx.order.findUnique({
+                  where: { id: orderId },
+                  include: { lines: true, payments: true, refunds: true },
+                });
+                if (fresh) {
+                  const linesTotal = fresh.lines.reduce((s, l) => s + l.total, 0) || fresh.totalAmount;
+                  const paid = fresh.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
+                  const refunded = fresh.refunds.filter((r) => r.status === "PROCESSED").reduce((s, r) => s + r.amount, 0);
+                  const balance = linesTotal - paid + refunded;
+                  const status = fresh.status === "CANCELLED" ? "CANCELLED" : balance <= 0 ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "OPEN";
+                  await tx.order.update({ where: { id: orderId }, data: { totalAmount: linesTotal, status } });
+                }
+
+                await tx.activityLog.create({
+                  data: {
+                    type: ActivityType.PAYMENT_RECEIVED,
+                    tenantId: orderTenant,
+                    editionId: current.order.editionId,
+                    message: `Manuel tahsilat onaylandı: ${current.amount / 100} ${current.currency} — Onaylayan: ${approverName}`,
+                    entityType: "Payment",
+                    entityId: updated.id,
+                    actorName: approverName,
+                  },
+                });
+                return updated;
+              } else {
+                // Reddet
+                const updated = await tx.payment.update({
+                  where: { id: paymentId },
+                  data: {
+                    status: "FAILED",
+                    reason: reason ? `REDDEDİLDİ: ${reason}` : (current.reason ? `${current.reason} (REDDEDİLDİ)` : "Yönetici tarafından reddedildi"),
+                    approvedBy: `${approverName} (RED)`,
+                  },
+                });
+
+                await tx.activityLog.create({
+                  data: {
+                    type: ActivityType.PAYMENT_RECEIVED,
+                    tenantId: orderTenant,
+                    editionId: current.order.editionId,
+                    message: `Manuel tahsilat reddedildi: ${current.amount / 100} ${current.currency} — Reddeden: ${approverName} (${reason ?? "Gerekçe yok"})`,
+                    entityType: "Payment",
+                    entityId: updated.id,
+                    actorName: approverName,
+                  },
+                });
+                return updated;
+              }
+            })
+          );
+          return NextResponse.json(updatedPayment, { status: 200 });
         } catch (e) {
           if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
           throw e;
@@ -740,12 +916,36 @@ export async function POST(req: NextRequest) {
             if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
             throw e;
           }
+          if (enabled) {
+            const entitled = await isTenantCapabilityEntitled(ctx, existing.key, db);
+            if (!entitled) {
+              return NextResponse.json(
+                {
+                  error: `Bu yetenek (${existing.key}) platform sahibi (Firma A) tarafından kiracınız için yetkilendirilmemiştir`,
+                  code: "PLATFORM_MODULE_UNENTITLED",
+                },
+                { status: 403 },
+              );
+            }
+          }
           cap = await db.eventCapability.update({ where: { id: capabilityId }, data: { enabled } });
         } else if (editionId && key) {
           // G0-d: hedef edisyon bağlama doğrulanır
           try { await verifyEditionTenant(editionId); } catch (e) {
             if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
             throw e;
+          }
+          if (enabled) {
+            const entitled = await isTenantCapabilityEntitled(ctx, key, db);
+            if (!entitled) {
+              return NextResponse.json(
+                {
+                  error: `Bu yetenek (${key}) platform sahibi (Firma A) tarafından kiracınız için yetkilendirilmemiştir`,
+                  code: "PLATFORM_MODULE_UNENTITLED",
+                },
+                { status: 403 },
+              );
+            }
           }
           const existing = await db.eventCapability.findUnique({ where: { editionId_key: { editionId, key } } });
           cap = existing

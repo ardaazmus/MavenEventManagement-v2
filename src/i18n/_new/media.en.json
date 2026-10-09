@@ -8,12 +8,18 @@
       "SUBMISSION": "Submission",
       "PORTAL": "Portal",
       "CERTIFICATE": "Certificate",
-      "BADGE_DESIGN": "Badge design"
+      "BADGE_DESIGN": "Badge Design"
     },
-    "totalAssets": "Total assets",
-    "emptyAssetsDesc": "Use 'Upload asset' to attach a file link, or embed small files directly into the archive.",
-    "addSubfolder": "Add subfolder",
-    "deleteFolder": "Delete folder",
-    "addToArchive": "Add to archive"
+    "totalAssets": "Total Assets",
+    "emptyAssetsDesc": "Use 'Upload Asset' to add a file link or embed small files directly in the archive.",
+    "addSubfolder": "Add Subfolder",
+    "deleteFolder": "Delete Folder",
+    "addToArchive": "Add to Archive",
+    "tabWorkMedia": "Work Media Archive",
+    "tabBrandLibrary": "Company Brand Library",
+    "brandLibraryNotice": "Company Brand Library: Corporate logos, letterheads, watermarks and press kits shared across all Company B works are stored here. Work-specific operational media remains bound to the active event.",
+    "workMediaNotice": "Work Media: Session presentations, participant photos, badge and certificate assets for the selected work are managed here.",
+    "linkedModule": "Linked Module",
+    "brandItemsCount": "{count} Brand Assets"
   }
 }

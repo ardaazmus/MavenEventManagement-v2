@@ -8,8 +8,8 @@ import { AUTH_ENABLED } from "@/lib/auth-flag";
 
 const STARTED_AT = Date.now();
 
-export async function GET(req?: NextRequest) {
-  const probe = req?.nextUrl?.searchParams?.get("probe") || req?.nextUrl?.searchParams?.get("type");
+export async function GET(req: NextRequest) {
+  const probe = req.nextUrl?.searchParams?.get("probe") || req.nextUrl?.searchParams?.get("type");
 
   if (probe === "liveness") {
     return NextResponse.json(

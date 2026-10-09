@@ -77,7 +77,8 @@
     "pushedDesc": "{count} booth geometries shared",
     "pulledTitle": "Plan pulled",
     "pulledDesc": "{booths} booths, {decor} decor objects — snapshot refreshed.",
-    "pullFailed": "Could not pull plan"
+    "pullFailed": "Could not pull plan",
+    "sponsorLinkNotice": "Sponsor Rights & Venue Integration: Booth spaces in this hall are directly linked to sponsorship contracts and entitlement quotas of the selected event. Commercial allocation is managed in Maven, while floor plan geometry is governed by Floor Studio."
   },
   "common": {
     "error": "Error"

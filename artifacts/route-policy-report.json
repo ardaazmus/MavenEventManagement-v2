@@ -1,11 +1,11 @@
 {
-  "totalDiscovered": 164,
-  "totalClassified": 164,
+  "totalDiscovered": 168,
+  "totalClassified": 168,
   "unclassifiedCount": 0,
   "categoryCounts": {
-    "PUBLIC": 46,
-    "STAFF": 76,
-    "ADMIN": 38,
+    "PUBLIC": 47,
+    "STAFF": 77,
+    "ADMIN": 40,
     "DOMAIN_POLICY": 4
   },
   "unclassifiedRoutes": [],
@@ -417,6 +417,13 @@
       "description": "P18.2 edisyon arşivleme + görüntü okuma"
     },
     {
+      "path": "src/app/api/editions/[id]/setup-checklist/route.ts",
+      "category": "STAFF",
+      "authRequired": true,
+      "enforcement": "requireStaff() + resolveEditionContext",
+      "description": "F-07 kademeli etkinlik kurulum checklist değerlendirmesi"
+    },
+    {
       "path": "src/app/api/export/company-snapshot/route.ts",
       "category": "ADMIN",
       "authRequired": true,
@@ -774,6 +781,20 @@
       "description": "Dış portal blok düzenleme"
     },
     {
+      "path": "src/app/api/portal/client-grants/route.ts",
+      "category": "ADMIN",
+      "authRequired": true,
+      "enforcement": "requireAdmin() + resolveEditionContext + single-display + rate-limit",
+      "description": "F-06 müşteri portalı erişim izni çıkarımı/liste/iptal"
+    },
+    {
+      "path": "src/app/api/portal/client/route.ts",
+      "category": "PUBLIC",
+      "authRequired": false,
+      "enforcement": "CLIENT portal tokenı ile güvenli icra özeti erişimi",
+      "description": "F-06 müşteri / düzenleyen kurum self-service portalı"
+    },
+    {
       "path": "src/app/api/portal/config/route.ts",
       "category": "PUBLIC",
       "authRequired": false,
@@ -1045,6 +1066,13 @@
       "authRequired": true,
       "enforcement": "requireAdmin()",
       "description": "SaaS kiracı erişim ve hak denetimi"
+    },
+    {
+      "path": "src/app/api/saas/entitlements/route.ts",
+      "category": "ADMIN",
+      "authRequired": true,
+      "enforcement": "x-super-admin-key (requireSuperAdmin)",
+      "description": "P07: Platform Sahibi (Firma A) → Tenant modül yetkileri yönetimi"
     },
     {
       "path": "src/app/api/saas/onboarding/route.ts",

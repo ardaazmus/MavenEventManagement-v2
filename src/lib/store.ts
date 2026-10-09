@@ -48,11 +48,13 @@ interface AppState {
   modelCount: number; // DÜZELTME: footer model metriği bootstrap'tan türetilir (sabit 79 değil)
   currentEditionId: string | null;
   module: string;
+  moduleSubView: string | null;
   refreshKey: number;
   loading: boolean;
   error: string | null;
   me: { authenticated: boolean; role: string | null; name: string | null } | null; // §48 rol filtresi (auth-off → role null)
-  setModule: (m: string) => void;
+  setModule: (m: string, subView?: string | null) => void;
+  setModuleSubView: (subView: string | null) => void;
   setCurrentEdition: (id: string) => void;
   bump: () => void;
   // ONBOARD-1: sıfır-veri kabuğundaki "Kuruluş oluştur ve başla" CTA'si, ensure
@@ -71,18 +73,20 @@ export const useApp = create<AppState>((set, get) => ({
   modelCount: 0,
   currentEditionId: null,
   module: "dashboard",
+  moduleSubView: null,
   refreshKey: 0,
   loading: true,
   error: null,
   me: null,
-  setModule: (m) => {
-    set({ module: m });
+  setModule: (m, subView = null) => {
+    set({ module: m, moduleSubView: subView ?? null });
     try { window.localStorage.setItem("maven.module", m); } catch { /* yoksay */ }
   },
+  setModuleSubView: (subView) => set({ moduleSubView: subView }),
   setCurrentEdition: (id) => set({ currentEditionId: id }),
   bump: () => set({ refreshKey: get().refreshKey + 1 }),
   editionWizardNonce: 0,
-  openEditionWizard: () => set({ editionWizardNonce: get().editionWizardNonce + 1 }),
+  openEditionWizard: () => set({ module: "editions", editionWizardNonce: get().editionWizardNonce + 1 }),
 
   // Yetenek toggle'ından sonra store'u anında düzelt — menü kilidi (hasCapability)
   // ve Ayarlar switch'i DB ile aynı turda güncellenir (bug: toggle bağlı değildi)

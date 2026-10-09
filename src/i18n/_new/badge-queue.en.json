@@ -2,6 +2,7 @@
   "badgeQueue": {
     "searchPlaceholder": "Search person / badge no / profile",
     "emptyQueueDesc": "Badges are prepared automatically once a registration is approved (READY) and are listed here.",
-    "clearFilterHint": "Clear the status filter or your search."
+    "clearFilterHint": "Clear the status filter or your search.",
+    "portalBadgeNotice": "Badge operation is decoupled from registration status. Confirmed attendees can instantly access their digital badge QR code via their personal attendee portal (/portal/attendee)."
   }
 }

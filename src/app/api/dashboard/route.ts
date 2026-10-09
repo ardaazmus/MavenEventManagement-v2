@@ -199,7 +199,15 @@ export async function GET(req: NextRequest) {
     // ── Kaynak dağılımı ──
     const bySourceFinal = bySource;
 
-    const recentActivity = await db.activityLog.findMany({ where: { editionId }, orderBy: { createdAt: "desc" }, take: 12 });
+    const [recentActivity, upcomingTasks] = await Promise.all([
+      db.activityLog.findMany({ where: { editionId }, orderBy: { createdAt: "desc" }, take: 12 }),
+      db.task.findMany({
+        where: { editionId, status: { notIn: ["DONE"] } },
+        include: { edition: { select: { name: true } }, assignee: true },
+        orderBy: { dueDate: "asc" },
+        take: 8,
+      }),
+    ]);
 
     return NextResponse.json({
       scope: "EDITION",
@@ -238,6 +246,7 @@ export async function GET(req: NextRequest) {
       bySource: bySourceFinal,
       checks,
       recentActivity,
+      upcomingTasks,
       lastUpdated: new Date().toISOString(),
     });
   } catch (e) {

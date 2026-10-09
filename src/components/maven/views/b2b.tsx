@@ -66,6 +66,7 @@ export function B2bView() {
     [currentEditionId, refreshKey],
   );
 
+  const [journeyTab, setJourneyTab] = useState<"requests" | "mutual" | "timetable">("requests");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -95,6 +96,24 @@ export function B2bView() {
   }, [participations]);
 
   const filtered = useMemo(() => (plans ?? []).filter((p) => statusFilter === "ALL" || p.status === statusFilter), [plans, statusFilter]);
+
+  const allAssignments = useMemo(() => {
+    const list: { plan: B2bPlanRow; assignment: B2bAssignmentRow }[] = [];
+    for (const p of plans ?? []) {
+      for (const a of p.assignments ?? []) {
+        list.push({ plan: p, assignment: a });
+      }
+    }
+    return list;
+  }, [plans]);
+
+  const timetablePlans = useMemo(() => {
+    return [...(plans ?? [])].sort((a, b) => {
+      if (!a.startsAt) return 1;
+      if (!b.startsAt) return -1;
+      return new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
+    });
+  }, [plans]);
 
   const stats = useMemo(() => {
     const all = plans ?? [];
@@ -252,13 +271,46 @@ export function B2bView() {
   return (
     <div className="space-y-5">
       <PageHeader title={t("b2b.title")} desc={t("b2b.desc")}>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-lg border p-0.5 bg-muted/30">
+            <button
+              type="button"
+              onClick={() => setJourneyTab("requests")}
+              className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", journeyTab === "requests" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            >
+              {t("b2b.tabRequests")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setJourneyTab("mutual")}
+              className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", journeyTab === "mutual" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            >
+              {t("b2b.tabMutual")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setJourneyTab("timetable")}
+              className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors", journeyTab === "timetable" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            >
+              {t("b2b.tabTimetable")}
+            </button>
+          </div>
           <Button size="sm" variant="outline" onClick={() => { setMobilePersonId(""); setMobileOpen(true); }}>
             <Icons.Smartphone className="size-4" /> {t("b2b.btnMobilePreview")}
           </Button>
           <Button size="sm" onClick={openCreate}><Icons.Plus className="size-4" /> {t("b2b.btnNewPlan")}</Button>
         </div>
       </PageHeader>
+
+      {/* Tek Kullanıcı Yolculuğu Bilgilendirme Şeridi */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5 text-xs">
+        <div className="flex items-start gap-2.5">
+          <Icons.GitMerge className="size-4 text-primary shrink-0 mt-0.5" />
+          <p className="text-muted-foreground leading-relaxed">
+            {t("b2b.journeyNotice")}
+          </p>
+        </div>
+      </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiCard label={t("b2b.kpiTotal")} value={stats.total} icon={<Icons.Briefcase className="size-4" />} />
@@ -269,92 +321,283 @@ export function B2bView() {
         <KpiCard label={t("b2b.kpiFeedbacks")} value={stats.feedbacks} tone="rose" icon={<Icons.MessageSquare className="size-4" />} />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="h-8 w-[210px]" aria-label={t("b2b.statusFilterAria")}><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">{t("b2b.allStatuses")}</SelectItem>
-            {Object.entries(B2B_PLAN_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Chip tone="teal">{t("b2b.planCount", { count: filtered.length })}</Chip>
-        <p className="text-xs text-muted-foreground">{t("b2b.mutualApprovalHint")}</p>
-      </div>
+      {/* 1. Aşama: Talepler & Eşleşmeler */}
+      {journeyTab === "requests" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-8 w-[210px]" aria-label={t("b2b.statusFilterAria")}><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">{t("b2b.allStatuses")}</SelectItem>
+                {Object.entries(B2B_PLAN_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Chip tone="teal">{t("b2b.planCount", { count: filtered.length })}</Chip>
+            <p className="text-xs text-muted-foreground">{t("b2b.mutualApprovalHint")}</p>
+          </div>
 
-      {filtered.length === 0 ? (
-        <EmptyState
-          title={t("b2b.emptyTitle")}
-          desc={t("b2b.emptyDesc")}
-          action={<Button onClick={openCreate}><Icons.Plus className="size-4" /> {t("b2b.btnCreateFirst")}</Button>}
-        />
-      ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {filtered.map((p) => {
-            const asg = p.assignments ?? [];
-            const allAccepted = asg.length > 0 && asg.every((a) => a.status === "ACCEPTED");
-            return (
-              <SectionCard
-                key={p.id}
-                title={p.subject}
-                desc={[p.venue, p.location].filter(Boolean).join(" · ") || t("b2b.noVenue")}
-                action={<StatusBadge map={B2B_PLAN_STATUS} value={p.status} />}
-                className="transition hover:shadow-md"
-              >
-                <div onDoubleClick={() => openEdit(p)} title={t("b2b.doubleClickEdit")}>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {p.isPrivate ? <Chip tone="violet"><span className="inline-flex items-center gap-1"><Icons.Lock className="size-3" />{t("b2b.chipPrivate")}</span></Chip> : <Chip tone="teal">{t("b2b.chipPublic")}</Chip>}
-                    {p.startsAt && <Chip><span className="inline-flex items-center gap-1"><Icons.Clock className="size-3" />{new Date(p.startsAt).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}</span></Chip>}
-                    {p.location && <Chip><span className="inline-flex items-center gap-1"><Icons.MapPin className="size-3" />{p.location}</span></Chip>}
-                    <Chip tone={allAccepted && asg.some((a) => a.organizerApproved) ? "emerald" : "amber"}><Icons.Users className="mr-1 inline size-3" />{t("b2b.personCount", { count: asg.length })}</Chip>
-                  </div>
-                  {p.description && <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{p.description}</p>}
-                  {p.notes && <p className="mt-1 line-clamp-1 text-xs italic text-muted-foreground"><Icons.StickyNote className="mr-1 inline size-3" />{p.notes}</p>}
-                </div>
+          {filtered.length === 0 ? (
+            <EmptyState
+              title={t("b2b.emptyTitle")}
+              desc={t("b2b.emptyDesc")}
+              action={<Button onClick={openCreate}><Icons.Plus className="size-4" /> {t("b2b.btnCreateFirst")}</Button>}
+            />
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {filtered.map((p) => {
+                const asg = p.assignments ?? [];
+                const allAccepted = asg.length > 0 && asg.every((a) => a.status === "ACCEPTED");
+                return (
+                  <SectionCard
+                    key={p.id}
+                    title={p.subject}
+                    desc={[p.venue, p.location].filter(Boolean).join(" · ") || t("b2b.noVenue")}
+                    action={<StatusBadge map={B2B_PLAN_STATUS} value={p.status} />}
+                    className="transition hover:shadow-md"
+                  >
+                    <div onDoubleClick={() => openEdit(p)} title={t("b2b.doubleClickEdit")}>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {p.isPrivate ? <Chip tone="violet"><span className="inline-flex items-center gap-1"><Icons.Lock className="size-3" />{t("b2b.chipPrivate")}</span></Chip> : <Chip tone="teal">{t("b2b.chipPublic")}</Chip>}
+                        {p.startsAt && <Chip><span className="inline-flex items-center gap-1"><Icons.Clock className="size-3" />{new Date(p.startsAt).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}</span></Chip>}
+                        {p.location && <Chip><span className="inline-flex items-center gap-1"><Icons.MapPin className="size-3" />{p.location}</span></Chip>}
+                        <Chip tone={allAccepted && asg.some((a) => a.organizerApproved) ? "emerald" : "amber"}><Icons.Users className="mr-1 inline size-3" />{t("b2b.personCount", { count: asg.length })}</Chip>
+                      </div>
+                      {p.description && <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{p.description}</p>}
+                      {p.notes && <p className="mt-1 line-clamp-1 text-xs italic text-muted-foreground"><Icons.StickyNote className="mr-1 inline size-3" />{p.notes}</p>}
+                    </div>
 
-                {/* atama satırları */}
-                {expandedId === p.id && asg.length > 0 && (
-                  <div className="mt-3 max-h-64 space-y-1.5 overflow-y-auto rounded-lg border bg-muted/30 p-2 maven-scroll">
-                    {asg.map((a) => (
-                      <div key={a.id} className="rounded border bg-background px-2 py-1.5 text-xs">
-                        <div className="flex items-center gap-2">
-                          <Icons.User className="size-3.5 shrink-0 text-muted-foreground" />
-                          <span className="min-w-0 flex-1 truncate font-medium">{a.person ? `${a.person.firstName} ${a.person.lastName}` : t("b2b.personFallback")}{a.person?.company ? ` — ${a.person.company}` : ""}</span>
-                          <Chip>{label(B2B_ROLES, a.role)}</Chip>
-                          {a.status === "ACCEPTED" ? <Chip tone="emerald">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>
-                            : a.status === "DECLINED" ? <Chip tone="rose">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>
-                            : <Chip tone="amber">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>}
-                          {a.organizerApproved ? (
-                            <Button size="icon" variant="ghost" className="size-6" aria-label={t("b2b.orgRevokeAria")} onClick={() => organizerApprove(a, false)} title={t("b2b.orgRevokeTitle")}><Icons.BadgeCheck className="size-3.5 text-emerald-600" /></Button>
+                    {/* atama satırları */}
+                    {expandedId === p.id && asg.length > 0 && (
+                      <div className="mt-3 max-h-64 space-y-1.5 overflow-y-auto rounded-lg border bg-muted/30 p-2 maven-scroll">
+                        {asg.map((a) => (
+                          <div key={a.id} className="rounded border bg-background px-2 py-1.5 text-xs">
+                            <div className="flex items-center gap-2">
+                              <Icons.User className="size-3.5 shrink-0 text-muted-foreground" />
+                              <span className="min-w-0 flex-1 truncate font-medium">{a.person ? `${a.person.firstName} ${a.person.lastName}` : t("b2b.personFallback")}{a.person?.company ? ` — ${a.person.company}` : ""}</span>
+                              <Chip>{label(B2B_ROLES, a.role)}</Chip>
+                              {a.status === "ACCEPTED" ? <Chip tone="emerald">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>
+                                : a.status === "DECLINED" ? <Chip tone="rose">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>
+                                : <Chip tone="amber">{label(B2B_ASSIGNMENT_STATUS, a.status)}</Chip>}
+                              {a.organizerApproved ? (
+                                <Button size="icon" variant="ghost" className="size-6" aria-label={t("b2b.orgRevokeAria")} onClick={() => organizerApprove(a, false)} title={t("b2b.orgRevokeTitle")}><Icons.BadgeCheck className="size-3.5 text-emerald-600" /></Button>
+                              ) : (
+                                <Button size="icon" variant="ghost" className="size-6" aria-label={t("b2b.orgApproveAria")} onClick={() => organizerApprove(a, true)} title={t("b2b.orgApproveTitle")}><Icons.Circle className="size-3.5 text-muted-foreground" /></Button>
+                              )}
+                              <Button size="icon" variant="ghost" className="size-6" aria-label={t("b2b.removeAssignmentAria")} onClick={() => removeAssignment(a)}><Icons.Trash2 className="size-3 text-muted-foreground" /></Button>
+                            </div>
+                            {a.feedback && (
+                              <p className="mt-1 flex items-start gap-1 rounded bg-teal-500/10 px-1.5 py-1 text-[11px] text-teal-700">
+                                <Icons.MessageSquare className="mt-0.5 size-3 shrink-0" /> {t("b2b.feedbackLabel", { feedback: a.feedback })}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => openAssign(p)}><Icons.UserPlus className="size-3.5" /> {t("b2b.btnAssign")}</Button>
+                      {asg.length > 0 && (
+                        <Button size="sm" variant="outline" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}>
+                          <Icons.List className="size-3.5" /> {t("b2b.btnAssignments", { count: asg.length })}
+                        </Button>
+                      )}
+                      <Button size="sm" variant="ghost" onClick={() => { setMobilePersonId(""); setMobileOpen(true); }} aria-label={t("b2b.mobilePreviewAria")}><Icons.Smartphone className="size-3.5" /></Button>
+                      <Button size="sm" variant="ghost" onClick={() => openEdit(p)} aria-label={t("b2b.editAria")}><Icons.Pencil className="size-3.5" /> {t("b2b.btnEdit")}</Button>
+                      {p.status === "ACTIVE" && <Button size="sm" variant="ghost" onClick={() => setPlanStatus(p, "COMPLETED")}>{t("b2b.btnComplete")}</Button>}
+                      <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => setDeleteTarget(p)} aria-label={t("b2b.deleteAria", { subject: p.subject })}><Icons.Trash2 className="size-3.5" /></Button>
+                    </div>
+                  </SectionCard>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 2. Aşama: Karşılıklı Kabul & Onay */}
+      {journeyTab === "mutual" && (
+        <div className="space-y-4">
+          {allAssignments.length === 0 ? (
+            <EmptyState
+              title="Karşılıklı Onay Bekleyen Atama Yok"
+              desc="Talepler & Eşleşmeler sekmesinden planlara katılımcı atayarak onay sürecini başlatın."
+            />
+          ) : (
+            <div className="grid gap-3">
+              {allAssignments.map(({ plan, assignment: a }) => {
+                const isMutualActive = a.status === "ACCEPTED" && a.organizerApproved;
+                return (
+                  <div key={a.id} className="rounded-xl border bg-card p-4 shadow-sm transition hover:shadow-md">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-semibold text-sm">{plan.subject}</p>
+                          <StatusBadge map={B2B_PLAN_STATUS} value={plan.status} />
+                          {isMutualActive ? (
+                            <Chip tone="emerald">
+                              <span className="inline-flex items-center gap-1"><Icons.CheckCheck className="size-3" /> Karşılıklı Etkin</span>
+                            </Chip>
                           ) : (
-                            <Button size="icon" variant="ghost" className="size-6" aria-label={t("b2b.orgApproveAria")} onClick={() => organizerApprove(a, true)} title={t("b2b.orgApproveTitle")}><Icons.Circle className="size-3.5 text-muted-foreground" /></Button>
+                            <Chip tone="amber">
+                              <span className="inline-flex items-center gap-1"><Icons.Hourglass className="size-3" /> Onay Aşaması</span>
+                            </Chip>
                           )}
-                          <Button size="icon" variant="ghost" className="size-6" aria-label={t("b2b.removeAssignmentAria")} onClick={() => removeAssignment(a)}><Icons.Trash2 className="size-3 text-muted-foreground" /></Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {[plan.venue, plan.location].filter(Boolean).join(" · ") || t("b2b.noVenue")}
+                          {plan.startsAt && ` · ${new Date(plan.startsAt).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}`}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => { setMobilePersonId(a.personId); setMobileOpen(true); }}
+                        >
+                          <Icons.Smartphone className="size-3.5 mr-1" /> Katılımcı Olarak Gör
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 border-t pt-3 text-xs">
+                      <div>
+                        <span className="text-[11px] text-muted-foreground block mb-1">Katılımcı & Kurum</span>
+                        <div className="flex items-center gap-1.5 font-medium">
+                          <Icons.User className="size-3.5 text-muted-foreground" />
+                          <span>{a.person ? `${a.person.firstName} ${a.person.lastName}` : t("b2b.personFallback")}</span>
+                          <Chip>{label(B2B_ROLES, a.role)}</Chip>
+                        </div>
+                        {a.person?.company && <p className="text-[11px] text-muted-foreground mt-0.5">{a.person.company}</p>}
+                      </div>
+
+                      <div>
+                        <span className="text-[11px] text-muted-foreground block mb-1">Mobil Uygulama Yanıtı</span>
+                        <div className="flex items-center gap-2">
+                          {a.status === "ACCEPTED" ? <Chip tone="emerald"><Icons.Check className="size-3 mr-1 inline" /> Kabul Etti</Chip>
+                            : a.status === "DECLINED" ? <Chip tone="rose"><Icons.X className="size-3 mr-1 inline" /> Reddetti</Chip>
+                            : <Chip tone="amber"><Icons.Clock className="size-3 mr-1 inline" /> Yanıt Bekleniyor</Chip>}
+                          {a.respondedAt && <span className="text-[10px] text-muted-foreground">{new Date(a.respondedAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}</span>}
                         </div>
                         {a.feedback && (
-                          <p className="mt-1 flex items-start gap-1 rounded bg-teal-500/10 px-1.5 py-1 text-[11px] text-teal-700">
-                            <Icons.MessageSquare className="mt-0.5 size-3 shrink-0" /> {t("b2b.feedbackLabel", { feedback: a.feedback })}
+                          <p className="mt-1 text-[11px] text-teal-700 bg-teal-50/70 p-1 rounded border border-teal-200/50">
+                            <Icons.MessageSquare className="size-3 inline mr-1" /> {a.feedback}
                           </p>
                         )}
                       </div>
-                    ))}
-                  </div>
-                )}
 
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => openAssign(p)}><Icons.UserPlus className="size-3.5" /> {t("b2b.btnAssign")}</Button>
-                  {asg.length > 0 && (
-                    <Button size="sm" variant="outline" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}>
-                      <Icons.List className="size-3.5" /> {t("b2b.btnAssignments", { count: asg.length })}
-                    </Button>
-                  )}
-                  <Button size="sm" variant="ghost" onClick={() => { setMobilePersonId(""); setMobileOpen(true); }} aria-label={t("b2b.mobilePreviewAria")}><Icons.Smartphone className="size-3.5" /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => openEdit(p)} aria-label={t("b2b.editAria")}><Icons.Pencil className="size-3.5" /> {t("b2b.btnEdit")}</Button>
-                  {p.status === "ACTIVE" && <Button size="sm" variant="ghost" onClick={() => setPlanStatus(p, "COMPLETED")}>{t("b2b.btnComplete")}</Button>}
-                  <Button size="sm" variant="ghost" className="ml-auto text-rose-500 hover:text-rose-600" onClick={() => setDeleteTarget(p)} aria-label={t("b2b.deleteAria", { subject: p.subject })}><Icons.Trash2 className="size-3.5" /></Button>
-                </div>
-              </SectionCard>
-            );
-          })}
+                      <div>
+                        <span className="text-[11px] text-muted-foreground block mb-1">Organizatör Onayı (Firma B)</span>
+                        <div className="flex items-center gap-2">
+                          {a.organizerApproved ? (
+                            <Button size="sm" variant="outline" className="h-7 text-xs border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100" onClick={() => organizerApprove(a, false)}>
+                              <Icons.BadgeCheck className="size-3.5 text-emerald-600 mr-1" /> Onaylandı (Geri Al)
+                            </Button>
+                          ) : (
+                            <Button size="sm" className="h-7 text-xs bg-primary" onClick={() => organizerApprove(a, true)}>
+                              <Icons.Check className="size-3.5 mr-1" /> Organizatör Onayı Ver
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 3. Aşama: Görüşme Çizelgesi & Takvim */}
+      {journeyTab === "timetable" && (
+        <div className="space-y-4">
+          {timetablePlans.length === 0 ? (
+            <EmptyState
+              title="Çizelgede Görüşme Bulunmuyor"
+              desc="Plan oluşturup başlangıç ve bitiş saatlerini belirleyin."
+            />
+          ) : (
+            <div className="overflow-hidden rounded-xl border bg-card">
+              <div className="overflow-x-auto maven-scroll">
+                <table className="w-full min-w-[850px] text-xs">
+                  <thead>
+                    <tr className="border-b bg-muted/50 text-left font-medium text-muted-foreground">
+                      <th className="px-3 py-2.5">{t("b2b.thMeeting")}</th>
+                      <th className="px-3 py-2.5">{t("b2b.thParticipants")}</th>
+                      <th className="px-3 py-2.5">{t("b2b.thTimeSlot")}</th>
+                      <th className="px-3 py-2.5">{t("b2b.thLocation")}</th>
+                      <th className="px-3 py-2.5">{t("b2b.thMutualStatus")}</th>
+                      <th className="px-3 py-2.5 text-right">Eylem</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {timetablePlans.map((p) => {
+                      const asg = p.assignments ?? [];
+                      const allAccepted = asg.length > 0 && asg.every((a) => a.status === "ACCEPTED");
+                      const allOrganizerApproved = asg.length > 0 && asg.every((a) => a.organizerApproved);
+                      const isFullyApproved = allAccepted && allOrganizerApproved;
+
+                      return (
+                        <tr key={p.id} className="transition hover:bg-muted/40">
+                          <td className="px-3 py-2.5 max-w-[220px]">
+                            <p className="font-semibold text-foreground truncate">{p.subject}</p>
+                            {p.description && <p className="text-[11px] text-muted-foreground truncate">{p.description}</p>}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {asg.length === 0 ? (
+                              <span className="text-muted-foreground italic">Atama yok</span>
+                            ) : (
+                              <div className="flex flex-wrap gap-1">
+                                {asg.map((a) => (
+                                  <span key={a.id} className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                                    <Icons.User className="size-2.5 text-muted-foreground" />
+                                    {a.person ? `${a.person.firstName} ${a.person.lastName}` : t("b2b.personFallback")}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 whitespace-nowrap">
+                            {p.startsAt ? (
+                              <span className="font-mono text-[11px]">
+                                {new Date(p.startsAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
+                                {p.endsAt && ` - ${new Date(p.endsAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}`}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 whitespace-nowrap">
+                            <span className="inline-flex items-center gap-1 font-medium text-foreground">
+                              <Icons.MapPin className="size-3 text-primary" />
+                              {[p.venue, p.location].filter(Boolean).join(" · ") || t("b2b.noVenue")}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <StatusBadge map={B2B_PLAN_STATUS} value={p.status} />
+                              {isFullyApproved ? (
+                                <Chip tone="emerald">Karşılıklı Onaylı</Chip>
+                              ) : (
+                                <Chip tone="amber">Onay Bekliyor</Chip>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => openEdit(p)}>
+                              <Icons.Pencil className="size-3 mr-1" /> Düzenle
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

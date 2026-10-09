@@ -1,7 +1,7 @@
 "use client";
 // Ödeme & Ek Hizmet — sipariş ≠ tahsilat ≠ iade (§36-39); manuel teyit = ayrı kayıt
 import { useState } from "react";
-import { listEntity, apiSend } from "@/lib/client";
+import { listEntity, apiSend, apiGet } from "@/lib/client";
 import { useApp } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
 import { fmtDate, fmtMoney, PAYMENT_STATUS } from "@/lib/constants";
@@ -24,8 +24,23 @@ interface OrderRow {
 }
 interface CatalogRow { id: string; name: string; category: string; price: number; currency: string; quantity?: number | null; availableFor: string; isActive: boolean }
 
+interface AccountingSummaryData {
+  summary: {
+    incomeTotal: number;
+    onlineIncome: number;
+    manualIncomeTotal: number;
+    pendingIncome: number;
+    pendingCount: number;
+    expenseTotal: number;
+  };
+  receivable: {
+    amount: number;
+    openOrders: number;
+  };
+}
+
 export function FinanceView() {
-  const { currentEditionId, bump, refreshKey } = useApp();
+  const { currentEditionId, bump, refreshKey, setModule } = useApp();
   const { toast } = useToast();
   const { t } = useLang(); // dil değişiminde re-render (F9-R-d)
   const [manualTarget, setManualTarget] = useState<OrderRow | null>(null);
@@ -34,6 +49,10 @@ export function FinanceView() {
 
   const { data: orders, error, reload, loading } = useApi<OrderRow[]>(() => listEntity<OrderRow>("orders", { editionId: currentEditionId ?? undefined, limit: 200 }), [currentEditionId, refreshKey]);
   const { data: catalog } = useApi<CatalogRow[]>(() => listEntity<CatalogRow>("catalog-items", { editionId: currentEditionId ?? undefined }), [currentEditionId, refreshKey]);
+  const { data: accounting, reload: reloadAccounting } = useApi<AccountingSummaryData | null>(
+    () => currentEditionId ? apiGet<AccountingSummaryData>(`/api/accounting?editionId=${currentEditionId}`).catch(() => null) : Promise.resolve(null),
+    [currentEditionId, refreshKey]
+  );
 
   const sum = (fn: (o: OrderRow) => number) => (orders ?? []).reduce((s, o) => s + fn(o), 0);
   const paidOf = (o: OrderRow) => o.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
@@ -53,22 +72,72 @@ export function FinanceView() {
       });
       toast({ title: "Manuel tahsilat kaydedildi", description: "50.000+ tutarlarda ikinci onay istenir; finansal durum kayıttan türetilir." });
       setManualTarget(null); setManual({ amount: "", reference: "", reason: "" });
-      reload(); bump();
+      reload(); reloadAccounting(); bump();
     } catch (e) {
       toast({ title: "Tahsilat kaydedilemedi", description: e instanceof Error ? e.message : "Hata", variant: "destructive" });
     } finally { setBusy(false); }
   };
 
+  const handleApprovePayment = async (paymentId: string, approved: boolean, reason?: string) => {
+    setBusy(true);
+    try {
+      await apiSend("/api/flows", "POST", {
+        action: "finance.approvePayment",
+        paymentId,
+        approved,
+        reason,
+      });
+      toast({
+        title: approved ? "Manuel tahsilat onaylandı" : "Manuel tahsilat reddedildi",
+        description: approved ? "Tahsilat kesinleşti ve sipariş bakiyesi güncellendi." : "Tahsilat reddedildi.",
+      });
+      reload();
+      reloadAccounting();
+      bump();
+    } catch (e) {
+      toast({
+        title: "İşlem başarısız",
+        description: e instanceof Error ? e.message : "Hata",
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const orderedTotal = sum((o) => o.lines.reduce((s, l) => s + l.total, 0));
-  const collectedTotal = sum(paidOf);
+  const collectedTotal = accounting?.summary ? accounting.summary.onlineIncome : sum(paidOf);
   const refundedTotal = sum(refundedOf);
-  const openTotal = sum((o) => Math.max(0, o.lines.reduce((s, l) => s + l.total, 0) - paidOf(o) + refundedOf(o)));
+  const openTotal = accounting?.receivable ? accounting.receivable.amount : sum((o) => Math.max(0, o.lines.reduce((s, l) => s + l.total, 0) - paidOf(o) + refundedOf(o)));
   const partialCount = (orders ?? []).filter((o) => paidOf(o) > 0 && o.lines.reduce((s, l) => s + l.total, 0) - paidOf(o) + refundedOf(o) > 0.01).length;
-  const pendingManual = (orders ?? []).flatMap((o) => o.payments).filter((p) => p.source === "MANUAL_EXTERNAL" && p.status === "PENDING").length;
+  const pendingManual = accounting?.summary ? accounting.summary.pendingCount : (orders ?? []).flatMap((o) => o.payments).filter((p) => p.source === "MANUAL_EXTERNAL" && p.status === "PENDING").length;
 
   return (
     <div className="space-y-5">
       <PageHeader title="Ödeme & Ek Hizmet" desc="Registration'da paid=true tutulmaz — finansal gerçek Order/Payment/Refund'dan türetilir (§36)" />
+
+      {/* Operasyonel Finans Ayrımı ve Muhasebeye Geçiş Bildirimi */}
+      <div className="flex flex-col gap-2 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2.5">
+          <Icons.Info className="size-4 shrink-0 text-primary" />
+          <p className="text-xs text-foreground/80">{t("financeView.scopeNotice")}</p>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="shrink-0 gap-1.5 text-xs bg-background shadow-xs hover:bg-muted"
+          onClick={() => setModule("accounting")}
+        >
+          <Icons.BookOpen className="size-3.5" />
+          {t("financeView.btnGoToAccounting")}
+        </Button>
+      </div>
+
+      {/* SoD (>50.000 TL) Çift Onay Güvencesi */}
+      <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+        <Icons.ShieldAlert className="size-4 shrink-0 text-amber-600" />
+        <span>{t("financeView.sodNotice")}</span>
+      </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <KpiCard label="Sipariş Edilen" value={fmtMoney(orderedTotal)} sub="vergiler ve indirimler kalemlerde" icon={<Icons.ShoppingCart className="size-4" />} />
@@ -117,9 +186,37 @@ export function FinanceView() {
                       <p className="mb-1 text-xs font-semibold text-muted-foreground">Ödeme zaman çizelgesi</p>
                       <div className="space-y-1">
                         {o.payments.map((p) => (
-                          <div key={p.id} className="flex items-center justify-between gap-2 text-xs">
-                            <span>{fmtMoney(p.amount, o.currency)} · {p.source}{p.enteredBy ? ` · ${p.enteredBy}` : ""}</span>
-                            <StatusBadge map={{ SUCCEEDED: "Tahsil", FAILED: "Başarısız", PENDING: "Bekliyor" }} value={p.status} />
+                          <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <span className="truncate">
+                              {fmtMoney(p.amount, o.currency)} · {p.source}{p.enteredBy ? ` · ${p.enteredBy}` : ""}{p.approvedBy ? ` (Onay: ${p.approvedBy})` : ""}
+                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <StatusBadge map={{ SUCCEEDED: "Tahsil", FAILED: "Başarısız", PENDING: "Bekliyor" }} value={p.status} />
+                              {p.status === "PENDING" && (
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-6 px-1.5 text-[10px] text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                                    disabled={busy}
+                                    onClick={() => handleApprovePayment(p.id, true)}
+                                    title="Onayla"
+                                  >
+                                    <Icons.Check className="size-3 mr-0.5" /> Onayla
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-6 px-1.5 text-[10px] text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                                    disabled={busy}
+                                    onClick={() => handleApprovePayment(p.id, false, "Yönetici tarafından reddedildi")}
+                                    title="Reddet"
+                                  >
+                                    <Icons.X className="size-3 mr-0.5" /> Reddet
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         ))}
                         {o.refunds.map((r) => (

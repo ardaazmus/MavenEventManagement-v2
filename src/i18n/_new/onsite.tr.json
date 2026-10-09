@@ -37,9 +37,16 @@
     "badgeChip": "yaka kartı: {profile} {status}",
     "manualException": "Manuel İstisna (gerekçe ile)",
     "exceptionDesc": "Gerekçe zorunlu; karar tarama geçmişine DENIED + istisna olarak işlenir.",
-    "applyException": "İstisna Uygula"
+    "applyException": "İstisna Uygula",
+    "venueNotice": "İş Mekânı ve Saha Operasyonu: Giriş kapıları ve alan kontrolü işin fiziki mekânı ({venue}) ile senkronize çalışır.",
+    "tabDesk": "Hızlı Tarama Masası",
+    "tabKiosk": "Kiosk Terminali",
+    "tabOccupancy": "Alan İçi Yoğunluk",
+    "tabCme": "Oturum CME Yoklama",
+    "btnOpenVenue": "Mekân Planını Aç"
   },
   "certificates": {
+    "portalLinkNotice": "Üretilen ve onaylanan sertifikalar katılımcıların kişisel dış portalında (/portal/attendee) anında erişilebilir hale gelir.",
     "defaultBody": "Bu belge {{fullName}} adına {{edition}} etkinliğine {{tier}} olarak katılımını belgelemek üzere düzenlenmiştir.",
     "canvasLogoArea": "Logo alanı",
     "defaultBodyShort": "Bu belge {{fullName}} adına katılımını belgelemek üzere düzenlenmiştir.",

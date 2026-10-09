@@ -144,7 +144,7 @@ const barLabel = (v: string) => (v === "true" ? t("forms.yes") : v === "false" ?
 
 export function FormCenterView() {
   useLang(); // dil değişiminde yeniden render
-  const { currentEditionId, bump, refreshKey } = useApp();
+  const { currentEditionId, bump, refreshKey, setModule } = useApp();
   const { toast } = useToast();
 
   // Veri — formlar + kayıt kategorileri (ödeme paneli için)
@@ -2497,16 +2497,58 @@ export function FormCenterView() {
               {detail.registration && (
                 <>
                   <Separator />
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-3 text-sm">
-                    <span className="text-xs text-muted-foreground">Bağlı kayıt:</span>
-                    <span className="font-mono text-xs font-semibold">{detail.registration.confirmationNo}</span>
-                    <StatusBadge map={REG_STATUS_MAP} value={detail.registration.status} />
-                    {detail.registration.category && <Chip tone="teal">{detail.registration.category.name}</Chip>}
-                    {detail.registration.participation?.person && (
-                      <span className="text-xs text-muted-foreground">
-                        {detail.registration.participation.person.firstName} {detail.registration.participation.person.lastName}
-                      </span>
-                    )}
+                  <div className="flex flex-col gap-2 rounded-lg border bg-card p-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Bağlı kayıt:</span>
+                      <span className="font-mono text-xs font-semibold">{detail.registration.confirmationNo}</span>
+                      <StatusBadge map={REG_STATUS_MAP} value={detail.registration.status} />
+                      {detail.registration.category && <Chip tone="teal">{detail.registration.category.name}</Chip>}
+                      {detail.registration.participation?.person && (
+                        <span className="text-xs text-muted-foreground">
+                          {detail.registration.participation.person.firstName} {detail.registration.participation.person.lastName}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border/40">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 gap-1 text-xs"
+                        onClick={() => {
+                          setModule("registrations");
+                          setDetailId(null);
+                        }}
+                      >
+                        <Icons.UserCheck className="size-3" />
+                        {t("forms.openInRegistrations")}
+                      </Button>
+                      {detail.registration.participation?.person && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 gap-1 text-xs"
+                          onClick={() => {
+                            setModule("people");
+                            setDetailId(null);
+                          }}
+                        >
+                          <Icons.UserRound className="size-3" />
+                          {t("forms.openInPeople")}
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 text-xs"
+                        onClick={() => {
+                          setModule("finance");
+                          setDetailId(null);
+                        }}
+                      >
+                        <Icons.CreditCard className="size-3" />
+                        {t("forms.openInFinance")}
+                      </Button>
+                    </div>
                   </div>
                 </>
               )}

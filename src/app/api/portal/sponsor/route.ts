@@ -9,7 +9,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolvePublicEdition } from "@/lib/api/public-guard";
 import { extractToken, validatePortalToken, touchToken } from "@/lib/api/portal-tokens";
-import { checkSponsorScope, agreementFilter } from "@/lib/portal/sponsor-scope";
+import {
+  checkSponsorScope,
+  agreementFilter,
+  isItemInAgreementScope,
+  extractAgreementTag,
+} from "@/lib/portal/sponsor-scope";
 import { sanitizeProfilePatch } from "@/lib/portal/sponsor-profile";
 import { STAFF_ROLE } from "@/lib/portal/sponsor-staff";
 import { ActivityType } from "@/lib/api/activity";
@@ -79,6 +84,14 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: "desc" },
     });
 
+    const filteredEntitlements = entitlements.filter((e) =>
+      isItemInAgreementScope(e, token.agreementId),
+    );
+
+    const filteredOrders = orders.filter((o) =>
+      isItemInAgreementScope(o, token.agreementId),
+    );
+
     // portalda görünecek katılımcılar — bu kurumdan gelenler (firma eşleşmesi +
     // P20.1: EXHIBITOR_STAFF rolü şart — rolü silinen personel listeden düşer)
     const staffParticipations = await db.eventParticipation.findMany({
@@ -145,21 +158,21 @@ export async function GET(req: NextRequest) {
       })),
       // TASK-B 26: stant tahsislerinin düz listesi (sözleşme bağımsız hızlı görünüm)
       booths,
-      entitlements: entitlements.map((e) => ({
+      entitlements: filteredEntitlements.map((e) => ({
         id: e.id, label: e.label, type: e.type, source: e.source,
         granted: e.quantityGranted, consumed: e.quantityConsumed, reserved: e.quantityReserved,
-        // TASK-B 26: havuz özeti — total (kota) ve claimed (kullanılan + ayrılmış);
-        // sponsor için kalan = total - claimed
         total: e.quantityGranted, claimed: e.quantityConsumed + e.quantityReserved,
         restrictions: e.restrictions, validUntil: e.validUntil,
+        agreementId: extractAgreementTag(e.restrictions),
         claims: e.claims.map((c) => ({ id: c.id, status: c.status, guestName: c.guestName, reservedAt: c.reservedAt, consumedAt: c.consumedAt })),
       })),
-      orders: orders.map((o) => {
+      orders: filteredOrders.map((o) => {
         const paid = o.payments.filter((p) => p.status === "SUCCEEDED").reduce((s, p) => s + p.amount, 0);
         const pending = o.payments.filter((p) => p.status === "PENDING").reduce((s, p) => s + p.amount, 0);
         return {
           id: o.id, orderNo: o.orderNo, status: o.status, totalAmount: o.totalAmount,
           currency: o.currency, createdAt: o.createdAt, payerName: o.payerName,
+          agreementId: extractAgreementTag(o.notes),
           lines: o.lines.map((l) => ({
             id: l.id, description: l.description, quantity: l.quantity, total: l.total,
             personName: l.participation?.person ? `${l.participation.person.firstName} ${l.participation.person.lastName}` : null,
@@ -176,8 +189,12 @@ export async function GET(req: NextRequest) {
         categoryCode: p.registrations[0]?.category?.code ?? null,
         badgeStatus: p.badgeInstances[0]?.status ?? null,
       })),
-      // P20.1: jetonun erişim kapsamı (anlaşma-kapsamlı ise id; kurum geneli ise null)
-      grant: { agreementId: token.agreementId ?? null },
+      // P20.1 & F-04: jetonun erişim kapsamı
+      grant: {
+        scope: token.agreementId ? "AGREEMENT" : "ORGANIZATION",
+        agreementId: token.agreementId ?? null,
+        isAgreementScoped: Boolean(token.agreementId),
+      },
     });
   } catch (err) {
     console.error("portal/sponsor error:", err);

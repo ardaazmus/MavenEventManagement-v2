@@ -19,6 +19,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 import { NotificationBell } from "./notification-bell";
 import { CommandPalette } from "./command-palette";
+import { DualSidebar } from "./navigation/dual-sidebar";
+import { ModuleContextBridge } from "./navigation/module-context-bridge";
+import { getProductContextScope } from "@/lib/product-taxonomy";
 import { useLang, t } from "@/lib/i18n";
 
 type ThemeOption = "light" | "system" | "dark";
@@ -231,22 +234,38 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   <Icons.Menu className="size-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="w-72 bg-sidebar p-0 text-sidebar-foreground">
+              <SheetContent side="left" className="w-[300px] border-r-0 bg-sidebar p-0 text-sidebar-foreground sm:w-[320px]">
                 <SheetTitle className="sr-only">{t("shell.srMenu")}</SheetTitle>
-                <SidebarNav onNavigate={() => setOpen(false)} />
+                <DualSidebar onNavigate={() => setOpen(false)} />
               </SheetContent>
             </Sheet>
 
             <div className="hidden items-center gap-1.5 text-sm text-muted-foreground lg:flex">
               <span className="font-medium text-foreground">{tenant?.name ?? t("shell.workspace")}</span>
               <Icons.ChevronRight className="size-3.5" />
-              {edition?.series?.name && (
+              {getProductContextScope(module) === "GLOBAL_COMPANY" ? (
                 <>
-                  <span>{edition.series.name}</span>
+                  <span className="font-medium text-primary">{t("scopes.globalCompany")}</span>
                   <Icons.ChevronRight className="size-3.5" />
+                  <span className="font-medium text-foreground">{activeModule?.label ?? t(`modules.${module}`)}</span>
+                </>
+              ) : (
+                <>
+                  {edition?.series?.name && (
+                    <>
+                      <span>{edition.series.name}</span>
+                      <Icons.ChevronRight className="size-3.5" />
+                    </>
+                  )}
+                  <span className="font-medium text-foreground">{edition?.name ?? t("shell.selectEdition")}</span>
+                  {activeModule?.label && (
+                    <>
+                      <Icons.ChevronRight className="size-3.5" />
+                      <span className="font-medium text-foreground">{activeModule.label}</span>
+                    </>
+                  )}
                 </>
               )}
-              <span className="font-medium text-foreground">{edition?.name ?? "Edisyon seçin"}</span>
             </div>
 
             <div className="ml-auto flex items-center gap-2">
@@ -351,8 +370,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
         />
 
         <div className="flex flex-1">
-          <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 border-r bg-sidebar text-sidebar-foreground lg:block">
-            <SidebarNav />
+          <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] shrink-0 border-r-0 bg-sidebar text-sidebar-foreground lg:flex">
+            <DualSidebar />
           </aside>
 
           <main className="min-w-0 flex-1 p-4 md:p-6" aria-label={activeModule?.label}>
@@ -387,7 +406,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 </div>
               </div>
             ) : (
-              children
+              <>
+                {/* Faz 12: Birleşik Ürün Dili ve Gezinme — İş Omurga Köprüsü */}
+                {getProductContextScope(module) === "WORK_WORKSPACE" && module !== "dashboard" && currentEditionId && (
+                  <div className="mb-4 hidden sm:block">
+                    <ModuleContextBridge />
+                  </div>
+                )}
+                {children}
+              </>
             )}
             </div>
           </main>

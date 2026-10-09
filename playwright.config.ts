@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-const PORT = process.env.PORT || "3000";
+const PORT = process.env.PORT || "3005";
 const BASE_URL = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 
 // TASK-B 24: Playwright E2E + golden snapshots
@@ -20,7 +20,7 @@ export default defineConfig({
     viewport: { width: 1280, height: 800 },
   },
   webServer: {
-    command: process.env.CI ? "npm run start" : "npm run dev",
+    command: process.env.CI ? "npm run start" : `npx next dev -p ${PORT}`,
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

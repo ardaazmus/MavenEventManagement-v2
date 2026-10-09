@@ -5,12 +5,11 @@ import { apiGet } from "@/lib/client";
 import { useLang } from "@/lib/i18n";
 import { KpiCard, SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip } from "../bits";
 import { fmtDate, fmtDateTime, fmtMoney, EDITION_STATUS, TASK_PRIORITY, label } from "@/lib/constants";
-import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import * as Icons from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { AnnounceStrip } from "./announce-card";
+import { WorkSummaryView } from "./work-summary-view";
 
 interface DashData {
   scope: "PORTFOLIO" | "EDITION";
@@ -133,162 +132,6 @@ export function DashboardView() {
     );
   }
 
-  // ── Edisyon görünümü ──
-  const kpi = data.kpi ?? {};
-  const checks = data.checks;
-  const num = (k: string) => Number(kpi[k] ?? 0);
-
-  return (
-    <div className="space-y-5">
-      <PageHeader
-        title={data.edition?.name ?? "Edisyon"}
-        desc={`${fmtDate(data.edition?.startDate)} — ${fmtDate(data.edition?.endDate)}${data.edition?.venueName ? ` · ${data.edition.venueName}` : ""}`}
-      >
-        <span className="text-xs text-muted-foreground">Son güncelleme: {fmtDateTime(data.lastUpdated)}</span>
-        <Button size="sm" variant="outline" onClick={reload}><Icons.RefreshCw className="size-4" /> Yenile</Button>
-      </PageHeader>
-
-      {/* Hazırlık denetimi — dashboard(2) 8/8 */}
-      <SectionCard
-        title="Kurulum Denetimi"
-        desc={`Hazırlık ${checks?.score ?? 0}/8 — karta basınca ilgili ayar açılır`}
-        action={
-          <div className="w-28">
-            <Progress value={checks?.pct ?? 0} className="h-2" aria-label={`Kurulum hazırlığı yüzde ${checks?.pct ?? 0}`} />
-            <p className="mt-1 text-right text-[11px] text-muted-foreground">%{checks?.pct ?? 0}</p>
-          </div>
-        }
-      >
-        <div className="space-y-1.5">
-          {[...(checks?.blockers ?? []).map((b) => ({ ...b, tone: "rose" })), ...(checks?.warnings ?? []).map((w) => ({ ...w, tone: "amber" }))].map((c) => (
-            <div key={c.key} className={cn("flex items-start gap-2 rounded-lg border p-2.5 text-sm", c.tone === "rose" ? "border-rose-200 bg-rose-50/60" : "border-amber-200 bg-amber-50/60")}>
-              {c.tone === "rose" ? <Icons.OctagonAlert className="mt-0.5 size-4 shrink-0 text-rose-500" /> : <Icons.TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />}
-              <span>{c.message}</span>
-            </div>
-          ))}
-          {(checks?.blockers?.length ?? 0) + (checks?.warnings?.length ?? 0) === 0 && (
-            <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-2.5 text-sm">
-              <Icons.CircleCheck className="size-4 text-emerald-600" /> Tüm denetimler temiz — yayına hazır.
-            </div>
-          )}
-        </div>
-      </SectionCard>
-
-      {/* Kayıt & katılım kartları */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <KpiCard label="Başvuru" value={num("applications")} sub="taslak hariç gönderim" icon={<Icons.Inbox className="size-4" />} onClick={() => setModule("registrations")} detailHref={t("dashboard.registrationsLink")} />
-        <KpiCard label="Onaylı" value={num("confirmed")} sub="ödeme ayrı eksen" tone="emerald" icon={<Icons.ClipboardCheck className="size-4" />} onClick={() => setModule("registrations")} detailHref="Onaylı filtresi →" />
-        <KpiCard label="Onay Bekleyen" value={num("pendingApproval")} sub="inceleme kuyruğu" tone="amber" icon={<Icons.Hourglass className="size-4" />} onClick={() => setModule("registrations")} detailHref="Bekleyenler →" />
-        <KpiCard label={t("dashboard.uniquePersons")} value={num("uniquePersons")} sub="aynı kişi iki rol → tek kişi" icon={<Icons.Users className="size-4" />} onClick={() => setModule("people")} detailHref="Kişiler →" />
-        <KpiCard label="Onay Oranı" value={kpi.approvalRate != null ? `%${kpi.approvalRate}` : "—"} sub="karara bağlanan üzerinden" icon={<Icons.Gauge className="size-4" />} />
-        <KpiCard label="Sahada Gelen" value={num("arrived")} sub={`katılım oranı ${kpi.attendanceRate != null ? `%${kpi.attendanceRate}` : "—"}`} tone="emerald" icon={<Icons.ScanLine className="size-4" />} onClick={() => setModule("onsite")} detailHref="Saha paneli →" />
-        <KpiCard label="No-Show" value={num("noShow")} sub="onaylı, girişsiz" tone="rose" icon={<Icons.UserX className="size-4" />} />
-        <KpiCard label="Açık İş" value={num("taskOpen")} sub="tüm modüller" tone="amber" icon={<Icons.ListChecks className="size-4" />} onClick={() => setModule("operations")} detailHref="Operasyon →" />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* Finans kartları */}
-        <SectionCard title="Finans" desc="sipariş ≠ tahsilat ≠ iade — eksenler ayrı" className="min-w-0 lg:col-span-2">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <KpiCard label="Sipariş Edilen" value={fmtMoney(num("ordered"))} sub="geçerli satır toplamı" />
-            <KpiCard label="Tahsil Edilen" value={fmtMoney(num("collected"))} sub="iade düşülmemiş brüt" tone="emerald" />
-            <KpiCard label="İade Edilen" value={fmtMoney(num("refunded"))} sub="kesinleşen" tone="violet" />
-            <KpiCard label="Açık Bakiye" value={fmtMoney(num("openBalance"))} sub="borç − tahsilat + iade" tone="amber" onClick={() => setModule("finance")} detailHref={t("dashboard.ordersLink")} />
-            <KpiCard label="Kısmi Ödeme" value={num("partialCount")} sub="sipariş sayısı" tone="amber" />
-            <KpiCard label="Manuel Teyit Bekleyen" value={num("pendingManual")} sub="finans kuyruğu" tone="rose" />
-          </div>
-        </SectionCard>
-
-        {/* Sponsor hak dökümü */}
-        <SectionCard title="Sponsor Hakları" desc="tanınan / kullanılan / ayrılmış / kalan">
-          <div className="space-y-3">
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-semibold tabular-nums">{num("consumed")}/{num("granted")}</span>
-              <span className="text-sm text-muted-foreground">kullanılan hak</span>
-            </div>
-            <Progress value={num("granted") ? (num("consumed") / num("granted")) * 100 : 0} className="h-2.5" aria-label={`Kontenjan kullanımı yüzde ${num("granted") ? Math.round((num("consumed") / num("granted")) * 100) : 0}`} />
-            <div className="grid grid-cols-3 gap-2 text-center text-xs">
-              <div className="rounded-lg bg-muted p-2"><p className="text-lg font-semibold tabular-nums">{num("granted")}</p><p className="text-muted-foreground">tanınan</p></div>
-              <div className="rounded-lg bg-amber-50 p-2"><p className="text-lg font-semibold tabular-nums text-amber-700">{num("reserved")}</p><p className="text-amber-800">ayrılmış</p></div>
-              <div className="rounded-lg bg-emerald-50 p-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{Math.max(0, num("granted") - num("consumed") - num("reserved"))}</p><p className="text-emerald-800">kalan</p></div>
-            </div>
-            <p className="text-xs text-muted-foreground">Sponsorluk değeri: <span className="font-medium text-foreground">{fmtMoney(num("sponsorshipValue"))}</span> · bekleyen teslim: {num("deliverablePending")}</p>
-            <Button size="sm" variant="outline" className="w-full" onClick={() => setModule("sponsorship")}>Sponsorluk modülü →</Button>
-          </div>
-        </SectionCard>
-      </div>
-
-      {/* Grafikler */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <SectionCard title={t("dashboard.registrationCurve")} desc="gönderim tarihi bazlı — son 14 gün" className="min-w-0 lg:col-span-2">
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={data.curve ?? []} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.9 0.01 190)" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
-              <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-              <Line type="monotone" dataKey="count" name="Başvuru" stroke="#0f9b8e" strokeWidth={2.5} dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </SectionCard>
-
-        <SectionCard title="Kaynak Dağılımı" desc="kayıt kaynakları">
-          {/* Pasta grafik AT/odaktan çıkarılmıştır (inert) — veri alttaki metin lejantta aynen sunulur. */}
-          <div inert>
-          <ResponsiveContainer width="100%" height={220}>
-            <PieChart>
-              <Pie data={Object.entries(data.bySource ?? {}).map(([k, v]) => ({ name: k, value: v }))} dataKey="value" nameKey="name" innerRadius={48} outerRadius={80} paddingAngle={2}>
-                {Object.keys(data.bySource ?? {}).map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-              </Pie>
-              <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-            </PieChart>
-          </ResponsiveContainer>
-          </div>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            {Object.entries(data.bySource ?? {}).map(([k, v], i) => (
-              <span key={k} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                <span className="size-2 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} /> {k}: {v}
-              </span>
-            ))}
-          </div>
-        </SectionCard>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <SectionCard title="Bilimsel & Program" desc="kabulden yayına darboğaz">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <KpiCard label="Bildiri" value={Object.values(kpi.sciByStatus ?? {}).reduce((a: number, b) => a + Number(b), 0)} sub="tüm durumlar" onClick={() => setModule("scientific")} detailHref="Bilimsel →" />
-            <KpiCard label="İncelemede" value={(kpi.sciByStatus as Record<string, number>)?.UNDER_REVIEW ?? 0} sub={`geciken hakem: ${num("reviewOverdue")}`} tone="amber" onClick={() => setModule("scientific")} detailHref="Bildiriler →" />
-            <KpiCard label="Oturum" value={num("sessionCount")} sub={`${num("publishedSessions")} yayınlandı`} onClick={() => setModule("program")} detailHref="Program →" />
-            <KpiCard label="Program Bekleyen" value={num("acceptedNoSession")} sub="kabul edildi, slot yok" tone="rose" onClick={() => setModule("program")} detailHref="Program →" />
-          </div>
-        </SectionCard>
-
-        <SectionCard title="Konaklama & LCV & Saha" desc="kırılım sayaçları">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <KpiCard label="Rezervasyon" value={num("reservationCount")} sub={`${num("roomNightsSold")} oda-gece`} onClick={() => setModule("accommodation")} detailHref="Konaklama →" />
-            <KpiCard label="Davetli" value={Object.values(kpi.invByStatus ?? {}).reduce((a: number, b) => a + Number(b), 0)} sub="LCV havuzu" />
-            <KpiCard label="Gelecek" value={(kpi.invByStatus as Record<string, number>)?.COMING ?? 0} sub="yanıt: gelecek" tone="emerald" />
-            <KpiCard label="Tarama" value={num("scanCount")} sub={`${num("rescanCount")} tekrar · ${num("deniedCount")} ret`} tone="teal" onClick={() => setModule("onsite")} detailHref="Saha →" />
-          </div>
-        </SectionCard>
-      </div>
-
-      <SectionCard title="Aktivite Akışı" desc="edisyon kapsamı">
-        {(data.recentActivity ?? []).length === 0 ? (
-          <EmptyState title="Henüz hareket yok" />
-        ) : (
-          <ol className="relative space-y-3 border-l pl-4">
-            {(data.recentActivity ?? []).map((a) => (
-              <li key={a.id} className="relative">
-                <span className="absolute -left-[21px] top-1.5 size-2 rounded-full bg-primary/70" />
-                <p className="text-sm leading-snug">{a.message}</p>
-                <p className="text-xs text-muted-foreground">{a.actorName ?? "Sistem"} · {fmtDateTime(a.createdAt)}</p>
-              </li>
-            ))}
-          </ol>
-        )}
-      </SectionCard>
-    </div>
-  );
+  // ── Edisyon görünümü: Karar ve Operasyon Odaklı İş Özeti (Cockpit) ──
+  return <WorkSummaryView data={data} onReload={reload} />;
 }

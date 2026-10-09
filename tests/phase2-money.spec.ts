@@ -110,7 +110,7 @@ test.describe.serial("P2.8 — manualPayment eşik/birim bütünlüğü + generi
     expect(res.status()).toBe(409);
   });
 
-  test("manuel ödeme — ₺60.000 = 6M minor > 5M eşik → Tenant Sahibi onayı (birim düzeltmesi kanıtı)", async ({ request }) => {
+  test("manuel ödeme — ₺60.000 = 6M minor > 5M eşik → PENDING ve ikinci onay ile SUCCEEDED", async ({ request }) => {
     const order = await db.order.create({
       data: { editionId, orderNo: `P2A-${Date.now()}`, payerName: "P2 A", totalAmount: 6_000_000, currency: "TRY", status: "OPEN" },
       select: { id: true },
@@ -119,8 +119,26 @@ test.describe.serial("P2.8 — manualPayment eşik/birim bütünlüğü + generi
       data: { action: "finance.manualPayment", orderId: order.id, amount: 60_000, currency: "TRY", reason: "P2 eşik testi" },
     });
     expect(res.status()).toBe(201);
-    const body = (await res.json()) as { approvedBy?: string | null };
-    expect(body.approvedBy).toBe("Tenant Sahibi"); // eski kod: 60000 > 5_000_000 → tetikLENMEZTİ
+    const body = (await res.json()) as { id: string; status: string; approvedBy?: string | null };
+    expect(body.status).toBe("PENDING");
+    expect(body.approvedBy).toBeFalsy();
+
+    // Sipariş henüz ödenmedi
+    const freshOrder = await db.order.findUnique({ where: { id: order.id }, select: { status: true } });
+    expect(freshOrder?.status).toBe("OPEN");
+
+    // İkinci yetkili onayı
+    const approveRes = await request.post("/api/flows", {
+      data: { action: "finance.approvePayment", paymentId: body.id, approved: true, approverName: "Finans Direktörü" },
+    });
+    expect(approveRes.status()).toBe(200);
+    const approvedBody = (await approveRes.json()) as { status: string; approvedBy: string };
+    expect(approvedBody.status).toBe("SUCCEEDED");
+    expect(approvedBody.approvedBy).toContain("Finans Direktörü");
+
+    // Sipariş artık PAID
+    const paidOrder = await db.order.findUnique({ where: { id: order.id }, select: { status: true } });
+    expect(paidOrder?.status).toBe("PAID");
   });
 
   test("generic PUT — payment status değiştirilemez (durum-makinesi koruması)", async ({ request }) => {

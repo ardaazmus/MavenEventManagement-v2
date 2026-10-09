@@ -43,6 +43,12 @@ export const ROUTE_POLICY_DEFINITIONS = {
     enforcement: "POST: requireAdmin() + blockers 409 + dryRun; GET: requireStaff() + tenant scope",
     description: "P18.2 edisyon arşivleme + görüntü okuma",
   },
+  "src/app/api/editions/[id]/setup-checklist/route.ts": {
+    category: "STAFF",
+    authRequired: true,
+    enforcement: "requireStaff() + resolveEditionContext",
+    description: "F-07 kademeli etkinlik kurulum checklist değerlendirmesi",
+  },
   "src/app/api/scan/route.ts": {
     category: "DOMAIN_POLICY",
     authRequired: false,
@@ -267,6 +273,12 @@ export const ROUTE_POLICY_DEFINITIONS = {
     enforcement: "Konuşmacıya soru iletme",
     description: "Katılımcı soru havuzu",
   },
+  "src/app/api/portal/client/route.ts": {
+    category: "PUBLIC",
+    authRequired: false,
+    enforcement: "CLIENT portal tokenı ile güvenli icra özeti erişimi",
+    description: "F-06 müşteri / düzenleyen kurum self-service portalı",
+  },
   "src/app/api/portal/sponsor/route.ts": {
     category: "PUBLIC",
     authRequired: false,
@@ -389,6 +401,12 @@ export const ROUTE_POLICY_DEFINITIONS = {
     enforcement: "requireAdmin()",
     description: "Portal önizleme belirteci üretimi",
   },
+  "src/app/api/portal/client-grants/route.ts": {
+    category: "ADMIN",
+    authRequired: true,
+    enforcement: "requireAdmin() + resolveEditionContext + single-display + rate-limit",
+    description: "F-06 müşteri portalı erişim izni çıkarımı/liste/iptal",
+  },
   "src/app/api/portal/sponsor-grants/route.ts": {
     category: "ADMIN",
     authRequired: true,
@@ -406,6 +424,12 @@ export const ROUTE_POLICY_DEFINITIONS = {
     authRequired: true,
     enforcement: "requireAdmin()",
     description: "SaaS yeni müşteri onboarding akışı",
+  },
+  "src/app/api/saas/entitlements/route.ts": {
+    category: "ADMIN",
+    authRequired: true,
+    enforcement: "x-super-admin-key (requireSuperAdmin)",
+    description: "P07: Platform Sahibi (Firma A) → Tenant modül yetkileri yönetimi",
   },
   "src/app/api/saas/provision/route.ts": {
     category: "ADMIN",

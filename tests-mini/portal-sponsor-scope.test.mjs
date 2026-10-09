@@ -189,3 +189,46 @@ test("P20.3 - gorusme: slot + gecis + cakisma", async () => {
   assert.strictEqual(validateWindow(iso(now + 3_600_000), iso(now + 30 * 3_600_000), now).ok, false); // 29s yasak
   assert.strictEqual(validateWindow(iso(now - 7_200_000), iso(now - 3_600_000), now).ok, false);
 });
+
+test("F-04 - sponsor anlasma izolasyonu: haklar ve siparisler yalniz hedef anlasmaya filtrelenir", async () => {
+  const { isItemInAgreementScope, extractAgreementTag } = await import(pathToFileURL(scopeLib).href);
+
+  // 1. extractAgreementTag doğrulaması
+  assert.strictEqual(extractAgreementTag("agreement:agr_100"), "agr_100");
+  assert.strictEqual(extractAgreementTag("agreementId:agr_200"), "agr_200");
+  assert.strictEqual(extractAgreementTag("Özel notlar agreement:agr_300 vs."), "agr_300");
+  assert.strictEqual(extractAgreementTag("Kısıtsız hak"), null);
+  assert.strictEqual(extractAgreementTag(null), null);
+
+  // 2. Anlaşma-kapsamlı jeton (target: agr_1)
+  const targetAgreement = "agr_1";
+
+  // Hak A: Anlaşma 1'e ait
+  const entA = { restrictions: "agreement:agr_1;vip:true" };
+  // Hak B: Anlaşma 2'ye ait (F-04 izolasyon testi: gizlenmeli)
+  const entB = { restrictions: "agreement:agr_2;vip:true" };
+  // Hak C: Kurum geneli (anlaşma kısıtı yok)
+  const entC = { restrictions: "vip:true" };
+
+  assert.strictEqual(isItemInAgreementScope(entA, targetAgreement), true, "Hedef anlaşmaya ait hak görünmeli");
+  assert.strictEqual(isItemInAgreementScope(entB, targetAgreement), false, "Başka anlaşmaya ait hak İZOLE EDİLMELİ (görünmemeli)");
+  assert.strictEqual(isItemInAgreementScope(entC, targetAgreement), true, "Genel hak görünmeli");
+
+  // Sipariş A: Anlaşma 1'e ait
+  const orderA = { notes: "Sponsorluk agreement:agr_1" };
+  // Sipariş B: Anlaşma 2'ye ait (F-04 izolasyon testi: gizlenmeli)
+  const orderB = { notes: "Sponsorluk agreement:agr_2" };
+  // Sipariş C: Genel sipariş
+  const orderC = { notes: null };
+
+  assert.strictEqual(isItemInAgreementScope(orderA, targetAgreement), true, "Hedef anlaşma siparişi görünmeli");
+  assert.strictEqual(isItemInAgreementScope(orderB, targetAgreement), false, "Başka anlaşma siparişi İZOLE EDİLMELİ");
+  assert.strictEqual(isItemInAgreementScope(orderC, targetAgreement), true, "Genel sipariş görünmeli");
+
+  // 3. Kurum-geneli jeton (tokenAgreementId = null) -> tüm haklar ve siparişler görünür (geriye uyum)
+  assert.strictEqual(isItemInAgreementScope(entA, null), true);
+  assert.strictEqual(isItemInAgreementScope(entB, null), true);
+  assert.strictEqual(isItemInAgreementScope(orderA, null), true);
+  assert.strictEqual(isItemInAgreementScope(orderB, null), true);
+});
+

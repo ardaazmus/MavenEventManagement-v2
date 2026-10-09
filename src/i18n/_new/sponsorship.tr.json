@@ -2,6 +2,15 @@
   "sponsorship": {
     "guestFlowDesc": "Person → Participation → Registration(SPONSOR_ENTITLEMENT) → Claim(RESERVED) zinciri kuruldu. Onayla henüz tüketmez.",
     "addAsProposal": "Öneri Olarak Ekle",
+    "tabSponsors": "Sponsorlar & Satış Hunisi",
+    "tabPackages": "Paketler & Anlaşmalar",
+    "tabEntitlements": "Haklar & Kontenjanlar",
+    "tabDeliverables": "Teslimatlar Takvimi",
+    "tabBooths": "Stant Tahsisi & Floor",
+    "portalIsolationNotice": "Sponsor Dış Portalı: Firma B yönetim paneli ve hak dökümleri bağımsız bir dış deneyim olarak sponsor temsilcilerine sunulur. Sponsorlar kendi haklarını, logolarını ve temsilci kayıtlarını bu izole portal üzerinden yönetir.",
+    "btnOpenSponsorPortal": "Sponsor Dış Portalını Aç",
+    "boothFloorNotice": "Stant Tahsis Kuralı: Stant birimlerinin ticari kimliği ve anlaşma bağı Maven'dadır; yerleşim geometrisi ve fuar planı Floor Studio ile iki yönlü senkronize edilir.",
+    "noEdition": "Edisyon seçilmedi.",
     "entType": {
       "complimentaryRegistration": "Ücretsiz Kayıt",
       "booth": "Stant",

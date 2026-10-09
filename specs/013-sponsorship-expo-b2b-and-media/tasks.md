@@ -1,0 +1,21 @@
+# Görev Listesi: 013 — Sponsor, Fuar, B2B ve Medya (Faz 8)
+
+- [x] **T-01:** `specs/013-sponsorship-expo-b2b-and-media/` dokümantasyonunun hazırlanması (`spec.md`, `plan.md`, `tasks.md`).
+- [x] **T-02:** `src/components/maven/navigation/dual-sidebar.tsx` içinde `sponsor_exhibition` grubunun (`sponsors`, `packages-agreements`, `deliverables-entitlements`, `booths-floors`, `b2b`) ve `media` öğesinin `moduleSubView` ile bağlanması ve aktiflik durumunun güncellenmesi.
+- [x] **T-03:** i18n Sözlük Dosyalarının Hazırlanması (`sponsorship.tr.json` / `en.json`, `b2b.tr.json` / `en.json`, `media.tr.json` / `en.json`, `floors.tr.json` / `en.json`) — 0 hardcoded metin ihlali.
+- [x] **T-04:** `src/components/maven/views/sponsorship.tsx` (`SponsorshipView`):
+  - [x] Sekmeli yapı: `sponsors`, `packages`, `entitlements`, `deliverables`, `booths`.
+  - [x] `moduleSubView` senkronizasyon effect'i (asenkron setTimeout ile React 19 uyumlu).
+  - [x] Bağımsız Sponsor Dış Portalı bilgilendirme ve erişim kartı/banner'ı.
+- [x] **T-05:** `src/components/maven/views/floors.tsx` (`FloorsView`):
+  - [x] Sponsorluk hakları ve mekan bağlantı bilgilendirme bildirimi.
+  - [x] Stantların ticari kimliğinin Maven'da, geometrisinin Floor Studio'da tutulduğu ayrımı.
+- [x] **T-06:** `src/components/maven/views/b2b.tsx` (`B2bView`):
+  - [x] Tek kullanıcı yolculuğu sekmeleri: `requests` (Eşleşme Talepleri), `mutual` (Karşılıklı Kabul), `timetable` (Görüşme Çizelgesi & Takvim).
+  - [x] Mevcut mobil önizleme ve onay akışlarının korunması.
+- [x] **T-07:** `src/components/maven/views/media.tsx` (`MediaView`):
+  - [x] İki sekmeli ayrım: `work` (İş Medyası) ve `brand` (Firma Marka Kitaplığı).
+  - [x] Modül ve dış içerik bağlantı rozetleri.
+- [x] **T-08:** `tests-mini/sponsorship-expo-b2b-and-media.test.mjs` test paketinin yazılması ve `package.json`'a eklenmesi.
+- [x] **T-09:** Kalite kapılarının çalıştırılması (`typecheck`, `lint`, `i18n:scan`, `lint:arch`, `test:unit`, `test:smoke`, `quality-report`).
+- [x] **T-10:** Kanıt raporunun (`docs/evidence/`) ve Codex devir protokolünün güncellenmesi.

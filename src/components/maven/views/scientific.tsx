@@ -1,7 +1,7 @@
 "use client";
 // Bilimsel — çağrı, bildiri, hakem, karar (kabul ≠ otomatik program slotu, Kimlik kuralı 6)
 // Program — oturum, salon, görevler, yayın durumu + CME kredi defteri (§08, CME_CREDITS yeteneği)
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listEntity, listEntityPaged, apiSend, apiGet } from "@/lib/client";
 import { useApp, hasCapability } from "@/lib/store";
 import { SectionCard, EmptyState, Loading, ErrorState, useApi, PageHeader, StatusBadge, Chip, KpiCard } from "../bits";
@@ -127,13 +127,68 @@ export function ScientificView() {
   const subStatusMap = Object.fromEntries(Object.entries(SUBMISSION_STATUS).map(([k]) => [k, tLabel(SUBMISSION_STATUS, k)]));
   const subTypeMap = Object.fromEntries(Object.entries(SUBMISSION_TYPES).map(([k]) => [k, tLabel(SUBMISSION_TYPES, k)]));
   const fileStatusMap = Object.fromEntries(Object.entries(FILE_STATUS_OPTIONS).map(([k]) => [k, tLabel(FILE_STATUS_OPTIONS, k)]));
-  const { currentEditionId, bump, refreshKey } = useApp();
+  const { currentEditionId, bump, refreshKey, moduleSubView, setModule, editions } = useApp();
   const { toast } = useToast();
+  const [tab, setTab] = useState<"submissions" | "reviews" | "decisions" | "cme">("submissions");
   const [decideTarget, setDecideTarget] = useState<SubmissionRow | null>(null);
   const [decision, setDecision] = useState("ACCEPT_ORAL");
   const [rationale, setRationale] = useState("");
   const [busy, setBusy] = useState(false);
   const [reviewTarget, setReviewTarget] = useState<SubmissionRow | null>(null);
+
+  // Arama ve filtreleme state'leri
+  const [subSearch, setSubSearch] = useState("");
+  const [subFilter, setSubFilter] = useState("ALL");
+  const [reviewFilter, setReviewFilter] = useState<"ALL" | "OVERDUE" | "PENDING" | "COMPLETED">("ALL");
+
+  // CME desteği
+  const edition = editions.find((e) => e.id === currentEditionId);
+  const cmeEnabled = hasCapability(edition, "CME_CREDITS");
+  const [reportOpen, setReportOpen] = useState(false);
+  const [creditInputs, setCreditInputs] = useState<Record<string, string>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [bulkDefaults, setBulkDefaults] = useState<Record<string, string>>({});
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const { data: cme, error: cmeError, reload: reloadCme, loading: cmeLoading } = useApi<CmeData | null>(() => {
+    if (!currentEditionId || !cmeEnabled) return Promise.resolve(null);
+    return apiGet<CmeData>("/api/cme?editionId=" + currentEditionId);
+  }, [currentEditionId, refreshKey]);
+
+  // CME dış veri değişiminde girdi senkronizasyonu
+  const [creditsFor, setCreditsFor] = useState(cme);
+  if (cme && creditsFor !== cme) {
+    setCreditsFor(cme);
+    const next: Record<string, string> = {};
+    for (const s of cme.sessions) next[s.id] = s.cmeCredits != null ? String(s.cmeCredits) : "";
+    setCreditInputs(next);
+  }
+
+  // Oturumlar ve salonlar (Kabulden oturum eşleme ve oluşturma akışı)
+  const { data: sessionsPaged, reload: reloadSessions } = useApi<{ items: SessionRow[] }>(
+    () => listEntityPaged<SessionRow>("sessions", { editionId: currentEditionId ?? undefined, limit: 300 }),
+    [currentEditionId, refreshKey]
+  );
+  const sessions = useMemo(() => sessionsPaged?.items ?? [], [sessionsPaged]);
+  const { data: rooms } = useApi<{ id: string; name: string; capacity: number }[]>(
+    () => listEntity("rooms", { editionId: currentEditionId ?? undefined }),
+    [currentEditionId, refreshKey]
+  );
+
+  const sessionBySubId = useMemo(() => {
+    const map = new Map<string, SessionRow>();
+    for (const ses of sessions) {
+      if (ses.submissionId) map.set(ses.submissionId, ses);
+    }
+    return map;
+  }, [sessions]);
+
+  // Kabulden oturuma dönüştürme state'leri
+  const [createSessionSub, setCreateSessionSub] = useState<SubmissionRow | null>(null);
+  const [createSessionBusy, setCreateSessionBusy] = useState(false);
+  const [subSessionRoomId, setSubSessionRoomId] = useState("none");
+  const [subSessionStartTime, setSubSessionStartTime] = useState("");
+  const [subSessionEndTime, setSubSessionEndTime] = useState("");
+  const [subSessionType, setSubSessionType] = useState("TALK");
 
   // ── R10-b: bildiri ayrıntılı giriş/düzenleme ──
   const [subOpen, setSubOpen] = useState(false);
@@ -154,6 +209,18 @@ export function ScientificView() {
 
   const byStatus = (s: string) => subs.filter((x) => x.status === s).length;
   const overdue = subs.flatMap((s) => s.reviewAssignments).filter((r) => r.status === "OVERDUE").length;
+
+  // moduleSubView senkronizasyonu
+  useEffect(() => {
+    if (!moduleSubView) return;
+    const timer = setTimeout(() => {
+      if (moduleSubView === "reviews") setTab("reviews");
+      else if (moduleSubView === "decisions") setTab("decisions");
+      else if (moduleSubView === "cme") setTab("cme");
+      else if (moduleSubView === "submissions") setTab("submissions");
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [moduleSubView]);
 
   const submitDecision = async () => {
     if (!decideTarget) return;
@@ -215,6 +282,149 @@ export function ScientificView() {
     } finally { setSubBusy(false); }
   };
 
+  // Kabulden oturuma dönüştürme eylemleri
+  const openCreateSessionForSub = (s: SubmissionRow) => {
+    setCreateSessionSub(s);
+    setSubSessionRoomId(rooms && rooms.length > 0 ? rooms[0].id : "none");
+    setSubSessionType(s.type === "POSTER" || s.type === "E_POSTER" ? "POSTER_SESSION" : s.type === "PANEL" ? "PANEL" : "TALK");
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 10, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 10, 45);
+    setSubSessionStartTime(toLocalInput(start.toISOString()));
+    setSubSessionEndTime(toLocalInput(end.toISOString()));
+  };
+
+  const saveSessionForSub = async () => {
+    if (!createSessionSub || !currentEditionId) return;
+    setCreateSessionBusy(true);
+    try {
+      const start = new Date(subSessionStartTime);
+      const end = new Date(subSessionEndTime);
+      await apiSend("/api/sessions", "POST", {
+        editionId: currentEditionId,
+        title: createSessionSub.title,
+        description: createSessionSub.abstract || null,
+        type: subSessionType,
+        roomId: subSessionRoomId === "none" ? null : subSessionRoomId,
+        submissionId: createSessionSub.id,
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        status: "DRAFT",
+        isVisible: true,
+      });
+      toast({
+        title: t("scientific.sessionCreatedSuccess"),
+        description: createSessionSub.title,
+      });
+      setCreateSessionSub(null);
+      reloadSessions();
+      bump();
+    } catch (e) {
+      toast({
+        title: t("scientific.sessionSaveFailed"),
+        description: e instanceof Error ? e.message : t("common.error"),
+        variant: "destructive",
+      });
+    } finally {
+      setCreateSessionBusy(false);
+    }
+  };
+
+  // CME Kredi Kaydetme & Toplu Atama
+  const saveCredits = async (s: CmeSession) => {
+    const raw = (creditInputs[s.id] ?? "").trim();
+    if (raw === "") return;
+    const credits = Number(raw);
+    if (Number.isNaN(credits) || credits < 0 || credits > 99) {
+      toast({ title: t("cme.invalidCredits"), description: t("cme.invalidCreditsDesc"), variant: "destructive" });
+      return;
+    }
+    setSavingId(s.id);
+    try {
+      await apiSend("/api/cme", "POST", { action: "set-credits", sessionId: s.id, credits });
+      toast({ title: t("cme.creditsAssigned", { credits, title: s.title }) });
+      reloadCme(); bump();
+    } catch (e) {
+      toast({ title: t("cme.creditsAssignFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally { setSavingId(null); }
+  };
+
+  const applyBulk = async () => {
+    if (!currentEditionId) return;
+    const defaults: Record<string, number> = {};
+    for (const st of CME_SESSION_TYPES) {
+      const raw = (bulkDefaults[st] ?? "").trim();
+      if (raw === "") continue;
+      const n = Number(raw);
+      if (!Number.isNaN(n) && n >= 0 && n <= 99) defaults[st] = n;
+    }
+    if (Object.keys(defaults).length === 0) return;
+    setBulkBusy(true);
+    try {
+      const res = await apiSend<{ updated: number }>("/api/cme", "POST", { action: "bulk-default-by-type", editionId: currentEditionId, defaults });
+      toast({ title: t("cme.bulkApplied", { count: res.updated }) });
+      reloadCme(); bump();
+    } catch (e) {
+      toast({ title: t("cme.bulkFailed"), description: e instanceof Error ? e.message : t("common.error"), variant: "destructive" });
+    } finally { setBulkBusy(false); }
+  };
+
+  const bulkFilled = CME_SESSION_TYPES.some((st) => (bulkDefaults[st] ?? "").trim() !== "");
+
+  // Filtrelenmiş bildiriler
+  const filteredSubs = useMemo(() => {
+    return subs.filter((s) => {
+      if (subFilter !== "ALL" && s.status !== subFilter) return false;
+      if (subSearch.trim()) {
+        const query = subSearch.toLowerCase();
+        const matches = s.title.toLowerCase().includes(query) ||
+          s.code.toLowerCase().includes(query) ||
+          (s.presentingAuthorName ?? "").toLowerCase().includes(query) ||
+          s.authorships.some((a) => a.name.toLowerCase().includes(query));
+        if (!matches) return false;
+      }
+      return true;
+    });
+  }, [subs, subFilter, subSearch]);
+
+  // Hakem süreçleri özeti
+  const allReviews = useMemo(() => {
+    return subs.flatMap((s) =>
+      s.reviewAssignments.map((ra) => ({
+        submission: s,
+        assignment: ra,
+        reviewer: ra.reviewer,
+        reviews: ra.reviews,
+        status: ra.status,
+        dueDate: ra.dueDate,
+      }))
+    );
+  }, [subs]);
+
+  const filteredReviews = useMemo(() => {
+    return allReviews.filter((r) => {
+      if (reviewFilter === "ALL") return true;
+      return r.status === reviewFilter;
+    });
+  }, [allReviews, reviewFilter]);
+
+  // Kararlar özeti
+  const subsAwaitingDecision = useMemo(() => {
+    return subs.filter((s) => ["SUBMITTED", "UNDER_REVIEW", "REVISION_REQUIRED"].includes(s.status));
+  }, [subs]);
+  const acceptedSubs = useMemo(() => {
+    return subs.filter((s) => s.status === "ACCEPTED" || s.decisions.some((d) => d.decision.startsWith("ACCEPT")));
+  }, [subs]);
+  const unslottedAccepted = useMemo(() => {
+    return acceptedSubs.filter((s) => !sessionBySubId.has(s.id));
+  }, [acceptedSubs, sessionBySubId]);
+  const slottedAccepted = useMemo(() => {
+    return acceptedSubs.filter((s) => sessionBySubId.has(s.id));
+  }, [acceptedSubs, sessionBySubId]);
+  const otherDecisions = useMemo(() => {
+    return subs.filter((s) => ["REJECTED", "WITHDRAWN", "WAITLIST"].includes(s.status));
+  }, [subs]);
+
   return (
     <div className="space-y-5">
       <PageHeader title={t("scientific.title")} desc={t("scientific.desc")}>
@@ -223,135 +433,499 @@ export function ScientificView() {
         </Button>
       </PageHeader>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <KpiCard label={t("scientific.kpiSubmitted")} value={subs.filter((s) => s.status !== "DRAFT").length} sub={t("scientific.kpiSubmittedSub")} icon={<Icons.FileText className="size-4" />} />
-        <KpiCard label={t("scientific.kpiInReview")} value={byStatus("UNDER_REVIEW")} sub={t("scientific.kpiInReviewSub", { n: overdue })} tone="amber" icon={<Icons.Hourglass className="size-4" />} />
-        <KpiCard label={t("scientific.kpiAccepted")} value={byStatus("ACCEPTED")} sub={t("scientific.kpiAcceptedSub")} tone="emerald" icon={<Icons.CircleCheck className="size-4" />} />
-        <KpiCard label={t("scientific.kpiRevision")} value={byStatus("REVISION_REQUIRED")} sub={t("scientific.kpiRevisionSub")} tone="amber" />
-        <KpiCard label={t("scientific.kpiRejected")} value={byStatus("REJECTED") + byStatus("WITHDRAWN")} tone="rose" />
-      </div>
+      <Tabs value={tab} onValueChange={(v: any) => setTab(v)}>
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="submissions">{t("scientific.tabSubmissions")}</TabsTrigger>
+          <TabsTrigger value="reviews" className="gap-1.5">
+            <Icons.Scale className="size-4" /> {t("scientific.tabReviews")}
+            {overdue > 0 && <span className="ml-1 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">{overdue}</span>}
+          </TabsTrigger>
+          <TabsTrigger value="decisions" className="gap-1.5">
+            <Icons.Gavel className="size-4" /> {t("scientific.tabDecisions")}
+            {subsAwaitingDecision.length > 0 && (
+              <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
+                {subsAwaitingDecision.length}
+              </span>
+            )}
+          </TabsTrigger>
+          {cmeEnabled && (
+            <TabsTrigger value="cme" className="gap-1.5">
+              <Icons.GraduationCap className="size-4" /> {t("scientific.tabCme")}
+            </TabsTrigger>
+          )}
+        </TabsList>
 
-      {tracks && tracks.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {tracks.map((trk) => <Chip key={trk.id} tone="teal">{t("scientific.trackChip", { name: trk.name, n: subs.filter((s) => s.track?.name === trk.name).length })}</Chip>)}
-        </div>
-      )}
+        {/* ── 1. BİLDİRİLER VE GÖNDERİLER ── */}
+        <TabsContent value="submissions" className="mt-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <KpiCard label={t("scientific.kpiSubmitted")} value={subs.filter((s) => s.status !== "DRAFT").length} sub={t("scientific.kpiSubmittedSub")} icon={<Icons.FileText className="size-4" />} />
+            <KpiCard label={t("scientific.kpiInReview")} value={byStatus("UNDER_REVIEW")} sub={t("scientific.kpiInReviewSub", { n: overdue })} tone="amber" icon={<Icons.Hourglass className="size-4" />} />
+            <KpiCard label={t("scientific.kpiAccepted")} value={byStatus("ACCEPTED")} sub={t("scientific.kpiAcceptedSub")} tone="emerald" icon={<Icons.CircleCheck className="size-4" />} />
+            <KpiCard label={t("scientific.kpiRevision")} value={byStatus("REVISION_REQUIRED")} sub={t("scientific.kpiRevisionSub")} tone="amber" />
+            <KpiCard label={t("scientific.kpiRejected")} value={byStatus("REJECTED") + byStatus("WITHDRAWN")} tone="rose" />
+          </div>
 
-      {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : subs.length === 0 ? (
-        <EmptyState title={t("scientific.emptyTitle")} desc={t("scientific.emptyDesc")} />
-      ) : (
-        <div className="space-y-2">
-          {subs.map((s) => (
-            <details key={s.id} className="rounded-xl border bg-card">
-              <summary
-                className="flex cursor-pointer flex-wrap items-center gap-2 p-3.5 text-sm"
-                onDoubleClick={() => openSubEdit(s)}
-                title={t("scientific.doubleClickEdit")}
-              >
-                <span className="font-mono text-xs text-muted-foreground">{s.code}</span>
-                <span className="min-w-0 flex-1 truncate font-medium">{s.title}</span>
-                <Chip tone={s.type === "POSTER" ? "violet" : "teal"}>{s.type}</Chip>
-                {s.track && <span className="hidden text-xs text-muted-foreground md:inline">{s.track.name}</span>}
-                <StatusBadge map={subStatusMap} value={s.status} />
-                {s.fileStatus && <Chip tone={s.fileStatus === "APPROVED" ? "emerald" : "amber"}>{t("scientific.fileChip", { status: s.fileStatus })}</Chip>}
-              </summary>
-              {/* R10-b: hızlı durum değişimi — yalnız status alanına PUT */}
-              <div className="flex flex-wrap items-center gap-1.5 border-t px-4 py-2.5">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("scientific.quickStatus")}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-48 flex-1 sm:max-w-xs">
+              <Icons.Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+              <Input
+                value={subSearch}
+                onChange={(e) => setSubSearch(e.target.value)}
+                placeholder={t("scientific.titlePlaceholder")}
+                className="pl-8 text-xs"
+              />
+            </div>
+            <Select value={subFilter} onValueChange={setSubFilter}>
+              <SelectTrigger className="h-9 w-40 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">{t("social.all")}</SelectItem>
                 {Object.entries(subStatusMap).map(([k, v]) => (
-                  <button
-                    key={k} type="button" disabled={statusBusyId === s.id}
-                    onClick={() => void changeStatus(s, k)}
-                    aria-label={t("scientific.quickStatusAria", { code: s.code, status: v })}
-                    className={cn(
-                      "rounded-full border px-2 py-0.5 text-[11px] transition",
-                      s.status === k ? "border-primary bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:border-primary/40 hover:text-foreground",
-                      statusBusyId === s.id && "opacity-50",
-                    )}
-                  >
-                    {v}
-                  </button>
+                  <SelectItem key={k} value={k}>{v}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {tracks && tracks.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {tracks.map((trk) => (
+                  <Chip key={trk.id} tone="teal">
+                    {t("scientific.trackChip", { name: trk.name, n: subs.filter((s) => s.track?.name === trk.name).length })}
+                  </Chip>
                 ))}
               </div>
-              <div className="grid gap-4 border-t p-4 lg:grid-cols-3">
-                <div className="min-w-0 lg:col-span-2 space-y-3">
-                  <div>
-                    <p className="mb-1 text-xs font-semibold text-muted-foreground">{t("scientific.authorsLabel")}</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {s.authorships.map((a) => (
-                        <Chip key={a.id} tone={a.isPresenting ? "emerald" : "neutral"}>
-                          {a.position}. {a.name}{a.organizationName ? ` — ${a.organizationName}` : ""}{a.isPresenting ? " ★" : ""}
-                        </Chip>
+            )}
+          </div>
+
+          {loading ? <Loading /> : error ? <ErrorState message={error} onRetry={reload} /> : filteredSubs.length === 0 ? (
+            <EmptyState title={t("scientific.emptyTitle")} desc={t("scientific.emptyDesc")} />
+          ) : (
+            <div className="space-y-2">
+              {filteredSubs.map((s) => {
+                const isAccepted = s.status === "ACCEPTED" || s.decisions.some((d) => d.decision.startsWith("ACCEPT"));
+                const slottedSession = sessionBySubId.get(s.id);
+                return (
+                  <details key={s.id} className="rounded-xl border bg-card">
+                    <summary
+                      className="flex cursor-pointer flex-wrap items-center gap-2 p-3.5 text-sm"
+                      onDoubleClick={() => openSubEdit(s)}
+                      title={t("scientific.doubleClickEdit")}
+                    >
+                      <span className="font-mono text-xs text-muted-foreground">{s.code}</span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{s.title}</span>
+                      <Chip tone={s.type === "POSTER" ? "violet" : "teal"}>{s.type}</Chip>
+                      {s.track && <span className="hidden text-xs text-muted-foreground md:inline">{s.track.name}</span>}
+                      <StatusBadge map={subStatusMap} value={s.status} />
+                      {isAccepted && (
+                        slottedSession ? (
+                          <Chip tone="emerald">{t("scientific.slottedInSession", { title: slottedSession.title })}</Chip>
+                        ) : (
+                          <Chip tone="amber">{t("scientific.awaitingSlot")}</Chip>
+                        )
+                      )}
+                      {s.fileStatus && <Chip tone={s.fileStatus === "APPROVED" ? "emerald" : "amber"}>{t("scientific.fileChip", { status: s.fileStatus })}</Chip>}
+                    </summary>
+
+                    {/* Hızlı durum değişimi */}
+                    <div className="flex flex-wrap items-center gap-1.5 border-t px-4 py-2.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("scientific.quickStatus")}</span>
+                      {Object.entries(subStatusMap).map(([k, v]) => (
+                        <button
+                          key={k} type="button" disabled={statusBusyId === s.id}
+                          onClick={() => void changeStatus(s, k)}
+                          aria-label={t("scientific.quickStatusAria", { code: s.code, status: v })}
+                          className={cn(
+                            "rounded-full border px-2 py-0.5 text-[11px] transition",
+                            s.status === k ? "border-primary bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                            statusBusyId === s.id && "opacity-50",
+                          )}
+                        >
+                          {v}
+                        </button>
                       ))}
                     </div>
-                  </div>
-                  {s.abstract && <p className="text-xs leading-relaxed text-muted-foreground">{s.abstract}</p>}
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                    {s.presentingAuthorName && <span>{t("scientific.presenting")} <span className="font-medium text-foreground">{s.presentingAuthorName}</span></span>}
-                    {s.keywords && <span className="min-w-0">{t("scientific.keywordsPrefix")} <span className="break-words">{s.keywords}</span></span>}
-                    {s.posterNo && <span>{t("scientific.posterNo", { no: s.posterNo })}</span>}
-                    {s.submittedAt && <span>{t("scientific.submittedAt", { date: fmtDateTime(s.submittedAt) })}</span>}
-                    {s.fileUrl && (
-                      <a href={s.fileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-teal-600 transition hover:text-teal-800" aria-label={t("scientific.openFileAria")}>
-                        <Icons.FileDown className="size-3" /> {t("scientific.fileLink")}
-                      </a>
-                    )}
-                  </div>
-                  <div>
-                    <p className="mb-1 text-xs font-semibold text-muted-foreground">{t("scientific.reviewAssignments")}</p>
-                    {s.reviewAssignments.length === 0 ? <p className="text-xs text-muted-foreground">{t("scientific.notAssigned")}</p> : (
-                      <div className="space-y-1">
-                        {s.reviewAssignments.map((r) => (
-                          <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
-                            <span>{r.reviewer ? `${r.reviewer.firstName} ${r.reviewer.lastName}` : "—"} {r.dueDate && <span className="text-muted-foreground">{t("scientific.reviewDue", { date: fmtDate(r.dueDate) })}</span>}</span>
-                            <span className="flex items-center gap-1">
-                              <Chip tone={r.status === "COMPLETED" ? "emerald" : r.status === "OVERDUE" ? "rose" : "amber"}>{r.status}</Chip>
-                              {r.reviews[0]?.score != null && <Chip tone="teal">{t("scientific.score", { score: r.reviews[0].score })}</Chip>}
-                            </span>
+
+                    <div className="grid gap-4 border-t p-4 lg:grid-cols-3">
+                      <div className="min-w-0 lg:col-span-2 space-y-3">
+                        <div>
+                          <p className="mb-1 text-xs font-semibold text-muted-foreground">{t("scientific.authorsLabel")}</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {s.authorships.map((a) => (
+                              <Chip key={a.id} tone={a.isPresenting ? "emerald" : "neutral"}>
+                                {a.position}. {a.name}{a.organizationName ? ` — ${a.organizationName}` : ""}{a.isPresenting ? " ★" : ""}
+                              </Chip>
+                            ))}
+                          </div>
+                        </div>
+                        {s.abstract && <p className="text-xs leading-relaxed text-muted-foreground">{s.abstract}</p>}
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                          {s.presentingAuthorName && <span>{t("scientific.presenting")} <span className="font-medium text-foreground">{s.presentingAuthorName}</span></span>}
+                          {s.keywords && <span className="min-w-0">{t("scientific.keywordsPrefix")} <span className="break-words">{s.keywords}</span></span>}
+                          {s.posterNo && <span>{t("scientific.posterNo", { no: s.posterNo })}</span>}
+                          {s.submittedAt && <span>{t("scientific.submittedAt", { date: fmtDateTime(s.submittedAt) })}</span>}
+                          {s.fileUrl && (
+                            <a href={s.fileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-teal-600 transition hover:text-teal-800" aria-label={t("scientific.openFileAria")}>
+                              <Icons.FileDown className="size-3" /> {t("scientific.fileLink")}
+                            </a>
+                          )}
+                        </div>
+                        <div>
+                          <p className="mb-1 text-xs font-semibold text-muted-foreground">{t("scientific.reviewAssignments")}</p>
+                          {s.reviewAssignments.length === 0 ? <p className="text-xs text-muted-foreground">{t("scientific.notAssigned")}</p> : (
+                            <div className="space-y-1">
+                              {s.reviewAssignments.map((r) => (
+                                <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
+                                  <span>{r.reviewer ? `${r.reviewer.firstName} ${r.reviewer.lastName}` : "—"} {r.dueDate && <span className="text-muted-foreground">{t("scientific.reviewDue", { date: fmtDate(r.dueDate) })}</span>}</span>
+                                  <span className="flex items-center gap-1">
+                                    <Chip tone={r.status === "COMPLETED" ? "emerald" : r.status === "OVERDUE" ? "rose" : "amber"}>{r.status}</Chip>
+                                    {r.reviews[0]?.score != null && <Chip tone="teal">{t("scientific.score", { score: r.reviews[0].score })}</Chip>}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-muted-foreground">{t("scientific.decisionHistory")}</p>
+                        {s.decisions.length === 0 ? <p className="text-xs text-muted-foreground">{t("scientific.awaitingDecision")}</p> : s.decisions.map((d) => (
+                          <div key={d.id} className="rounded-lg border p-2.5 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold">{d.decision}</span>
+                              <span className="text-muted-foreground">{t("scientific.decisionVersion", { version: d.version, date: fmtDate(d.decidedAt) })}</span>
+                            </div>
+                            {d.rationale && <p className="mt-1 text-muted-foreground">{d.rationale}</p>}
                           </div>
                         ))}
+
+                        {/* Kabulden programa oturum bağlama aksiyonu */}
+                        {isAccepted && (
+                          <div className="rounded-lg border bg-muted/30 p-2.5 space-y-1.5">
+                            {slottedSession ? (
+                              <div className="space-y-1">
+                                <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                  {t("scientific.slottedInSession", { title: slottedSession.title })}
+                                </p>
+                                <Button size="sm" variant="outline" className="w-full text-xs" onClick={() => setModule("program")}>
+                                  <Icons.Calendar className="size-3.5 mr-1" /> {t("scientific.btnViewInProgram")}
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="space-y-1">
+                                <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                                  {t("scientific.awaitingSlot")}
+                                </p>
+                                <Button size="sm" className="w-full text-xs" onClick={() => openCreateSessionForSub(s)}>
+                                  <Icons.CalendarPlus className="size-3.5 mr-1" /> {t("scientific.btnCreateSession")}
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <Button size="sm" variant="outline" className="w-full" onClick={() => openSubEdit(s)} aria-label={t("scientific.editSubmissionAria", { title: s.title })}>
+                          <Icons.Pencil className="size-4" /> {t("scientific.editSubmission")}
+                        </Button>
+                        <Button size="sm" variant="outline" className="w-full gap-1.5" onClick={() => setReviewTarget(s)}>
+                          <Icons.Scale className="size-4 text-primary" /> {t("scientific.btnEvaluate")}
+                        </Button>
+                        {["SUBMITTED", "UNDER_REVIEW", "REVISION_REQUIRED"].includes(s.status) && (
+                          <Button size="sm" className="w-full" onClick={() => setDecideTarget(s)}>
+                            <Icons.Gavel className="size-4" /> {t("scientific.makeDecision")}
+                          </Button>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold text-muted-foreground">{t("scientific.decisionHistory")}</p>
-                  {s.decisions.length === 0 ? <p className="text-xs text-muted-foreground">{t("scientific.awaitingDecision")}</p> : s.decisions.map((d) => (
-                    <div key={d.id} className="rounded-lg border p-2.5 text-xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-semibold">{d.decision}</span>
-                        <span className="text-muted-foreground">{t("scientific.decisionVersion", { version: d.version, date: fmtDate(d.decidedAt) })}</span>
-                      </div>
-                      {d.rationale && <p className="mt-1 text-muted-foreground">{d.rationale}</p>}
                     </div>
-                  ))}
-                  <Button size="sm" variant="outline" className="w-full" onClick={() => openSubEdit(s)} aria-label={t("scientific.editSubmissionAria", { title: s.title })}>
-                    <Icons.Pencil className="size-4" /> {t("scientific.editSubmission")}
+                  </details>
+                );
+              })}
+
+              {subMore?.hasMore && (
+                <div className="flex items-center justify-center pt-1">
+                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={subMore.loading} onClick={subMore.next}>
+                    {subMore.loading ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ChevronsDown className="size-3.5" />}
+                    {t("scientific.loadMore")}
                   </Button>
-                  <Button size="sm" variant="outline" className="w-full gap-1.5" onClick={() => setReviewTarget(s)}>
-                    <Icons.Scale className="size-4 text-primary" /> Hakem Değerlendirmesi & Rubrik
-                  </Button>
-                  {["SUBMITTED", "UNDER_REVIEW", "REVISION_REQUIRED"].includes(s.status) && (
-                    <Button size="sm" className="w-full" onClick={() => setDecideTarget(s)}>
-                      <Icons.Gavel className="size-4" /> {t("scientific.makeDecision")}
-                    </Button>
-                  )}
                 </div>
-              </div>
-            </details>
-          ))}
-          {/* TASK-A F6: kesintisiz yükleme */}
-          {subMore?.hasMore && (
-            <div className="flex items-center justify-center pt-1">
-              <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={subMore.loading} onClick={subMore.next}>
-                {subMore.loading ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.ChevronsDown className="size-3.5" />}
-                {t("scientific.loadMore")}
-              </Button>
+              )}
             </div>
           )}
-        </div>
-      )}
+        </TabsContent>
 
+        {/* ── 2. HAKEM DEĞERLENDİRMESİ ── */}
+        <TabsContent value="reviews" className="mt-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <KpiCard label={t("scientific.reviewAssignments")} value={allReviews.length} icon={<Icons.Scale className="size-4" />} />
+            <KpiCard label={t("scientific.COMPLETED")} value={allReviews.filter((r) => r.status === "COMPLETED").length} tone="emerald" icon={<Icons.CheckCircle2 className="size-4" />} />
+            <KpiCard label={t("scientific.PENDING")} value={allReviews.filter((r) => r.status === "PENDING" || r.status === "ASSIGNED").length} tone="amber" icon={<Icons.Clock className="size-4" />} />
+            <KpiCard label={t("scientific.OVERDUE")} value={overdue} tone="rose" icon={<Icons.AlertTriangle className="size-4" />} />
+          </div>
+
+          <div className="flex gap-1 rounded-lg border p-1 w-fit">
+            {(["ALL", "OVERDUE", "PENDING", "COMPLETED"] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setReviewFilter(mode)}
+                className={cn(
+                  "rounded px-2.5 py-1 text-xs font-medium transition",
+                  reviewFilter === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                )}
+              >
+                {mode === "ALL" ? t("social.all") : mode === "OVERDUE" ? t("scientific.OVERDUE") : mode === "PENDING" ? t("scientific.PENDING") : t("scientific.COMPLETED")}
+              </button>
+            ))}
+          </div>
+
+          {filteredReviews.length === 0 ? (
+            <EmptyState title={t("scientific.noReviewsFound")} desc={t("scientific.emptyDesc")} />
+          ) : (
+            <div className="rounded-xl border bg-card overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="border-b bg-muted/40 text-muted-foreground">
+                  <tr>
+                    <th className="p-3 text-left font-medium">{t("scientific.thSubmission")}</th>
+                    <th className="p-3 text-left font-medium">{t("scientific.thReviewer")}</th>
+                    <th className="p-3 text-left font-medium">{t("scientific.thStatus")}</th>
+                    <th className="p-3 text-left font-medium">{t("scientific.thScore")}</th>
+                    <th className="p-3 text-left font-medium">{t("scientific.thDueDate")}</th>
+                    <th className="p-3 text-right font-medium">{t("common.action")}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {filteredReviews.map((r, i) => (
+                    <tr key={`${r.assignment.id}-${i}`} className="hover:bg-muted/20">
+                      <td className="p-3">
+                        <span className="font-mono text-muted-foreground mr-1.5">{r.submission.code}</span>
+                        <span className="font-semibold">{r.submission.title}</span>
+                      </td>
+                      <td className="p-3">
+                        {r.reviewer ? `${r.reviewer.firstName} ${r.reviewer.lastName}` : "—"}
+                      </td>
+                      <td className="p-3">
+                        <Chip tone={r.status === "COMPLETED" ? "emerald" : r.status === "OVERDUE" ? "rose" : "amber"}>
+                          {r.status}
+                        </Chip>
+                      </td>
+                      <td className="p-3 font-semibold">
+                        {r.reviews[0]?.score != null ? `${r.reviews[0].score}/5` : "—"}
+                      </td>
+                      <td className="p-3 text-muted-foreground">
+                        {r.dueDate ? fmtDate(r.dueDate) : "—"}
+                      </td>
+                      <td className="p-3 text-right">
+                        <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setReviewTarget(r.submission)}>
+                          <Icons.Scale className="size-3 text-primary" /> {t("scientific.btnEvaluate")}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ── 3. KARAR MERKEZİ ── */}
+        <TabsContent value="decisions" className="mt-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <KpiCard label={t("scientific.kpiAwaitingDecision")} value={subsAwaitingDecision.length} tone="amber" icon={<Icons.Gavel className="size-4" />} />
+            <KpiCard label={t("scientific.kpiAccepted")} value={acceptedSubs.length} tone="emerald" icon={<Icons.CheckCircle2 className="size-4" />} />
+            <KpiCard label={t("scientific.kpiUnslotted")} value={unslottedAccepted.length} tone="amber" icon={<Icons.CalendarClock className="size-4" />} />
+            <KpiCard label={t("scientific.kpiSlotted")} value={slottedAccepted.length} tone="teal" icon={<Icons.CalendarCheck className="size-4" />} />
+            <KpiCard label={t("scientific.kpiRejected")} value={otherDecisions.length} tone="rose" icon={<Icons.XCircle className="size-4" />} />
+          </div>
+
+          <SectionCard title={t("scientific.decisionsSummary")} desc={t("scientific.desc")}>
+            <div className="space-y-3">
+              {subsAwaitingDecision.length === 0 ? (
+                <p className="p-3 text-xs text-muted-foreground">{t("scientific.awaitingDecision")}: 0</p>
+              ) : (
+                <div className="divide-y rounded-lg border">
+                  {subsAwaitingDecision.map((s) => (
+                    <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 p-3 text-xs">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-muted-foreground">{s.code}</span>
+                          <span className="font-semibold truncate">{s.title}</span>
+                          <Chip tone={s.type === "POSTER" ? "violet" : "teal"}>{s.type}</Chip>
+                        </div>
+                        <p className="mt-0.5 text-muted-foreground">
+                          {s.presentingAuthorName ? `${t("scientific.presenting")} ${s.presentingAuthorName}` : "—"}
+                        </p>
+                      </div>
+                      <Button size="sm" onClick={() => setDecideTarget(s)} className="gap-1.5">
+                        <Icons.Gavel className="size-3.5" /> {t("scientific.makeDecision")}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </SectionCard>
+        </TabsContent>
+
+        {/* ── 4. CME KREDİ DEFTERİ ── */}
+        {cmeEnabled && (
+          <TabsContent value="cme" className="mt-4 space-y-4">
+            {cmeLoading ? <Loading rows={5} /> : cmeError ? <ErrorState message={cmeError} onRetry={reloadCme} /> : !cme ? (
+              <EmptyState title={t("cme.noDataTitle")} desc={t("cme.noDataDesc")} />
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <KpiCard label={t("cme.kpiSessionsWithCredits")} value={cme.summary.sessionsWithCredits} sub={t("cme.kpiSessionsSub", { n: cme.summary.sessionsTotal })} icon={<Icons.GraduationCap className="size-4" />} />
+                  <KpiCard label={t("cme.kpiPotential")} value={cme.summary.creditsPotential} sub={t("cme.kpiPotentialSub")} tone="violet" icon={<Icons.Sigma className="size-4" />} />
+                  <KpiCard label={t("cme.kpiAttendees")} value={cme.summary.attendees} sub={t("cme.kpiAttendeesSub")} tone="emerald" icon={<Icons.UserCheck className="size-4" />} />
+                  <KpiCard label={t("cme.kpiIssued")} value={cme.summary.creditsIssued} sub={t("cme.kpiIssuedSub", { avg: cme.summary.avgCredits })} tone="amber" icon={<Icons.Award className="size-4" />} />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 gap-y-2 rounded-xl border bg-card px-4 py-3 shadow-sm sm:gap-3">
+                  <span className="text-xs font-medium text-muted-foreground">{t("cme.coverage")}</span>
+                  <div className="h-1.5 min-w-24 flex-1 overflow-hidden rounded bg-muted">
+                    <div className="h-full w-full origin-left rounded bg-teal-500 transition-transform duration-300 ease-out" style={{ transform: `scaleX(${Math.min(100, Math.max(0, cme.summary.coveragePercent)) / 100})` }} />
+                  </div>
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">{t("cme.coveragePercent", { p: cme.summary.coveragePercent })}</span>
+                  <Button size="sm" variant="outline" className="ml-auto h-8 shrink-0" onClick={() => setReportOpen(true)} disabled={!currentEditionId}>
+                    <Icons.FileBadge className="size-3.5" /> {t("cme.officialReport")}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-8 shrink-0" onClick={() => window.open(`/api/cme/report?editionId=${encodeURIComponent(currentEditionId ?? "")}&format=csv`, "_blank")}>
+                    <Icons.Download className="size-3.5" /> {t("cme.csv")}
+                  </Button>
+                </div>
+
+                <SectionCard title={t("cme.sessionCredits")} desc={t("cme.sessionCreditsDesc")}>
+                  <div className="maven-scroll max-h-96 overflow-auto">
+                    <table className="w-full min-w-[560px] text-sm">
+                      <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
+                        <tr className="border-b">
+                          <th className="px-3 py-2 text-xs font-medium">{t("cme.thSession")}</th>
+                          <th className="px-3 py-2 text-xs font-medium">{t("cme.thTime")}</th>
+                          <th className="px-3 py-2 text-xs font-medium">{t("cme.thAttendance")}</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium">{t("cme.thCredits")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cme.sessions.map((s) => (
+                          <tr key={s.id} className="border-b last:border-0 hover:bg-muted/30">
+                            <td className="px-3 py-2.5">
+                              <p className="max-w-64 truncate font-semibold">{s.title}</p>
+                              <div className="mt-1"><Chip tone={cmeTypeTone(s.type)}>{s.type}</Chip></div>
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-muted-foreground">{cmeTime(s.startTime)}</td>
+                            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{t("cme.personCount", { n: s.attendanceCount })}</td>
+                            <td className="px-3 py-2.5">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Input
+                                  type="number" inputMode="decimal" min={0} max={99} step={0.5}
+                                  value={creditInputs[s.id] ?? ""}
+                                  onChange={(e) => setCreditInputs({ ...creditInputs, [s.id]: e.target.value })}
+                                  placeholder={s.cmeCredits != null ? String(s.cmeCredits) : "0"}
+                                  className="h-8 w-20 text-right tabular-nums text-xs"
+                                />
+                                <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs" onClick={() => saveCredits(s)} disabled={savingId === s.id}>
+                                  {savingId === s.id ? <Icons.Loader2 className="size-3.5 animate-spin" /> : t("cme.saveBtn")}
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-4 border-t pt-3">
+                    <p className="mb-2 text-xs font-semibold text-muted-foreground">{t("cme.bulkDefaults")}</p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                      {CME_SESSION_TYPES.map((st) => (
+                        <div key={st} className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">{st}</Label>
+                          <Input
+                            type="number" inputMode="decimal" min={0} max={99} step={0.5}
+                            value={bulkDefaults[st] ?? ""}
+                            onChange={(e) => setBulkDefaults({ ...bulkDefaults, [st]: e.target.value })}
+                            placeholder="0" className="h-8 text-right tabular-nums text-xs"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2.5 flex justify-end">
+                      <Button size="sm" variant="secondary" onClick={applyBulk} disabled={!bulkFilled || bulkBusy} className="gap-1.5 text-xs">
+                        {bulkBusy ? <Icons.Loader2 className="size-3.5 animate-spin" /> : <Icons.Sparkles className="size-3.5" />}
+                        {t("cme.applyBulkBtn")}
+                      </Button>
+                    </div>
+                  </div>
+                </SectionCard>
+              </>
+            )}
+          </TabsContent>
+        )}
+      </Tabs>
+
+      {/* ── Kabul Edilen Bildiriden Oturum Oluşturma Diyaloğu ── */}
+      <Dialog open={Boolean(createSessionSub)} onOpenChange={(o) => !o && setCreateSessionSub(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("scientific.createSessionForSubTitle")}</DialogTitle>
+            <DialogDescription>
+              {createSessionSub && t("scientific.createSessionForSubDesc", { code: createSessionSub.code })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-xs">
+            <div>
+              <Label>{t("scientific.titleLabel")}</Label>
+              <Input value={createSessionSub?.title ?? ""} disabled className="mt-1" />
+            </div>
+            <div>
+              <Label>{t("scientific.typeLabel")}</Label>
+              <Select value={subSessionType} onValueChange={setSubSessionType}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="TALK">{t("scientific.TALK")}</SelectItem>
+                  <SelectItem value="KEYNOTE">{t("scientific.KEYNOTE")}</SelectItem>
+                  <SelectItem value="POSTER_SESSION">{t("scientific.POSTER_SESSION")}</SelectItem>
+                  <SelectItem value="PANEL">{t("scientific.PANEL")}</SelectItem>
+                  <SelectItem value="WORKSHOP">{t("scientific.WORKSHOP")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>{t("scientific.sessionRoom")}</Label>
+              <Select value={subSessionRoomId} onValueChange={setSubSessionRoomId}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t("scientific.none")}</SelectItem>
+                  {(rooms ?? []).map((r) => (
+                    <SelectItem key={r.id} value={r.id}>{r.name} ({r.capacity} pax)</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label>{t("scientific.sessionStartTime")}</Label>
+                <Input type="datetime-local" value={subSessionStartTime} onChange={(e) => setSubSessionStartTime(e.target.value)} className="mt-1" />
+              </div>
+              <div>
+                <Label>{t("scientific.sessionEndTime")}</Label>
+                <Input type="datetime-local" value={subSessionEndTime} onChange={(e) => setSubSessionEndTime(e.target.value)} className="mt-1" />
+              </div>
+            </div>
+            {createSessionSub?.presentingAuthorName && (
+              <div className="rounded-lg border bg-muted/40 p-2.5">
+                <span className="font-semibold text-muted-foreground">{t("scientific.presenting")}</span>{" "}
+                <span className="font-medium text-foreground">{createSessionSub.presentingAuthorName}</span>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateSessionSub(null)}>{t("common.cancel")}</Button>
+            <Button onClick={saveSessionForSub} disabled={createSessionBusy || !subSessionStartTime || !subSessionEndTime}>
+              {createSessionBusy ? t("common.saving") : t("scientific.btnCreateSession")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Komite Kararı Diyaloğu ── */}
       <Dialog open={Boolean(decideTarget)} onOpenChange={(o) => !o && setDecideTarget(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -492,6 +1066,11 @@ export function ScientificView() {
           }}
         />
       )}
+
+      {/* Resmi CME Raporu Modalı */}
+      {reportOpen && currentEditionId && (
+        <CmeReportOverlay editionId={currentEditionId} onClose={() => setReportOpen(false)} />
+      )}
     </div>
   );
 }
@@ -504,11 +1083,25 @@ export function ProgramView() {
   const sessionStatusMap = Object.fromEntries(Object.entries(SESSION_STATUS).map(([k]) => [k, tLabel(SESSION_STATUS, k)]));
   const materialTypeMap = Object.fromEntries(Object.entries(MATERIAL_TYPE).map(([k]) => [k, tLabel(MATERIAL_TYPE, k)]));
   const matStatusMap = Object.fromEntries(Object.entries(MATERIAL_STATUS_LABEL).map(([k]) => [k, tLabel(MATERIAL_STATUS_LABEL, k)]));
-  const { currentEditionId, tenant, bump, refreshKey, editions } = useApp();
+  const { currentEditionId, tenant, bump, refreshKey, editions, moduleSubView, setModule } = useApp();
   const { toast } = useToast();
+  const [programTab, setProgramTab] = useState<"sessions" | "rooms" | "speakers" | "timetable" | "broadcast" | "cme">("sessions");
   const [dayFilter, setDayFilter] = useState("ALL");
   const [publishTarget, setPublishTarget] = useState<SessionRow | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!moduleSubView) return;
+    const timer = setTimeout(() => {
+      if (moduleSubView === "timetable") setProgramTab("timetable");
+      else if (moduleSubView === "rooms") setProgramTab("rooms");
+      else if (moduleSubView === "speakers") setProgramTab("speakers");
+      else if (moduleSubView === "broadcast") setProgramTab("broadcast");
+      else if (moduleSubView === "cme") setProgramTab("cme");
+      else if (moduleSubView === "sessions") setProgramTab("sessions");
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [moduleSubView]);
 
   // ── R9-c: içe aktarım durumu ──
   const [importOpen, setImportOpen] = useState(false);
@@ -827,6 +1420,39 @@ export function ProgramView() {
     if (p.person && !personOptions.has(p.person.id)) personOptions.set(p.person.id, `${p.person.firstName} ${p.person.lastName}`);
   }
 
+  const speakersList = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; role: string; status: string; sessions: { id: string; title: string; time: string }[] }>();
+    for (const s of sessions) {
+      for (const a of s.assignments) {
+        const name = a.person ? `${a.person.firstName} ${a.person.lastName}` : a.participation ? `${a.participation.person.firstName} ${a.participation.person.lastName}` : "—";
+        const key = `${name}-${a.role}`;
+        const existing = map.get(key) ?? { id: a.id, name, role: a.role, status: a.status, sessions: [] };
+        existing.sessions.push({
+          id: s.id,
+          title: s.title,
+          time: `${new Date(s.startTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}–${new Date(s.endTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}`,
+        });
+        map.set(key, existing);
+      }
+    }
+    return Array.from(map.values());
+  }, [sessions]);
+
+  const roomsStats = useMemo(() => {
+    return (rooms ?? []).map((r) => {
+      const roomSessions = sessions.filter((s) => s.room?.id === r.id);
+      return {
+        ...r,
+        sessionCount: roomSessions.length,
+        firstStart: roomSessions.length > 0 ? roomSessions.reduce((min, s) => s.startTime < min ? s.startTime : min, roomSessions[0].startTime) : null,
+        lastEnd: roomSessions.length > 0 ? roomSessions.reduce((max, s) => s.endTime > max ? s.endTime : max, roomSessions[0].endTime) : null,
+      };
+    });
+  }, [rooms, sessions]);
+
+  const publishedSessions = useMemo(() => sessions.filter((s) => s.status === "PUBLISHED" && s.isVisible), [sessions]);
+  const draftSessions = useMemo(() => sessions.filter((s) => s.status !== "PUBLISHED" || !s.isVisible), [sessions]);
+
   return (
     <div className="space-y-5">
       <PageHeader title={t("scientific.programTitle")} desc={t("scientific.programDesc")}>
@@ -839,11 +1465,20 @@ export function ProgramView() {
         <Button variant="ghost" size="sm" onClick={() => { reload(); reloadCme(); }} aria-label={t("scientific.refreshAria")}><Icons.RefreshCw className="size-4" /></Button>
       </PageHeader>
 
-      <Tabs defaultValue="sessions">
+      <Tabs value={programTab} onValueChange={(v: any) => setProgramTab(v)}>
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="sessions">{t("scientific.tabSessions")}</TabsTrigger>
+          <TabsTrigger value="rooms" className="gap-1.5">
+            <Icons.DoorOpen className="size-4" /> {t("scientific.tabRooms")} ({rooms?.length ?? 0})
+          </TabsTrigger>
+          <TabsTrigger value="speakers" className="gap-1.5">
+            <Icons.Users className="size-4" /> {t("scientific.tabSpeakers")} ({speakersList.length})
+          </TabsTrigger>
           <TabsTrigger value="timetable" className="gap-1.5">
             <Icons.CalendarRange className="size-4" /> Timetable Matrisi
+          </TabsTrigger>
+          <TabsTrigger value="broadcast" className="gap-1.5">
+            <Icons.Radio className="size-4" /> {t("scientific.tabBroadcast")} ({publishedSessions.length})
           </TabsTrigger>
           {cmeEnabled && <TabsTrigger value="cme"><Icons.GraduationCap className="size-4" /> {t("cme.tabCredits")}</TabsTrigger>}
         </TabsList>
@@ -962,6 +1597,189 @@ export function ProgramView() {
               if (full) openSesEdit(full);
             }}
           />
+        </TabsContent>
+
+        <TabsContent value="rooms" className="mt-4 space-y-4">
+          {roomsStats.length === 0 ? (
+            <EmptyState title={t("scientific.noRoomsFound")} desc={t("scientific.noSessionsDesc")} />
+          ) : (
+            <SectionCard title={t("scientific.tabRooms")} desc={t("scientific.roomsCount", { n: roomsStats.length })}>
+              <div className="maven-scroll max-h-[600px] overflow-auto">
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
+                    <tr className="border-b">
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thRoomName")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thRoomCapacity")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thRoomSessions")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thRoomSpan")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {roomsStats.map((r) => (
+                      <tr key={r.id} className="border-b last:border-0 hover:bg-muted/30">
+                        <td className="px-3 py-2.5 font-semibold">
+                          <div className="flex items-center gap-2">
+                            <Icons.DoorOpen className="size-4 text-muted-foreground" />
+                            <span>{r.name}</span>
+                          </div>
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">
+                          {r.capacity ? t("scientific.capacitySeats", { n: r.capacity }) : "—"}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2.5">
+                          <Chip tone={r.sessionCount > 0 ? "teal" : "neutral"}>
+                            {t("scientific.sessionsCount", { n: r.sessionCount })}
+                          </Chip>
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">
+                          {r.firstStart && r.lastEnd ? (
+                            `${new Date(r.firstStart).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })} – ${new Date(r.lastEnd).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}`
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </SectionCard>
+          )}
+        </TabsContent>
+
+        <TabsContent value="speakers" className="mt-4 space-y-4">
+          {speakersList.length === 0 ? (
+            <EmptyState title={t("scientific.noSpeakersFound")} desc={t("scientific.noSessionsDesc")} />
+          ) : (
+            <SectionCard title={t("scientific.tabSpeakers")} desc={t("scientific.thAssignedSessions")}>
+              <div className="maven-scroll max-h-[600px] overflow-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
+                    <tr className="border-b">
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thSpeaker")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thRole")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thStatus")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thAssignedSessions")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {speakersList.map((sp) => (
+                      <tr key={sp.id} className="border-b last:border-0 hover:bg-muted/30">
+                        <td className="px-3 py-2.5 font-semibold">
+                          <div className="flex items-center gap-2">
+                            <Icons.User className="size-4 text-muted-foreground" />
+                            <span>{sp.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <Chip tone="teal">{tLabel(EVENT_ROLES, sp.role)}</Chip>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <Chip tone={sp.status === "CONFIRMED" ? "emerald" : "amber"}>{sp.status}</Chip>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex flex-wrap gap-1.5">
+                            {sp.sessions.map((ses) => (
+                              <button
+                                key={ses.id}
+                                onClick={() => {
+                                  const full = sessions.find((s) => s.id === ses.id);
+                                  if (full) openSesEdit(full);
+                                }}
+                                className="group inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1 text-xs transition hover:border-primary/50"
+                              >
+                                <span className="font-semibold text-primary tabular-nums">{ses.time}</span>
+                                <span className="max-w-44 truncate text-muted-foreground group-hover:text-foreground">{ses.title}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </SectionCard>
+          )}
+        </TabsContent>
+
+        <TabsContent value="broadcast" className="mt-4 space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <SectionCard title={t("scientific.broadcastPublic")}>
+              <div className="flex items-center justify-between">
+                <span className="text-2xl font-bold text-teal-600 tabular-nums">{publishedSessions.length}</span>
+                <Icons.Radio className="size-5 text-teal-600" />
+              </div>
+            </SectionCard>
+            <SectionCard title={t("scientific.broadcastDraft")}>
+              <div className="flex items-center justify-between">
+                <span className="text-2xl font-bold text-muted-foreground tabular-nums">{draftSessions.length}</span>
+                <Icons.FileEdit className="size-5 text-muted-foreground" />
+              </div>
+            </SectionCard>
+            <SectionCard title={t("scientific.broadcastStatus")}>
+              <div className="flex items-center justify-between">
+                <Chip tone={publishedSessions.length > 0 ? "emerald" : "amber"}>
+                  {publishedSessions.length > 0 ? t("scientific.broadcastPublic") : t("scientific.broadcastDraft")}
+                </Chip>
+                <Icons.Globe className="size-5 text-muted-foreground" />
+              </div>
+            </SectionCard>
+          </div>
+
+          {publishedSessions.length === 0 ? (
+            <EmptyState title={t("scientific.noBroadcastSessions")} desc={t("scientific.publishDialogDesc")} />
+          ) : (
+            <SectionCard title={t("scientific.tabBroadcast")} desc={t("scientific.sessionsCount", { n: publishedSessions.length })}>
+              <div className="maven-scroll max-h-[600px] overflow-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead className="sticky top-0 z-10 bg-card text-left text-muted-foreground">
+                    <tr className="border-b">
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thBroadcastTime")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thBroadcastRoom")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thBroadcastSession")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thBroadcastSpeakers")}</th>
+                      <th className="px-3 py-2 text-xs font-medium">{t("scientific.thBroadcastVisibility")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {publishedSessions.map((s) => (
+                      <tr key={s.id} className="border-b last:border-0 hover:bg-muted/30">
+                        <td className="whitespace-nowrap px-3 py-2.5 font-semibold tabular-nums text-primary">
+                          {new Date(s.startTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })} – {new Date(s.endTime).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2.5">
+                          {s.room ? <Chip>{s.room.name}</Chip> : "—"}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <p className="font-semibold">{s.title}</p>
+                          <div className="mt-0.5 flex items-center gap-1.5">
+                            <Chip tone={s.type === "KEYNOTE" ? "violet" : "teal"}>{s.type}</Chip>
+                            {s.submission && <span className="text-[11px] text-muted-foreground">{s.submission.code}</span>}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex flex-wrap gap-1">
+                            {s.assignments.map((a) => {
+                              const name = a.person ? `${a.person.firstName} ${a.person.lastName}` : "—";
+                              return <Chip key={a.id} tone="neutral">{name}</Chip>;
+                            })}
+                            {s.assignments.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
+                          </div>
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <StatusBadge map={sessionStatusMap} value={s.status} />
+                            <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => openSesEdit(s)}>
+                              <Icons.Pencil className="size-3" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </SectionCard>
+          )}
         </TabsContent>
 
         {cmeEnabled && (

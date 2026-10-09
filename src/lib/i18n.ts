@@ -52,8 +52,16 @@ import dashboardTr from "@/i18n/_new/dashboard.tr.json";
 import dashboardEn from "@/i18n/_new/dashboard.en.json";
 import editionsTr from "@/i18n/_new/editions.tr.json";
 import editionsEn from "@/i18n/_new/editions.en.json";
+import portfolioTr from "@/i18n/_new/portfolio.tr.json";
+import portfolioEn from "@/i18n/_new/portfolio.en.json";
 import registrationsTr from "@/i18n/_new/registrations.tr.json";
 import registrationsEn from "@/i18n/_new/registrations.en.json";
+import communicationTr from "@/i18n/_new/communication.tr.json";
+import communicationEn from "@/i18n/_new/communication.en.json";
+import reportsTr from "@/i18n/_new/reports.tr.json";
+import reportsEn from "@/i18n/_new/reports.en.json";
+import unifiedNavTr from "@/i18n/_new/unified-nav.tr.json";
+import unifiedNavEn from "@/i18n/_new/unified-nav.en.json";
 
 type Dict = Record<string, unknown>;
 
@@ -93,6 +101,10 @@ const FRAGMENTS: { tr: Dict; en: Dict }[] = [
   { tr: mediaTr as Dict, en: mediaEn as Dict },
   { tr: dashboardTr as Dict, en: dashboardEn as Dict },
   { tr: editionsTr as Dict, en: editionsEn as Dict },
+  { tr: portfolioTr as Dict, en: portfolioEn as Dict },
+  { tr: communicationTr as Dict, en: communicationEn as Dict },
+  { tr: reportsTr as Dict, en: reportsEn as Dict },
+  { tr: unifiedNavTr as Dict, en: unifiedNavEn as Dict },
 ];
 
 function withFragments(base: Dict): Dict {

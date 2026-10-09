@@ -1,0 +1,38 @@
+{
+  "contextBridge": {
+    "ariaLabel": "İş Çapraz Modül Gezinme Köprüsü",
+    "title": "İş Omurgası",
+    "summary": "İş Özeti",
+    "setup": "Kurulum",
+    "comms": "İletişim",
+    "portals": "Dış Deneyim",
+    "reports": "Raporlar"
+  },
+  "scopes": {
+    "globalCompany": "Firma B Global",
+    "workWorkspace": "İşe Özel Alan",
+    "platformOperator": "Platform Yönetimi",
+    "externalExperience": "Dış Deneyimler"
+  },
+  "dualSidebar": {
+    "tabWork": "İş Modülleri",
+    "tabCompany": "Firma Globali",
+    "ariaContextToggle": "Gezinme bağlamı seçimi",
+    "searchPlaceholder": "Menüde ara...",
+    "clearSearch": "Temizle",
+    "noResults": "Eşleşen menü öğesi bulunamadı",
+    "viewModeHub": "Odaklı Hub",
+    "viewModeAll": "Tümünü Göster",
+    "hubCockpit": "Kokpit ve Yönetim",
+    "hubRegistration": "Katılım ve Kayıt",
+    "hubProgram": "Program ve İçerik",
+    "hubSponsor": "Sponsor ve Sergi",
+    "hubLogistics": "Saha ve Lojistik",
+    "hubComms": "İletişim ve Deneyim",
+    "hubReports": "İş Raporları",
+    "hubSettings": "İş Ayarları",
+    "badgeSetup": "Kurulum",
+    "badgeApproval": "Onay Bekleyen",
+    "badgeOnsite": "Canlı Saha"
+  }
+}

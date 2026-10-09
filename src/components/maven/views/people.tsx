@@ -888,7 +888,7 @@ export function PeopleView() {
   const { toast } = useToast();
   const [q, setQ] = useState("");
   // P16.1/P16.2: kapsam sekmesi — şirket rehberi (kiracı master) ya da bu etkinlik (ilişkili kişiler).
-  const [peopleScope, setPeopleScope] = useState<"directory" | "event">("directory");
+  const [peopleScope, setPeopleScope] = useState<"directory" | "event">(currentEditionId ? "event" : "directory");
   const [selected, setSelected] = useState<PersonRow | null>(null);
   const [detail, setDetail] = useState<Person360 | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -1412,6 +1412,25 @@ export function PeopleView() {
             <EmptyState title={t("people.emptyTitle")} desc={t("people.emptyDesc")} />
           ) : (
             <div className="space-y-3">
+              {currentEditionId && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/30 p-2.5 text-xs">
+                  <div className="flex items-center gap-2">
+                    {peopleScope === "event" ? (
+                      <Icons.CalendarCheck className="size-4 text-primary shrink-0" />
+                    ) : (
+                      <Icons.Building2 className="size-4 text-muted-foreground shrink-0" />
+                    )}
+                    <span className="text-muted-foreground">
+                      {peopleScope === "event" ? t("people.workScopeNotice") : t("people.portfolioScopeNotice")}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Chip tone={peopleScope === "event" ? "teal" : "neutral"}>
+                      {peopleScope === "event" ? t("people.workParticipationBadge") : t("people.portfolioMasterBadge")}
+                    </Chip>
+                  </div>
+                </div>
+              )}
               {viewMode === "grid" ? (
                 <div className="rounded-xl border bg-card overflow-hidden shadow-xs">
                   <div className="overflow-x-auto">
@@ -1425,7 +1444,7 @@ export function PeopleView() {
                           <th className="p-2.5">Telefon</th>
                           <th className="p-2.5">Kurum / Şirket</th>
                           <th className="p-2.5">Ünvan</th>
-                          <th className="p-2.5 w-24 text-center">360° / İşlem</th>
+                          <th className="p-2.5 w-32 text-center">360° / İşlem</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y">
@@ -1451,9 +1470,22 @@ export function PeopleView() {
                               <InlineEditableCell value={p.title} onSave={(val) => handleInlineSave(p.id, "title", val)} placeholder="Ünvan" />
                             </td>
                             <td className="p-2 text-center">
-                              <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] gap-1" onClick={() => open360(p)}>
-                                <Icons.Eye className="size-3" /> 360°
-                              </Button>
+                              <div className="flex items-center justify-center gap-1">
+                                <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] gap-1" onClick={() => open360(p)}>
+                                  <Icons.Eye className="size-3" /> 360°
+                                </Button>
+                                {currentEditionId && (
+                                  peopleScope === "directory" ? (
+                                    <Button size="sm" variant="outline" className="h-6 px-1.5 text-[10px] gap-0.5 text-teal-700" title={t("people.attachToWork")} onClick={() => toggleEventLink(p.id, true)}>
+                                      <Icons.Plus className="size-2.5" /> {t("people.attachToWork")}
+                                    </Button>
+                                  ) : (
+                                    <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px] gap-0.5 text-rose-600 hover:bg-rose-50" title={t("people.detachFromWork")} onClick={() => toggleEventLink(p.id, false)}>
+                                      <Icons.Minus className="size-2.5" /> {t("people.detachFromWork")}
+                                    </Button>
+                                  )
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}

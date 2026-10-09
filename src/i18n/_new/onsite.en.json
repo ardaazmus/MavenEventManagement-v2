@@ -37,9 +37,16 @@
     "badgeChip": "badge: {profile} {status}",
     "manualException": "Manual Exception (with reason)",
     "exceptionDesc": "Reason is required; the decision is recorded in scan history as DENIED + exception.",
-    "applyException": "Apply Exception"
+    "applyException": "Apply Exception",
+    "venueNotice": "Work Venue and Onsite Operations: Access doors and area control operate in sync with the physical venue ({venue}).",
+    "tabDesk": "Fast Scan Desk",
+    "tabKiosk": "Kiosk Terminal",
+    "tabOccupancy": "Inside Occupancy",
+    "tabCme": "Session CME Attendance",
+    "btnOpenVenue": "Open Venue Layout"
   },
   "certificates": {
+    "portalLinkNotice": "Generated and approved certificates are immediately accessible to attendees in their personal portal (/portal/attendee).",
     "defaultBody": "This document is issued to certify the participation of {{fullName}} in the {{edition}} event as {{tier}}.",
     "canvasLogoArea": "Logo area",
     "defaultBodyShort": "This document is issued to certify the participation of {{fullName}}.",

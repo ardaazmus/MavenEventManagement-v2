@@ -620,6 +620,7 @@ export const FLOW_ACTION_POLICY: Record<string, FlowActionPolicy> = {
   "sponsor.guest": { entity: "sponsor-agreements", action: "CREATE" },
   // Finansal hareketler.
   "finance.manualPayment": { entity: "payments", action: "CREATE" },
+  "finance.approvePayment": { entity: "payments", action: "APPROVE" },
   "finance.refund": { entity: "refunds", action: "CREATE" },
   // Stant tahsisi.
   "booth.allocate": { entity: "booth-allocations", action: "CREATE" },
@@ -677,6 +678,7 @@ export interface FlowScopePrisma {
   boothUnit: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
   certificateDefinition: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
   eventCapability: { findUnique(args: unknown): Promise<{ editionId: string | null } | null> };
+  payment: { findUnique(args: unknown): Promise<{ order: { editionId: string | null } | null } | null> };
   b2bAssignment: {
     findUnique(args: unknown): Promise<{ plan: { editionId: string } } | null>;
   };
@@ -725,6 +727,12 @@ export async function resolveFlowEdition(
         if (!id) return "TENANT";
         const row = await prisma.order.findUnique({ where: { id }, select: { editionId: true } });
         return row?.editionId ?? "TENANT";
+      }
+      case "finance.approvePayment": {
+        const id = flowIdOf(body, "paymentId");
+        if (!id) return "TENANT";
+        const row = await prisma.payment.findUnique({ where: { id }, select: { order: { select: { editionId: true } } } });
+        return row?.order?.editionId ?? "TENANT";
       }
       case "booth.allocate": {
         const id = flowIdOf(body, "boothUnitId");

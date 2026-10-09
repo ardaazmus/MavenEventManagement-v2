@@ -15,6 +15,7 @@ import {
 import { PageHeader, SectionCard, StatusBadge, Chip, EmptyState, Loading, ErrorState, useApi } from "@/components/maven/bits";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -1382,15 +1383,104 @@ function PortalBlocksManager({ editionId }: { editionId: string }) {
   );
 }
 
+// ─── Dış Yayın Akışı Durum Kartı (Faz 10 / AC-4) ────────────────────────────
+function PublishStatusCard({ editionName, editionSlug }: { editionName: string; editionSlug?: string | null }) {
+  const [publishing, setPublishing] = useState<Record<string, boolean>>({
+    program: true,
+    speakers: true,
+    sponsors: true,
+    forms: true,
+  });
+
+  const toggle = (key: string) => {
+    setPublishing((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  return (
+    <div className="mb-4 rounded-xl border bg-card p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+        <div>
+          <h4 className="flex items-center gap-2 text-sm font-semibold">
+            <Icons.RadioTower className="size-4 text-primary" />
+            {t("portalsView.publish.title")}
+          </h4>
+          <p className="text-xs text-muted-foreground">
+            {t("portalsView.publish.desc", { work: editionName })}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-800 text-[11px] gap-1">
+            <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+            {t("portalsView.publish.liveSync")}
+          </Badge>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => {
+              window.open(`/portal/${editionSlug || "demo"}`, "_blank");
+            }}
+          >
+            <Icons.ExternalLink className="size-3.5" />
+            {t("portalsView.publish.openLivePortal")}
+          </Button>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[
+          { key: "program", label: t("portalsView.publish.items.program"), icon: Icons.CalendarDays },
+          { key: "speakers", label: t("portalsView.publish.items.speakers"), icon: Icons.Mic },
+          { key: "sponsors", label: t("portalsView.publish.items.sponsors"), icon: Icons.Handshake },
+          { key: "forms", label: t("portalsView.publish.items.forms"), icon: Icons.FileText },
+        ].map(({ key, label: itemLabel, icon: Icon }) => {
+          const isPub = publishing[key] ?? true;
+          return (
+            <div key={key} className="flex items-center justify-between rounded-lg border bg-muted/20 p-2.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <Icon className="size-4 shrink-0 text-muted-foreground" />
+                <span className="truncate text-xs font-medium">{itemLabel}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={cn(
+                  "text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded",
+                  isPub ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                )}>
+                  {isPub ? t("portalsView.publish.statusPublished") : t("portalsView.publish.statusDraft")}
+                </span>
+                <Switch
+                  checked={isPub}
+                  onCheckedChange={() => toggle(key)}
+                  aria-label={`${itemLabel} ${t("portalsView.publish.statusToggleAria")}`}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ═══ MODÜL KÖKÜ ══════════════════════════════════════════════════════════════
 export function PortalsView() {
-  const { currentEditionId, editions } = useApp();
+  const { currentEditionId, editions, moduleSubView, setModule } = useApp();
   const edition = editions.find((e) => e.id === currentEditionId);
-  const [tab, setTab] = useState("participant");
+  const [tab, setTab] = useState("pwa");
   // CRON-6: kaydedilmemiş portal-ayarları koruması — sekme değişimini onayla
   const [portalDirty, setPortalDirty] = useState(false);
   const [pendingTab, setPendingTab] = useState<string | null>(null);
   const { t } = useLang();
+
+  // moduleSubView senkronizasyonu (React 19 uyumlu setTimeout)
+  useEffect(() => {
+    if (moduleSubView && ["pwa", "attendee", "participant", "b2b", "sponsor", "client", "ayarlar", "vitrin"].includes(moduleSubView)) {
+      const target = moduleSubView === "participant" ? "attendee" : moduleSubView;
+      const timer = setTimeout(() => {
+        setTab(target);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [moduleSubView]);
 
   const handleTabChange = (v: string) => {
     if (tab === "ayarlar" && v !== "ayarlar" && portalDirty) {
@@ -1398,10 +1488,14 @@ export function PortalsView() {
       return;
     }
     setTab(v);
+    setModule("portals", v);
   };
 
   const confirmLeave = () => {
-    if (pendingTab) setTab(pendingTab);
+    if (pendingTab) {
+      setTab(pendingTab);
+      setModule("portals", pendingTab);
+    }
     setPendingTab(null);
     setPortalDirty(false); // taslak sekme değişimiyle düşecek — rozet temizlensin
   };
@@ -1424,47 +1518,246 @@ export function PortalsView() {
     return () => { alive = false; };
   }, [currentEditionId]);
 
+  const activeTabKey = tab === "participant" ? "attendee" : tab;
+
   return (
     <div>
       <PageHeader
         title={t("portalsView.page.title")}
         desc={t("portalsView.page.desc")}
       >
-        <Tabs value={tab} onValueChange={handleTabChange}>
-          <TabsList aria-label={t("portalsView.page.title")}>
-            <TabsTrigger value="participant" className="gap-1.5"><Icons.UserRound className="size-3.5" /> {t("portalsView.tabs.participant")}</TabsTrigger>
+        <Tabs value={activeTabKey} onValueChange={handleTabChange}>
+          <TabsList aria-label={t("portalsView.page.title")} className="flex flex-wrap h-auto gap-1">
+            <TabsTrigger value="pwa" className="gap-1.5"><Icons.Smartphone className="size-3.5" /> {t("portalsView.tabs.pwa")}</TabsTrigger>
+            <TabsTrigger value="attendee" className="gap-1.5"><Icons.UserRound className="size-3.5" /> {t("portalsView.tabs.attendee")}</TabsTrigger>
+            <TabsTrigger value="b2b" className="gap-1.5"><Icons.Network className="size-3.5" /> {t("portalsView.tabs.b2b")}</TabsTrigger>
             <TabsTrigger value="sponsor" className="gap-1.5"><Icons.Handshake className="size-3.5" /> {t("portalsView.tabs.sponsor")}</TabsTrigger>
-            <TabsTrigger value="vitrin" className="gap-1.5"><Icons.Store className="size-3.5" /> {t("portalsView.tabs.vitrin")}</TabsTrigger>
+            <TabsTrigger value="client" className="gap-1.5"><Icons.Building2 className="size-3.5" /> {t("portalsView.tabs.client")}</TabsTrigger>
             <TabsTrigger value="ayarlar" className="gap-1.5">
               <Icons.SlidersHorizontal className="size-3.5" /> {t("portalsView.tabs.ayarlar")}
               {portalDirty && <span className="size-1.5 rounded-full bg-amber-500" aria-label={t("portalSettings.unsaved")} />}
             </TabsTrigger>
+            <TabsTrigger value="vitrin" className="gap-1.5"><Icons.Store className="size-3.5" /> {t("portalsView.tabs.vitrin")}</TabsTrigger>
           </TabsList>
         </Tabs>
       </PageHeader>
+
+      {/* Firma Vitrini ve Dış Deneyim İzolasyon Bildirimi */}
+      {tab !== "vitrin" && (
+        <>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3.5 text-xs text-indigo-950 shadow-sm">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-indigo-600 text-white shadow-sm">
+                <Icons.Layers className="size-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="font-semibold text-indigo-900">
+                  {t("portalsView.isolation.title", { work: edition?.name ?? t("common.activeWork") })}
+                </p>
+                <p className="text-[11px] text-indigo-800/90 leading-tight">
+                  {t("portalsView.isolation.desc", { work: edition?.name ?? t("common.activeWork") })}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5 border-indigo-300 bg-white text-xs font-medium text-indigo-900 shadow-sm hover:bg-indigo-100/60"
+                onClick={() => handleTabChange("vitrin")}
+              >
+                <Icons.Store className="size-3.5 text-indigo-700" />
+                {t("portalsView.isolation.btnVitrin")}
+              </Button>
+            </div>
+          </div>
+
+          {/* Dış Yayın Akışı Kontrol Kartı */}
+          {edition && (
+            <PublishStatusCard editionName={edition.name} editionSlug={edition.slug} />
+          )}
+        </>
+      )}
 
       {tab === "vitrin" ? (
         <FirmaVitrin />
       ) : tab === "ayarlar" ? (
         !edition ? (
-          <EmptyState title="Edisyon seçin" desc="Portal ayarları için bir edisyon gerekli." />
+          <EmptyState title={t("portalsView.noEditionTitle")} desc={t("portalsView.noEditionDesc")} />
         ) : (
           <PortalSettingsTab editionId={edition.id} portalSlug={edition.slug} onDirtyChange={setPortalDirty} />
         )
       ) : !edition ? (
-        <EmptyState title="Edisyon seçin" desc="Portal önizlemesi için bir edisyon gerekli." />
-      ) : (
+        <EmptyState title={t("portalsView.noEditionTitle")} desc={t("portalsView.noEditionDesc")} />
+      ) : tab === "pwa" ? (
+        <div className="space-y-4">
+          <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-teal-100 text-teal-700">
+                  <Icons.Smartphone className="size-5" />
+                </span>
+                <div>
+                  <h4 className="text-sm font-semibold">{t("portalsView.pwa.title")}</h4>
+                  <p className="text-xs text-muted-foreground">{t("portalsView.pwa.desc")}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Chip tone="teal">{t("portalsView.pwa.badgeInstall")}</Chip>
+                <Chip tone="amber">{t("portalsView.pwa.badgeOffline")}</Chip>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 gap-1.5 text-xs"
+                  onClick={() => window.open(`/portal/app/${edition.slug || "demo"}`, "_blank")}
+                >
+                  <Icons.ExternalLink className="size-3.5" />
+                  {t("portalsView.pwa.openApp")}
+                </Button>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3 text-xs">
+              <div className="flex items-center gap-2">
+                <Icons.QrCode className="size-4 text-primary shrink-0" />
+                <span className="text-muted-foreground">{t("portalsView.pwa.qrHint")}</span>
+              </div>
+              <span className="font-mono text-[11px] text-muted-foreground">
+                https://portal.maven.events/app/{edition.slug || "demo"}
+              </span>
+            </div>
+          </div>
+          <PortalHeaderDesigner editionId={edition.id} editionName={edition.name} draft={headerDraft} setDraft={setHeaderDraft} />
+          <PortalBlocksManager editionId={edition.id} />
+          <ParticipantPortal editionId={edition.id} headerDesign={headerDraft} />
+        </div>
+      ) : tab === "attendee" || tab === "participant" ? (
         <div className="space-y-4">
           <PortalHeaderDesigner editionId={edition.id} editionName={edition.name} draft={headerDraft} setDraft={setHeaderDraft} />
-          {/* TASK-B 25: düzenleyici kontrollü portal blokları — her iki portal yüzeyi için */}
           <PortalBlocksManager editionId={edition.id} />
-          {tab === "participant" ? (
-            <ParticipantPortal editionId={edition.id} headerDesign={headerDraft} />
-          ) : (
-            <SponsorPortal editionId={edition.id} headerDesign={headerDraft} />
-          )}
+          <ParticipantPortal editionId={edition.id} headerDesign={headerDraft} />
         </div>
-      )}
+      ) : tab === "b2b" ? (
+        <div className="space-y-4">
+          <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-indigo-100 text-indigo-700">
+                  <Icons.Network className="size-5" />
+                </span>
+                <div>
+                  <h4 className="text-sm font-semibold">{t("portalsView.b2b.title")}</h4>
+                  <p className="text-xs text-muted-foreground">{t("portalsView.b2b.desc")}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 gap-1.5 text-xs"
+                  onClick={() => setModule("b2b")}
+                >
+                  <Icons.FolderKanban className="size-3.5" />
+                  {t("portalsView.b2b.btnOpenModule")}
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
+                  onClick={() => window.open(`/portal/b2b/${edition.slug || "demo"}`, "_blank")}
+                >
+                  <Icons.ExternalLink className="size-3.5" />
+                  {t("portalsView.b2b.previewPortal")}
+                </Button>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border bg-muted/10 p-3">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                  <Icons.CalendarCheck className="size-4 text-indigo-600" />
+                  {t("portalsView.b2b.activeMatches")}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("portalsView.b2b.matchesHint")}
+                </p>
+              </div>
+              <div className="rounded-lg border bg-muted/10 p-3">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                  <Icons.LayoutGrid className="size-4 text-indigo-600" />
+                  {t("portalsView.b2b.tablePlan")}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("portalsView.b2b.tablePlanHint")}
+                </p>
+              </div>
+            </div>
+          </div>
+          <PortalHeaderDesigner editionId={edition.id} editionName={edition.name} draft={headerDraft} setDraft={setHeaderDraft} />
+          <PortalBlocksManager editionId={edition.id} />
+        </div>
+      ) : tab === "sponsor" ? (
+        <div className="space-y-4">
+          <PortalHeaderDesigner editionId={edition.id} editionName={edition.name} draft={headerDraft} setDraft={setHeaderDraft} />
+          <PortalBlocksManager editionId={edition.id} />
+          <SponsorPortal editionId={edition.id} headerDesign={headerDraft} />
+        </div>
+      ) : tab === "client" ? (
+        <div className="space-y-4">
+          <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-700">
+                  <Icons.Building2 className="size-5" />
+                </span>
+                <div>
+                  <h4 className="text-sm font-semibold">{t("portalsView.client.title")}</h4>
+                  <p className="text-xs text-muted-foreground">{t("portalsView.client.desc")}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 gap-1.5 text-xs"
+                  onClick={() => setModule("organizations")}
+                >
+                  <Icons.Building className="size-3.5" />
+                  {t("portalsView.client.btnOpenOrgs")}
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                  onClick={() => window.open(`/portal/client/${edition.slug || "demo"}`, "_blank")}
+                >
+                  <Icons.ExternalLink className="size-3.5" />
+                  {t("portalsView.client.previewPortal")}
+                </Button>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border bg-muted/10 p-3">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                  <Icons.Users className="size-4 text-emerald-600" />
+                  {t("portalsView.client.quotaSummary")}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("portalsView.client.quotaHint")}
+                </p>
+              </div>
+              <div className="rounded-lg border bg-muted/10 p-3">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                  <Icons.Receipt className="size-4 text-emerald-600" />
+                  {t("portalsView.client.financeSummary")}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("portalsView.client.financeHint")}
+                </p>
+              </div>
+            </div>
+          </div>
+          <PortalHeaderDesigner editionId={edition.id} editionName={edition.name} draft={headerDraft} setDraft={setHeaderDraft} />
+          <PortalBlocksManager editionId={edition.id} />
+        </div>
+      ) : null}
 
       {/* ── CRON-6: kaydedilmemiş değişiklik koruması — sekme ayrılış onayı ── */}
       <Dialog open={pendingTab !== null} onOpenChange={(o) => !o && setPendingTab(null)}>

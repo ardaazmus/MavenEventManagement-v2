@@ -38,6 +38,7 @@ test.describe.serial("P3 — UI doğrulamaları", () => {
 
   test("P3.11 — Etkinlik sihirbazı: boş başlama tarihi adım ilerletmez + hata görünür; end<start engellenir", async ({ page }) => {
     await page.goto("/");
+    await page.waitForLoadState("networkidle");
     await page.getByRole("button", { name: /Etkinlikler|Events/i }).first().click();
     await page.getByRole("button", { name: /Yeni Etkinlik/i }).first().click();
     // Adım 1 → 2
@@ -76,11 +77,27 @@ test.describe.serial("P3 — UI doğrulamaları", () => {
   });
 
   test("P3.13 — İletişim satırı liter interpolasyon yer tutucusu İÇERMEZ", async ({ request }) => {
-    // gerçek kampanya satırı verisiyle: segmentLine + segmentCustom render'ı
-    const edition = await db.eventEdition.findFirst({ select: { id: true } });
+    let edition = await db.eventEdition.findFirst({ select: { id: true } });
+    if (!edition) {
+      let tenant = await db.tenant.findFirst();
+      if (!tenant) {
+        tenant = await db.tenant.create({ data: { name: "Test Tenant", slug: "test-tenant" } });
+      }
+      edition = await db.eventEdition.create({
+        data: {
+          tenantId: tenant.id,
+          name: "Test Edition",
+          slug: `test-edition-${Date.now()}`,
+          status: "PLANNING",
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 86400000),
+        },
+        select: { id: true },
+      });
+    }
     const camp = await db.campaign.create({
       data: {
-        editionId: edition!.id,
+        editionId: edition.id,
         name: "E2E interpolasyon kampanyası",
         segmentRule: "tüm kişiler",
         phase: "PRE_EVENT",

@@ -112,7 +112,16 @@
     "feedbackSavedDesc": "Organizatör görüşü panoda görebilir.",
     "feedbackSaveFailed": "Görüş kaydedilemedi",
     "selectEditionTitle": "Edisyon seçin",
-    "selectEditionDesc": "B2B planları edisyona bağlıdır."
+    "selectEditionDesc": "B2B planları edisyona bağlıdır.",
+    "tabRequests": "Talepler & Eşleşmeler",
+    "tabMutual": "Karşılıklı Kabul & Onay",
+    "tabTimetable": "Görüşme Çizelgesi & Takvim",
+    "journeyNotice": "B2B Kullanıcı Yolculuğu: Eşleşme talebi → Karşılıklı kabul (taraflar ve organizatör) → Görüşme masa/lokasyon çizelgesi tek akışta ilerler.",
+    "thMeeting": "Görüşme Konusu",
+    "thParticipants": "Katılımcılar",
+    "thTimeSlot": "Zaman Dilimi",
+    "thLocation": "Masa / Lokasyon",
+    "thMutualStatus": "Karşılıklı Durum"
   },
   "common": {
     "error": "Hata"

@@ -77,7 +77,8 @@
     "pushedDesc": "{count} stant geometrisi paylaşıldı",
     "pulledTitle": "Plan çekildi",
     "pulledDesc": "{booths} stant, {decor} dekor objesi — anlık görünüm tazelendi.",
-    "pullFailed": "Plan çekilemedi"
+    "pullFailed": "Plan çekilemedi",
+    "sponsorLinkNotice": "Sponsor Hakları ve Mekân Entegrasyonu: Bu salondaki stant alanları, seçili işin sponsorluk sözleşmeleri ve hak havuzuyla doğrudan ilişkilidir. Tahsis ve sözleşme Maven'da, salon planı geometrisi Floor Studio'da yönetilir."
   },
   "common": {
     "error": "Hata"

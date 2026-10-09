@@ -75,6 +75,16 @@
   .backbtn svg{width:12px;height:12px}
   .panel-body{overflow-y:auto;padding:4px 10px 14px}
   .grp{margin:12px 8px 4px;font-size:10px;font-weight:800;letter-spacing:.09em;color:var(--faint);text-transform:uppercase}
+  /* açılır-kapanır grup başlıkları (iş modülleri) */
+  .ghead{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:12px;
+         font-size:13px;font-weight:700;color:#26272b;text-align:left;margin-top:4px}
+  .ghead:hover{background:var(--soft2)}
+  .ghead>svg{width:16px;height:16px;flex:none;color:var(--faint)}
+  .ghead .chev{margin-left:auto;width:14px;height:14px;color:var(--faint);transition:transform .18s ease}
+  .ghead.open .chev{transform:rotate(180deg)}
+  .ghead.open{background:var(--soft)}
+  .gitems{margin:2px 0 6px 17px;padding-left:8px;border-left:2px solid var(--line);
+          display:flex;flex-direction:column;gap:2px;overflow:hidden}
   .item{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border-radius:12px;color:#3f4045;
         font-size:13px;font-weight:500;text-align:left}
   .item svg{width:16px;height:16px;flex:none;color:var(--faint)}
@@ -229,47 +239,48 @@ const I = {
   consent:'<path d="M9 12l2 2 4-4"/><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>',
   integr:'<path d="M9 2v6M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0Z"/><path d="M12 18v4"/>',
   compl:'<circle cx="12" cy="12" r="10"/><path d="M12 8v4l2.5 2.5"/>',
+  chev:'<path d="m6 9 6 6 6-6"/>',
 };
 const svg = n => `<svg viewBox="0 0 24 24">${I[n]||I.info}</svg>`;
 
 /* TEK NAVİGASYON KAYNAĞI — her yaprak module+subView taşır (if/else zinciri yok) */
 const WORK_NAV = [
-  { g:"Yönetim", items:[
+  { id:"yon", g:"Yönetim", gi:"dash", items:[
     ["summary","İş Özeti","dash","dashboard"],
     ["setup","Kurulum Listesi","checklist","editions:setup-checklist"],
     ["tasks","Görevler & Onaylar","tasks","operations"],
     ["workinfo","İş Bilgileri","info","editions"],
   ]},
-  { g:"Katılım", items:[
+  { id:"kat", g:"Katılım", gi:"users", items:[
     ["parts","Katılımcılar","users","registrations:list",1284],
     ["cats","Kategoriler & Haklar","tags","registrations:categories"],
     ["appr","Onay Merkezi","approve","registrations:approval",12],
     ["forms","Formlar","forms","forms"],
     ["io","İçe / Dışa Aktarım","swap","registrations:import"],
   ]},
-  { g:"Program", items:[
+  { id:"prog", g:"Program", gi:"calendar", items:[
     ["prog","Program","calendar","program"],
     ["sci","Bilimsel","science","scientific"],
     ["soc","Sosyal & Tur","social","social"],
   ]},
-  { g:"Sponsor & Fuar", items:[
+  { id:"spon", g:"Sponsor & Fuar", gi:"hand", items:[
     ["spons","Sponsorlar","hand","sponsorship:sponsors"],
     ["pack","Paketler & Anlaşmalar","box","sponsorship:packages"],
     ["floor","Floor Studio","map","floors"],
     ["b2b","B2B","b2b","b2b"],
   ]},
-  { g:"Saha & Konaklama", items:[
+  { id:"saha", g:"Saha & Konaklama", gi:"scan", items:[
     ["onsite","Saha Operasyonu","scan","onsite"],
     ["badge","Yaka Kartı","printer","badges"],
     ["cert","Belgeler","award","certificates"],
     ["accom","Konaklama","bed","accommodation"],
   ]},
-  { g:"İletişim & Deneyim", items:[
+  { id:"den", g:"İletişim & Deneyim", gi:"radio", items:[
     ["wcomms","İş İletişimi","radio","communications"],
     ["pwa","Dış Deneyimler (PWA)","globe","portals"],
     ["media","Medya","media","media"],
   ]},
-  { g:"Rapor & Ayar", items:[
+  { id:"rap", g:"Rapor & Ayar", gi:"ledger", items:[
     ["ledger","Defter & Raporlar","ledger","accounting:defter"],
     ["wset","İş Ayarları","sliders","settings"],
   ]},
@@ -316,7 +327,11 @@ const COMPANY_NAV = {
 };
 const RAIL = [["jobs","İşler"],["portfolio","Portföy"],["comms","İletişim"],["reports","Raporlar"],["settings","Ayarlar"]];
 
-const state = { ctx:"work", area:"jobs", leaf:"summary", work:true };
+const state = { ctx:"work", area:"jobs", leaf:"summary", work:true, open:{ yon:true } };
+const groupOf = leafId => WORK_NAV.find(g=>g.items.some(i=>i[0]===leafId));
+const ensureOpen = leafId => { const g=groupOf(leafId); if(g) state.open[g.id]=true; };
+const itemsHtml = its => its.map(it=>`<button class="item ${state.leaf===it[0]?"on":""}" data-leaf="${it[0]}">
+  ${svg(it[2])}<span>${it[1]}</span>${it[4]?`<span class="cnt">${it[4]}</span>`:""}</button>`).join("");
 const rail = document.getElementById("rail");
 const panel = document.getElementById("panel");
 const content = document.getElementById("content");
@@ -328,7 +343,7 @@ function renderRail(){
     `<div class="spacer"></div><button class="railbtn" title="Çıkış">${svg("back")}</button>`;
   rail.querySelectorAll("[data-rail]").forEach(b=>b.onclick=()=>{
     const v=b.dataset.rail;
-    if(v==="work"){ state.ctx="work"; state.leaf = state.leaf||"summary"; }
+    if(v==="work"){ state.ctx="work"; if(!groupOf(state.leaf)) state.leaf="summary"; ensureOpen(state.leaf); }
     else { state.ctx="company"; state.area=v; state.leaf=COMPANY_NAV[v].items[0][0]; }
     render();
   });
@@ -346,15 +361,24 @@ function renderPanel(){
     head = `<div class="ctx">Firma Geneli</div><h2>${a.t}</h2>`;
     groups = [{ g:a.t, items:a.items }];
   }
+  const isWork = state.ctx==="work";
   panel.innerHTML = `<div class="panel-head">${head}</div>
-    <div class="panel-body">${groups.map(g=>`
-      <div class="grp">${g.g}</div>
-      ${g.items.map(it=>`<button class="item ${state.leaf===it[0]?"on":""}" data-leaf="${it[0]}">
-        ${svg(it[2])}<span>${it[1]}</span>${it[4]?`<span class="cnt">${it[4]}</span>`:""}</button>`).join("")}
+    <div class="panel-body">${groups.map(g=> isWork ? `
+      <button class="ghead ${state.open[g.id]?"open":""}" data-grp="${g.id}" aria-expanded="${!!state.open[g.id]}">
+        ${svg(g.gi)}<span>${g.g}</span>${svg("chev").replace("<svg ",'<svg class="chev" ')}
+      </button>
+      ${state.open[g.id]?`<div class="gitems">${itemsHtml(g.items)}</div>`:""}
+    ` : `
+      <div class="grp">${g.g}</div>${itemsHtml(g.items)}
     `).join("")}</div>`;
   const bk = panel.querySelector("[data-back]");
   if(bk) bk.onclick = ()=>{ state.ctx="company"; state.area="jobs"; state.leaf="all"; render(); };
-  panel.querySelectorAll("[data-leaf]").forEach(b=>b.onclick=()=>{ state.leaf=b.dataset.leaf; render(); });
+  panel.querySelectorAll("[data-grp]").forEach(b=>b.onclick=()=>{
+    const id=b.dataset.grp; state.open[id]=!state.open[id]; render();
+  });
+  panel.querySelectorAll("[data-leaf]").forEach(b=>b.onclick=()=>{
+    state.leaf=b.dataset.leaf; ensureOpen(state.leaf); render();
+  });
 }
 
 function findLeaf(){
@@ -432,7 +456,7 @@ function renderContent(){
         <b>Bu prototipin kuralları (referans görsel hizalı)</b>
         <ul>
           <li><b>Ray = bağlam:</b> dairesel ikonlar, aktif = siyah daire; menü açmaz, panelin bağlamını seçer.</li>
-          <li><b>Panel = modüller side-menüsü:</b> beyaz kart, tek seviye; aktif madde = siyah hap. Sekme/akordeon/panel-arama yok — arama yalnızca üst barda.</li>
+          <li><b>Panel = modüller side-menüsü:</b> beyaz kart; gruplar açılır-kapanır (tek alt seviye), aktif madde = siyah hap. Sekme ve panel-arama yok — arama yalnızca üst barda.</li>
           <li><b>Renk disiplini:</b> zeminler nötr gri/beyaz; siyah yalnızca aktif + birincil eylem; amber yalnızca vurgu/sayaç; yeşil-kırmızı yalnızca durum.</li>
           <li><b>Veri güdümlü:</b> her yaprak <code>module + subView</code> taşır; eşleme if/else zinciri gerektirmez (üstteki çip canlı gösterir).</li>
         </ul>
@@ -455,7 +479,7 @@ function render(){ renderRail(); renderPanel(); renderContent(); }
 document.getElementById("workSelect").onchange = e=>{
   state.work = e.target.value==="work";
   state.ctx = state.work ? "work" : "company";
-  if(!state.work){ state.area="jobs"; state.leaf="all"; } else state.leaf="summary";
+  if(!state.work){ state.area="jobs"; state.leaf="all"; } else { state.leaf="summary"; ensureOpen("summary"); }
   render();
 };
 render();

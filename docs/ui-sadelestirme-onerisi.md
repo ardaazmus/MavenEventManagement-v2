@@ -54,7 +54,7 @@ Sadeleştirmenin kuralı: **her karar tek yerde, her eylem tek yüzeyde.**
 | ⚙️ Ayarlar | Firma → Firma Ayarları |
 | (alt) Yardım + Avatar | |
 
-Ray **menü açmaz**, yalnızca ikinci panelin hangi bağlamı göstereceğini seçer. Aktif ikon = dolu teal zemin + sol çizgi.
+Ray **menü açmaz**, yalnızca ikinci panelin hangi bağlamı göstereceğini seçer. Aktif ikon = **siyah dolu daire** (referans görseldeki dil); pasif ikonlar açık gri daire üzerinde koyu gri.
 
 ### 2.2 İkinci panel (240px) — MODÜLLER side-menüsü
 - **Firma bağlamında:** seçili alanın düz listesi (ekran görüntüsündeki gibi): başlık + en çok 6–9 madde, akordeonsuz.
@@ -80,15 +80,17 @@ RAPOR & AYAR   Defter & Raporlar · İş Ayarları
 `Kiracı adı  ›  [İş Seçici ▾]  …  ⌘K  🔔  Tema  Avatar`
 Edisyon meta şeridi (tarih/mekân satırı) kaldırılır; bu bilgi İş Özeti sayfasının başlığına iner.
 
-### 2.4 Renk sistemi — 3 ton + 1 vurgu
-| Token | Açık | Koyu | Kural |
-|---|---|---|---|
-| `--sidebar` | `oklch(0.16 0.02 200)` koyu petrol | `oklch(0.16 0.02 200)` | **iki temada AYNI** (koyu panel = marka yüzeyi) |
-| `--sidebar-primary` (vurgu) | `oklch(0.72 0.12 182)` teal | **aynı teal** | Tema başına hue değişmez |
-| içerik zemini | beyaz/gri | `oklch(0.19 0 0)` | Nötr; renkli yüzey yalnızca durum için (başarı=yeşil, uyarı=amber, hata=kırmızı) |
-| aktif madde | `sidebar-primary/12` zemin + 2px sol çubuk | aynı | Tek aktif stili; `bg-primary` dolu zemin yalnızca ray ikonunda |
+### 2.4 Renk sistemi — referans görselin dili (soft-ui, açık tema)
+| Token | Değer | Kural |
+|---|---|---|
+| sayfa zemini | `#e7e8ea` (dış) / `#f6f6f7` (kabuk) | Kabuk 28px, kartlar 20px köşe; border yerine 1px yumuşak gölge |
+| kartlar | `#ffffff` | Düz, çerçevesiz; gölge `0 2px 10px rgba(0,0,0,.05)` |
+| metin | `#101114` / ikincil `#84858b` | Güçlü tipografik hiyerarşi (27px başlık, 13px alt açıklama) |
+| **siyah** | `#101114` | YALNIZCA: aktif ray dairesi, aktif menü maddesi (hap), birincil eylem pili ("+ Yeni İş") |
+| **amber** | `#f6c453` (zemin `#fdeec9`) | YALNIZCA vurgu: sayaç rozetleri, grafik etiketi, tek ilerleme çubuğu |
+| yeşil / kırmızı | `#34a368` / `#e5484d` | YALNIZCA durum noktaları (↗ %12,5, onay kuyruğu çizgileri) |
 
-Kaldırılacaklar: yarı saydam katman üstüne katman (`/20 /30 /50`), gölge-2xs gibi mikro gölgeler, madde içi rozet renk çeşitliliği (rozet tek tip: nötr outline).
+Kaldırılacaklar: koyu petrol sidebar, yarı saydam katman üstüne katman (`/20 /30 /50`), tema başına değişen marka hue'su (mevcut `.dark` `--sidebar-primary` moru), mikro gölgeler ve çok renkli rozetler. Koyu tema gerekirse aynı hue'ların koyu zemin karşılıklarıyla tanımlanır — vurgu rengi temaya göre ASLA hue değiştirmez.
 
 ---
 
@@ -105,7 +107,7 @@ Kaldırılacaklar: yarı saydam katman üstüne katman (`/20 /30 /50`), gölge-2
 2. **Eşleme if/else'leri silinir:** aktif madde = `leaf.module === module && leaf.subView === moduleSubView` karşılaştırması; tıklama = `setModule(leaf.module, leaf.subView ?? null)`. `handleWorkItemClick` vb. 5 fonksiyon (~350 satır) yok olur.
 3. **Lokal state asgari:** yalnızca `open` (mobil) ve ray seçimi; `module`/`moduleSubView` store'u tek doğruluk kaynağı kalır.
 4. **Türetilen yüzeyler aynı ağaçtan:** ⌘K paleti, mobil Sheet, breadcrumb. (Şu an palet `MODULES`'ten, sidebar başka sözlükten geliyor.)
-5. **Temizlik listesi:** `SidebarNav` (ölü) sil; `tailwind.config.ts` sil (v4'te etkisiz) ya da `@config` ile bağla — öneri: sil; `hsl(var(--…))` kalan 2 yeri oklch token'a çevir; `.dark` `--sidebar-primary`'i teal'e eşitle.
+5. **Temizlik listesi:** `SidebarNav` (ölü) sil; `tailwind.config.ts` sil (v4'te etkisiz) ya da `@config` ile bağla — öneri: sil; `hsl(var(--…))` kalan 2 yeri yeni token setine çevir; temaya göre hue değiştiren `--sidebar-primary` kullanımını §2.4'teki tek soft-ui token setiyle değiştir.
 6. **Testler:** `tests-mini/module-coherence`, `24-ui-organization.spec.ts` gibi kayıpsızlık testleri tek ağaca yeniden bağlanır (27 modülün tamamının ağaçta görünür olduğu aynı garantiyle test edilir — özellik kaybı yok).
 
 ---

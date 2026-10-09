@@ -3,133 +3,185 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Maven V2 — Önerilen Menü Prototipi (Ray + Modül Paneli)</title>
+<title>Maven V2 — Önerilen Menü Prototipi v2 (referans görsel hizalı)</title>
 <style>
-  /* ── Tek renk kaynağı: 3 nötr ton + 1 marka vurgusu (teal), iki temada AYNI hue ── */
+  /* ── Referans görselin dili: açık zemin, yumuşak köşeler, siyah = tek güçlü renk,
+     amber = tek vurgu, yeşil/kırmızı = yalnızca durum ── */
   :root{
-    --accent:      #14b8a6;             /* marka teal — açık/koyu ortak */
-    --accent-ink:  #0f766e;
-    --accent-soft: rgba(20,184,166,.14);
-    --rail-bg:     #0c1514;             /* iki temada aynı koyu petrol */
-    --rail-ink:    #b6c4c2;
-    --panel-bg:    #f6f8f8;
-    --panel-ink:   #24312f;
-    --panel-mut:   #6b7a78;
-    --panel-line:  #e3e9e8;
-    --content-bg:  #ffffff;
-    --content-ink: #1c2726;
-    --content-mut: #64716f;
-    --card-line:   #e6ebea;
-    --warn:        #d97706;
-  }
-  html[data-theme="dark"]{
-    --accent:      #14b8a6;             /* hue DEĞİŞMİYOR — yalnızca zeminler koyulaşır */
-    --accent-ink:  #5eead4;
-    --accent-soft: rgba(20,184,166,.16);
-    --rail-bg:     #0c1514;
-    --rail-ink:    #9fb4b1;
-    --panel-bg:    #101a19;
-    --panel-ink:   #dbe7e5;
-    --panel-mut:   #879996;
-    --panel-line:  #1e2b29;
-    --content-bg:  #151f1e;
-    --content-ink: #e5efee;
-    --content-mut: #93a5a2;
-    --card-line:  #223130;
+    --page:#e7e8ea; --shell:#f6f6f7; --card:#ffffff;
+    --ink:#101114; --mut:#84858b; --faint:#9a9aa1;
+    --soft:#e9e9ec; --soft2:#f1f1f3; --line:#ececef;
+    --amber:#f6c453; --amber-soft:#fdeec9; --amber-ink:#7a5a12;
+    --green:#34a368; --red:#e5484d;
+    --r-shell:28px; --r-card:20px;
+    --shadow:0 2px 10px rgba(16,17,20,.05);
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font:14px/1.45 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;background:var(--content-bg);color:var(--content-ink)}
+  body{font:14px/1.45 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;background:var(--page);color:var(--ink);padding:22px}
   button{font:inherit;border:0;background:none;cursor:pointer;color:inherit}
   svg{display:block;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 
-  /* ── Üst bar: tek satır ── */
-  .topbar{height:52px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--card-line);background:var(--content-bg)}
-  .crumb{font-weight:600;font-size:13px;color:var(--content-mut);display:flex;gap:8px;align-items:center;white-space:nowrap;overflow:hidden}
-  .crumb b{color:var(--content-ink)}
-  .worksel{margin-left:auto;display:flex;align-items:center;gap:8px}
-  .worksel select{font:inherit;font-size:13px;padding:6px 10px;border:1px solid var(--card-line);border-radius:8px;background:var(--content-bg);color:var(--content-ink)}
-  .iconbtn{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;color:var(--content-mut)}
-  .iconbtn:hover{background:var(--accent-soft);color:var(--accent-ink)}
-  .avatar{width:32px;height:32px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);display:grid;place-items:center;font-size:12px;font-weight:700}
+  .shell{background:var(--shell);border-radius:var(--r-shell);box-shadow:var(--shadow);
+         height:calc(100vh - 44px);min-height:640px;display:flex;flex-direction:column;overflow:hidden}
 
-  .frame{display:flex;height:calc(100vh - 52px)}
+  /* ── Üst bar: logo · arama pili · sağ ikonlar ── */
+  .topbar{display:flex;align-items:center;gap:16px;padding:18px 26px 6px}
+  .mark{width:34px;height:34px;display:grid;place-items:center;color:var(--ink)}
+  .search{flex:1;max-width:560px;display:flex;align-items:center;gap:10px;background:var(--soft);
+          border-radius:999px;padding:11px 18px;color:var(--mut);font-size:13px}
+  .search svg{width:15px;height:15px}
+  .tright{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .cbtn{width:40px;height:40px;border-radius:50%;background:var(--soft);display:grid;place-items:center;color:#3c3d42}
+  .cbtn:hover{background:var(--soft2)}
+  .cbtn svg{width:17px;height:17px}
+  .avatar{width:40px;height:40px;border-radius:50%;background:#d8d9dd url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="15" r="7" fill="%23a7a8ad"/><path d="M6 38c2-9 8-13 14-13s12 4 14 13" fill="%23a7a8ad"/></svg>') center/cover;display:grid;place-items:center}
 
-  /* ── 1) Ray: 60px, bağlam değiştirici ── */
-  .rail{width:60px;flex:none;background:var(--rail-bg);display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:6px}
-  .rail .logo{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#06251f;font-weight:800;display:grid;place-items:center;font-size:15px;margin-bottom:6px}
-  .rail .sep{width:26px;height:1px;background:#243432;margin:4px 0}
-  .railbtn{position:relative;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;color:var(--rail-ink)}
-  .railbtn:hover{background:#172423;color:#e5efee}
-  .railbtn.on{background:var(--accent);color:#06251f}
-  .railbtn.on::before{content:"";position:absolute;left:-9px;top:11px;width:3px;height:20px;border-radius:2px;background:var(--accent)}
-  .railbtn .dot{position:absolute;top:8px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--accent);border:2px solid var(--rail-bg)}
+  /* ── Sayfa başlığı + eylem pill'leri ── */
+  .pagehead{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;padding:18px 30px 8px}
+  .pagehead h1{font-size:27px;font-weight:700;letter-spacing:-.02em}
+  .pagehead .sub{color:var(--mut);font-size:13px;margin-top:2px}
+  .actions{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .pill{display:inline-flex;align-items:center;gap:8px;background:var(--soft);border-radius:999px;
+        padding:10px 16px;font-size:13px;font-weight:600;color:#26272b}
+  .pill:hover{background:var(--soft2)}
+  .pill svg{width:15px;height:15px}
+  .pill.dark{background:var(--ink);color:#fff}
+  .pill.dark:hover{background:#000}
+  select.pill{appearance:none;-webkit-appearance:none;padding-right:30px;
+        background-image:url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="%2384858b" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>');
+        background-repeat:no-repeat;background-position:right 12px center;font-weight:600}
+
+  .frame{flex:1;display:flex;gap:18px;padding:14px 26px 24px;min-height:0}
+
+  /* ── 1) İkon rayı: dairesel butonlar, aktif = siyah daire ── */
+  .rail{width:64px;flex:none;display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:6px}
+  .railbtn{width:46px;height:46px;border-radius:50%;background:var(--soft);display:grid;place-items:center;color:#3c3d42;position:relative}
+  .railbtn:hover{background:var(--soft2)}
+  .railbtn svg{width:19px;height:19px}
+  .railbtn.on{background:var(--ink);color:#fff}
+  .railbtn .dot{position:absolute;top:2px;right:2px;width:9px;height:9px;border-radius:50%;background:var(--amber);border:2px solid var(--shell)}
   .rail .spacer{flex:1}
-  .railbtn small{position:absolute;bottom:3px;font-size:8px;letter-spacing:.04em}
 
-  /* ── 2) Modül paneli: 248px ── */
-  .panel{width:248px;flex:none;background:var(--panel-bg);border-right:1px solid var(--panel-line);display:flex;flex-direction:column}
-  .panel-head{padding:14px 14px 10px;border-bottom:1px solid var(--panel-line)}
-  .panel-head .ctx{font-size:10px;font-weight:700;letter-spacing:.09em;color:var(--accent-ink);text-transform:uppercase}
-  .panel-head h2{font-size:14px;margin-top:2px}
-  .panel-head .sub{font-size:11px;color:var(--panel-mut)}
-  .backbtn{margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--panel-mut)}
-  .backbtn:hover{color:var(--accent-ink)}
-  .panel-body{overflow-y:auto;padding:10px 8px 16px}
-  .grp{margin:10px 6px 2px;font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--panel-mut);text-transform:uppercase}
-  .item{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border-radius:8px;color:var(--panel-ink);font-size:13px;text-align:left;position:relative}
-  .item svg{width:16px;height:16px;flex:none;color:var(--panel-mut)}
-  .item:hover{background:var(--accent-soft)}
-  .item:hover svg{color:var(--accent-ink)}
-  .item.on{background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
-  .item.on svg{color:var(--accent-ink)}
-  .item.on::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:2px;background:var(--accent)}
-  .item .cnt{margin-left:auto;font-size:10px;color:var(--panel-mut);border:1px solid var(--panel-line);border-radius:999px;padding:0 6px}
+  /* ── 2) Modüller side-menüsü: beyaz kart kolon ── */
+  .panel{width:252px;flex:none;background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow);
+         display:flex;flex-direction:column;min-height:0}
+  .panel-head{padding:16px 16px 10px}
+  .panel-head .ctx{font-size:10px;font-weight:800;letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
+  .panel-head h2{font-size:15px;font-weight:700;margin-top:2px}
+  .panel-head .sub{font-size:11px;color:var(--mut)}
+  .backbtn{margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--mut);
+           background:var(--soft);border-radius:999px;padding:5px 10px}
+  .backbtn:hover{background:var(--soft2);color:var(--ink)}
+  .backbtn svg{width:12px;height:12px}
+  .panel-body{overflow-y:auto;padding:4px 10px 14px}
+  .grp{margin:12px 8px 4px;font-size:10px;font-weight:800;letter-spacing:.09em;color:var(--faint);text-transform:uppercase}
+  .item{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border-radius:12px;color:#3f4045;
+        font-size:13px;font-weight:500;text-align:left}
+  .item svg{width:16px;height:16px;flex:none;color:var(--faint)}
+  .item:hover{background:var(--soft2)}
+  .item.on{background:var(--ink);color:#fff;font-weight:600}
+  .item.on svg{color:#fff}
+  .item .cnt{margin-left:auto;font-size:10px;font-weight:700;color:var(--amber-ink);background:var(--amber-soft);
+             border-radius:999px;padding:1px 7px}
+  .item.on .cnt{background:var(--amber);color:#3d2c07}
 
-  /* ── 3) İçerik ── */
-  .content{flex:1;overflow-y:auto;padding:26px 30px}
-  .content h1{font-size:20px;display:flex;align-items:center;gap:10px}
-  .content h1::before{content:"";width:4px;height:20px;border-radius:2px;background:var(--accent)}
-  .content .desc{color:var(--content-mut);font-size:13px;margin:6px 0 18px}
-  .chiprow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
-  .chip{font-size:11px;font-weight:600;border:1px solid var(--card-line);border-radius:999px;padding:4px 10px;color:var(--content-mut)}
-  .chip.map{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft)}
-  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
-  .card{border:1px solid var(--card-line);border-radius:12px;padding:16px}
-  .card .k{font-size:11px;color:var(--content-mut);text-transform:uppercase;letter-spacing:.06em;font-weight:700}
-  .card .v{font-size:22px;font-weight:700;margin-top:6px}
-  .card .d{font-size:12px;color:var(--content-mut);margin-top:4px}
-  .rules{margin-top:26px;border:1px dashed var(--card-line);border-radius:12px;padding:16px;color:var(--content-mut);font-size:12.5px}
-  .rules b{color:var(--content-ink)}
+  /* ── 3) İçerik: beyaz kart ızgarası ── */
+  .content{flex:1;overflow-y:auto;min-width:0;display:flex;flex-direction:column;gap:16px}
+  .mapchip{align-self:flex-start;font-size:11px;font-weight:700;color:var(--mut);background:var(--card);
+           border-radius:999px;padding:6px 12px;box-shadow:var(--shadow)}
+  .mapchip b{color:var(--ink)}
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+  .card{background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow);padding:18px}
+  .card h3{font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:space-between}
+  .card h3 .exp{width:28px;height:28px;border-radius:50%;background:var(--soft);display:grid;place-items:center;color:#55565b}
+  .card h3 .exp svg{width:13px;height:13px}
+  .grad{grid-column:span 3;grid-row:span 2;display:flex;flex-direction:column;
+        background:linear-gradient(160deg,#dbe7f6 0%,#f3ede0 55%,#f6d9a0 100%);border-radius:var(--r-card)}
+  .trend{grid-column:span 6}.gauge{grid-column:span 3}
+  .team{grid-column:span 3}.appr{grid-column:span 3}.clock{grid-column:span 3}
+  .rules{grid-column:span 12}
+
+  .grad .t{font-size:15px;font-weight:700}.grad .d{font-size:12px;color:#5c5344;margin-top:2px}
+  .grad .art{flex:1;min-height:110px;display:grid;place-items:center;font-size:44px}
+  .meter{background:rgba(255,255,255,.55);border-radius:14px;padding:12px}
+  .meter .row{display:flex;justify-content:space-between;font-size:12px;font-weight:700}
+  .bar{height:8px;border-radius:99px;background:rgba(16,17,20,.12);margin-top:8px;overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:99px;background:var(--ink)}
+  .grad .pill{margin-top:12px;justify-content:center}
+
+  .big{font-size:26px;font-weight:800;letter-spacing:-.02em;margin-top:8px}
+  .delta{color:var(--green);font-size:12px;font-weight:700}
+  .chart{margin-top:6px;position:relative}
+  .tag{position:absolute;left:56%;top:-6px;transform:translateX(-50%);background:var(--amber);color:#3d2c07;
+       font-size:11px;font-weight:800;border-radius:10px;padding:5px 10px}
+  .legend{display:flex;gap:8px;margin-top:10px}
+  .legend span{font-size:11px;font-weight:700;color:#3f4045;background:var(--soft);border-radius:999px;padding:5px 12px;display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:7px;height:7px;border-radius:50%}
+
+  .gwrap{display:grid;place-items:center;padding:10px 0 0}
+  .gnum{font-size:30px;font-weight:800;margin-top:-46px}
+  .gsub{font-size:11px;color:var(--mut);font-weight:600}
+  .gleg{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-top:14px;font-size:11px;font-weight:600;color:#3f4045}
+  .gleg i{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+
+  .prow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .prow:last-child{border-bottom:0}
+  .prow .ic{width:34px;height:34px;border-radius:10px;background:var(--soft);display:grid;place-items:center;color:#55565b;flex:none}
+  .prow .ic svg{width:15px;height:15px}
+  .prow .nm{font-size:12.5px;font-weight:700}
+  .prow .cl{font-size:11px;color:var(--mut)}
+  .prow .st{margin-left:auto;width:34px;height:6px;border-radius:99px}
+
+  .trow{display:flex;align-items:center;gap:10px;padding:8px 0}
+  .trow .nm{font-size:12.5px;font-weight:600;color:#3f4045;width:78px}
+  .trow .pc{margin-left:auto;font-size:12px;font-weight:700}
+  .tbar{flex:1;height:10px;border-radius:99px;background:var(--soft);overflow:hidden}
+  .tbar i{display:block;height:100%;background:#d9dade}
+  .tbar.amber i{background:repeating-linear-gradient(45deg,var(--amber) 0 6px,#f9d98b 6px 12px)}
+
+  .clock .big{font-size:34px;font-variant-numeric:tabular-nums}
+
+  .rules{color:var(--mut);font-size:12.5px}
+  .rules b{color:var(--ink)}
   .rules ul{margin:8px 0 0 18px;display:grid;gap:4px}
+  @media (max-width:1080px){ .grad,.trend,.gauge,.team,.appr,.clock{grid-column:span 6} }
 </style>
 </head>
 <body>
+<div class="shell">
+  <header class="topbar">
+    <div class="mark"><svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" stroke="none"><path d="M12 2c1 5 3 8 10 10-7 2-9 5-10 10-1-5-3-8-10-10 7-2 9-5 10-10Z"/></svg></div>
+    <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg> Ara: katılımcı, iş, sponsor… (⌘K)</div>
+    <div class="tright">
+      <button class="cbtn" title="Bildirimler"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></button>
+      <button class="cbtn" title="Yardım"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
+      <div class="avatar" title="Elif Kaya"></div>
+    </div>
+  </header>
 
-<header class="topbar">
-  <div class="crumb">Maven Etkinlik Çözümleri <span>›</span> <b id="crumbWork">No-Dig Turkey 2026</b></div>
-  <div class="worksel">
-    <select id="workSelect" aria-label="Bağlam / iş seçici">
-      <option value="work">İş: No-Dig Turkey 2026</option>
-      <option value="company">Firma genelinde (iş yok)</option>
-    </select>
-    <button class="iconbtn" id="themeBtn" title="Tema değiştir (renk hue'su iki temada aynı kalır)">
-      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-    </button>
-    <button class="iconbtn" title="⌘K Komut Paleti — tek arama yüzeyi">
-      <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-    </button>
-    <div class="avatar">EK</div>
+  <div class="pagehead">
+    <div>
+      <h1 id="pageTitle">İş Özeti</h1>
+      <div class="sub" id="pageSub">No-Dig Turkey 2026 · bugün ne oluyor?</div>
+    </div>
+    <div class="actions">
+      <select id="workSelect" class="pill" aria-label="Bağlam / iş seçici">
+        <option value="work">İş: No-Dig Turkey 2026</option>
+        <option value="company">Firma geneli (iş yok)</option>
+      </select>
+      <button class="pill">Dışa Aktar</button>
+      <button class="pill dark"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Yeni İş</button>
+    </div>
   </div>
-</header>
 
-<div class="frame">
-  <nav class="rail" aria-label="Bağlam rayı" id="rail"></nav>
-  <aside class="panel" aria-label="Modül menüsü" id="panel"></aside>
-  <main class="content" id="content"></main>
+  <div class="frame">
+    <nav class="rail" aria-label="Bağlam rayı" id="rail"></nav>
+    <aside class="panel" aria-label="Modüller" id="panel"></aside>
+    <main class="content" id="content"></main>
+  </div>
 </div>
 
 <script>
-/* ── İkonlar (inline, tek stil: 24 grid, 2px stroke) ── */
 const I = {
   work:'<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   jobs:'<path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><rect width="20" height="14" x="2" y="6" rx="2"/>',
@@ -139,7 +191,7 @@ const I = {
   settings:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/>',
   dash:'<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
   checklist:'<rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4M12 16h4M8 11h.01M8 16h.01"/>',
-  tasks:'<path d="M11 12H3M16 6H3M16 18H3"/><path d="m19 6 2 2 4-4" transform="scale(.85) translate(-2 1)"/>',
+  tasks:'<path d="M11 12H3M16 6H3M16 18H3"/><path d="m17 15 2 2 4-4"/>',
   info:'<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
   users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   tags:'<path d="M12 2H2v10l9.3 9.3a2 2 0 0 0 2.8 0l7.2-7.2a2 2 0 0 0 0-2.8Z"/><circle cx="7" cy="7" r="1.5"/>',
@@ -166,7 +218,6 @@ const I = {
   orgs:'<rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M8 10h.01M16 10h.01M12 10h.01M8 14h.01M16 14h.01M12 14h.01"/>',
   clients:'<path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><rect width="20" height="14" x="2" y="6" rx="2"/><path d="M2 12h20"/>',
   seg:'<circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.4 6.4"/>',
-  pforms:'<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
   aud:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/>',
   camp:'<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
   tpl:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M9 21V9"/>',
@@ -181,7 +232,7 @@ const I = {
 };
 const svg = n => `<svg viewBox="0 0 24 24">${I[n]||I.info}</svg>`;
 
-/* ── TEK NAVİGASYON KAYNAĞI (öneri): her yaprak module+subView taşır ── */
+/* TEK NAVİGASYON KAYNAĞI — her yaprak module+subView taşır (if/else zinciri yok) */
 const WORK_NAV = [
   { g:"Yönetim", items:[
     ["summary","İş Özeti","dash","dashboard"],
@@ -238,7 +289,7 @@ const COMPANY_NAV = {
     ["orgs","Kurumlar","orgs","portfolio:organizations"],
     ["clients","Müşteriler","clients","portfolio:clients"],
     ["seg","Segmentler","seg","portfolio:segments"],
-    ["pforms","Portföy Formları","pforms","portfolio:portfolio-forms"],
+    ["pforms","Portföy Formları","forms","portfolio:portfolio-forms"],
   ]},
   comms:{ t:"Genel İletişim", items:[
     ["aud","Kitleler","aud","company-communications:audiences"],
@@ -263,123 +314,149 @@ const COMPANY_NAV = {
     ["compl","Uyumluluk","compl","compliance"],
   ]},
 };
-const RAIL = [
-  ["jobs","İşler"],["portfolio","Portföy"],["comms","İletişim"],["reports","Raporlar"],["settings","Ayarlar"],
-];
+const RAIL = [["jobs","İşler"],["portfolio","Portföy"],["comms","İletişim"],["reports","Raporlar"],["settings","Ayarlar"]];
 
-/* ── Durum: tek doğruluk kaynağı {ctx, area|leaf} ── */
-const state = { ctx:"work", area:"jobs", leaf:"parts", work:true };
-
+const state = { ctx:"work", area:"jobs", leaf:"summary", work:true };
 const rail = document.getElementById("rail");
 const panel = document.getElementById("panel");
 const content = document.getElementById("content");
 
 function renderRail(){
-  rail.innerHTML = `
-    <div class="logo">M</div><div class="sep"></div>
-    ${state.work ? `<button class="railbtn ${state.ctx==="work"?"on":""}" data-rail="work" title="Aktif İş — modül menüsü">${svg("work")}<span class="dot"></span></button>` : ""}
-    ${RAIL.map(([id,label])=>`<button class="railbtn ${state.ctx==="company"&&state.area===id?"on":""}" data-rail="${id}" title="${label}">${svg(id)}</button>`).join("")}
-    <div class="spacer"></div>
-    <button class="railbtn" title="Yardım">${svg("info")}</button>
-  `;
+  rail.innerHTML =
+    (state.work ? `<button class="railbtn ${state.ctx==="work"?"on":""}" data-rail="work" title="Aktif İş — modüller">${svg("work")}<span class="dot"></span></button>` : "") +
+    RAIL.map(([id,label])=>`<button class="railbtn ${state.ctx==="company"&&state.area===id?"on":""}" data-rail="${id}" title="${label}">${svg(id)}</button>`).join("") +
+    `<div class="spacer"></div><button class="railbtn" title="Çıkış">${svg("back")}</button>`;
   rail.querySelectorAll("[data-rail]").forEach(b=>b.onclick=()=>{
     const v=b.dataset.rail;
-    if(v==="work"){ state.ctx="work"; }
-    else { state.ctx="company"; state.area=v;
-      // firma alanına girince o alanın ilk maddesi seçili olsun
-      state.leaf = COMPANY_NAV[v].items[0][0];
-    }
+    if(v==="work"){ state.ctx="work"; state.leaf = state.leaf||"summary"; }
+    else { state.ctx="company"; state.area=v; state.leaf=COMPANY_NAV[v].items[0][0]; }
     render();
   });
 }
 
 function renderPanel(){
+  let head, groups;
   if(state.ctx==="work"){
-    const groups = WORK_NAV;
-    panel.innerHTML = `
-      <div class="panel-head">
-        <div class="ctx">İş Modülleri</div>
-        <h2>No-Dig Turkey 2026</h2>
-        <div class="sub">22 Eyl — 25 Eyl 2026 · İstanbul</div>
-        <button class="backbtn" data-back>← İş listesine dön</button>
-      </div>
-      <div class="panel-body">
-        ${groups.map(g=>`
-          <div class="grp">${g.g}</div>
-          ${g.items.map(it=>`
-            <button class="item ${state.leaf===it[0]?"on":""}" data-leaf="${it[0]}">
-              ${svg(it[2])}<span>${it[1]}</span>${it[4]?`<span class="cnt">${it[4]}</span>`:""}
-            </button>`).join("")}
-        `).join("")}
-      </div>`;
-    panel.querySelector("[data-back]").onclick = ()=>{ state.ctx="company"; state.area="jobs"; state.leaf="all"; render(); };
+    head = `<div class="ctx">İş Modülleri</div><h2>No-Dig Turkey 2026</h2>
+            <div class="sub">22–25 Eyl 2026 · İstanbul KM</div>
+            <button class="backbtn" data-back>${svg("back")} İş listesine dön</button>`;
+    groups = WORK_NAV;
   } else {
     const a = COMPANY_NAV[state.area];
-    panel.innerHTML = `
-      <div class="panel-head">
-        <div class="ctx">Firma Geneli</div>
-        <h2>${a.t}</h2>
-      </div>
-      <div class="panel-body">
-        ${a.items.map(it=>`
-          <button class="item ${state.leaf===it[0]?"on":""}" data-leaf="${it[0]}">
-            ${svg(it[2])}<span>${it[1]}</span>${it[4]?`<span class="cnt">${it[4]}</span>`:""}
-          </button>`).join("")}
-      </div>`;
+    head = `<div class="ctx">Firma Geneli</div><h2>${a.t}</h2>`;
+    groups = [{ g:a.t, items:a.items }];
   }
+  panel.innerHTML = `<div class="panel-head">${head}</div>
+    <div class="panel-body">${groups.map(g=>`
+      <div class="grp">${g.g}</div>
+      ${g.items.map(it=>`<button class="item ${state.leaf===it[0]?"on":""}" data-leaf="${it[0]}">
+        ${svg(it[2])}<span>${it[1]}</span>${it[4]?`<span class="cnt">${it[4]}</span>`:""}</button>`).join("")}
+    `).join("")}</div>`;
+  const bk = panel.querySelector("[data-back]");
+  if(bk) bk.onclick = ()=>{ state.ctx="company"; state.area="jobs"; state.leaf="all"; render(); };
   panel.querySelectorAll("[data-leaf]").forEach(b=>b.onclick=()=>{ state.leaf=b.dataset.leaf; render(); });
 }
 
 function findLeaf(){
-  if(state.ctx==="work"){
-    for(const g of WORK_NAV){ const f=g.items.find(i=>i[0]===state.leaf); if(f) return {grp:g.g,item:f}; }
-  }
-  const a=COMPANY_NAV[state.area]; const f=a.items.find(i=>i[0]===state.leaf) || a.items[0];
-  return {grp:a.t,item:f};
+  if(state.ctx==="work"){ for(const g of WORK_NAV){ const f=g.items.find(i=>i[0]===state.leaf); if(f) return f; } }
+  const a=COMPANY_NAV[state.area];
+  return a.items.find(i=>i[0]===state.leaf) || a.items[0];
 }
 
 function renderContent(){
-  const {grp,item}=findLeaf();
-  const [mod,sub]=(item[3]||"dashboard").split(":");
-  document.getElementById("crumbWork").textContent =
-    state.ctx==="work" ? `No-Dig Turkey 2026 › ${item[1]}` : item[1];
+  const leaf=findLeaf();
+  const [mod,sub]=(leaf[3]||"dashboard").split(":");
+  document.getElementById("pageTitle").textContent = leaf[1];
+  document.getElementById("pageSub").textContent =
+    state.ctx==="work" ? "No-Dig Turkey 2026 · bugün ne oluyor?" : "Firma geneli · bugün ne oluyor?";
   content.innerHTML = `
-    <h1>${item[1]}</h1>
-    <p class="desc">${grp} bölümü — bu prototipte içerik yerine yalnızca gezinme iskeleti gösterilir.</p>
-    <div class="chiprow">
-      <span class="chip map">→ module: <b>${mod}</b>${sub?` · subView: <b>${sub}</b>`:""}</span>
-      <span class="chip">bağlam: ${state.ctx==="work"?"İŞ":"FİRMA"}</span>
-      <span class="chip">aktif madde: tek karşılaştırma (module + subView)</span>
-    </div>
-    <div class="cards">
-      <div class="card"><div class="k">Kayıtlı Katılımcı</div><div class="v">1.284</div><div class="d">+96 bu hafta</div></div>
-      <div class="card"><div class="k">Bekleyen Onay</div><div class="v">12</div><div class="d">3'ü 48 saati aştı</div></div>
-      <div class="card"><div class="k">Sponsor Gerçekleşme</div><div class="v">%72</div><div class="d">18 / 25 paket</div></div>
-      <div class="card"><div class="k">Oda Doluluk</div><div class="v">%64</div><div class="d">attrition eşiği %20</div></div>
-    </div>
-    <div class="rules">
-      <b>Bu prototipin kuralları</b>
-      <ul>
-        <li><b>Ray = bağlam değiştirici:</b> menü açmaz; yalnızca panelin hangi bağlamı (İş / Firma alanı) göstereceğini seçer.</li>
-        <li><b>Panel = tek seviyeli modül listesi:</b> akordeon-içinde-akordeon, sekme ve panel-içi arama yok; arama yalnızca ⌘K.</li>
-        <li><b>Tek aktif stili:</b> teal zemin %14 + 2px sol çubuk; dolu teal yalnızca ray ikonunda.</li>
-        <li><b>Tema değişince hue değişmez:</b> sağ üstten koyu temaya geçin — vurgu aynı teal kalır, yalnızca zeminler koyulaşır.</li>
-        <li><b>Veri güdümlü:</b> her yaprak <code>module + subView</code> taşır; if/else eşleme zinciri gerekmez.</li>
-      </ul>
+    <span class="mapchip">eşleme → module: <b>${mod}</b>${sub?` · subView: <b>${sub}</b>`:""} &nbsp;·&nbsp; veri güdümlü, if/else yok</span>
+    <div class="grid">
+      <div class="card grad">
+        <div class="t">Kurulum Kontrol Listesi</div>
+        <div class="d">Yayına hazırlık · 7 adım kaldı</div>
+        <div class="art">◇</div>
+        <div class="meter">
+          <div class="row"><span>Tamamlanma</span><span>%68</span></div>
+          <div class="bar"><i style="width:68%"></i></div>
+        </div>
+        <button class="pill dark">Kuruluma Git →</button>
+      </div>
+      <div class="card trend">
+        <h3>Kayıt Geliri <span class="exp">${svg("swap")}</span></h3>
+        <div class="big">₺2,84M</div><span class="delta">↗ %12,5</span>
+        <div class="chart">
+          <span class="tag">₺245,2B</span>
+          <svg viewBox="0 0 300 92" width="100%" height="92">
+            <path d="M8 62 C40 48 60 66 92 58 S150 70 182 50 S250 34 292 26 L292 92 L8 92 Z" fill="#ececef"/>
+            <path d="M8 62 C40 48 60 66 92 58 S150 70 182 50 S250 34 292 26" fill="none" stroke="#9a9aa1" stroke-width="1.6"/>
+            <circle cx="8" cy="62" r="3.4" fill="#101114"/><circle cx="92" cy="58" r="3.4" fill="#101114"/>
+            <circle cx="182" cy="50" r="3.4" fill="#101114"/><circle cx="292" cy="26" r="3.4" fill="#101114"/>
+          </svg>
+        </div>
+        <div class="legend"><span><i style="background:#101114"></i> Gelir</span><span><i style="background:#d9dade"></i> Gider</span></div>
+      </div>
+      <div class="card gauge">
+        <h3>İş Durumu <span class="exp">${svg("swap")}</span></h3>
+        <div class="gwrap">
+          <svg viewBox="0 0 200 110" width="190">
+            <path d="M18 100 A82 82 0 0 1 182 100" fill="none" stroke="#ececef" stroke-width="14" stroke-linecap="round"/>
+            <path d="M18 100 A82 82 0 0 1 150 34" fill="none" stroke="#f6c453" stroke-width="14" stroke-linecap="round"/>
+          </svg>
+          <div class="gnum">42</div><div class="gsub">Aktif İş</div>
+        </div>
+        <div class="gleg">
+          <span><i style="background:#f6c453"></i>Yürüyen (23)</span><span><i style="background:#f9d98b"></i>Biten (13)</span>
+          <span><i style="background:#e8d9b8"></i>Onayda (3)</span><span><i style="background:#d9dade"></i>Beklemede (3)</span>
+        </div>
+      </div>
+      <div class="card team">
+        <h3>Ekip Performansı <span class="exp">${svg("swap")}</span></h3>
+        <div class="trow"><span class="nm">Kayıt Ekibi</span><div class="tbar"><i style="width:70%"></i></div><span class="pc">%70</span></div>
+        <div class="trow"><span class="nm">Sponsor</span><div class="tbar amber"><i style="width:80%"></i></div><span class="pc">%80</span></div>
+        <div class="trow"><span class="nm">Saha</span><div class="tbar"><i style="width:90%"></i></div><span class="pc">%90</span></div>
+        <div class="trow"><span class="nm">Bilimsel</span><div class="tbar"><i style="width:60%"></i></div><span class="pc">%60</span></div>
+      </div>
+      <div class="card appr">
+        <h3>Onay Kuyruğu <span class="exp">${svg("swap")}</span></h3>
+        <div class="prow"><span class="ic">${svg("users")}</span><span><span class="nm">Bildiri Onayı</span><br><span class="cl">Dr. S. Aydın · Bilimsel</span></span><span class="st" style="background:var(--amber)"></span></div>
+        <div class="prow"><span class="ic">${svg("hand")}</span><span><span class="nm">Sponsor Sözleşmesi</span><br><span class="cl">GeoLab A.Ş.</span></span><span class="st" style="background:var(--green)"></span></div>
+        <div class="prow"><span class="ic">${svg("tags")}</span><span><span class="nm">Kategori Değişikliği</span><br><span class="cl">VIP kontenjan +10</span></span><span class="st" style="background:var(--red)"></span></div>
+      </div>
+      <div class="card clock">
+        <h3>Etkinliğe Kalan <span class="exp">${svg("swap")}</span></h3>
+        <div class="big" id="liveClock">--:--:--</div>
+        <div class="gsub" style="margin-top:6px">22 Eyl 2026 09:00 · İstanbul</div>
+      </div>
+      <div class="card rules">
+        <b>Bu prototipin kuralları (referans görsel hizalı)</b>
+        <ul>
+          <li><b>Ray = bağlam:</b> dairesel ikonlar, aktif = siyah daire; menü açmaz, panelin bağlamını seçer.</li>
+          <li><b>Panel = modüller side-menüsü:</b> beyaz kart, tek seviye; aktif madde = siyah hap. Sekme/akordeon/panel-arama yok — arama yalnızca üst barda.</li>
+          <li><b>Renk disiplini:</b> zeminler nötr gri/beyaz; siyah yalnızca aktif + birincil eylem; amber yalnızca vurgu/sayaç; yeşil-kırmızı yalnızca durum.</li>
+          <li><b>Veri güdümlü:</b> her yaprak <code>module + subView</code> taşır; eşleme if/else zinciri gerektirmez (üstteki çip canlı gösterir).</li>
+        </ul>
+      </div>
     </div>`;
+  tick();
 }
+function tick(){
+  const el=document.getElementById("liveClock"); if(!el) return;
+  const target=new Date("2026-09-22T09:00:00+03:00");
+  const d=target-Date.now();
+  if(d<=0){ el.textContent="CANLI"; return; }
+  const days=Math.floor(d/864e5), h=String(Math.floor(d/36e5)%24).padStart(2,"0"),
+        m=String(Math.floor(d/6e4)%60).padStart(2,"0"), s=String(Math.floor(d/1e3)%60).padStart(2,"0");
+  el.textContent=`${days}g ${h}:${m}:${s}`;
+}
+setInterval(tick,1000);
 
 function render(){ renderRail(); renderPanel(); renderContent(); }
-
 document.getElementById("workSelect").onchange = e=>{
   state.work = e.target.value==="work";
   state.ctx = state.work ? "work" : "company";
   if(!state.work){ state.area="jobs"; state.leaf="all"; } else state.leaf="summary";
   render();
-};
-document.getElementById("themeBtn").onclick = ()=>{
-  const html=document.documentElement;
-  html.dataset.theme = html.dataset.theme==="dark" ? "light" : "dark";
 };
 render();
 </script>
